@@ -994,8 +994,8 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
 
   return (
     <div className="pb-24">
-      <div className="stripes-bg text-white px-5 pt-12 pb-8 relative">
-        <div className="absolute top-12 right-4 flex items-center gap-2">
+      <div className="stripes-bg text-white px-5 pt-16 pb-10 relative">
+        <div className="absolute top-16 right-4 flex items-center gap-2">
           {!isStandalone && (
             <button
               onClick={() => setShowInstallModal(true)}
@@ -1013,11 +1013,11 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
             ?
           </button>
         </div>
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-4 mt-4">
           <img
             src="./stompers_logo.png"
             alt=""
-            className="w-16 h-16 shrink-0 drop-shadow"
+            className="w-24 h-24 shrink-0 drop-shadow"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
           <div className="flex-1 min-w-0">
