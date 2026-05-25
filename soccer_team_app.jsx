@@ -370,8 +370,9 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad) => {
     const now = Date.now();
+    const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
       id: uid(),
       opponent: opponent || 'Opponent',
@@ -387,6 +388,7 @@ export default function App() {
       elapsedAtPause: 0,
       segmentStartedAt: now,
       events: [],
+      squad: squadIds,
       startingLineup: startingLineup || [],
       gkPlayerId: gkPlayerId || null,
       gkChanges: [],
@@ -678,19 +680,33 @@ export default function App() {
           onCancel={() => setView('home')}
           onStart={(opponent, isHome, tournament) => {
             setPendingGameSetup({ opponent, isHome, tournament });
-            setView('lineup');
+            setView('squad');
           }}
           onGoRoster={() => setView('roster')}
+        />
+      )}
+
+      {view === 'squad' && pendingGameSetup && (
+        <SquadPickerView
+          roster={roster}
+          setup={pendingGameSetup}
+          initialSquad={pendingGameSetup.squad}
+          onBack={() => setView('gameSetup')}
+          onNext={(squad) => {
+            setPendingGameSetup({ ...pendingGameSetup, squad });
+            setView('lineup');
+          }}
         />
       )}
 
       {view === 'lineup' && pendingGameSetup && (
         <StartingLineupView
           roster={roster}
+          squad={pendingGameSetup.squad}
           setup={pendingGameSetup}
-          onBack={() => { setView('gameSetup'); }}
+          onBack={() => { setView('squad'); }}
           onStart={(lineup, gkPlayerId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad);
             setPendingGameSetup(null);
           }}
         />
@@ -702,6 +718,10 @@ export default function App() {
           roster={roster}
           pendingEvent={pendingEvent}
           onSelectEvent={(type) => {
+            if (type === '__MINS__') {
+              setPendingEvent({ type: 'MINS_VIEW' });
+              return;
+            }
             if (type === 'SUB') {
               setPendingEvent({ type: 'SUB', step: 'OFF' });
               return;
@@ -1286,9 +1306,103 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
   );
 }
 
-/* ---------- STARTING LINEUP ---------- */
-function StartingLineupView({ roster, setup, onBack, onStart }) {
+/* ---------- MATCH-DAY SQUAD ---------- */
+function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+  const SOFT_CAP = 12;
+  const [selected, setSelected] = useState(() =>
+    new Set(initialSquad && initialSquad.length > 0 ? initialSquad : sorted.map(p => p.id))
+  );
+
+  const toggle = (id) => {
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelected(next);
+  };
+
+  const selectAll = () => setSelected(new Set(sorted.map(p => p.id)));
+  const clearAll = () => setSelected(new Set());
+
+  const overCap = selected.size > SOFT_CAP;
+  const canProceed = selected.size > 0;
+
+  return (
+    <div className="pb-40">
+      <Header title="MATCH-DAY SQUAD" onBack={onBack} />
+
+      <div className="px-4 pt-4">
+        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent} · {setup.isHome ? 'Home' : 'Away'}</div>
+        <div className="text-sm text-stone-700 mb-3">
+          Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
+          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <button onClick={selectAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL IN</button>
+          <button onClick={clearAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL OUT</button>
+        </div>
+
+        <div className="space-y-1.5">
+          {sorted.map(p => {
+            const on = selected.has(p.id);
+            return (
+              <button
+                key={p.id}
+                onClick={() => toggle(p.id)}
+                className={`w-full flex items-center gap-3 p-2.5 rounded-xl border-2 text-left active:scale-[0.98] transition ${
+                  on ? 'bg-lime-50 border-lime-400' : 'bg-white border-stone-200 opacity-60'
+                }`}
+              >
+                <PlayerAvatar
+                  player={p}
+                  sizeClass="w-11 h-11"
+                  textSize="text-xl"
+                  numberClasses={on ? 'bg-stone-900 text-lime-400' : 'bg-stone-200 text-stone-500'}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm truncate">{p.name}</div>
+                  <div className={`text-[10px] font-bold tracking-wider ${on ? 'text-lime-700' : 'text-stone-400'}`}>
+                    {on ? 'AVAILABLE' : 'OUT'}{p.position ? ` · ${p.position}` : ''}
+                  </div>
+                </div>
+                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                  on ? 'bg-lime-500 border-lime-600' : 'bg-white border-stone-300'
+                }`}>
+                  {on && <span className="text-white text-sm font-bold">✓</span>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 p-4 shadow-xl">
+        <div className={`text-center text-sm mb-2 ${overCap ? 'text-amber-700' : 'text-stone-600'}`}>
+          <span className={`font-bold ${overCap ? 'text-amber-700' : 'text-lime-700'}`}>{selected.size}</span> in squad
+          {overCap && <span className="ml-1 text-xs">⚠ over {SOFT_CAP}</span>}
+        </div>
+        <button
+          onClick={() => canProceed && onNext(Array.from(selected))}
+          disabled={!canProceed}
+          className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
+            canProceed
+              ? 'bg-stone-900 text-lime-400 border-stone-900'
+              : 'bg-stone-200 text-stone-400 border-stone-300 cursor-not-allowed'
+          }`}
+        >
+          NEXT: STARTING LINEUP →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- STARTING LINEUP ---------- */
+function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
+  // Only players in the matchday squad are eligible. Legacy fallback: whole roster.
+  const squadSet = squad && squad.length > 0 ? new Set(squad) : null;
+  const pool = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
+  const sorted = [...pool].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
   const [selected, setSelected] = useState(() => new Set(sorted.map(p => p.id)));
   // Default the match GK to the first player with position='GK' if any.
   const [gkId, setGkId] = useState(() => {
@@ -1433,8 +1547,19 @@ function StartingLineupView({ roster, setup, onBack, onStart }) {
 function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
-  const playersSorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+  // Match-day squad limits who can be picked / subbed on. Legacy games without
+  // a `squad` field fall back to the whole roster.
+  const squadSet = game.squad && game.squad.length > 0 ? new Set(game.squad) : null;
+  const squadRoster = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
+  const playersSorted = [...squadRoster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
   const gameGKId = currentGKAt(game);
+  // Live seconds-on-field per squad player, refreshed by `tick`.
+  const secondsByPlayer = useMemo(() => {
+    const m = {};
+    for (const p of squadRoster) m[p.id] = playerSeconds(p.id, game);
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, tick]);
 
   const [quickMode, setQuickMode] = useState(() => {
     try { return localStorage.getItem('stompers_quick_mode') === 'true'; } catch(e) { return false; }
@@ -1519,6 +1644,16 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           })()}
           {!inHalfTimeBreak && (
             <button
+              onClick={() => onSelectEvent('__MINS__')}
+              className="shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 bg-white text-stone-600 border-stone-200 active:scale-95 transition flex items-center gap-1"
+              title="Live minutes played"
+            >
+              <span>⏱</span>
+              <span>MINS</span>
+            </button>
+          )}
+          {!inHalfTimeBreak && (
+            <button
               onClick={toggleQuickMode}
               className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 transition active:scale-95 ${
                 quickMode
@@ -1534,7 +1669,58 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       )}
 
       <div className="flex-1 flex flex-col px-4 pt-4">
-        {pendingEvent?.type === 'NEW_GK' ? (() => {
+        {pendingEvent?.type === 'MINS_VIEW' ? (() => {
+          const onField = onFieldAt(game);
+          const rows = [...playersSorted].sort((a, b) => (secondsByPlayer[b.id] || 0) - (secondsByPlayer[a.id] || 0));
+          const maxSec = Math.max(1, ...rows.map(p => secondsByPlayer[p.id] || 0));
+          return (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <div>
+                  <div className="text-xs text-stone-500 font-bold tracking-widest">LIVE</div>
+                  <div className="font-display text-3xl flex items-center gap-2"><span>⏱</span><span>MINUTES</span></div>
+                </div>
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto pb-6 space-y-1.5">
+                {rows.map(p => {
+                  const sec = secondsByPlayer[p.id] || 0;
+                  const min = Math.round(sec / 60);
+                  const isOn = onField.has(p.id);
+                  const isGK = p.id === gameGKId;
+                  const pct = Math.round((sec / maxSec) * 100);
+                  return (
+                    <div key={p.id} className={`relative rounded-xl border-2 p-2.5 flex items-center gap-3 ${
+                      isGK ? 'bg-amber-50 border-amber-300' : isOn ? 'bg-lime-50 border-lime-300' : 'bg-white border-stone-200'
+                    }`}>
+                      <div className="absolute inset-y-0 left-0 rounded-xl opacity-30" style={{ width: `${pct}%`, background: isGK ? '#fbbf24' : isOn ? '#a3e635' : '#e7e5e4' }} />
+                      <div className="relative z-10 flex items-center gap-3 w-full">
+                        <PlayerAvatar player={p} sizeClass="w-10 h-10" textSize="text-lg" numberClasses={isGK ? 'bg-amber-500 text-stone-900' : isOn ? 'bg-stone-900 text-lime-400' : 'bg-stone-200 text-stone-500'} />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-sm truncate">{p.name}</div>
+                          <div className="text-[10px] font-bold tracking-wider text-stone-500">
+                            {isGK ? '🧤 IN GOAL' : isOn ? 'ON FIELD' : 'BENCH'}{p.position ? ` · ${p.position}` : ''}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-display text-2xl tabular-nums leading-none">{min}</div>
+                          <div className="text-[9px] font-bold tracking-wider text-stone-500">MIN</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {rows.length === 0 && (
+                  <div className="bg-white border border-stone-200 rounded-xl p-6 text-center text-stone-500 text-sm">
+                    No squad players.
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })() : pendingEvent?.type === 'NEW_GK' ? (() => {
           const onField = onFieldAt(game);
           const candidates = playersSorted.filter(p => onField.has(p.id));
           const currentGKPlayer = roster.find(p => p.id === gameGKId);
@@ -1687,6 +1873,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               event={pickerEvent}
               players={pickerPlayers}
               gameGKId={gameGKId}
+              secondsByPlayer={isSub ? secondsByPlayer : null}
               skippable={pickerSkippable}
               onPick={onSelectPlayer}
               onSkip={onCancelEvent}
@@ -1857,7 +2044,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   );
 }
 
-function PlayerPicker({ event, players, gameGKId, skippable, onPick, onSkip, onUnknown, onCancel, emptyMessage }) {
+function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, onPick, onSkip, onUnknown, onCancel, emptyMessage }) {
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center justify-between mb-4 shrink-0">
@@ -1923,11 +2110,15 @@ function PlayerPicker({ event, players, gameGKId, skippable, onPick, onSkip, onU
               />
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-sm truncate">{p.name}</div>
-                {p.position && (
+                {secondsByPlayer ? (
+                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-500'}`}>
+                    {Math.round((secondsByPlayer[p.id] || 0) / 60)} min{p.position ? ` · ${p.position}` : ''}
+                  </div>
+                ) : (p.position && (
                   <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-500'}`}>
                     {p.position}
                   </div>
-                )}
+                ))}
               </div>
             </button>
           );
