@@ -636,6 +636,31 @@ export default function App() {
           onAdd={() => { setEditingPlayer({}); setView('playerForm'); }}
           onEdit={(p) => { setEditingPlayer(p); setView('playerForm'); }}
           onDelete={(p) => askConfirm(`Remove ${p.name} #${p.number} from the roster?`, () => removePlayer(p.id), { danger: true, yesLabel: 'REMOVE' })}
+          onBulkPhotos={async (files) => {
+            const updates = {};
+            let matched = 0, skipped = 0;
+            for (const file of files) {
+              // Extract the first run of digits from the filename, e.g. "#10.PNG" -> 10.
+              const m = file.name.match(/(\d+)/);
+              if (!m) { skipped++; continue; }
+              const num = m[1];
+              const player = roster.find(p => String(p.number) === num);
+              if (!player) { skipped++; continue; }
+              try {
+                updates[player.id] = await resizePhoto(file, 256, 0.85);
+                matched++;
+              } catch (e) {
+                skipped++;
+              }
+            }
+            if (matched === 0) {
+              showToast(`No photos matched (skipped ${skipped})`);
+              return;
+            }
+            const next = roster.map(p => updates[p.id] ? { ...p, photo: updates[p.id] } : p);
+            await persistRoster(next);
+            showToast(`📷 Imported ${matched} photo${matched === 1 ? '' : 's'}${skipped ? ` (skipped ${skipped})` : ''}`);
+          }}
         />
       )}
 
@@ -918,8 +943,21 @@ function TileButton({ onClick, icon, label, sub }) {
 }
 
 /* ---------- ROSTER ---------- */
-function RosterView({ roster, onBack, onAdd, onEdit, onDelete }) {
+function RosterView({ roster, onBack, onAdd, onEdit, onDelete, onBulkPhotos }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+  const bulkInputRef = React.useRef(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const handleBulkFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    setBulkBusy(true);
+    try {
+      await onBulkPhotos(Array.from(files));
+    } finally {
+      setBulkBusy(false);
+      if (bulkInputRef.current) bulkInputRef.current.value = '';
+    }
+  };
 
   return (
     <div className="pb-24">
@@ -928,6 +966,31 @@ function RosterView({ roster, onBack, onAdd, onEdit, onDelete }) {
           <Plus className="w-5 h-5" />
         </button>
       } />
+
+      <input
+        ref={bulkInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={e => handleBulkFiles(e.target.files)}
+      />
+
+      {sorted.length > 0 && (
+        <div className="px-4 pt-3">
+          <button
+            onClick={() => bulkInputRef.current?.click()}
+            disabled={bulkBusy}
+            className="w-full bg-amber-100 text-amber-900 border-2 border-amber-300 font-bold text-sm py-3 rounded-xl active:scale-[0.99] transition disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <span>📷</span>
+            <span>{bulkBusy ? 'Importing…' : 'BULK IMPORT PHOTOS'}</span>
+          </button>
+          <div className="text-[11px] text-stone-500 mt-1.5 text-center px-2">
+            Pick multiple files — names like <span className="font-mono">#10.PNG</span> match by jersey number.
+          </div>
+        </div>
+      )}
 
       <div className="px-4 pt-4">
         {sorted.length === 0 ? (
