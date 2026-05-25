@@ -1650,17 +1650,6 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, tick]);
 
-  const [quickMode, setQuickMode] = useState(() => {
-    try { return localStorage.getItem('stompers_quick_mode') === 'true'; } catch(e) { return false; }
-  });
-  const toggleQuickMode = () => {
-    setQuickMode(prev => {
-      const next = !prev;
-      try { localStorage.setItem('stompers_quick_mode', next ? 'true' : 'false'); } catch(e) {}
-      return next;
-    });
-  };
-
   const inFirstHalf = game.period === 1 && game.clockRunning !== false;
   const inHalfTimeBreak = game.period === 1 && game.clockRunning === false;
   const inSecondHalf = game.period === 2;
@@ -1739,19 +1728,6 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             >
               <span>⏱</span>
               <span>MINS</span>
-            </button>
-          )}
-          {!inHalfTimeBreak && (
-            <button
-              onClick={toggleQuickMode}
-              className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 transition active:scale-95 ${
-                quickMode
-                  ? 'bg-amber-400 text-stone-900 border-amber-500 shadow'
-                  : 'bg-white text-stone-600 border-stone-200'
-              }`}
-              title="Toggle Quick-Tap Mode"
-            >
-              ⚡ {quickMode ? 'QUICK' : 'FULL'}
             </button>
           )}
         </div>
@@ -2009,66 +1985,70 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           </div>
         ) : (
           <>
-            {quickMode ? (
-              /* QUICK-TAP MODE: 4 huge buttons for high-tempo stretches */
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { id: 'GOAL',     emoji: '⚽', label: 'GOAL',     tone: 'big-green' },
-                  { id: 'BALL_WIN', emoji: '🔥', label: 'BALL WIN', tone: 'soft-green' },
-                  { id: 'TURNOVER', emoji: '💨', label: 'TURNOVER', tone: 'soft-red' },
-                  { id: 'OPP_GOAL', emoji: '🚨', label: 'OPP GOAL', tone: 'big-red' },
-                ].map(b => (
-                  <button
-                    key={b.id}
-                    onClick={() => onSelectEvent(b.id)}
-                    className={`${TONE_CLASSES[b.tone]} border-2 rounded-2xl py-10 flex flex-col items-center justify-center gap-2 active:scale-[0.97] transition`}
-                  >
-                    <div className="text-5xl">{b.emoji}</div>
-                    <div className="font-sans-pro font-extrabold tracking-tight text-xl leading-none text-center">{b.label}</div>
-                  </button>
-                ))}
+            {/* Positive actions (top zone) — each adds to performance score.
+                GOAL is emphasised. ASSIST is captured automatically from the
+                GOAL flow, so it has no standalone button. */}
+            <div className="rounded-2xl border-2 border-lime-300 bg-lime-50/40 p-2">
+              <div className="flex items-center justify-between px-1 pb-1.5">
+                <div className="flex items-center gap-1.5 text-lime-800 font-display text-xs tracking-widest">
+                  <span className="w-5 h-5 rounded-full bg-lime-500 text-white flex items-center justify-center font-bold text-sm leading-none">+</span>
+                  <span>EARN</span>
+                </div>
+                <div className="text-[10px] text-lime-700/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
-            ) : (
-              <>
-              {/* 4x3 grid: 12 primary events. ASSIST is removed — it's captured
-                  automatically from the GOAL flow, so a standalone button would
-                  let an assist be logged without an actual goal. */}
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'KEY_PASS', 'BALL_WIN', 'HOLDS_BALL', 'SHOT_ON', 'SHOT_OFF', 'SAVE', 'BLOCK', 'DUEL_WIN', 'DUEL_LOSE', 'GIVE_GO', 'GATES'].map(id => {
+                {['GOAL', 'KEY_PASS', 'BALL_WIN', 'SHOT_ON', 'SAVE', 'BLOCK', 'DUEL_WIN', 'GIVE_GO', 'GATES', 'SHOT_OFF'].map(id => {
                   const ev = EVENT_TYPES[id];
-                  const big = ev.tone === 'big-green';
+                  const big = id === 'GOAL';
                   return (
                     <button
                       key={ev.id}
                       onClick={() => onSelectEvent(ev.id)}
-                      className={`${TONE_CLASSES[ev.tone]} border-2 rounded-2xl ${big ? 'py-5' : 'py-4'} flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
+                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl ${big ? 'py-5' : 'py-4'} flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
                     >
+                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-lime-700">+</span>
                       <div className={`${big ? 'text-3xl' : 'text-2xl'}`}>{ev.emoji}</div>
                       <div className={`font-sans-pro font-extrabold tracking-tight ${big ? 'text-base' : 'text-xs'} leading-none text-center`}>{ev.label}</div>
                     </button>
                   );
                 })}
               </div>
+            </div>
 
-              <div className="mt-2">
-                <button
-                  onClick={() => onSelectEvent('TURNOVER')}
-                  className={`${TONE_CLASSES['soft-red']} border-2 rounded-2xl py-3.5 w-full flex items-center justify-center gap-2 active:scale-[0.97] transition`}
-                >
-                  <span className="text-xl">💨</span>
-                  <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">TURNOVER</span>
-                </button>
+            {/* Negative actions (bottom zone) — each subtracts from performance score. */}
+            <div className="mt-2.5 rounded-2xl border-2 border-red-300 bg-red-50/40 p-2">
+              <div className="flex items-center justify-between px-1 pb-1.5">
+                <div className="flex items-center gap-1.5 text-red-800 font-display text-xs tracking-widest">
+                  <span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center font-bold text-sm leading-none">−</span>
+                  <span>LOSE</span>
+                </div>
+                <div className="text-[10px] text-red-700/70 font-bold tracking-wider">LOWERS SCORE</div>
               </div>
-
+              <div className="grid grid-cols-3 gap-2">
+                {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE'].map(id => {
+                  const ev = EVENT_TYPES[id];
+                  return (
+                    <button
+                      key={ev.id}
+                      onClick={() => onSelectEvent(ev.id)}
+                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl py-4 flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
+                    >
+                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-red-700">−</span>
+                      <div className="text-2xl">{ev.emoji}</div>
+                      <div className="font-sans-pro font-extrabold tracking-tight text-xs leading-none text-center">{ev.label}</div>
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 onClick={() => onSelectEvent('OPP_GOAL')}
-                className={`mt-2 w-full ${TONE_CLASSES['big-red']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
+                className={`relative mt-2 w-full ${TONE_CLASSES['big-red']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
               >
+                <span className="absolute top-1 right-2 text-[10px] font-extrabold text-red-100">−</span>
                 <span className="text-2xl">🚨</span>
                 <span className="font-sans-pro font-extrabold tracking-tight text-lg leading-none">OPP GOAL</span>
               </button>
-              </>
-            )}
+            </div>
 
             <div className="grid grid-cols-2 gap-2 mt-2.5">
               <button
@@ -2670,6 +2650,8 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
 
 
 
