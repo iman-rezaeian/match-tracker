@@ -408,18 +408,23 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-const TEAM_CODE = '2016';
+const COACH_PASS = 'ManUtd2016';
 
 function App() {
-  // Public read-only live scoreboard route. When the URL has ?live=<gameId>,
-  // bypass the entire coach app and render a clean scoreboard for parents.
-  // Computed once at mount; reading window.location here is safe because the
-  // URL doesn't change without a reload.
-  const liveGameId = (typeof window !== 'undefined')
-    ? new URLSearchParams(window.location.search).get('live')
-    : null;
+  // URL-based routing — computed once at mount; the URL doesn't change without
+  // a full reload so this is safe to do before hooks.
+  //   ?live=<gameId>  -> single-game public scoreboard (Share button URL)
+  //   ?coach          -> coach app (password-gated)
+  //   (default)       -> public home: current/latest scoreboard + past matches
+  const params = (typeof window !== 'undefined')
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams('');
+  const liveGameId = params.get('live');
+  const isCoach = params.has('coach');
   if (liveGameId) return <LiveScorePage gameId={liveGameId} />;
+  if (!isCoach) return <PublicHomePage />;
 
+  // ---- coach app below ----
   const [unlocked, setUnlocked] = useState(() => {
     try { return localStorage.getItem('stompers_unlocked') === 'true'; } catch(e) { return false; }
   });
@@ -2964,7 +2969,7 @@ function LockScreen({ onUnlock }) {
   const [error, setError] = useState(false);
 
   const handleSubmit = () => {
-    if (code.trim() === TEAM_CODE) {
+    if (code.trim() === COACH_PASS) {
       onUnlock();
     } else {
       setError(true);
@@ -2984,31 +2989,36 @@ function LockScreen({ onUnlock }) {
       />
       <div className="font-display text-5xl text-white leading-none">LASALLE</div>
       <div className="font-display text-3xl text-lime-400 leading-tight mb-2">STOMPERS</div>
-      <div className="text-white/50 text-xs font-bold tracking-widest mb-8">U10 · 2016 SQUAD</div>
+      <div className="text-white/50 text-xs font-bold tracking-widest mb-8">COACH ACCESS</div>
 
       <div className="w-full max-w-xs">
-        <label className="block text-white/70 text-xs font-bold tracking-widest mb-2">ENTER TEAM CODE</label>
+        <label className="block text-white/70 text-xs font-bold tracking-widest mb-2">ENTER COACH PASSWORD</label>
         <input
-          type="number"
-          inputMode="numeric"
+          type="password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           value={code}
           onChange={e => setCode(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          placeholder="••••"
-          className={`w-full text-center text-3xl font-display py-4 rounded-xl border-2 outline-none transition ${
+          placeholder="••••••••"
+          className={`w-full text-center text-2xl font-display py-4 rounded-xl border-2 outline-none transition ${
             error
               ? 'bg-red-100 border-red-400 text-red-700 animate-[shake_0.3s_ease-in-out]'
               : 'bg-white border-stone-200 text-stone-900'
           }`}
           autoFocus
         />
-        {error && <div className="text-red-400 text-sm font-bold mt-2">Wrong code. Try again.</div>}
+        {error && <div className="text-red-400 text-sm font-bold mt-2">Wrong password. Try again.</div>}
         <button
           onClick={handleSubmit}
           className="mt-4 w-full bg-lime-500 text-stone-900 font-display text-2xl py-4 rounded-xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition"
         >
           ENTER
         </button>
+        <div className="mt-6 text-white/40 text-xs">
+          Looking for the live scoreboard? <a href="./" className="text-lime-400 underline">Tap here</a>.
+        </div>
       </div>
     </div>
   );
@@ -3403,16 +3413,23 @@ function HelpView({ onBack }) {
           <p className="text-xs text-stone-500 mt-2">Sharing the app with another parent or coach? Just send them the same URL — they install on their own device and see the same shared team data in real time.</p>
         </Section>
 
-        <Section id="live" emoji="📡" title="12 · Live scoreboard for parents" summary="Share a read-only link — score & goals update in real time">
-          <p>Open any past or in-progress game and tap the green <Pill tone="lime">📡 SHARE</Pill> button at the top. You'll get a link parents can open on any phone to see a Premier League-style scoreboard: live score, clock, and every goal with scorer + assist as they happen.</p>
-          <p className="text-sm">Parents don't need to install anything, sign in, or have the app — just open the link. They <strong>only see the score and goals</strong>, never pillar events, weights, or rosters.</p>
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2 text-sm">
-            <div className="font-display text-sm text-stone-700 mb-1">💡 Suggested workflow</div>
-            <Step n={1}>Right after kickoff, open the active game from the home screen.</Step>
-            <Step n={2}>Tap <Pill tone="lime">📡 SHARE</Pill> and send the link to your team's TeamSnap / WhatsApp chat once.</Step>
-            <Step n={3}>Parents leave the tab open — it auto-updates every time you log a GOAL, ASSIST, or OPP GOAL. No refresh needed.</Step>
+        <Section id="live" emoji="📡" title="12 · Public scoreboard & coach access" summary="How URLs are split between parents and coaches">
+          <p>The site has <strong>three URLs</strong>, each for a different audience:</p>
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2 text-sm space-y-2">
+            <div>
+              <div className="font-display text-sm text-stone-700">👩‍👦 Parents — public scoreboard</div>
+              <div className="text-xs text-stone-600">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past matches. First name + jersey number only — no full names.</div>
+            </div>
+            <div>
+              <div className="font-display text-sm text-stone-700">📎 Share a specific game</div>
+              <div className="text-xs text-stone-600">Tap <Pill tone="lime">📡 SHARE</Pill> on any game to copy a link like <code>?live=GAME_ID</code> — great for tournament recaps or revisiting a past match in a TeamSnap event post.</div>
+            </div>
+            <div>
+              <div className="font-display text-sm text-stone-700">🔑 Coaches — password-gated app</div>
+              <div className="text-xs text-stone-600">Coach app lives at <code>?coach</code> (e.g. <code>stompers2016.com/?coach</code>). Bookmark this URL on your phone — enter the coach password once and it remembers your device.</div>
+            </div>
           </div>
-          <p className="text-xs text-stone-500 mt-2">The link works for finished games too — useful for parents who couldn't make the match.</p>
+          <p className="text-xs text-stone-500 mt-2">Parents never need a password or to install anything — they just open the bare URL and bookmark it. Coaches install the PWA on the <code>?coach</code> URL for the full app experience.</p>
         </Section>
 
         <div className="text-center text-xs text-stone-400 pt-2 pb-1">
@@ -3437,17 +3454,20 @@ function Header({ title, onBack, right }) {
 
 /* =========================================================================
    LIVE SCOREBOARD (public, read-only)
-   Loaded via ?live=<gameId>. Premier-League-style scoreboard for parents:
-   teams + score, live clock, chronological goal feed (scorer + assist).
-   Subscribes to Firestore via window.fbDb so it auto-updates the moment the
-   coach taps GOAL. Anonymous auth handles access; no rule changes needed.
-   Shows ONLY score + goals — no pillar events, rosters, or weights.
+   Two entry points, both render <LiveScoreboard> internally:
+     - <LiveScorePage gameId> — used by ?live=<gameId> deep-links.
+         Subscribes to ONE game doc by id.
+     - <PublicHomePage>       — used by the bare root URL (no params).
+         Subscribes to ALL games, auto-picks active or most-recent finished,
+         and renders a "Past matches" list under the main scoreboard.
+   Privacy: scoreboard shows first name + jersey number only — never last names,
+   never pillar events, rosters, or weights.
+   Auth: existing anonymous Firebase auth covers public viewers transparently.
    ========================================================================= */
 function LiveScorePage({ gameId }) {
   const [game, setGame] = useState(null);
   const [roster, setRoster] = useState([]);
   const [error, setError] = useState(null);
-  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
@@ -3478,6 +3498,136 @@ function LiveScorePage({ gameId }) {
     });
     return () => { if (unsubGame) unsubGame(); if (unsubRoster) unsubRoster(); };
   }, [gameId]);
+
+  if (error) return <PublicErrorScreen msg={error} />;
+  if (!game) return <PublicLoadingScreen />;
+  return (
+    <div className="min-h-screen bg-stone-50 pb-12">
+      <style>{FONT_STYLES}</style>
+      <LiveScoreboard game={game} roster={roster} />
+    </div>
+  );
+}
+
+/* ---- PublicHomePage: default URL for parents ---- */
+function PublicHomePage() {
+  const [games, setGames] = useState([]);
+  const [roster, setRoster] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
+      setError('App not loaded.');
+      return;
+    }
+    let unsubGames = null, unsubRoster = null;
+    window.fbReady.then((ok) => {
+      if (!ok) { setError('Could not connect to Firebase.'); return; }
+      const teamRef = window.fbDb.collection('teams').doc('main');
+      unsubGames = teamRef.collection('games').onSnapshot(
+        (snap) => {
+          const list = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+          list.sort((a, b) => new Date(b.date) - new Date(a.date));
+          setGames(list);
+          setLoaded(true);
+        },
+        (err) => { setError(err.message || 'Could not load games.'); setLoaded(true); }
+      );
+      unsubRoster = teamRef.onSnapshot(
+        (snap) => {
+          if (snap.exists) {
+            const data = snap.data();
+            if (Array.isArray(data.roster)) setRoster(data.roster);
+          }
+        },
+        () => {}
+      );
+    });
+    return () => { if (unsubGames) unsubGames(); if (unsubRoster) unsubRoster(); };
+  }, []);
+
+  if (error) return <PublicErrorScreen msg={error} />;
+  if (!loaded) return <PublicLoadingScreen />;
+
+  const active = games.find((g) => g.status === 'active');
+  const finished = games.filter((g) => g.status === 'finished');
+  const featured = active || finished[0] || null;
+  const past = active ? finished : finished.slice(1);
+
+  return (
+    <div className="min-h-screen bg-stone-50 pb-12">
+      <style>{FONT_STYLES}</style>
+      {featured ? (
+        <LiveScoreboard game={featured} roster={roster} />
+      ) : (
+        <div className="stripes-bg text-white px-4 pt-14 pb-12 text-center">
+          <div className="font-display text-4xl text-lime-400">LASALLE STOMPERS</div>
+          <div className="text-white/60 text-sm font-bold tracking-widest mt-1">U10 · 2016 SQUAD</div>
+          <div className="mt-10 inline-block bg-white/10 rounded-2xl px-6 py-5">
+            <div className="font-display text-2xl">No live match right now</div>
+            <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
+          </div>
+        </div>
+      )}
+      {past.length > 0 && (
+        <div className="px-4 pt-6 max-w-md mx-auto">
+          <h3 className="font-display text-xl text-stone-700 mb-2">PAST MATCHES</h3>
+          <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+            {past.map((g) => {
+              const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+              const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-300 text-stone-800';
+              return (
+                <a key={g.id} href={`./?live=${g.id}`} className="flex items-center gap-3 p-3 active:bg-stone-50">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+                    <div className="text-xs text-stone-500 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)} · {g.isHome ? 'Home' : 'Away'}</div>
+                  </div>
+                  <div className="font-display text-lg tabular-nums text-stone-900">{g.ourScore}–{g.oppScore}</div>
+                  <ChevronRight className="w-4 h-4 text-stone-400" />
+                </a>
+              );
+            })}
+          </div>
+          <div className="text-center text-xs text-stone-400 mt-6">
+            © LaSalle Stompers · <a href="./?coach" className="underline">Coach access</a>
+          </div>
+        </div>
+      )}
+      {past.length === 0 && (
+        <div className="text-center text-xs text-stone-400 mt-8">
+          © LaSalle Stompers · <a href="./?coach" className="underline">Coach access</a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- shared public-mode helpers ---- */
+function PublicErrorScreen({ msg }) {
+  return (
+    <div className="min-h-screen stripes-bg text-white flex items-center justify-center p-6">
+      <style>{FONT_STYLES}</style>
+      <div className="bg-white/10 rounded-2xl p-6 max-w-sm text-center">
+        <div className="font-display text-3xl mb-2">⚠ {msg}</div>
+        <div className="text-white/60 text-sm">Double-check the link with the coach.</div>
+      </div>
+    </div>
+  );
+}
+function PublicLoadingScreen() {
+  return (
+    <div className="min-h-screen stripes-bg text-white flex items-center justify-center">
+      <style>{FONT_STYLES}</style>
+      <div className="font-display text-2xl text-white/60">Loading…</div>
+    </div>
+  );
+}
+
+/* ---- LiveScoreboard: pure render given game + roster ---- */
+function LiveScoreboard({ game, roster }) {
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (!game || game.status !== 'active' || !game.clockRunning) return;
@@ -3512,26 +3662,6 @@ function LiveScorePage({ gameId }) {
     return out;
   }, [game]);
 
-  if (error) {
-    return (
-      <div className="min-h-screen stripes-bg text-white flex items-center justify-center p-6">
-        <style>{FONT_STYLES}</style>
-        <div className="bg-white/10 rounded-2xl p-6 max-w-sm text-center">
-          <div className="font-display text-3xl mb-2">⚠ {error}</div>
-          <div className="text-white/60 text-sm">Double-check the link with the coach.</div>
-        </div>
-      </div>
-    );
-  }
-  if (!game) {
-    return (
-      <div className="min-h-screen stripes-bg text-white flex items-center justify-center">
-        <style>{FONT_STYLES}</style>
-        <div className="font-display text-2xl text-white/60">Loading live scoreboard…</div>
-      </div>
-    );
-  }
-
   const elapsed = computeElapsed(game);
   const mins = Math.floor(elapsed / 60);
   const isActive = game.status === 'active';
@@ -3549,14 +3679,16 @@ function LiveScorePage({ gameId }) {
   const leftScore = homeIsUs ? game.ourScore : game.oppScore;
   const rightScore = homeIsUs ? game.oppScore : game.ourScore;
 
+  // Privacy: first name + jersey number only — never last names on public pages.
   const nameOf = (pid) => {
     const p = roster.find((r) => r.id === pid);
-    return p ? p.name : 'Unknown';
+    if (!p) return 'Unknown';
+    const first = (p.name || '').split(/\s+/)[0] || p.name || 'Player';
+    return `${first} #${p.number || '?'}`;
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-12">
-      <style>{FONT_STYLES}</style>
+    <>
       <div className="stripes-bg text-white px-4 pt-10 pb-6">
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)} · {homeIsUs ? 'Home' : 'Away'}
@@ -3638,13 +3770,12 @@ function LiveScorePage({ gameId }) {
             })}
           </div>
         )}
-        <div className="text-center text-xs text-stone-400 mt-6">
-          Live updates · LaSalle Stompers
-        </div>
       </div>
-    </div>
+    </>
   );
 }
+
+
 
 
 
