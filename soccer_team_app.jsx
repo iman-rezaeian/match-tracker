@@ -1593,7 +1593,6 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
   const [opponent, setOpponent] = useState('');
   const [tournament, setTournament] = useState('Festival');
-  const [isHome, setIsHome] = useState(true);
 
   if (rosterCount === 0) {
     return (
@@ -1638,31 +1637,10 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
           />
         </Field>
 
-        <Field label="LOCATION">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setIsHome(true)}
-              className={`py-4 rounded-xl font-display text-2xl border-2 transition ${
-                isHome ? 'bg-stone-900 text-lime-400 border-stone-900' : 'bg-white text-stone-700 border-stone-200'
-              }`}
-            >
-              HOME
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsHome(false)}
-              className={`py-4 rounded-xl font-display text-2xl border-2 transition ${
-                !isHome ? 'bg-stone-900 text-lime-400 border-stone-900' : 'bg-white text-stone-700 border-stone-200'
-              }`}
-            >
-              AWAY
-            </button>
-          </div>
-        </Field>
+
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival')}
+          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival')}
           className="w-full bg-lime-500 text-stone-900 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -1698,7 +1676,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
       <Header title="MATCH-DAY SQUAD" onBack={onBack} />
 
       <div className="px-4 pt-4">
-        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent} · {setup.isHome ? 'Home' : 'Away'}</div>
+        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent}</div>
         <div className="text-sm text-stone-700 mb-3">
           Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
           Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.
@@ -1810,7 +1788,7 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
       <Header title="STARTING LINEUP" onBack={onBack} />
 
       <div className="px-4 pt-4">
-        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent} · {setup.isHome ? 'Home' : 'Away'}</div>
+        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent}</div>
         <div className="text-sm text-stone-700 mb-3">Tap a player to put them on the field. Tap the <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">🧤 GK</span> button on the right to assign the goalie.</div>
 
         <div className="flex gap-2 mb-4">
@@ -1937,7 +1915,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="stripes-bg text-white px-4 pt-6 pb-3">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3">
         <div className="flex items-center justify-between mb-2">
           <button onClick={onBack} className="text-white/70 active:scale-95">
             <ChevronLeft className="w-6 h-6" />
@@ -1947,7 +1925,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               {game.tournament || 'Festival'}
             </div>
             <div className="text-xs text-white/50">
-              {formatDate(game.date)}{game.isHome != null && ` · ${game.isHome ? 'Home' : 'Away'}`}
+              {formatDate(game.date)}
             </div>
           </div>
           <div className="w-6" />
@@ -2646,7 +2624,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
         {shareMsg && (
           <div className="text-center text-xs text-lime-300 -mt-1 mb-2">{shareMsg}</div>
         )}
-        <div className="text-center text-xs text-white/70 mb-1">{game.tournament || 'Festival'} · {formatDate(game.date)} · {game.isHome ? 'Home' : 'Away'}</div>
+        <div className="text-center text-xs text-white/70 mb-1">{game.tournament || 'Festival'} · {formatDate(game.date)}</div>
         <div className="text-center font-display text-2xl">vs {game.opponent}</div>
         <div className="text-center font-display text-6xl tabular-nums mt-2">
           {game.ourScore} <span className="text-white/40">–</span> {game.oppScore}
@@ -3270,7 +3248,7 @@ function HelpView({ onBack }) {
 
         <Section id="start" emoji="🚀" title="1 · Starting a match" summary="Opponent → squad → lineup → GK">
           <p>From Home tap <Pill tone="lime">START GAME</Pill> and walk through the wizard:</p>
-          <Step n={1}><strong>Game setup</strong>: opponent name, Home/Away, tournament/festival label.</Step>
+          <Step n={1}><strong>Game setup</strong>: opponent name, tournament/festival label.</Step>
           <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. For 7v7 leagues that cap rosters at 12, you'll see a soft warning over 12 — but no hard limit.</Step>
           <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or however many) who start on the field. Everyone else begins on the bench.</Step>
           <Step n={4}><strong>Goalkeeper</strong>: tap the player wearing the gloves. You can change keeper at any time during the game.</Step>
@@ -3532,16 +3510,11 @@ function PublicHomePage() {
   return (
     <div className="min-h-screen bg-stone-50 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <a
-        href="./?coach"
-        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20"
-      >
-        🔑 COACH
-      </a>
+
       {featured ? (
         <LiveScoreboard game={featured} roster={roster} />
       ) : (
-        <div className="stripes-bg text-white px-4 pt-14 pb-12 text-center">
+        <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+2rem)] pb-12 text-center">
           <img
             src="./stompers_logo.png"
             alt="LaSalle Stompers"
@@ -3568,7 +3541,7 @@ function PublicHomePage() {
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                    <div className="text-xs text-stone-500 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)} · {g.isHome ? 'Home' : 'Away'}</div>
+                    <div className="text-xs text-stone-500 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
                   </div>
                   <div className="font-display text-lg tabular-nums text-stone-900">{g.ourScore}–{g.oppScore}</div>
                   <ChevronRight className="w-4 h-4 text-stone-400" />
@@ -3653,11 +3626,10 @@ function LiveScoreboard({ game, roster }) {
   else statusLabel = 'NOT STARTED';
 
   const HOME_NAME = 'Stompers';
-  const homeIsUs = !!game.isHome;
-  const leftName = homeIsUs ? HOME_NAME : (game.opponent || 'Opponent');
-  const rightName = homeIsUs ? (game.opponent || 'Opponent') : HOME_NAME;
-  const leftScore = homeIsUs ? game.ourScore : game.oppScore;
-  const rightScore = homeIsUs ? game.oppScore : game.ourScore;
+  const leftName = HOME_NAME;
+  const rightName = game.opponent || 'Opponent';
+  const leftScore = game.ourScore;
+  const rightScore = game.oppScore;
 
   // Privacy: first name + jersey number only — never last names on public pages.
   const nameOf = (pid) => {
@@ -3669,21 +3641,19 @@ function LiveScoreboard({ game, roster }) {
 
   return (
     <>
-      <div className="stripes-bg text-white px-4 pt-10 pb-6">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)] pb-6">
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
-          {game.tournament || 'Match'} · {formatDate(game.date)} · {homeIsUs ? 'Home' : 'Away'}
+          {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
         <div className="flex items-center justify-center gap-3 mt-4">
           <div className="flex-1 text-right">
             <div className="font-display text-2xl truncate">{leftName}</div>
-            {homeIsUs && <div className="text-xs text-lime-400 font-bold mt-0.5">HOME</div>}
           </div>
           <div className="font-display text-6xl tabular-nums px-3">
             {leftScore}<span className="text-white/40 mx-2">–</span>{rightScore}
           </div>
           <div className="flex-1 text-left">
             <div className="font-display text-2xl truncate">{rightName}</div>
-            {!homeIsUs && <div className="text-xs text-lime-400 font-bold mt-0.5">HOME</div>}
           </div>
         </div>
         <div className="text-center mt-4">
