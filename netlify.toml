@@ -2,7 +2,7 @@
   command = "python3 _sync_html.py"
   publish = "_site"
 
-# main branch → production at lasalle-stompers.netlify.app
+# main branch → production at stompers2016.com (also lasalle-stompers.netlify.app)
 [context.production]
   command = "python3 _sync_html.py"
 
