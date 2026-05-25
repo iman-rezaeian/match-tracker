@@ -217,6 +217,11 @@ print(f"Wrote {HTML} ({len(new_html.splitlines())} lines)")
 # asset inlined as a base64 data URI. One-file deploys = no separate asset
 # uploads on Netlify Drop (saves bandwidth / build minutes when only the HTML
 # actually changed).
+#
+# Exception: PWA support files (manifest, service worker, install icons) MUST
+# remain as real files in the deploy folder so the browser can fetch them by
+# URL — data URIs don't work for these. They are copied as-is alongside the
+# inlined index.html.
 import shutil
 import base64
 import mimetypes
@@ -224,12 +229,25 @@ import mimetypes
 DEPLOY_DIR = Path.home() / "Desktop" / "stompers_deploy"
 DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 
-# Inline every "./asset" reference in src=/href= as base64. Files that don't
-# exist locally are left untouched (so external URLs still work).
+# Files that must stay as real files in the deploy folder (PWA shell).
+PWA_FILES = [
+    "manifest.webmanifest",
+    "sw.js",
+    "icon-192.png",
+    "icon-512.png",
+    "icon-maskable-192.png",
+    "icon-maskable-512.png",
+]
+
+# Inline every "./asset" reference in src=/href= as base64, EXCEPT PWA shell
+# files which need to remain fetchable by URL. Files that don't exist locally
+# are left untouched (so external URLs still work).
 asset_refs = set(re.findall(r'(?:src|href)="\./([^"?#]+)"', new_html))
 deploy_html = new_html
 inlined = []
 for name in sorted(asset_refs):
+    if name in PWA_FILES:
+        continue  # keep as real file reference
     src = HERE / name
     if not src.is_file():
         continue
@@ -241,17 +259,34 @@ for name in sorted(asset_refs):
     deploy_html = deploy_html.replace(f'"./{name}"', f'"{data_uri}"')
     inlined.append(f"{name} ({len(b64)//1024} KB b64)")
 
-# Also remove any leftover assets from previous (non-inlined) deploys.
+# Files that must exist in the deploy folder forever (never purged by stale
+# cleanup). index.html + every PWA support file.
+KEEP_IN_DEPLOY = {"index.html", *PWA_FILES}
+
+# Remove anything else left over from previous deploys.
 for stale in DEPLOY_DIR.iterdir():
-    if stale.name != "index.html":
-        if stale.is_file():
-            stale.unlink()
-        else:
-            shutil.rmtree(stale)
+    if stale.name in KEEP_IN_DEPLOY:
+        continue
+    if stale.is_file():
+        stale.unlink()
+    else:
+        shutil.rmtree(stale)
 
 (DEPLOY_DIR / "index.html").write_text(deploy_html)
 
-print(f"Built {DEPLOY_DIR} (single index.html, {len(deploy_html)//1024} KB)")
+# Copy PWA shell files into the deploy folder.
+copied_pwa = []
+for name in PWA_FILES:
+    src = HERE / name
+    if not src.is_file():
+        print(f"  WARNING: PWA file missing: {name}")
+        continue
+    shutil.copy2(src, DEPLOY_DIR / name)
+    copied_pwa.append(name)
+
+print(f"Built {DEPLOY_DIR} (index.html {len(deploy_html)//1024} KB + {len(copied_pwa)} PWA files)")
 if inlined:
     print(f"  Inlined: {', '.join(inlined)}")
-print("Drag that folder (or just index.html) onto Netlify Drop to deploy.")
+if copied_pwa:
+    print(f"  PWA shell: {', '.join(copied_pwa)}")
+print("Drag the FOLDER (not just index.html) onto Netlify Drop so PWA install works.")

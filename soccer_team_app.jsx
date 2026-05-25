@@ -950,16 +950,55 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
     setShowWelcome(false);
   };
 
+  // ---- PWA install state ----
+  // Treat the app as "installed" if launched in standalone display mode OR via
+  // iOS home-screen launcher (legacy navigator.standalone).
+  const detectStandalone = () => {
+    try {
+      if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+      if (window.navigator && window.navigator.standalone) return true;
+    } catch (e) {}
+    return false;
+  };
+  const [isStandalone, setIsStandalone] = useState(detectStandalone);
+  const [canPromptInstall, setCanPromptInstall] = useState(() => !!(typeof window !== 'undefined' && window.fbDeferredInstall));
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  useEffect(() => {
+    const onAvail = () => setCanPromptInstall(true);
+    const onInstalled = () => { setCanPromptInstall(false); setIsStandalone(true); setShowInstallModal(false); };
+    const mq = window.matchMedia ? window.matchMedia('(display-mode: standalone)') : null;
+    const onMode = () => setIsStandalone(detectStandalone());
+    window.addEventListener('stompers:installavailable', onAvail);
+    window.addEventListener('stompers:installed', onInstalled);
+    if (mq && mq.addEventListener) mq.addEventListener('change', onMode);
+    return () => {
+      window.removeEventListener('stompers:installavailable', onAvail);
+      window.removeEventListener('stompers:installed', onInstalled);
+      if (mq && mq.removeEventListener) mq.removeEventListener('change', onMode);
+    };
+  }, []);
+
   return (
     <div className="pb-24">
       <div className="stripes-bg text-white px-5 pt-12 pb-8 relative">
-        <button
-          onClick={onViewHelp}
-          aria-label="Help & onboarding"
-          className="absolute top-12 right-4 w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-lg flex items-center justify-center border border-white/20 active:scale-95"
-        >
-          ?
-        </button>
+        <div className="absolute top-12 right-4 flex items-center gap-2">
+          {!isStandalone && (
+            <button
+              onClick={() => setShowInstallModal(true)}
+              aria-label="Install app on this device"
+              className="h-9 px-3 rounded-full bg-lime-400/90 hover:bg-lime-400 text-stone-900 font-display text-xs flex items-center gap-1 border border-lime-300 active:scale-95 shadow"
+            >
+              <span>📲</span><span>INSTALL</span>
+            </button>
+          )}
+          <button
+            onClick={onViewHelp}
+            aria-label="Help & onboarding"
+            className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-lg flex items-center justify-center border border-white/20 active:scale-95"
+          >
+            ?
+          </button>
+        </div>
         <div className="flex items-start gap-3">
           <img
             src="./stompers_logo.png"
@@ -1077,6 +1116,100 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
             ))}
           </div>
         )}
+      </div>
+      {showInstallModal && (
+        <InstallModal
+          canPrompt={canPromptInstall}
+          onTriggerPrompt={async () => {
+            const dp = (typeof window !== 'undefined') ? window.fbDeferredInstall : null;
+            if (!dp) return;
+            try {
+              dp.prompt();
+              await dp.userChoice;
+            } catch (e) {}
+            window.fbDeferredInstall = null;
+            setCanPromptInstall(false);
+            setShowInstallModal(false);
+          }}
+          onClose={() => setShowInstallModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- INSTALL APP MODAL ---------- */
+function InstallModal({ canPrompt, onTriggerPrompt, onClose }) {
+  // Detect platform once per open.
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  const isAndroid = /Android/.test(ua);
+  const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(ua);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-[fadein_0.15s_ease-out]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md p-5 pb-8 sm:pb-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <div className="text-2xl">📲</div>
+          <div className="font-display text-2xl">INSTALL ON YOUR PHONE</div>
+        </div>
+        <p className="text-sm text-stone-600 mb-4">
+          Adds a Stompers icon to your home screen. Opens fullscreen — no browser bar — and works offline.
+        </p>
+
+        {canPrompt && (
+          <button
+            onClick={onTriggerPrompt}
+            className="w-full bg-lime-500 text-stone-900 font-display text-xl py-4 rounded-xl border-2 border-lime-600 active:scale-[0.98] transition mb-4"
+          >
+            ⬇ INSTALL NOW
+          </button>
+        )}
+
+        {isIOS && (
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3">
+            <div className="font-display text-sm text-stone-700 mb-2">📱 iPhone / iPad (Safari)</div>
+            <ol className="text-sm text-stone-700 space-y-1.5 list-decimal pl-5">
+              <li>Tap the <strong>Share</strong> button <span className="inline-block px-1.5 py-0.5 bg-white border border-stone-300 rounded text-xs">⬆</span> at the bottom of Safari.</li>
+              <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+              <li>Tap <strong>Add</strong> in the top-right.</li>
+            </ol>
+            {!isSafari && (
+              <p className="text-xs text-amber-700 mt-2 italic">Heads up: on iPhone, only <strong>Safari</strong> can install web apps. Open this page in Safari first.</p>
+            )}
+          </div>
+        )}
+
+        {isAndroid && !canPrompt && (
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3">
+            <div className="font-display text-sm text-stone-700 mb-2">🤖 Android (Chrome)</div>
+            <ol className="text-sm text-stone-700 space-y-1.5 list-decimal pl-5">
+              <li>Tap the <strong>⋮</strong> menu (top-right of Chrome).</li>
+              <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+              <li>Confirm <strong>Install</strong>.</li>
+            </ol>
+            <p className="text-xs text-stone-500 mt-2 italic">If you don't see the option, reload the page and try again.</p>
+          </div>
+        )}
+
+        {!isIOS && !isAndroid && !canPrompt && (
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3 text-sm text-stone-700">
+            <p>Look for an <strong>install</strong> or <strong>add to home screen</strong> option in your browser's menu (usually under <strong>⋮</strong> or the address bar).</p>
+          </div>
+        )}
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 mt-2 rounded-xl bg-stone-100 text-stone-700 font-display text-base active:scale-[0.98] transition"
+        >
+          CLOSE
+        </button>
       </div>
     </div>
   );
@@ -3091,6 +3224,30 @@ function HelpView({ onBack }) {
         <Section id="data" emoji="☁" title="10 · Where data lives" summary="Cloud + offline behavior">
           <p>The deployed web app stores everything in Firebase (a Google cloud database). Anyone with the URL is editing the <em>same</em> shared team data, in real time.</p>
           <p>If your phone goes offline mid-game, you can keep logging — entries queue and sync when you reconnect. Just don't close the tab before the sync completes.</p>
+        </Section>
+
+        <Section id="install" emoji="📲" title="11 · Install on your phone" summary="iPhone + Android — feels like a real app">
+          <p>The app is a <strong>PWA</strong> — install it to your home screen and it launches fullscreen with its own icon, no browser bar, and works offline.</p>
+          <p className="text-xs text-stone-500">Tap the green <Pill tone="lime">📲 INSTALL</Pill> button on the home screen at any time to open these steps.</p>
+
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2">
+            <div className="font-display text-sm text-stone-700 mb-2">📱 iPhone &amp; iPad (Safari only)</div>
+            <Step n={1}>Open the app in <strong>Safari</strong> (not Chrome — Apple doesn't allow other browsers to install PWAs on iOS).</Step>
+            <Step n={2}>Tap the <strong>Share</strong> button <Pill>⬆</Pill> at the bottom of Safari.</Step>
+            <Step n={3}>Scroll down and tap <strong>Add to Home Screen</strong>.</Step>
+            <Step n={4}>Confirm with <strong>Add</strong> in the top-right. Done!</Step>
+          </div>
+
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2">
+            <div className="font-display text-sm text-stone-700 mb-2">🤖 Android (Chrome, Edge, Samsung Internet)</div>
+            <p className="text-sm">On most Android browsers a one-tap install banner appears the first time you visit. If you missed it:</p>
+            <Step n={1}>Tap the <strong>⋮</strong> menu (top-right of the browser).</Step>
+            <Step n={2}>Tap <strong>Install app</strong> (or <strong>Add to Home screen</strong>).</Step>
+            <Step n={3}>Confirm <strong>Install</strong>.</Step>
+            <p className="text-xs text-stone-500 mt-1">After install, launch from the home-screen icon — it runs fullscreen with no browser UI.</p>
+          </div>
+
+          <p className="text-xs text-stone-500 mt-2">Sharing the app with another parent or coach? Just send them the same URL — they install on their own device and see the same shared team data in real time.</p>
         </Section>
 
         <div className="text-center text-xs text-stone-400 pt-2 pb-1">
