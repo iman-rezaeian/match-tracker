@@ -26,14 +26,14 @@ const EVENT_TYPES = {
 };
 
 const TONE_CLASSES = {
-  'big-green':  'bg-lime-500 hover:bg-lime-600 text-white shadow-lg shadow-lime-500/30 border-lime-600',
-  'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-600',
-  'soft-green': 'bg-lime-500/15 hover:bg-lime-500/25 text-lime-300 border-lime-500/30',
-  'soft-red':   'bg-red-500/15 hover:bg-red-500/25 text-red-300 border-red-500/30',
-  'blue':       'bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border-sky-500/30',
-  'yellow':     'bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-300 border-yellow-500/30',
-  'purple':     'bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border-violet-500/30',
-  'neutral':    'bg-stone-800 hover:bg-stone-700 text-stone-100 border-stone-800',
+  'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
+  'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-400',
+  'soft-green': 'bg-lime-900/50 hover:bg-lime-900/70 text-lime-200 border-lime-600/60',
+  'soft-red':   'bg-red-900/50 hover:bg-red-900/70 text-red-200 border-red-600/60',
+  'blue':       'bg-sky-900/50 hover:bg-sky-900/70 text-sky-200 border-sky-600/60',
+  'yellow':     'bg-yellow-900/50 hover:bg-yellow-900/70 text-yellow-200 border-yellow-600/60',
+  'purple':     'bg-violet-900/50 hover:bg-violet-900/70 text-violet-200 border-violet-600/60',
+  'neutral':    'bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700',
 };
 
 const SEED_ROSTER = [
@@ -2002,16 +2002,16 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3">
-        <div className="flex items-center justify-between mb-2">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] pb-2">
+        <div className="flex items-center justify-between mb-1">
           <button onClick={onBack} className="text-white/70 active:scale-95">
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="text-center flex-1">
-            <div className="text-sm text-white font-bold tracking-wide truncate">
+            <div className="text-xs text-white font-bold tracking-wide truncate">
               {game.tournament || 'Festival'}
             </div>
-            <div className="text-xs text-white/50">
+            <div className="text-[10px] text-white/50">
               {formatDate(game.date)}
             </div>
           </div>
@@ -2021,7 +2021,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
         <div className="grid grid-cols-3 items-center gap-3">
           <div className="text-center">
             <div className="text-[10px] font-bold tracking-widest text-lime-400">STOMPERS</div>
-            <div className="font-display text-6xl leading-none tabular-nums">{game.ourScore}</div>
+            <div className="font-display text-5xl leading-none tabular-nums">{game.ourScore}</div>
           </div>
           <button
             onClick={game.clockRunning ? onPauseClock : onResumeClock}
@@ -2030,21 +2030,21 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <div className="text-[10px] font-bold tracking-widest text-white/50">
               {game.clockRunning === false ? '⏸ PAUSED' : '⏱ CLOCK'}
             </div>
-            <div className={`font-display text-3xl tabular-nums ${game.clockRunning === false ? 'text-white/50' : 'text-white/90'}`}>
+            <div className={`font-display text-2xl tabular-nums ${game.clockRunning === false ? 'text-white/50' : 'text-white/90'}`}>
               {formatClock(elapsed)}
             </div>
-            <div className="text-[9px] text-white/40 mt-0.5">tap to {game.clockRunning ? 'pause' : 'resume'}</div>
+            <div className="text-[9px] text-white/40">tap to {game.clockRunning ? 'pause' : 'resume'}</div>
           </button>
           <div className="text-center">
-            <div className="text-[10px] font-bold tracking-widest text-red-400">{game.opponent || 'OPPONENT'}</div>
-            <div className="font-display text-6xl leading-none tabular-nums">{game.oppScore}</div>
+            <div className="text-[10px] font-bold tracking-widest text-red-400 truncate">{game.opponent || 'OPPONENT'}</div>
+            <div className="font-display text-5xl leading-none tabular-nums">{game.oppScore}</div>
           </div>
         </div>
       </div>
 
       {!pendingEvent && (
-        <div className="px-4 pt-3 flex items-center gap-2">
-          <div className={`${statusColor} flex-1 rounded-full py-2.5 text-center font-display text-base tracking-widest shadow`}>
+        <div className="px-4 pt-2 flex items-center gap-2">
+          <div className={`${statusColor} flex-1 rounded-full py-1.5 text-center font-display text-sm tracking-widest shadow`}>
             {statusLabel}
           </div>
           {(() => {
@@ -2077,7 +2077,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
         </div>
       )}
 
-      <div className="flex-1 flex flex-col px-4 pt-4">
+      <div className="flex-1 flex flex-col px-4 pt-2">
         {pendingEvent?.type === 'MINS_VIEW' ? (() => {
           const onField = onFieldAt(game);
           const rows = [...playersSorted].sort((a, b) => (secondsByPlayer[b.id] || 0) - (secondsByPlayer[a.id] || 0));
@@ -2342,13 +2342,13 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             {/* Positive actions (top zone) — each adds to performance score.
                 GOAL is emphasised. ASSIST is captured automatically from the
                 GOAL flow, so it has no standalone button. */}
-            <div className="rounded-2xl border-2 border-lime-300 bg-lime-50/40 p-2">
+            <div className="rounded-2xl border border-lime-700/40 bg-lime-950/30 p-2">
               <div className="flex items-center justify-between px-1 pb-1.5">
-                <div className="flex items-center gap-1.5 text-lime-800 font-display text-xs tracking-widest">
-                  <span className="w-5 h-5 rounded-full bg-lime-500 text-white flex items-center justify-center font-bold text-sm leading-none">+</span>
+                <div className="flex items-center gap-1.5 text-lime-300 font-display text-xs tracking-widest">
+                  <span className="w-5 h-5 rounded-full bg-lime-500 text-stone-950 flex items-center justify-center font-bold text-sm leading-none">+</span>
                   <span>EARN</span>
                 </div>
-                <div className="text-[10px] text-lime-700/70 font-bold tracking-wider">RAISES SCORE</div>
+                <div className="text-[10px] text-lime-400/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
               <div className="grid grid-cols-4 gap-2">
                 {['GOAL', 'KEY_PASS', 'BALL_WIN', 'SHOT_ON', 'SAVE', 'BLOCK', 'DUEL_WIN', 'GIVE_GO', 'GATES', 'SHOT_OFF'].map(id => {
@@ -2358,9 +2358,9 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                     <button
                       key={ev.id}
                       onClick={() => onSelectEvent(ev.id)}
-                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl ${big ? 'py-5' : 'py-4'} flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
+                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl ${big ? 'py-3.5' : 'py-2.5'} flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
                     >
-                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-lime-700">+</span>
+                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-lime-300/80">+</span>
                       <div className={`${big ? 'text-3xl' : 'text-2xl'}`}>{ev.emoji}</div>
                       <div className={`font-sans-pro font-extrabold tracking-tight ${big ? 'text-base' : 'text-xs'} leading-none text-center`}>{ev.label}</div>
                     </button>
@@ -2370,13 +2370,13 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             </div>
 
             {/* Negative actions (bottom zone) — each subtracts from performance score. */}
-            <div className="mt-2.5 rounded-2xl border-2 border-red-300 bg-red-50/40 p-2">
+            <div className="mt-2 rounded-2xl border border-red-700/40 bg-red-950/30 p-2">
               <div className="flex items-center justify-between px-1 pb-1.5">
-                <div className="flex items-center gap-1.5 text-red-800 font-display text-xs tracking-widest">
+                <div className="flex items-center gap-1.5 text-red-300 font-display text-xs tracking-widest">
                   <span className="w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center font-bold text-sm leading-none">−</span>
                   <span>LOSE</span>
                 </div>
-                <div className="text-[10px] text-red-700/70 font-bold tracking-wider">LOWERS SCORE</div>
+                <div className="text-[10px] text-red-400/70 font-bold tracking-wider">LOWERS SCORE</div>
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE'].map(id => {
@@ -2385,9 +2385,9 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                     <button
                       key={ev.id}
                       onClick={() => onSelectEvent(ev.id)}
-                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl py-4 flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
+                      className={`relative ${TONE_CLASSES[ev.tone]} border-2 rounded-2xl py-2.5 flex flex-col items-center justify-center gap-1 active:scale-[0.97] transition`}
                     >
-                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-red-700">−</span>
+                      <span className="absolute top-1 right-1.5 text-[10px] font-extrabold text-red-300/80">−</span>
                       <div className="text-2xl">{ev.emoji}</div>
                       <div className="font-sans-pro font-extrabold tracking-tight text-xs leading-none text-center">{ev.label}</div>
                     </button>
@@ -2396,7 +2396,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </div>
               <button
                 onClick={() => onSelectEvent('OPP_GOAL')}
-                className={`relative mt-2 w-full ${TONE_CLASSES['big-red']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
+                className={`relative mt-2 w-full ${TONE_CLASSES['big-red']} border-2 rounded-2xl py-2.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
               >
                 <span className="absolute top-1 right-2 text-[10px] font-extrabold text-red-100">−</span>
                 <span className="text-2xl">⚽</span>
@@ -2404,17 +2404,17 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mt-2.5">
+            <div className="grid grid-cols-2 gap-2 mt-2">
               <button
                 onClick={() => onSelectEvent('SUB')}
-                className={`${TONE_CLASSES['purple']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
+                className={`${TONE_CLASSES['purple']} border-2 rounded-2xl py-2.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
               >
                 <span className="text-2xl">🔄</span>
                 <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SUBSTITUTION</span>
               </button>
               <button
                 onClick={onSwapGK}
-                className="bg-amber-100 text-amber-900 border-2 border-amber-400 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+                className="bg-amber-900/50 text-amber-200 border-2 border-amber-600/60 rounded-2xl py-2.5 flex items-center justify-center gap-2 active:scale-[0.97] transition"
               >
                 <span className="text-2xl">🧤</span>
                 <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SWAP GK</span>
@@ -2424,14 +2424,14 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             {inFirstHalf ? (
               <button
                 onClick={onPauseHalfTime}
-                className="mt-2.5 w-full bg-amber-500 text-stone-100 font-display text-xl py-4 rounded-2xl active:scale-[0.99] transition border-2 border-amber-600 shadow"
+                className="mt-2 w-full bg-amber-500 text-stone-950 font-display text-xl py-3 rounded-2xl active:scale-[0.99] transition border-2 border-amber-400 shadow"
               >
                 ⏸ HALF TIME
               </button>
             ) : (
               <button
                 onClick={onEnd}
-                className="mt-2.5 w-full bg-stone-900 text-white font-display text-xl py-4 rounded-2xl active:scale-[0.99] transition"
+                className="mt-2 w-full bg-stone-900 text-white font-display text-xl py-3 rounded-2xl active:scale-[0.99] transition border-2 border-stone-700"
               >
                 FINAL WHISTLE
               </button>
