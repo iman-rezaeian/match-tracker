@@ -294,8 +294,42 @@ function gkExtrasForGame(playerId, game) {
 // unfairly penalized by low ATK/DEC opportunity, and saves count for more.
 // `gkExtras` (optional, GK only) — { oppGoalsConceded, cleanSheets } aggregated
 // across the games being scored. Adds clean-sheet bonus and conceded penalty.
-function computePerformanceScore(playerId, events, minutesPlayed, position, gkExtras = {}) {
+// Default per-action point values + pillar weights. Coaches can override these
+// in Settings → Scoring Weights. `mergeWeights` fills in any missing fields so
+// older saved overrides still work if new actions are added later.
+const DEFAULT_WEIGHTS = {
+  points: {
+    GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 5, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
+    SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
+    GIVE_GO_dec: 6, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
+    HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+  },
+  gkPoints: {
+    GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
+    SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
+    GIVE_GO_dec: 6, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
+    HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+  },
+  pillars: {
+    outfield: { atk: 30, def: 25, dec: 30, inv: 15 },
+    gk:       { atk: 10, def: 55, dec: 25, inv: 10 },
+  },
+};
+
+function mergeWeights(w) {
+  return {
+    points:   { ...DEFAULT_WEIGHTS.points,   ...(w?.points   || {}) },
+    gkPoints: { ...DEFAULT_WEIGHTS.gkPoints, ...(w?.gkPoints || {}) },
+    pillars: {
+      outfield: { ...DEFAULT_WEIGHTS.pillars.outfield, ...(w?.pillars?.outfield || {}) },
+      gk:       { ...DEFAULT_WEIGHTS.pillars.gk,       ...(w?.pillars?.gk       || {}) },
+    },
+  };
+}
+
+function computePerformanceScore(playerId, events, minutesPlayed, position, gkExtras = {}, weights) {
   if (minutesPlayed <= 0) return { overall: 0, attacking: 0, defending: 0, decisions: 0, involvement: 0 };
+  const W = mergeWeights(weights);
   const isGK = position === 'GK';
   const perHalf = minutesPlayed / 20;
   const c = {};
@@ -304,39 +338,36 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
       c[e.type] = (c[e.type] || 0) + 1;
     }
   }
+  const pts = isGK ? W.gkPoints : W.points;
   const attacking = (
-    (c.GOAL || 0) * 10 +
-    (c.ASSIST || 0) * 8 +
-    (c.KEY_PASS || 0) * (isGK ? 10 : 5) +
-    (c.SHOT_ON || 0) * 3 +
-    (c.SHOT_OFF || 0) * 1
+    (c.GOAL || 0)     * pts.GOAL_atk +
+    (c.ASSIST || 0)   * pts.ASSIST_atk +
+    (c.KEY_PASS || 0) * pts.KEY_PASS_atk +
+    (c.SHOT_ON || 0)  * pts.SHOT_ON_atk +
+    (c.SHOT_OFF || 0) * pts.SHOT_OFF_atk
   ) / perHalf;
-  const oppConceded = isGK ? (gkExtras.oppGoalsConceded || 0) : 0;
   const concededPenalty = isGK ? (gkExtras.concededPenalty || 0) : 0;
   const cleanSheets = isGK ? (gkExtras.cleanSheets || 0) : 0;
   const defending = (
-    (c.SAVE || 0) * (isGK ? 10 : 7) +
-    (c.BLOCK || 0) * 5 +
-    (c.BALL_WIN || 0) * 5 +
-    (c.DUEL_WIN || 0) * 4 +
-    (c.DUEL_LOSE || 0) * -1 +
-    -concededPenalty +
-    cleanSheets * 8
+    (c.SAVE || 0)      * pts.SAVE_def +
+    (c.BLOCK || 0)     * pts.BLOCK_def +
+    (c.BALL_WIN || 0)  * pts.BALL_WIN_def +
+    (c.DUEL_WIN || 0)  * pts.DUEL_WIN_def +
+    (c.DUEL_LOSE || 0) * pts.DUEL_LOSE_def +
+    (isGK ? (-concededPenalty + cleanSheets * pts.CLEAN_SHEET_def) : 0)
   ) / perHalf;
   const decisions = (
-    (c.GIVE_GO || 0) * 6 +
-    (c.GATES || 0) * 4 +
-    (c.KEY_PASS || 0) * (isGK ? 6 : 3) +
-    (c.ASSIST || 0) * 3 +
-    (c.HOLDS_BALL || 0) * -4 +
-    (c.TURNOVER || 0) * -4
+    (c.GIVE_GO || 0)    * pts.GIVE_GO_dec +
+    (c.GATES || 0)      * pts.GATES_dec +
+    (c.KEY_PASS || 0)   * pts.KEY_PASS_dec +
+    (c.ASSIST || 0)     * pts.ASSIST_dec +
+    (c.HOLDS_BALL || 0) * pts.HOLDS_BALL_dec +
+    (c.TURNOVER || 0)   * pts.TURNOVER_dec
   ) / perHalf;
   const totalEvents = Object.values(c).reduce((a, b) => a + b, 0);
   const involvement = totalEvents / perHalf;
-  // Outfield: 30/25/30/15. GK: 10/55/25/10 — DEF dominates, ATK de-weighted.
-  const overall = isGK
-    ? 0.10 * attacking + 0.55 * defending + 0.25 * decisions + 0.10 * involvement
-    : 0.30 * attacking + 0.25 * defending + 0.30 * decisions + 0.15 * involvement;
+  const pil = isGK ? W.pillars.gk : W.pillars.outfield;
+  const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
   const r = (n) => Math.round(n * 10) / 10;
   return { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
 }
@@ -353,6 +384,7 @@ function App() {
   });
   const [roster, setRoster] = useState([]);
   const [games, setGames] = useState([]);
+  const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('home');
   const [editingPlayer, setEditingPlayer] = useState(null);
@@ -376,7 +408,7 @@ function App() {
     window.fbReady.then((ok) => {
       if (!ok) return;
 
-      // Roster listener
+      // Roster + weights listener (both live on the team doc)
       unsubRoster = teamDoc().onSnapshot((snap) => {
         if (snap.exists) {
           const data = snap.data();
@@ -385,6 +417,7 @@ function App() {
           } else {
             teamDoc().set({ roster: SEED_ROSTER }, { merge: true });
           }
+          if (data.weights) setWeights(mergeWeights(data.weights));
         } else {
           teamDoc().set({ roster: SEED_ROSTER });
         }
@@ -438,6 +471,12 @@ function App() {
       if (!nextById[id]) writes.push(gamesCol().doc(id).delete());
     }
     try { await Promise.all(writes); } catch (e) { console.error('Save error:', e); }
+  };
+
+  const persistWeights = async (next) => {
+    const merged = mergeWeights(next);
+    setWeights(merged); // optimistic
+    try { await teamDoc().set({ weights: merged }, { merge: true }); } catch (e) { console.error('Weights save error:', e); }
   };
 
   const showToast = (msg) => {
@@ -717,6 +756,7 @@ function App() {
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
           onViewStats={() => setView('stats')}
+          onViewWeights={() => setView('weights')}
         />
       )}
 
@@ -859,6 +899,7 @@ function App() {
         <GameDetail
           game={viewingGame}
           roster={roster}
+          weights={weights}
           onBack={() => setView('home')}
           onDelete={() => askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' })}
           onDeleteEvent={(eid) => deleteEvent(viewingGame.id, eid)}
@@ -866,7 +907,11 @@ function App() {
       )}
 
       {view === 'stats' && (
-        <StatsView roster={roster} games={games} onBack={() => setView('home')} />
+        <StatsView roster={roster} games={games} weights={weights} onBack={() => setView('home')} />
+      )}
+
+      {view === 'weights' && (
+        <WeightsView weights={weights} onSave={persistWeights} onBack={() => setView('home')} />
       )}
 
       {confirmDialog && (
@@ -920,7 +965,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGame, onViewGame, onViewStats }) {
+function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGame, onViewGame, onViewStats, onViewWeights }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -981,9 +1026,10 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 px-4 pt-3">
+      <div className="grid grid-cols-3 gap-3 px-4 pt-3">
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
+        <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
       </div>
 
       <div className="px-4 pt-8">
@@ -2262,7 +2308,7 @@ function PillarMini({ label, value }) {
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, onBack, onDelete, onDeleteEvent }) {
+function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
@@ -2320,7 +2366,7 @@ function GameDetail({ game, roster, onBack, onDelete, onDeleteEvent }) {
                 const wasGKThisGame = (game.gkPlayerId === pid) || (game.gkChanges || []).some(c => c.gkPlayerId === pid);
                 const pos = wasGKThisGame ? 'GK' : player?.position;
                 const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
-                const score = computePerformanceScore(pid, events, min, pos, gkExtras);
+                const score = computePerformanceScore(pid, events, min, pos, gkExtras, weights);
                 return { pid, stats, min, score, pos, gkExtras };
               })
               .sort((a, b) => b.score.overall - a.score.overall)
@@ -2383,7 +2429,7 @@ function GameDetail({ game, roster, onBack, onDelete, onDeleteEvent }) {
 }
 
 /* ---------- STATS ---------- */
-function StatsView({ roster, games, onBack }) {
+function StatsView({ roster, games, weights, onBack }) {
   const [detailPlayerId, setDetailPlayerId] = useState(null);
   const finished = games.filter(g => g.status === 'finished');
 
@@ -2439,7 +2485,7 @@ function StatsView({ roster, games, onBack }) {
         }
       }
       const seasonPos = wasGKAnyGame ? 'GK' : p.position;
-      map[p.id] = computePerformanceScore(p.id, allEvents, min, seasonPos, wasGKAnyGame ? gkExtras : undefined);
+      map[p.id] = computePerformanceScore(p.id, allEvents, min, seasonPos, wasGKAnyGame ? gkExtras : undefined, weights);
     }
     return map;
   }, [roster, finished, stats]);
@@ -2639,6 +2685,205 @@ function LockScreen({ onUnlock }) {
 }
 
 /* ---------- HEADER ---------- */
+function WeightsView({ weights, onSave, onBack }) {
+  const [draft, setDraft] = useState(() => mergeWeights(weights));
+  const [tab, setTab] = useState('outfield'); // 'outfield' | 'gk' | 'pillars'
+
+  const setPoint = (group, key, raw) => {
+    // Allow empty string (mid-edit) or minus sign without committing yet.
+    const v = raw === '' || raw === '-' ? raw : Number(raw);
+    setDraft(d => ({ ...d, [group]: { ...d[group], [key]: v } }));
+  };
+  const setPillar = (role, key, raw) => {
+    const v = raw === '' ? '' : Number(raw);
+    setDraft(d => ({ ...d, pillars: { ...d.pillars, [role]: { ...d.pillars[role], [key]: v } } }));
+  };
+
+  const normalize = (w) => {
+    const fix = (obj) => {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) {
+        const n = typeof v === 'number' ? v : Number(v);
+        out[k] = Number.isFinite(n) ? n : 0;
+      }
+      return out;
+    };
+    return {
+      points: fix(w.points),
+      gkPoints: fix(w.gkPoints),
+      pillars: { outfield: fix(w.pillars.outfield), gk: fix(w.pillars.gk) },
+    };
+  };
+
+  const saveAndExit = async () => {
+    await onSave(normalize(draft));
+    onBack();
+  };
+
+  const resetDefaults = () => setDraft(mergeWeights(DEFAULT_WEIGHTS));
+
+  // Field labels: [key, label, emoji, pillar].
+  const ATK_ROWS = [
+    ['GOAL_atk',     'Goal',         '⚽'],
+    ['ASSIST_atk',   'Assist',       '🅰️'],
+    ['KEY_PASS_atk', 'Key pass',     '🔑'],
+    ['SHOT_ON_atk',  'Shot on',      '🎯'],
+    ['SHOT_OFF_atk', 'Shot off',     '❌'],
+  ];
+  const DEF_ROWS = [
+    ['SAVE_def',        'Save',         '🧤'],
+    ['BLOCK_def',       'Block',        '🛡️'],
+    ['BALL_WIN_def',    'Ball win',     '🔥'],
+    ['DUEL_WIN_def',    '1v1 win',      '💪'],
+    ['DUEL_LOSE_def',   '1v1 lose',     '💢'],
+    ['CLEAN_SHEET_def', 'Clean sheet (GK)', '🧱'],
+  ];
+  const DEC_ROWS = [
+    ['GIVE_GO_dec',    'Give & go',   '🔄'],
+    ['GATES_dec',      'Gates',       '🚪'],
+    ['KEY_PASS_dec',   'Key pass',    '🔑'],
+    ['ASSIST_dec',     'Assist',      '🅰️'],
+    ['HOLDS_BALL_dec', 'Holds ball',  '🛑'],
+    ['TURNOVER_dec',   'Turnover',    '🔁'],
+  ];
+
+  const renderPointRow = (group, [key, label, emoji]) => {
+    const val = draft[group][key];
+    const isNeg = typeof val === 'number' && val < 0;
+    return (
+      <div key={key} className="flex items-center justify-between gap-3 py-2 border-b border-stone-100 last:border-b-0">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="text-lg">{emoji}</span>
+          <span className="text-sm text-stone-700 truncate">{label}</span>
+        </div>
+        <input
+          type="number"
+          step="1"
+          inputMode="numeric"
+          value={val}
+          onChange={(e) => setPoint(group, key, e.target.value)}
+          className={`w-20 text-center font-display text-lg py-1 rounded-lg border-2 ${isNeg ? 'border-red-300 bg-red-50 text-red-700' : 'border-stone-200 bg-white text-stone-800'} focus:outline-none focus:border-stone-500`}
+        />
+      </div>
+    );
+  };
+
+  const PointsSection = ({ group }) => (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl border-2 border-lime-200 px-4 py-3">
+        <div className="font-display text-sm text-lime-700 mb-1">ATTACKING</div>
+        {ATK_ROWS.map(r => renderPointRow(group, r))}
+      </div>
+      <div className="bg-white rounded-2xl border-2 border-sky-200 px-4 py-3">
+        <div className="font-display text-sm text-sky-700 mb-1">DEFENDING</div>
+        {DEF_ROWS.map(r => renderPointRow(group, r))}
+      </div>
+      <div className="bg-white rounded-2xl border-2 border-amber-200 px-4 py-3">
+        <div className="font-display text-sm text-amber-700 mb-1">DECISIONS</div>
+        {DEC_ROWS.map(r => renderPointRow(group, r))}
+      </div>
+      <p className="text-xs text-stone-500 px-1">
+        Points per action. Negative values penalize the score. {group === 'gkPoints' && 'Goalkeeper-only overrides — only used when the player is GK that game.'}
+      </p>
+    </div>
+  );
+
+  const PillarsSection = () => {
+    const sum = (role) => ['atk', 'def', 'dec', 'inv'].reduce((s, k) => s + (Number(draft.pillars[role][k]) || 0), 0);
+    const renderPillar = (role, label) => {
+      const s = sum(role);
+      const ok = s === 100;
+      return (
+        <div className="bg-white rounded-2xl border-2 border-stone-200 px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-display text-sm text-stone-700">{label}</div>
+            <div className={`text-xs font-display ${ok ? 'text-lime-700' : 'text-red-600'}`}>Σ {s}%</div>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[['atk', 'ATK'], ['def', 'DEF'], ['dec', 'DEC'], ['inv', 'INV']].map(([k, lab]) => (
+              <label key={k} className="flex flex-col items-center gap-1">
+                <span className="text-[10px] font-display text-stone-500">{lab}</span>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="100"
+                  inputMode="numeric"
+                  value={draft.pillars[role][k]}
+                  onChange={(e) => setPillar(role, k, e.target.value)}
+                  className="w-full text-center font-display text-base py-1 rounded-lg border-2 border-stone-200 bg-white focus:outline-none focus:border-stone-500"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      );
+    };
+    return (
+      <div className="space-y-4">
+        {renderPillar('outfield', 'OUTFIELD pillar mix')}
+        {renderPillar('gk',       'GOALKEEPER pillar mix')}
+        <p className="text-xs text-stone-500 px-1">
+          Overall score = weighted blend of the four pillars (ATK · DEF · DEC · INV). Values are percentages — each row should sum to 100.
+        </p>
+      </div>
+    );
+  };
+
+  const TabBtn = ({ id, label }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`flex-1 py-2 font-display text-sm rounded-xl border-2 transition ${tab === id ? 'bg-stone-900 text-white border-stone-900' : 'bg-white text-stone-600 border-stone-200'}`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="pb-32">
+      <Header
+        title="SCORING WEIGHTS"
+        onBack={onBack}
+        right={
+          <button
+            onClick={resetDefaults}
+            className="text-xs font-display text-stone-500 hover:text-stone-800 px-2 py-1 rounded-lg border border-stone-200"
+          >
+            RESET
+          </button>
+        }
+      />
+
+      <div className="px-4 pt-3 flex items-center gap-2">
+        <TabBtn id="outfield" label="OUTFIELD" />
+        <TabBtn id="gk"       label="GK" />
+        <TabBtn id="pillars"  label="PILLARS" />
+      </div>
+
+      <div className="px-4 pt-4">
+        {tab === 'outfield' && <PointsSection group="points" />}
+        {tab === 'gk'       && <PointsSection group="gkPoints" />}
+        {tab === 'pillars'  && <PillarsSection />}
+      </div>
+
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-4 py-3 flex gap-2">
+        <button
+          onClick={onBack}
+          className="flex-1 py-3 rounded-xl border-2 border-stone-200 bg-white text-stone-700 font-display"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={saveAndExit}
+          className="flex-1 py-3 rounded-xl bg-lime-500 hover:bg-lime-600 text-stone-900 font-display border-2 border-lime-600"
+        >
+          SAVE
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Header({ title, onBack, right }) {
   return (
     <div className="bg-white border-b border-stone-200 px-4 pt-12 pb-3 flex items-center gap-3">
@@ -2650,6 +2895,8 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
 
 
 
