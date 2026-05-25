@@ -3260,6 +3260,88 @@ function ScheduleView({ schedule, onSave, onBack }) {
   const [time, setTime] = useState('');
   const [tournament, setTournament] = useState('');
   const [location, setLocation] = useState('');
+  const [pasteText, setPasteText] = useState('');
+  const [parsed, setParsed] = useState(null);
+
+  const parseECSL = (text) => {
+    // ECSL table rows: # | Date | KO | Field | Home | Away
+    // When copied they come as tab-separated or multi-line
+    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const results = [];
+    const months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+    const year = new Date().getFullYear();
+
+    for (const line of lines) {
+      // Split by tab first, fall back to 2+ spaces
+      let parts = line.split('\t');
+      if (parts.length < 5) parts = line.split(/\s{2,}/);
+      if (parts.length < 5) continue;
+
+      // Try to find date pattern (like "May 9" or "Jun 15")
+      let dateStr = '', timeStr = '', field = '', home = '', away = '';
+      let idx = 0;
+      // Skip game number if first part is just a number
+      if (/^\d+$/.test(parts[0].trim())) idx = 1;
+
+      dateStr = parts[idx]?.trim() || '';
+      timeStr = parts[idx + 1]?.trim() || '';
+      field = parts[idx + 2]?.trim() || '';
+      home = parts[idx + 3]?.trim() || '';
+      away = parts[idx + 4]?.trim() || '';
+
+      // Parse date
+      const dateMatch = dateStr.match(/([a-z]+)\s*(\d+)/i);
+      if (!dateMatch) continue;
+      const mon = months[dateMatch[1].toLowerCase().slice(0, 3)];
+      if (mon === undefined) continue;
+      const day = parseInt(dateMatch[2]);
+      const isoDate = `${year}-${String(mon + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+      // Parse time (3:00pm -> 15:00)
+      const timeMatch = timeStr.match(/(\d+):(\d+)\s*(am|pm)/i);
+      let isoTime = '';
+      if (timeMatch) {
+        let h = parseInt(timeMatch[1]);
+        const m = parseInt(timeMatch[2]);
+        if (timeMatch[3].toLowerCase() === 'pm' && h < 12) h += 12;
+        if (timeMatch[3].toLowerCase() === 'am' && h === 12) h = 0;
+        isoTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+
+      // Determine opponent (we are "Lasalle" or "LasalleGn" or "LSSC")
+      const isUs = (name) => /lasalle|lssc|stompers/i.test(name);
+      let opp = '';
+      if (isUs(home)) opp = away;
+      else if (isUs(away)) opp = home;
+      else continue; // neither team is us, skip
+
+      // Clean up opponent name (remove B10 prefix if present)
+      opp = opp.replace(/^B\d+/i, '').trim() || opp;
+
+      results.push({ date: isoDate, time: isoTime, opponent: opp, location: field });
+    }
+    return results;
+  };
+
+  const handleParse = () => {
+    const results = parseECSL(pasteText);
+    setParsed(results);
+  };
+
+  const handleImport = () => {
+    if (!parsed || parsed.length === 0) return;
+    const newItems = parsed.map(p => ({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      opponent: p.opponent,
+      date: p.date,
+      time: p.time,
+      tournament: '',
+      location: p.location,
+    }));
+    onSave([...schedule, ...newItems]);
+    setPasteText('');
+    setParsed(null);
+  };
 
   const handleAdd = () => {
     if (!opponent.trim() || !date) return;
@@ -3284,6 +3366,59 @@ function ScheduleView({ schedule, onSave, onBack }) {
   return (
     <div className="min-h-screen bg-stone-100 pb-8">
       <Header title="SCHEDULE" onBack={onBack} />
+
+      {/* Import from ECSL */}
+      <div className="px-4 pt-4">
+        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-3">
+          <div className="font-display text-lg">IMPORT FROM ECSL</div>
+          <p className="text-xs text-stone-500">Go to ecslsoccer.ca → Schedule → select your team → copy the table rows → paste below.</p>
+          <textarea
+            placeholder="Paste schedule rows here..."
+            value={pasteText}
+            onChange={e => setPasteText(e.target.value)}
+            rows={3}
+            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500 resize-none"
+          />
+          {pasteText.trim() && !parsed && (
+            <button
+              onClick={handleParse}
+              className="w-full bg-blue-600 text-white font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
+            >
+              PARSE
+            </button>
+          )}
+          {parsed && (
+            <div className="space-y-2">
+              {parsed.length === 0 ? (
+                <div className="text-sm text-red-600">Could not parse any games. Make sure you copied the table rows.</div>
+              ) : (
+                <>
+                  <div className="text-xs font-semibold text-stone-600">Found {parsed.length} game{parsed.length > 1 ? 's' : ''}:</div>
+                  {parsed.map((p, i) => (
+                    <div key={i} className="bg-stone-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="font-bold">vs {p.opponent}</span> · {new Date(p.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' })}
+                      {p.time && ` · ${formatTime12(p.time)}`}
+                      {p.location && ` · ${p.location}`}
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleImport}
+                    className="w-full bg-lime-500 text-stone-900 font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
+                  >
+                    ADD {parsed.length} GAME{parsed.length > 1 ? 'S' : ''}
+                  </button>
+                  <button
+                    onClick={() => { setParsed(null); setPasteText(''); }}
+                    className="w-full text-stone-500 text-sm py-1"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Add form */}
       <div className="px-4 pt-4 space-y-3">
