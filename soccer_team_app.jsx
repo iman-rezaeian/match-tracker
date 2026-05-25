@@ -595,6 +595,27 @@ export default function App() {
   const logSubEvent = (gameId, offPlayerId, onPlayerId) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
+    // Validate against the LIVE lineup, not the picker's snapshot. Protects
+    // against any race where the SUB picker was rendered with stale state
+    // (e.g. rapid back-to-back taps before Firestore round-tripped).
+    const liveOn = onFieldAt(game);
+    if (!liveOn.has(offPlayerId)) {
+      const p = roster.find(r => r.id === offPlayerId);
+      showToast(`⚠️ ${p?.name || 'That player'} is already off the field`);
+      setPendingEvent(null);
+      return;
+    }
+    if (liveOn.has(onPlayerId)) {
+      const p = roster.find(r => r.id === onPlayerId);
+      showToast(`⚠️ ${p?.name || 'That player'} is already on the field`);
+      setPendingEvent(null);
+      return;
+    }
+    if (offPlayerId === onPlayerId) {
+      showToast('⚠️ Pick a different player to sub on');
+      setPendingEvent(null);
+      return;
+    }
     const subAt = Date.now();
     const elapsed = computeElapsed(game);
     const event = {
@@ -788,6 +809,15 @@ export default function App() {
           onSwapGK={() => setPendingEvent({ type: 'NEW_GK', defaultGK: currentGKAt(activeGame) })}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
+              // Re-validate against the LIVE lineup at click time, not the
+              // picker's snapshot — prevents stale state from advancing.
+              const liveOn = onFieldAt(activeGame);
+              if (!liveOn.has(playerId)) {
+                const p = roster.find(r => r.id === playerId);
+                showToast(`⚠️ ${p?.name || 'That player'} is already off the field`);
+                setPendingEvent(null);
+                return;
+              }
               setPendingEvent({ type: 'SUB', step: 'ON', offPlayerId: playerId });
               return;
             }
