@@ -56,8 +56,8 @@ const SEED_ROSTER = [
 ];
 
 const FONT_STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=Anton&family=Outfit:wght@400;500;600;700;800;900&display=swap');
-  .font-display { font-family: 'Anton', system-ui, sans-serif; letter-spacing: 0.03em; }
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
+  .font-display { font-family: 'Outfit', system-ui, sans-serif; font-weight: 800; letter-spacing: 0.03em; }
   .font-sans-pro { font-family: 'Outfit', system-ui, sans-serif; }
   .stripes-bg {
     background-color: #0d2818;
@@ -2875,8 +2875,8 @@ function LockScreen({ onUnlock }) {
         className="w-28 h-28 mb-4 drop-shadow-lg"
         onError={(e) => { e.currentTarget.style.display = 'none'; }}
       />
-      <div className="font-display text-5xl text-white leading-none">LASALLE</div>
-      <div className="font-display text-3xl text-lime-400 leading-tight mb-2">STOMPERS</div>
+      <div className="text-5xl text-white leading-none font-bold tracking-wide">LASALLE</div>
+      <div className="text-3xl text-lime-400 leading-tight mb-2 font-bold tracking-wide">STOMPERS</div>
       <div className="text-white/50 text-xs font-bold tracking-widest mb-8">COACH ACCESS</div>
 
       <div className="w-full max-w-xs">
@@ -2890,7 +2890,7 @@ function LockScreen({ onUnlock }) {
           onChange={e => setCode(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
           placeholder="••••••••"
-          className={`w-full text-center text-2xl font-display py-4 rounded-xl border-2 outline-none transition ${
+          className={`w-full text-center text-2xl py-4 rounded-xl border-2 outline-none transition ${
             error
               ? 'bg-red-100 border-red-400 text-red-700 animate-[shake_0.3s_ease-in-out]'
               : 'bg-white border-stone-200 text-stone-900'
@@ -3490,16 +3490,10 @@ function PublicHomePage() {
               );
             })}
           </div>
-          <div className="text-center text-xs text-stone-400 mt-6">
-            © LaSalle Stompers · <a href="./?coach" className="underline">Coach access</a>
-          </div>
+
         </div>
       )}
-      {past.length === 0 && (
-        <div className="text-center text-xs text-stone-400 mt-8">
-          © LaSalle Stompers · <a href="./?coach" className="underline">Coach access</a>
-        </div>
-      )}
+
     </div>
   );
 }
