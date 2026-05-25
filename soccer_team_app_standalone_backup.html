@@ -8,6 +8,8 @@
   <meta name="apple-mobile-web-app-title" content="Stompers" />
   <meta name="theme-color" content="#0d2818" />
   <title>LaSalle Stompers 2016 — Match Day</title>
+  <link rel="icon" type="image/png" href="./stompers_logo.png" />
+  <link rel="apple-touch-icon" href="./stompers_logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Anton&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -223,11 +225,50 @@ function playerSeconds(playerId, game) {
   return Math.floor(totalSec);
 }
 
+// GK-only per-game context: OPP_GOALs conceded while this player was on the field,
+// weighted penalty (gkFault flag), and whether they earned a clean sheet.
+// Note: "on field" is used as a proxy for "in goal" — sufficient when only GK-tagged
+// players are scored with these extras.
+function gkExtrasForGame(playerId, game) {
+  const subs = (game.events || []).filter(e => e.type === 'SUB').sort((a, b) => a.at - b.at);
+  const intervals = [];
+  const starting = (game.startingLineup || []).includes(playerId);
+  let onSince = starting ? game.startedAt : null;
+  for (const sub of subs) {
+    if (sub.playerId === playerId && onSince !== null) { intervals.push([onSince, sub.at]); onSince = null; }
+    if (sub.subOnPlayerId === playerId && onSince === null) { onSince = sub.at; }
+  }
+  if (onSince !== null) {
+    const endTs = game.status === 'finished' && game.endedAt ? game.endedAt : Date.now();
+    intervals.push([onSince, endTs]);
+  }
+  if (intervals.length === 0) return { oppGoalsConceded: 0, concededPenalty: 0, cleanSheets: 0, secondsOnField: 0 };
+  let conceded = 0;
+  let concededPenalty = 0; // raw -DEF points: 6 for GK fault, 0 for unstoppable, 3 for neutral/unknown
+  for (const e of (game.events || [])) {
+    if (e.type !== 'OPP_GOAL') continue;
+    if (intervals.some(([s, en]) => e.at >= s && e.at <= en)) {
+      conceded++;
+      if (e.gkFault === 'gk') concededPenalty += 6;
+      else if (e.gkFault === 'unstoppable') concededPenalty += 0;
+      else concededPenalty += 3;
+    }
+  }
+  const secondsOnField = intervals.reduce((sum, [s, en]) => sum + Math.max(0, (en - s) / 1000), 0);
+  const cleanSheets = (conceded === 0 && secondsOnField >= 60 && game.status === 'finished') ? 1 : 0;
+  return { oppGoalsConceded: conceded, concededPenalty, cleanSheets, secondsOnField };
+}
+
 // ===== PERFORMANCE SCORE =====
 // Weighted per-20-minute composite across 4 development pillars.
 // Returns { overall, attacking, defending, decisions, involvement } rounded to 1 decimal.
-function computePerformanceScore(playerId, events, minutesPlayed) {
+// `position` (optional) — if 'GK', uses goalie-specific weights so keepers aren't
+// unfairly penalized by low ATK/DEC opportunity, and saves count for more.
+// `gkExtras` (optional, GK only) — { oppGoalsConceded, cleanSheets } aggregated
+// across the games being scored. Adds clean-sheet bonus and conceded penalty.
+function computePerformanceScore(playerId, events, minutesPlayed, position, gkExtras = {}) {
   if (minutesPlayed <= 0) return { overall: 0, attacking: 0, defending: 0, decisions: 0, involvement: 0 };
+  const isGK = position === 'GK';
   const perHalf = minutesPlayed / 20;
   const c = {};
   for (const e of events) {
@@ -238,28 +279,36 @@ function computePerformanceScore(playerId, events, minutesPlayed) {
   const attacking = (
     (c.GOAL || 0) * 10 +
     (c.ASSIST || 0) * 8 +
-    (c.KEY_PASS || 0) * 5 +
+    (c.KEY_PASS || 0) * (isGK ? 10 : 5) +
     (c.SHOT_ON || 0) * 3 +
     (c.SHOT_OFF || 0) * 1
   ) / perHalf;
+  const oppConceded = isGK ? (gkExtras.oppGoalsConceded || 0) : 0;
+  const concededPenalty = isGK ? (gkExtras.concededPenalty || 0) : 0;
+  const cleanSheets = isGK ? (gkExtras.cleanSheets || 0) : 0;
   const defending = (
-    (c.SAVE || 0) * 7 +
+    (c.SAVE || 0) * (isGK ? 10 : 7) +
     (c.BLOCK || 0) * 5 +
     (c.BALL_WIN || 0) * 5 +
     (c.DUEL_WIN || 0) * 4 +
-    (c.DUEL_LOSE || 0) * -1
+    (c.DUEL_LOSE || 0) * -1 +
+    -concededPenalty +
+    cleanSheets * 8
   ) / perHalf;
   const decisions = (
     (c.GIVE_GO || 0) * 6 +
     (c.GATES || 0) * 4 +
-    (c.KEY_PASS || 0) * 3 +
+    (c.KEY_PASS || 0) * (isGK ? 6 : 3) +
     (c.ASSIST || 0) * 3 +
     (c.HOLDS_BALL || 0) * -4 +
     (c.TURNOVER || 0) * -4
   ) / perHalf;
   const totalEvents = Object.values(c).reduce((a, b) => a + b, 0);
   const involvement = totalEvents / perHalf;
-  const overall = 0.30 * attacking + 0.25 * defending + 0.30 * decisions + 0.15 * involvement;
+  // Outfield: 30/25/30/15. GK: 10/55/25/10 — DEF dominates, ATK de-weighted.
+  const overall = isGK
+    ? 0.10 * attacking + 0.55 * defending + 0.25 * decisions + 0.10 * involvement
+    : 0.30 * attacking + 0.25 * defending + 0.30 * decisions + 0.15 * involvement;
   const r = (n) => Math.round(n * 10) / 10;
   return { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
 }
@@ -411,7 +460,7 @@ function App() {
     persistGames(games.map(g => g.id === id ? mutator(g) : g));
   };
 
-  const logEvent = (gameId, eventType, playerId) => {
+  const logEvent = (gameId, eventType, playerId, extras = {}) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
     const ev = EVENT_TYPES[eventType];
@@ -423,6 +472,7 @@ function App() {
       period: game.period,
       elapsed,
       at: Date.now(),
+      ...extras,
     };
     const updated = {
       ...game,
@@ -672,12 +722,20 @@ function App() {
               setPendingEvent({ type: 'SUB', step: 'OFF' });
               return;
             }
+            if (type === 'OPP_GOAL') {
+              setPendingEvent({ type: 'OPP_GOAL_FAULT' });
+              return;
+            }
             const ev = EVENT_TYPES[type];
             if (!ev.requiresPlayer) {
               logEvent(activeGame.id, type, null);
             } else {
               setPendingEvent({ type });
             }
+          }}
+          onResolveOppGoal={(fault) => {
+            // fault: 'gk' | 'unstoppable' | null (neutral / unsure)
+            logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: fault });
           }}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
@@ -776,12 +834,22 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
   return (
     <div className="pb-24">
       <div className="stripes-bg text-white px-5 pt-12 pb-8">
-        <div className="flex items-center gap-2 text-lime-400 text-xs font-bold uppercase tracking-widest mb-2">
-          <Flag className="w-3.5 h-3.5" />
-          Match Day Manager
+        <div className="flex items-start gap-3">
+          <img
+            src="./stompers_logo.png"
+            alt=""
+            className="w-16 h-16 shrink-0 drop-shadow"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 text-lime-400 text-xs font-bold uppercase tracking-widest mb-2">
+              <Flag className="w-3.5 h-3.5" />
+              Match Day Manager
+            </div>
+            <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+            <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+          </div>
         </div>
-        <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-        <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
 
         <div className="grid grid-cols-3 gap-3 mt-6">
           <Stat label="WINS" value={wins} accent="text-lime-400" />
@@ -1128,29 +1196,41 @@ function StartingLineupView({ roster, setup, onBack, onStart }) {
         <div className="space-y-1.5">
           {sorted.map(p => {
             const on = selected.has(p.id);
+            const isGK = p.position === 'GK';
             return (
               <button
                 key={p.id}
                 onClick={() => toggle(p.id)}
-                className={`w-full flex items-center gap-3 p-2.5 rounded-xl border-2 transition active:scale-[0.98] ${
+                className={`relative w-full flex items-center gap-3 p-2.5 rounded-xl border-2 transition active:scale-[0.98] ${
                   on
-                    ? 'bg-lime-50 border-lime-400'
-                    : 'bg-white border-stone-200 opacity-60'
+                    ? (isGK ? 'bg-amber-50 border-amber-400' : 'bg-lime-50 border-lime-400')
+                    : (isGK ? 'bg-amber-50/50 border-amber-200 opacity-60' : 'bg-white border-stone-200 opacity-60')
                 }`}
               >
+                {isGK && (
+                  <div className="absolute -top-2 -left-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5">
+                    <span>🧤</span><span>GK</span>
+                  </div>
+                )}
                 <div className={`w-11 h-11 rounded-lg flex items-center justify-center font-display text-xl tabular-nums ${
-                  on ? 'bg-stone-900 text-lime-400' : 'bg-stone-200 text-stone-500'
+                  on
+                    ? (isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400')
+                    : 'bg-stone-200 text-stone-500'
                 }`}>
                   {p.number || '—'}
                 </div>
                 <div className="flex-1 text-left">
                   <div className="font-bold text-sm">{p.name}</div>
-                  <div className={`text-[10px] font-bold tracking-wider ${on ? 'text-lime-700' : 'text-stone-400'}`}>
+                  <div className={`text-[10px] font-bold tracking-wider ${
+                    on ? (isGK ? 'text-amber-700' : 'text-lime-700') : 'text-stone-400'
+                  }`}>
                     {on ? 'ON FIELD' : 'BENCH'}
                   </div>
                 </div>
                 <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                  on ? 'bg-lime-500 border-lime-600' : 'bg-white border-stone-300'
+                  on
+                    ? (isGK ? 'bg-amber-500 border-amber-600' : 'bg-lime-500 border-lime-600')
+                    : 'bg-white border-stone-300'
                 }`}>
                   {on && <span className="text-white text-sm font-bold">✓</span>}
                 </div>
@@ -1176,7 +1256,7 @@ function StartingLineupView({ roster, setup, onBack, onStart }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
   const playersSorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
@@ -1262,24 +1342,88 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       )}
 
       <div className="flex-1 flex flex-col px-4 pt-4">
-        {pendingEvent ? (() => {
+        {pendingEvent?.type === 'OPP_GOAL_FAULT' ? (() => {
+          const onField = onFieldAt(game);
+          const gkOnField = playersSorted.filter(p => p.position === 'GK' && onField.has(p.id));
+          return (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <div>
+                  <div className="text-xs text-stone-500 font-bold tracking-widest">OPP GOAL — GK FAULT?</div>
+                  <div className="font-display text-3xl flex items-center gap-2">
+                    <span>🚨</span>
+                    <span>WHY?</span>
+                  </div>
+                </div>
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {gkOnField.length > 0 && (
+                <div className="mb-3 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2">
+                  <span className="text-lg">🧤</span>
+                  <div className="text-xs text-amber-800">
+                    <span className="font-bold tracking-wider">GK ON FIELD:</span>{' '}
+                    {gkOnField.map(p => `${p.name} #${p.number}`).join(', ')}
+                  </div>
+                </div>
+              )}
+              {gkOnField.length === 0 && (
+                <div className="mb-3 bg-stone-100 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-600">
+                  No GK-tagged player on the field. Pick a tag anyway — it'll be saved for record.
+                </div>
+              )}
+
+              <button
+                onClick={() => onResolveOppGoal('gk')}
+                className="mb-2 w-full bg-red-100 text-red-900 border-2 border-red-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+              >
+                <span className="text-3xl">🧤</span>
+                <span>GK FAULT</span>
+              </button>
+              <button
+                onClick={() => onResolveOppGoal('unstoppable')}
+                className="mb-2 w-full bg-stone-100 text-stone-800 border-2 border-stone-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+              >
+                <span className="text-3xl">😮</span>
+                <span>UNSTOPPABLE</span>
+              </button>
+              <button
+                onClick={() => onResolveOppGoal(null)}
+                className="w-full bg-white text-stone-600 border border-stone-300 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+              >
+                NEUTRAL / UNSURE
+              </button>
+            </div>
+          );
+        })() : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
           let pickerEvent, pickerPlayers, pickerSkippable, pickerOnUnknown;
+          // GK floats to top so the keeper is instantly visible
+          const gkFirst = (a, b) => {
+            const ag = a.position === 'GK' ? 0 : 1;
+            const bg = b.position === 'GK' ? 0 : 1;
+            if (ag !== bg) return ag - bg;
+            return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+          };
           if (isSub) {
             const onField = onFieldAt(game);
             if (pendingEvent.step === 'OFF') {
               pickerEvent = { emoji: '🔄', label: 'WHO\'S OFF?', requiresPlayer: true };
-              pickerPlayers = playersSorted.filter(p => onField.has(p.id));
+              pickerPlayers = playersSorted.filter(p => onField.has(p.id)).sort(gkFirst);
             } else {
               pickerEvent = { emoji: '🔄', label: 'WHO\'S ON?', requiresPlayer: true };
-              pickerPlayers = playersSorted.filter(p => !onField.has(p.id) && p.id !== pendingEvent.offPlayerId);
+              pickerPlayers = playersSorted.filter(p => !onField.has(p.id) && p.id !== pendingEvent.offPlayerId).sort(gkFirst);
             }
             pickerSkippable = false;
             pickerOnUnknown = null;
           } else {
             pickerEvent = EVENT_TYPES[pendingEvent.type];
             const onField = onFieldAt(game);
-            pickerPlayers = playersSorted.filter(p => onField.has(p.id) && p.id !== pendingEvent.excludePlayerId);
+            pickerPlayers = playersSorted
+              .filter(p => onField.has(p.id) && p.id !== pendingEvent.excludePlayerId)
+              .sort(gkFirst);
             pickerSkippable = pendingEvent.skippable;
             pickerOnUnknown = pendingEvent.skippable ? () => onSelectPlayer(null) : null;
           }
@@ -1489,21 +1633,39 @@ function PlayerPicker({ event, players, skippable, onPick, onSkip, onUnknown, on
             {emptyMessage}
           </div>
         )}
-        {players.map(p => (
-          <button
-            key={p.id}
-            onClick={() => onPick(p.id)}
-            className="bg-white border-2 border-stone-200 hover:border-stone-900 rounded-xl p-3 flex items-center gap-3 active:scale-[0.97] transition text-left"
-          >
-            <div className="w-12 h-12 rounded-lg bg-stone-900 text-lime-400 flex items-center justify-center font-display text-2xl tabular-nums shrink-0">
-              {p.number || '—'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="font-bold text-sm truncate">{p.name}</div>
-              {p.position && <div className="text-[10px] text-stone-500 font-bold tracking-wider">{p.position}</div>}
-            </div>
-          </button>
-        ))}
+        {players.map(p => {
+          const isGK = p.position === 'GK';
+          return (
+            <button
+              key={p.id}
+              onClick={() => onPick(p.id)}
+              className={`relative rounded-xl p-3 flex items-center gap-3 active:scale-[0.97] transition text-left border-2 ${
+                isGK
+                  ? 'bg-amber-50 border-amber-400 hover:border-amber-500'
+                  : 'bg-white border-stone-200 hover:border-stone-900'
+              }`}
+            >
+              {isGK && (
+                <div className="absolute -top-2 -right-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5">
+                  <span>🧤</span><span>GK</span>
+                </div>
+              )}
+              <div className={`w-12 h-12 rounded-lg flex items-center justify-center font-display text-2xl tabular-nums shrink-0 ${
+                isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400'
+              }`}>
+                {p.number || '—'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-sm truncate">{p.name}</div>
+                {p.position && (
+                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-500'}`}>
+                    {p.position}
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1531,7 +1693,20 @@ function EventRow({ event, roster, onDelete }) {
           <>
             {player && <div className="text-xs text-stone-600 truncate">{player.name} · #{player.number}</div>}
             {!player && ev.requiresPlayer && <div className="text-xs text-stone-500 italic">Unknown player</div>}
-            {!player && !ev.requiresPlayer && <div className="text-xs text-stone-500">No player</div>}
+            {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && <div className="text-xs text-stone-500">No player</div>}
+            {event.type === 'OPP_GOAL' && (
+              <div className="mt-0.5">
+                {event.gkFault === 'gk' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-300">🧤 GK FAULT</span>
+                )}
+                {event.gkFault === 'unstoppable' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-300">😮 UNSTOPPABLE</span>
+                )}
+                {!event.gkFault && (
+                  <span className="text-[10px] text-stone-400 italic">unmarked</span>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1616,8 +1791,10 @@ function GameDetail({ game, roster, onBack, onDelete, onDeleteEvent }) {
             {Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
-                const score = computePerformanceScore(pid, events, min);
-                return { pid, stats, min, score };
+                const pos = roster.find(p => p.id === pid)?.position;
+                const gkExtras = pos === 'GK' ? gkExtrasForGame(pid, game) : undefined;
+                const score = computePerformanceScore(pid, events, min, pos, gkExtras);
+                return { pid, stats, min, score, pos, gkExtras };
               })
               .sort((a, b) => b.score.overall - a.score.overall)
               .map(({ pid, stats, min, score }) => {
@@ -1720,7 +1897,16 @@ function StatsView({ roster, games, onBack }) {
           if (e.playerId === p.id && e.type !== 'SUB') allEvents.push(e);
         }
       }
-      map[p.id] = computePerformanceScore(p.id, allEvents, min);
+      let gkExtras;
+      if (p.position === 'GK') {
+        gkExtras = { oppGoalsConceded: 0, cleanSheets: 0 };
+        for (const g of finished) {
+          const gx = gkExtrasForGame(p.id, g);
+          gkExtras.oppGoalsConceded += gx.oppGoalsConceded;
+          gkExtras.cleanSheets += gx.cleanSheets;
+        }
+      }
+      map[p.id] = computePerformanceScore(p.id, allEvents, min, p.position, gkExtras);
     }
     return map;
   }, [roster, finished, stats]);
@@ -1881,6 +2067,12 @@ function LockScreen({ onUnlock }) {
   return (
     <div className="min-h-screen stripes-bg flex flex-col items-center justify-center px-6 text-center">
       <style>{FONT_STYLES}</style>
+      <img
+        src="./stompers_logo.png"
+        alt="LaSalle Stompers"
+        className="w-28 h-28 mb-4 drop-shadow-lg"
+        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+      />
       <div className="font-display text-5xl text-white leading-none">LASALLE</div>
       <div className="font-display text-3xl text-lime-400 leading-tight mb-2">STOMPERS</div>
       <div className="text-white/50 text-xs font-bold tracking-widest mb-8">U10 · 2016 SQUAD</div>
@@ -1925,6 +2117,16 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
 
 
 
