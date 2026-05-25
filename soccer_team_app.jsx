@@ -22,7 +22,7 @@ const EVENT_TYPES = {
   GATES:     { id: 'GATES',     label: 'GATE PASS', emoji: '🚪', tone: 'blue',       requiresPlayer: true },
   TURNOVER:  { id: 'TURNOVER',  label: 'TURNOVER',  emoji: '💨', tone: 'soft-red',   requiresPlayer: true },
   HOLDS_BALL:{ id: 'HOLDS_BALL',label: 'HOLDS BALL',emoji: '⏳', tone: 'yellow',     requiresPlayer: true },
-  OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '🚨', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
+  OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
 };
 
 const TONE_CLASSES = {
@@ -2312,7 +2312,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 className={`relative mt-2 w-full ${TONE_CLASSES['big-red']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
               >
                 <span className="absolute top-1 right-2 text-[10px] font-extrabold text-red-100">−</span>
-                <span className="text-2xl">🚨</span>
+                <span className="text-2xl">⚽</span>
                 <span className="font-sans-pro font-extrabold tracking-tight text-lg leading-none">OPP GOAL</span>
               </button>
             </div>
