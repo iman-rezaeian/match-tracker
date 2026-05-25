@@ -1307,7 +1307,7 @@ function InstallModal({ canPrompt, onTriggerPrompt, onClose }) {
 
 function Stat({ label, value, accent }) {
   return (
-    <div>
+    <div className="text-center">
       <div className={`font-display text-4xl ${accent}`}>{value}</div>
       <div className="text-[10px] text-white/60 font-bold tracking-widest">{label}</div>
     </div>
