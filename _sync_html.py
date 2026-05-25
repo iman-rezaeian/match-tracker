@@ -18,13 +18,6 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
-
-# CLI flags: --preview (draft deploy) or --prod (promote to production).
-DEPLOY_MODE = None
-if "--prod" in sys.argv:
-    DEPLOY_MODE = "prod"
-elif "--preview" in sys.argv:
-    DEPLOY_MODE = "preview"
 JSX = HERE / "soccer_team_app.jsx"
 HTML = HERE / "soccer_team_app_standalone_backup.html"
 
@@ -221,10 +214,8 @@ if new_html == html_src:
 HTML.write_text(new_html)
 print(f"Wrote {HTML} ({len(new_html.splitlines())} lines)")
 
-# Also build a Netlify-Drop-ready folder: a SINGLE index.html with every static
-# asset inlined as a base64 data URI. One-file deploys = no separate asset
-# uploads on Netlify Drop (saves bandwidth / build minutes when only the HTML
-# actually changed).
+# Also build a deploy-ready folder (_site/) with every static asset inlined as
+# a base64 data URI. Netlify publishes this folder on push.
 #
 # Exception: PWA support files (manifest, service worker, install icons) MUST
 # remain as real files in the deploy folder so the browser can fetch them by
@@ -234,7 +225,7 @@ import shutil
 import base64
 import mimetypes
 
-DEPLOY_DIR = Path.home() / "Desktop" / "stompers_deploy"
+DEPLOY_DIR = HERE / "_site"
 DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 
 # Files that must stay as real files in the deploy folder (PWA shell).
@@ -297,25 +288,4 @@ if inlined:
     print(f"  Inlined: {', '.join(inlined)}")
 if copied_pwa:
     print(f"  PWA shell: {', '.join(copied_pwa)}")
-print("Drag the FOLDER (not just index.html) onto Netlify Drop so PWA install works.")
-
-# Optional: invoke Netlify CLI for one-step deploys.
-#   python3 _sync_html.py --preview   → draft URL, production untouched
-#   python3 _sync_html.py --prod      → promote to lasalle-stompers.netlify.app
-if DEPLOY_MODE:
-    import subprocess
-    cmd = ["netlify", "deploy", "--dir", str(DEPLOY_DIR)]
-    if DEPLOY_MODE == "prod":
-        cmd.append("--prod")
-        print(f"\n>>> Deploying to PRODUCTION: {' '.join(cmd)}")
-    else:
-        print(f"\n>>> Deploying DRAFT preview: {' '.join(cmd)}")
-    try:
-        subprocess.run(cmd, cwd=DEPLOY_DIR, check=True)
-    except FileNotFoundError:
-        print("ERROR: netlify CLI not found. Install with: brew install netlify-cli")
-        sys.exit(1)
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: netlify deploy failed (exit {e.returncode})")
-        sys.exit(e.returncode)
 
