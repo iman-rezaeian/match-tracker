@@ -1811,7 +1811,9 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           );
         })() : pendingEvent?.type === 'NEW_GK' ? (() => {
           const onField = onFieldAt(game);
-          const candidates = playersSorted.filter(p => onField.has(p.id));
+          // Allow picking the new goalie from the entire match-day squad —
+          // a fresh keeper coming off the bench is the common case.
+          const candidates = playersSorted;
           const currentGKPlayer = roster.find(p => p.id === gameGKId);
           return (
             <div className="flex flex-col h-full min-h-0">
@@ -1841,6 +1843,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 {candidates.map(p => {
                   const isDefault = p.id === pendingEvent.defaultGK;
                   const isCurrent = p.id === gameGKId;
+                  const isOn = onField.has(p.id);
                   return (
                     <button
                       key={p.id}
@@ -1856,7 +1859,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                       <div className="min-w-0 flex-1">
                         <div className="font-bold text-sm truncate">{p.name}</div>
                         <div className="text-[10px] text-amber-700 font-bold tracking-wider">
-                          {isDefault ? 'SUGGESTED' : (p.position === 'GK' ? 'DEFAULT GK' : (p.position || 'OUTFIELD'))}
+                          {isDefault ? 'SUGGESTED' : (isOn ? 'ON FIELD' : 'BENCH')}{p.position === 'GK' ? ' · DEFAULT GK' : ''}
                         </div>
                       </div>
                     </button>
@@ -2027,9 +2030,11 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </div>
             ) : (
               <>
-              {/* 4x3 grid: 12 primary events */}
+              {/* 4x3 grid: 12 primary events. ASSIST is removed — it's captured
+                  automatically from the GOAL flow, so a standalone button would
+                  let an assist be logged without an actual goal. */}
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'ASSIST', 'KEY_PASS', 'BALL_WIN', 'SHOT_ON', 'SHOT_OFF', 'SAVE', 'BLOCK', 'DUEL_WIN', 'DUEL_LOSE', 'GIVE_GO', 'GATES'].map(id => {
+                {['GOAL', 'KEY_PASS', 'BALL_WIN', 'HOLDS_BALL', 'SHOT_ON', 'SHOT_OFF', 'SAVE', 'BLOCK', 'DUEL_WIN', 'DUEL_LOSE', 'GIVE_GO', 'GATES'].map(id => {
                   const ev = EVENT_TYPES[id];
                   const big = ev.tone === 'big-green';
                   return (
@@ -2045,20 +2050,13 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 })}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="mt-2">
                 <button
                   onClick={() => onSelectEvent('TURNOVER')}
-                  className={`${TONE_CLASSES['soft-red']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
+                  className={`${TONE_CLASSES['soft-red']} border-2 rounded-2xl py-3.5 w-full flex items-center justify-center gap-2 active:scale-[0.97] transition`}
                 >
                   <span className="text-xl">💨</span>
                   <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">TURNOVER</span>
-                </button>
-                <button
-                  onClick={() => onSelectEvent('HOLDS_BALL')}
-                  className={`${TONE_CLASSES['yellow']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
-                >
-                  <span className="text-xl">⏳</span>
-                  <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">HOLDS BALL</span>
                 </button>
               </div>
 
@@ -2672,6 +2670,8 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
 
 
 
