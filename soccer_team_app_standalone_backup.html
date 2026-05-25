@@ -3399,24 +3399,30 @@ function ScheduleView({ schedule, onSave, onBack }) {
             className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-stone-500 mb-1 block">DATE *</label>
+            <label className="relative block">
+              <span className="text-xs font-semibold text-stone-500 mb-1 block">DATE *</span>
+              <div className="w-full border border-stone-300 bg-white rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+                {date ? new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : <span className="text-stone-400">Select date</span>}
+              </div>
               <input
                 type="date"
                 value={date}
                 onChange={e => setDate(e.target.value)}
-                className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
               />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-stone-500 mb-1 block">TIME</label>
+            </label>
+            <label className="relative block">
+              <span className="text-xs font-semibold text-stone-500 mb-1 block">TIME</span>
+              <div className="w-full border border-stone-300 bg-white rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+                {time ? formatTime12(time) : <span className="text-stone-400">Select time</span>}
+              </div>
               <input
                 type="time"
                 value={time}
                 onChange={e => setTime(e.target.value)}
-                className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
               />
-            </div>
+            </label>
           </div>
           <input
             type="text"
@@ -4080,6 +4086,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
