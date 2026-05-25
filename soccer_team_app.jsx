@@ -3510,7 +3510,12 @@ function PublicHomePage() {
   return (
     <div className="min-h-screen bg-stone-50 pb-12 relative">
       <style>{FONT_STYLES}</style>
-
+      <a
+        href="./?coach"
+        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20"
+      >
+        🔑 COACH
+      </a>
       {featured ? (
         <LiveScoreboard game={featured} roster={roster} />
       ) : (
