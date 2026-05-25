@@ -338,7 +338,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
       c[e.type] = (c[e.type] || 0) + 1;
     }
   }
-  const pts = isGK ? W.gkPoints : W.points;
+  const pts = W.points;
   const attacking = (
     (c.GOAL || 0)     * pts.GOAL_atk +
     (c.ASSIST || 0)   * pts.ASSIST_atk +
@@ -2759,7 +2759,7 @@ function LockScreen({ onUnlock }) {
 /* ---------- HEADER ---------- */
 function WeightsView({ weights, onSave, onBack }) {
   const [draft, setDraft] = useState(() => mergeWeights(weights));
-  const [tab, setTab] = useState('outfield'); // 'outfield' | 'gk' | 'pillars'
+  const [tab, setTab] = useState('actions'); // 'actions' | 'pillars'
 
   const setPoint = (group, key, raw) => {
     // Allow empty string (mid-edit) or minus sign without committing yet.
@@ -2855,7 +2855,7 @@ function WeightsView({ weights, onSave, onBack }) {
         {DEC_ROWS.map(r => renderPointRow(group, r))}
       </div>
       <p className="text-xs text-stone-500 px-1">
-        Points per action. Negative values penalize the score. {group === 'gkPoints' && 'Goalkeeper-only overrides — only used when the player is GK that game.'}
+        Points per action. Negative values penalize the score. Goalkeepers and outfield players use the same per-action values — their roles differ via the PILLAR mix.
       </p>
     </div>
   );
@@ -2927,15 +2927,13 @@ function WeightsView({ weights, onSave, onBack }) {
       />
 
       <div className="px-4 pt-3 flex items-center gap-2">
-        <TabBtn id="outfield" label="OUTFIELD" />
-        <TabBtn id="gk"       label="GK" />
-        <TabBtn id="pillars"  label="PILLARS" />
+        <TabBtn id="actions" label="ACTIONS" />
+        <TabBtn id="pillars" label="PILLARS" />
       </div>
 
       <div className="px-4 pt-4">
-        {tab === 'outfield' && <PointsSection group="points" />}
-        {tab === 'gk'       && <PointsSection group="gkPoints" />}
-        {tab === 'pillars'  && <PillarsSection />}
+        {tab === 'actions' && <PointsSection group="points" />}
+        {tab === 'pillars' && <PillarsSection />}
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-4 py-3 flex gap-2">
@@ -3091,11 +3089,10 @@ function HelpView({ onBack }) {
         </Section>
 
         <Section id="weights" emoji="⚙" title="7 · Tuning scoring weights" summary="Adjust how much each action is worth">
-          <p>From Home tap <Pill>⚙ SCORING</Pill>. Three tabs:</p>
+          <p>From Home tap <Pill>⚙ SCORING</Pill>. Two tabs:</p>
           <ul className="list-disc pl-5 space-y-1">
-            <li><strong>OUTFIELD</strong> — points per action for non-keepers.</li>
-            <li><strong>GK</strong> — goalkeeper-specific overrides (saves &amp; key passes are worth more).</li>
-            <li><strong>PILLARS</strong> — how much each pillar contributes to the overall score. Each row should sum to 100% — the header turns red if it doesn't.</li>
+            <li><strong>ACTIONS</strong> — points per action. The same values apply to outfield players and the keeper.</li>
+            <li><strong>PILLARS</strong> — how much each pillar (ATK · DEF · DEC · INV) contributes to the overall score. Outfield and GK have separate mixes — the GK row is DEF-heavy because that's where keepers earn their rating. Each row should sum to 100% — the header turns red if it doesn't.</li>
           </ul>
           <p>Negative numbers (red boxes) penalize the score. Tap <Pill>RESET</Pill> in the top-right to restore defaults. All past games re-score live with the new weights — nothing is baked in.</p>
         </Section>
@@ -3141,6 +3138,8 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
 
 
 
