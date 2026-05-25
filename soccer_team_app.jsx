@@ -244,13 +244,13 @@ const DEFAULT_WEIGHTS = {
   points: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 5, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
     SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
-    GIVE_GO_dec: 6, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
+    GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
   },
   gkPoints: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
     SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
-    GIVE_GO_dec: 6, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
+    GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
   },
   pillars: {
@@ -276,9 +276,14 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   const isGK = position === 'GK';
   const perHalf = minutesPlayed / 20;
   const c = {};
+  let partnerCount = 0; // give & go wall-pass credits earned by this player
   for (const e of events) {
-    if (e.playerId === playerId && e.type !== 'SUB') {
+    if (e.type === 'SUB') continue;
+    if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
+    }
+    if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
+      partnerCount++;
     }
   }
   const pts = W.points;
@@ -301,13 +306,14 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   ) / perHalf;
   const decisions = (
     (c.GIVE_GO || 0)    * pts.GIVE_GO_dec +
+    partnerCount        * pts.GIVE_GO_PARTNER_dec +
     (c.GATES || 0)      * pts.GATES_dec +
     (c.KEY_PASS || 0)   * pts.KEY_PASS_dec +
     (c.ASSIST || 0)     * pts.ASSIST_dec +
     (c.HOLDS_BALL || 0) * pts.HOLDS_BALL_dec +
     (c.TURNOVER || 0)   * pts.TURNOVER_dec
   ) / perHalf;
-  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0);
+  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount;
   const involvement = totalEvents / perHalf;
   const pil = isGK ? W.pillars.gk : W.pillars.outfield;
   const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
@@ -471,7 +477,12 @@ export default function App() {
     let playerLabel = '';
     if (player) playerLabel = `${player.name} #${player.number}`;
     else if (ev.requiresPlayer && playerId === null) playerLabel = 'Unknown';
-    showToast(`${ev.emoji} ${ev.label}${playerLabel ? ` · ${playerLabel}` : ''}`);
+    let suffix = '';
+    if (eventType === 'GIVE_GO' && extras.partnerId) {
+      const partner = roster.find(p => p.id === extras.partnerId);
+      if (partner) suffix = ` → 🤝 ${partner.name} #${partner.number}`;
+    }
+    showToast(`${ev.emoji} ${ev.label}${playerLabel ? ` · ${playerLabel}` : ''}${suffix}`);
 
     if (eventType === 'GOAL' && playerId) {
       setPendingEvent({ type: 'ASSIST', excludePlayerId: playerId, skippable: true });
@@ -824,6 +835,18 @@ export default function App() {
             }
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'ON') {
               logSubEvent(activeGame.id, pendingEvent.offPlayerId, playerId);
+              return;
+            }
+            // Give & go: first pick = initiator, then ask for the wall partner.
+            if (pendingEvent?.type === 'GIVE_GO' && !pendingEvent.initiatorId) {
+              setPendingEvent({ type: 'GIVE_GO_PARTNER', initiatorId: playerId });
+              return;
+            }
+            if (pendingEvent?.type === 'GIVE_GO_PARTNER') {
+              // playerId === null means coach tapped SKIP / unknown — log
+              // the give & go with no partner credit.
+              const extras = playerId ? { partnerId: playerId } : {};
+              logEvent(activeGame.id, 'GIVE_GO', pendingEvent.initiatorId, extras);
               return;
             }
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
@@ -1940,6 +1963,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           );
         })() : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
+          const isGGPartner = pendingEvent.type === 'GIVE_GO_PARTNER';
           let pickerEvent, pickerPlayers, pickerSkippable, pickerOnUnknown;
           // GK floats to top so the keeper is instantly visible
           const gkFirst = (a, b) => {
@@ -1959,6 +1983,15 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             }
             pickerSkippable = false;
             pickerOnUnknown = null;
+          } else if (isGGPartner) {
+            // Step 2 of give & go: pick the wall-pass partner (or skip).
+            pickerEvent = { emoji: '🤝', label: 'WALL PASS PARTNER?', requiresPlayer: true };
+            const onField = onFieldAt(game);
+            pickerPlayers = playersSorted
+              .filter(p => onField.has(p.id) && p.id !== pendingEvent.initiatorId)
+              .sort(gkFirst);
+            pickerSkippable = true;
+            pickerOnUnknown = () => onSelectPlayer(null);
           } else {
             pickerEvent = EVENT_TYPES[pendingEvent.type];
             const onField = onFieldAt(game);
@@ -1981,7 +2014,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               onCancel={onCancelEvent}
               emptyMessage={isSub && pickerPlayers.length === 0
                 ? (pendingEvent.step === 'OFF' ? 'No one is on the field.' : 'Everyone is already on the field.')
-                : (!isSub && pickerPlayers.length === 0 ? 'No players on the field.' : null)}
+                : (isGGPartner && pickerPlayers.length === 0 ? 'No teammates available — tap SKIP.' : (!isSub && !isGGPartner && pickerPlayers.length === 0 ? 'No players on the field.' : null))}
             />
           );
         })() : inHalfTimeBreak ? (
@@ -2234,6 +2267,8 @@ function EventRow({ event, roster, onDelete }) {
     : (EVENT_TYPES[event.type] || { emoji: '•', label: event.type, requiresPlayer: false });
   const player = roster.find(p => p.id === event.playerId);
   const subOnPlayer = isSub ? roster.find(p => p.id === event.subOnPlayerId) : null;
+  const partner = event.type === 'GIVE_GO' && event.partnerId
+    ? roster.find(p => p.id === event.partnerId) : null;
   return (
     <div className="bg-white border border-stone-200 rounded-lg px-3 py-2 flex items-center gap-3">
       <div className="text-xl">{ev.emoji}</div>
@@ -2247,7 +2282,14 @@ function EventRow({ event, roster, onDelete }) {
           </div>
         ) : (
           <>
-            {player && <div className="text-xs text-stone-600 truncate">{player.name} · #{player.number}</div>}
+            {player && (
+              <div className="text-xs text-stone-600 truncate">
+                {player.name} · #{player.number}
+                {partner && (
+                  <span className="text-stone-500"> → 🤝 {partner.name} #{partner.number}</span>
+                )}
+              </div>
+            )}
             {!player && ev.requiresPlayer && <div className="text-xs text-stone-500 italic">Unknown player</div>}
             {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && <div className="text-xs text-stone-500">No player</div>}
             {event.type === 'OPP_GOAL' && (
@@ -2300,12 +2342,19 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
 
   const tally = useMemo(() => {
-    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0 });
+    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0 });
     const map = {};
     for (const e of events) {
-      if (!e.playerId || e.type === 'SUB') continue;
-      map[e.playerId] = map[e.playerId] || init();
-      if (map[e.playerId][e.type] !== undefined) map[e.playerId][e.type]++;
+      if (e.type === 'SUB') continue;
+      if (e.playerId) {
+        map[e.playerId] = map[e.playerId] || init();
+        if (map[e.playerId][e.type] !== undefined) map[e.playerId][e.type]++;
+      }
+      // Give & go wall partner gets credit too.
+      if (e.type === 'GIVE_GO' && e.partnerId) {
+        map[e.partnerId] = map[e.partnerId] || init();
+        map[e.partnerId].GIVE_GO_WALL++;
+      }
     }
     for (const p of roster) {
       const sec = playerSeconds(p.id, game);
@@ -2368,6 +2417,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
                 if (stats.BLOCK) parts.push(`${stats.BLOCK} blocks`);
                 if (stats.DUEL_WIN || stats.DUEL_LOSE) parts.push(`1v1: ${stats.DUEL_WIN || 0}-${stats.DUEL_LOSE || 0}`);
                 if (stats.GIVE_GO) parts.push(`${stats.GIVE_GO} g&g`);
+                if (stats.GIVE_GO_WALL) parts.push(`${stats.GIVE_GO_WALL} wall`);
                 if (stats.GATES) parts.push(`${stats.GATES} gates`);
                 if (stats.TURNOVER) parts.push(`${stats.TURNOVER}💨`);
                 if (stats.HOLDS_BALL) parts.push(`${stats.HOLDS_BALL}⏳`);
@@ -2420,16 +2470,22 @@ function StatsView({ roster, games, weights, onBack }) {
   const finished = games.filter(g => g.status === 'finished');
 
   const stats = useMemo(() => {
-    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0 });
+    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0 });
     const map = {};
     for (const p of roster) map[p.id] = init();
     for (const g of finished) {
       const seen = new Set();
       for (const e of g.events) {
-        if (!e.playerId || !map[e.playerId]) continue;
         if (e.type === 'SUB') continue;
-        if (map[e.playerId][e.type] !== undefined) map[e.playerId][e.type]++;
-        seen.add(e.playerId);
+        if (e.playerId && map[e.playerId]) {
+          if (map[e.playerId][e.type] !== undefined) map[e.playerId][e.type]++;
+          seen.add(e.playerId);
+        }
+        // Give & go wall partner credit
+        if (e.type === 'GIVE_GO' && e.partnerId && map[e.partnerId]) {
+          map[e.partnerId].GIVE_GO_WALL++;
+          seen.add(e.partnerId);
+        }
       }
       for (const p of roster) {
         const sec = playerSeconds(p.id, g);
@@ -2453,7 +2509,9 @@ function StatsView({ roster, games, weights, onBack }) {
       const allEvents = [];
       for (const g of finished) {
         for (const e of g.events) {
-          if (e.playerId === p.id && e.type !== 'SUB') allEvents.push(e);
+          if (e.type === 'SUB') continue;
+          if (e.playerId === p.id) allEvents.push(e);
+          else if (e.type === 'GIVE_GO' && e.partnerId === p.id) allEvents.push(e);
         }
       }
       // GK = roster position OR any game where they served as GK.
@@ -2725,7 +2783,8 @@ function WeightsView({ weights, onSave, onBack }) {
     ['CLEAN_SHEET_def', 'Clean sheet (GK)', '🧱'],
   ];
   const DEC_ROWS = [
-    ['GIVE_GO_dec',    'Give & go',   '🔄'],
+    ['GIVE_GO_dec',         'Give & go (initiator)',    '🔄'],
+    ['GIVE_GO_PARTNER_dec', 'Give & go (wall partner)', '🤝'],
     ['GATES_dec',      'Gates',       '🚪'],
     ['KEY_PASS_dec',   'Key pass',    '🔑'],
     ['ASSIST_dec',     'Assist',      '🅰️'],
@@ -2972,7 +3031,8 @@ function HelpView({ onBack }) {
           <Step n={1}>Tap the action button.</Step>
           <Step n={2}>The picker shows everyone <strong>currently on the field</strong>. Tap the player.</Step>
           <Step n={3}>For <Pill tone="lime">GOAL</Pill> you're asked if there was an assist — pick the assister, or <em>NO ASSIST</em>.</Step>
-          <Step n={4}>For <Pill tone="red">OPP GOAL</Pill> you'll be asked whose fault it was: <em>GK</em>, <em>UNSTOPPABLE</em>, or <em>NEUTRAL</em>. Affects the keeper's score.</Step>
+          <Step n={4}>For <Pill tone="lime">🔄 GIVE &amp; GO</Pill> you're asked for the <strong>wall-pass partner</strong> — the teammate who returned the ball. Initiator gets full credit, partner gets half. Tap <em>SKIP</em> if you didn't catch who.</Step>
+          <Step n={5}>For <Pill tone="red">OPP GOAL</Pill> you'll be asked whose fault it was: <em>GK</em>, <em>UNSTOPPABLE</em>, or <em>NEUTRAL</em>. Affects the keeper's score.</Step>
           <p className="text-xs text-stone-500">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
         </Section>
 
