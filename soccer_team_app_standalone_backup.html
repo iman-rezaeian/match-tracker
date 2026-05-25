@@ -411,6 +411,15 @@ function formatDate(iso) {
 const TEAM_CODE = '2016';
 
 function App() {
+  // Public read-only live scoreboard route. When the URL has ?live=<gameId>,
+  // bypass the entire coach app and render a clean scoreboard for parents.
+  // Computed once at mount; reading window.location here is safe because the
+  // URL doesn't change without a reload.
+  const liveGameId = (typeof window !== 'undefined')
+    ? new URLSearchParams(window.location.search).get('live')
+    : null;
+  if (liveGameId) return <LiveScorePage gameId={liveGameId} />;
+
   const [unlocked, setUnlocked] = useState(() => {
     try { return localStorage.getItem('stompers_unlocked') === 'true'; } catch(e) { return false; }
   });
@@ -2585,6 +2594,26 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
   const events = [...game.events].sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
+  const [shareMsg, setShareMsg] = useState(null);
+
+  const shareLiveLink = async () => {
+    const url = `${window.location.origin}${window.location.pathname}?live=${game.id}`;
+    const title = `Stompers vs ${game.opponent}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text: `Live score \u2014 ${title}`, url });
+        return;
+      }
+    } catch (e) { /* user cancelled */ }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareMsg('Link copied!');
+      setTimeout(() => setShareMsg(null), 1800);
+    } catch (e) {
+      setShareMsg(url);
+      setTimeout(() => setShareMsg(null), 4000);
+    }
+  };
 
   const tally = useMemo(() => {
     const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0 });
@@ -2619,13 +2648,25 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className={`font-display text-xl ${resultColor}`}>{result}</div>
-          <button
-            onClick={onDelete}
-            className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95"
-          >
-            <Trash2 className="w-4 h-4 text-white/70" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={shareLiveLink}
+              title="Share live scoreboard link"
+              className="h-9 px-3 rounded-full bg-lime-400/90 text-stone-900 flex items-center gap-1 active:scale-95 font-bold text-xs"
+            >
+              📡 SHARE
+            </button>
+            <button
+              onClick={onDelete}
+              className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center active:scale-95"
+            >
+              <Trash2 className="w-4 h-4 text-white/70" />
+            </button>
+          </div>
         </div>
+        {shareMsg && (
+          <div className="text-center text-xs text-lime-300 -mt-1 mb-2">{shareMsg}</div>
+        )}
         <div className="text-center text-xs text-white/70 mb-1">{game.tournament || 'Festival'} · {formatDate(game.date)} · {game.isHome ? 'Home' : 'Away'}</div>
         <div className="text-center font-display text-2xl">vs {game.opponent}</div>
         <div className="text-center font-display text-6xl tabular-nums mt-2">
@@ -3362,6 +3403,18 @@ function HelpView({ onBack }) {
           <p className="text-xs text-stone-500 mt-2">Sharing the app with another parent or coach? Just send them the same URL — they install on their own device and see the same shared team data in real time.</p>
         </Section>
 
+        <Section id="live" emoji="📡" title="12 · Live scoreboard for parents" summary="Share a read-only link — score & goals update in real time">
+          <p>Open any past or in-progress game and tap the green <Pill tone="lime">📡 SHARE</Pill> button at the top. You'll get a link parents can open on any phone to see a Premier League-style scoreboard: live score, clock, and every goal with scorer + assist as they happen.</p>
+          <p className="text-sm">Parents don't need to install anything, sign in, or have the app — just open the link. They <strong>only see the score and goals</strong>, never pillar events, weights, or rosters.</p>
+          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2 text-sm">
+            <div className="font-display text-sm text-stone-700 mb-1">💡 Suggested workflow</div>
+            <Step n={1}>Right after kickoff, open the active game from the home screen.</Step>
+            <Step n={2}>Tap <Pill tone="lime">📡 SHARE</Pill> and send the link to your team's TeamSnap / WhatsApp chat once.</Step>
+            <Step n={3}>Parents leave the tab open — it auto-updates every time you log a GOAL, ASSIST, or OPP GOAL. No refresh needed.</Step>
+          </div>
+          <p className="text-xs text-stone-500 mt-2">The link works for finished games too — useful for parents who couldn't make the match.</p>
+        </Section>
+
         <div className="text-center text-xs text-stone-400 pt-2 pb-1">
           Tap a row to expand · {String.fromCharCode(169)} LaSalle Stompers
         </div>
@@ -3381,6 +3434,219 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+/* =========================================================================
+   LIVE SCOREBOARD (public, read-only)
+   Loaded via ?live=<gameId>. Premier-League-style scoreboard for parents:
+   teams + score, live clock, chronological goal feed (scorer + assist).
+   Subscribes to Firestore via window.fbDb so it auto-updates the moment the
+   coach taps GOAL. Anonymous auth handles access; no rule changes needed.
+   Shows ONLY score + goals — no pillar events, rosters, or weights.
+   ========================================================================= */
+function LiveScorePage({ gameId }) {
+  const [game, setGame] = useState(null);
+  const [roster, setRoster] = useState([]);
+  const [error, setError] = useState(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
+      setError('This live link only works on the deployed app.');
+      return;
+    }
+    let unsubGame = null, unsubRoster = null;
+    window.fbReady.then((ok) => {
+      if (!ok) { setError('Could not connect to Firebase.'); return; }
+      const db = window.fbDb;
+      const teamRef = db.collection('teams').doc('main');
+      unsubGame = teamRef.collection('games').doc(gameId).onSnapshot(
+        (snap) => {
+          if (!snap.exists) { setError('Game not found.'); return; }
+          setGame({ ...snap.data(), id: snap.id });
+        },
+        (err) => setError(err.message || 'Could not load game.')
+      );
+      unsubRoster = teamRef.onSnapshot(
+        (snap) => {
+          if (snap.exists) {
+            const data = snap.data();
+            if (Array.isArray(data.roster)) setRoster(data.roster);
+          }
+        },
+        () => {}
+      );
+    });
+    return () => { if (unsubGame) unsubGame(); if (unsubRoster) unsubRoster(); };
+  }, [gameId]);
+
+  useEffect(() => {
+    if (!game || game.status !== 'active' || !game.clockRunning) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [game?.status, game?.clockRunning]);
+
+  // Pair each GOAL with the immediately-following ASSIST (the coach app prompts
+  // for ASSIST right after GOAL, so they're adjacent within ~60s).
+  const feed = useMemo(() => {
+    if (!game) return [];
+    const events = [...(game.events || [])].sort((a, b) => a.at - b.at);
+    const out = [];
+    let ourRun = 0, oppRun = 0;
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      if (e.type === 'GOAL') {
+        ourRun++;
+        let assist = null;
+        for (let j = i + 1; j < events.length; j++) {
+          const n = events[j];
+          if (n.at - e.at > 60000) break;
+          if (n.type === 'ASSIST' && n.playerId && n.playerId !== e.playerId) { assist = n; break; }
+          if (n.type === 'GOAL' || n.type === 'OPP_GOAL') break;
+        }
+        out.push({ kind: 'us', at: e.at, elapsed: e.elapsed, period: e.period, scorerId: e.playerId, assistId: assist?.playerId || null, ourRun, oppRun });
+      } else if (e.type === 'OPP_GOAL') {
+        oppRun++;
+        out.push({ kind: 'opp', at: e.at, elapsed: e.elapsed, period: e.period, ourRun, oppRun });
+      }
+    }
+    return out;
+  }, [game]);
+
+  if (error) {
+    return (
+      <div className="min-h-screen stripes-bg text-white flex items-center justify-center p-6">
+        <style>{FONT_STYLES}</style>
+        <div className="bg-white/10 rounded-2xl p-6 max-w-sm text-center">
+          <div className="font-display text-3xl mb-2">⚠ {error}</div>
+          <div className="text-white/60 text-sm">Double-check the link with the coach.</div>
+        </div>
+      </div>
+    );
+  }
+  if (!game) {
+    return (
+      <div className="min-h-screen stripes-bg text-white flex items-center justify-center">
+        <style>{FONT_STYLES}</style>
+        <div className="font-display text-2xl text-white/60">Loading live scoreboard…</div>
+      </div>
+    );
+  }
+
+  const elapsed = computeElapsed(game);
+  const mins = Math.floor(elapsed / 60);
+  const isActive = game.status === 'active';
+  const isFinished = game.status === 'finished';
+  let statusLabel;
+  if (isFinished) statusLabel = 'FULL TIME';
+  else if (isActive && !game.clockRunning) statusLabel = game.period >= 2 ? 'PAUSED' : 'HALF TIME';
+  else if (isActive) statusLabel = `${mins}'`;
+  else statusLabel = 'NOT STARTED';
+
+  const HOME_NAME = 'Stompers';
+  const homeIsUs = !!game.isHome;
+  const leftName = homeIsUs ? HOME_NAME : (game.opponent || 'Opponent');
+  const rightName = homeIsUs ? (game.opponent || 'Opponent') : HOME_NAME;
+  const leftScore = homeIsUs ? game.ourScore : game.oppScore;
+  const rightScore = homeIsUs ? game.oppScore : game.ourScore;
+
+  const nameOf = (pid) => {
+    const p = roster.find((r) => r.id === pid);
+    return p ? p.name : 'Unknown';
+  };
+
+  return (
+    <div className="min-h-screen bg-stone-50 pb-12">
+      <style>{FONT_STYLES}</style>
+      <div className="stripes-bg text-white px-4 pt-10 pb-6">
+        <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
+          {game.tournament || 'Match'} · {formatDate(game.date)} · {homeIsUs ? 'Home' : 'Away'}
+        </div>
+        <div className="flex items-center justify-center gap-3 mt-4">
+          <div className="flex-1 text-right">
+            <div className="font-display text-2xl truncate">{leftName}</div>
+            {homeIsUs && <div className="text-xs text-lime-400 font-bold mt-0.5">HOME</div>}
+          </div>
+          <div className="font-display text-6xl tabular-nums px-3">
+            {leftScore}<span className="text-white/40 mx-2">–</span>{rightScore}
+          </div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-2xl truncate">{rightName}</div>
+            {!homeIsUs && <div className="text-xs text-lime-400 font-bold mt-0.5">HOME</div>}
+          </div>
+        </div>
+        <div className="text-center mt-4">
+          {isActive && game.clockRunning && (
+            <span className="inline-flex items-center gap-2 bg-red-500/20 border border-red-400/40 text-red-200 px-3 py-1 rounded-full text-xs font-bold">
+              <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
+              LIVE · {statusLabel}
+            </span>
+          )}
+          {isActive && !game.clockRunning && (
+            <span className="inline-block bg-yellow-500/20 border border-yellow-400/40 text-yellow-200 px-3 py-1 rounded-full text-xs font-bold">
+              {statusLabel}
+            </span>
+          )}
+          {isFinished && (
+            <span className="inline-block bg-white/15 border border-white/20 text-white px-3 py-1 rounded-full text-xs font-bold">
+              FULL TIME
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="px-4 pt-5 max-w-md mx-auto">
+        <h3 className="font-display text-xl text-stone-700 mb-2">GOALS</h3>
+        {feed.length === 0 ? (
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-sm text-stone-500">
+            No goals yet.
+          </div>
+        ) : (
+          <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+            {feed.map((row, idx) => {
+              const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+              const isHt = idx > 0 && feed[idx - 1].period === 1 && row.period === 2;
+              return (
+                <React.Fragment key={idx}>
+                  {isHt && (
+                    <div className="bg-stone-100 px-3 py-1.5 text-center text-xs font-bold text-stone-500 uppercase tracking-widest">
+                      — Half Time —
+                    </div>
+                  )}
+                  {row.kind === 'us' ? (
+                    <div className="p-3 flex items-start gap-3">
+                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
+                      <div className="text-2xl">⚽</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-stone-900 truncate">{nameOf(row.scorerId)}</div>
+                        {row.assistId && (
+                          <div className="text-xs text-stone-500 truncate">🅰️ {nameOf(row.assistId)}</div>
+                        )}
+                      </div>
+                      <div className="font-display text-sm text-lime-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
+                    </div>
+                  ) : (
+                    <div className="p-3 flex items-start gap-3 bg-red-50/40">
+                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
+                      <div className="text-2xl">🚨</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-stone-900 truncate">{game.opponent || 'Opponent'}</div>
+                      </div>
+                      <div className="font-display text-sm text-red-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        )}
+        <div className="text-center text-xs text-stone-400 mt-6">
+          Live updates · LaSalle Stompers
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 
 
 
