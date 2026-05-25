@@ -197,3 +197,26 @@ if new_html == html_src:
 
 HTML.write_text(new_html)
 print(f"Wrote {HTML} ({len(new_html.splitlines())} lines)")
+
+# Also build a Netlify-Drop-ready folder: index.html + any static assets that
+# the HTML references via "./" (so a single drag-and-drop deploys everything).
+import shutil
+
+DEPLOY_DIR = Path.home() / "Desktop" / "stompers_deploy"
+DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
+
+# Always copy the HTML as index.html so Netlify serves it at the site root.
+shutil.copyfile(HTML, DEPLOY_DIR / "index.html")
+
+# Copy every static asset the HTML references with a "./" path
+# (e.g. ./stompers_logo.png). Skips anything not present in HERE.
+asset_refs = set(re.findall(r'(?:src|href)="\./([^"?#]+)"', new_html))
+copied = []
+for name in sorted(asset_refs):
+    src = HERE / name
+    if src.is_file():
+        shutil.copyfile(src, DEPLOY_DIR / name)
+        copied.append(name)
+
+print(f"Built {DEPLOY_DIR} (index.html + {len(copied)} asset(s): {', '.join(copied) or 'none'})")
+print("Drag that folder onto Netlify Drop to deploy.")

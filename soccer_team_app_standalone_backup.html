@@ -192,6 +192,17 @@ function onFieldAt(game, atTs = Date.now()) {
   return onField;
 }
 
+// Resolve who is the goalie at a given timestamp by walking game.gkChanges.
+// `game.gkPlayerId` is the starting GK; `game.gkChanges = [{at, gkPlayerId}, …]`
+// captures every swap mid-match. Returns the player id (or null if none set).
+function currentGKAt(game, atTs = Date.now()) {
+  if (!game) return null;
+  let current = game.gkPlayerId || null;
+  const changes = (game.gkChanges || []).filter(c => c.at <= atTs).sort((a, b) => a.at - b.at);
+  for (const c of changes) current = c.gkPlayerId || null;
+  return current;
+}
+
 function playerSeconds(playerId, game) {
   if (!game.startingLineup) return 0;
   const starting = game.startingLineup.includes(playerId);
@@ -225,38 +236,55 @@ function playerSeconds(playerId, game) {
   return Math.floor(totalSec);
 }
 
-// GK-only per-game context: OPP_GOALs conceded while this player was on the field,
-// weighted penalty (gkFault flag), and whether they earned a clean sheet.
-// Note: "on field" is used as a proxy for "in goal" — sufficient when only GK-tagged
-// players are scored with these extras.
+// GK-only per-game context: OPP_GOALs conceded while this player was THE GK
+// (per game.gkPlayerId + game.gkChanges timeline), weighted by gkFault tag,
+// plus clean-sheet credit. Falls back to on-field-as-GK heuristic for legacy
+// games that pre-date the gkPlayerId field.
 function gkExtrasForGame(playerId, game) {
-  const subs = (game.events || []).filter(e => e.type === 'SUB').sort((a, b) => a.at - b.at);
-  const intervals = [];
-  const starting = (game.startingLineup || []).includes(playerId);
-  let onSince = starting ? game.startedAt : null;
-  for (const sub of subs) {
-    if (sub.playerId === playerId && onSince !== null) { intervals.push([onSince, sub.at]); onSince = null; }
-    if (sub.subOnPlayerId === playerId && onSince === null) { onSince = sub.at; }
+  // Build the GK timeline: [{ from, to, gkPlayerId }]
+  const startTs = game.startedAt;
+  const endTs = game.status === 'finished' && game.endedAt ? game.endedAt : Date.now();
+  let gkTimeline;
+  if (game.gkPlayerId || (game.gkChanges && game.gkChanges.length > 0)) {
+    const segments = [];
+    let current = game.gkPlayerId || null;
+    let segStart = startTs;
+    const changes = [...(game.gkChanges || [])].sort((a, b) => a.at - b.at);
+    for (const c of changes) {
+      segments.push({ from: segStart, to: c.at, gkPlayerId: current });
+      current = c.gkPlayerId || null;
+      segStart = c.at;
+    }
+    segments.push({ from: segStart, to: endTs, gkPlayerId: current });
+    gkTimeline = segments.filter(s => s.gkPlayerId === playerId);
+  } else {
+    // Legacy fallback: any time the player was on the field counts as GK time.
+    const subs = (game.events || []).filter(e => e.type === 'SUB').sort((a, b) => a.at - b.at);
+    const intervals = [];
+    const starting = (game.startingLineup || []).includes(playerId);
+    let onSince = starting ? startTs : null;
+    for (const sub of subs) {
+      if (sub.playerId === playerId && onSince !== null) { intervals.push({ from: onSince, to: sub.at }); onSince = null; }
+      if (sub.subOnPlayerId === playerId && onSince === null) { onSince = sub.at; }
+    }
+    if (onSince !== null) intervals.push({ from: onSince, to: endTs });
+    gkTimeline = intervals;
   }
-  if (onSince !== null) {
-    const endTs = game.status === 'finished' && game.endedAt ? game.endedAt : Date.now();
-    intervals.push([onSince, endTs]);
-  }
-  if (intervals.length === 0) return { oppGoalsConceded: 0, concededPenalty: 0, cleanSheets: 0, secondsOnField: 0 };
+  if (gkTimeline.length === 0) return { oppGoalsConceded: 0, concededPenalty: 0, cleanSheets: 0, secondsAsGK: 0 };
   let conceded = 0;
-  let concededPenalty = 0; // raw -DEF points: 6 for GK fault, 0 for unstoppable, 3 for neutral/unknown
+  let concededPenalty = 0;
   for (const e of (game.events || [])) {
     if (e.type !== 'OPP_GOAL') continue;
-    if (intervals.some(([s, en]) => e.at >= s && e.at <= en)) {
+    if (gkTimeline.some(seg => e.at >= seg.from && e.at <= seg.to)) {
       conceded++;
       if (e.gkFault === 'gk') concededPenalty += 6;
       else if (e.gkFault === 'unstoppable') concededPenalty += 0;
       else concededPenalty += 3;
     }
   }
-  const secondsOnField = intervals.reduce((sum, [s, en]) => sum + Math.max(0, (en - s) / 1000), 0);
-  const cleanSheets = (conceded === 0 && secondsOnField >= 60 && game.status === 'finished') ? 1 : 0;
-  return { oppGoalsConceded: conceded, concededPenalty, cleanSheets, secondsOnField };
+  const secondsAsGK = gkTimeline.reduce((sum, seg) => sum + Math.max(0, (seg.to - seg.from) / 1000), 0);
+  const cleanSheets = (conceded === 0 && secondsAsGK >= 60 && game.status === 'finished') ? 1 : 0;
+  return { oppGoalsConceded: conceded, concededPenalty, cleanSheets, secondsAsGK };
 }
 
 // ===== PERFORMANCE SCORE =====
@@ -431,7 +459,7 @@ function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId) => {
     const now = Date.now();
     const game = {
       id: uid(),
@@ -449,6 +477,8 @@ function App() {
       segmentStartedAt: now,
       events: [],
       startingLineup: startingLineup || [],
+      gkPlayerId: gkPlayerId || null,
+      gkChanges: [],
       pausePeriods: [],
     };
     persistGames([game, ...games]);
@@ -610,6 +640,7 @@ function App() {
   const logSubEvent = (gameId, offPlayerId, onPlayerId) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
+    const subAt = Date.now();
     const elapsed = computeElapsed(game);
     const event = {
       id: uid(),
@@ -618,13 +649,30 @@ function App() {
       subOnPlayerId: onPlayerId,
       period: game.period,
       elapsed,
-      at: Date.now(),
+      at: subAt,
     };
     const updated = { ...game, events: [...game.events, event] };
     persistGames(games.map(g => g.id === gameId ? updated : g));
     const off = roster.find(p => p.id === offPlayerId);
     const on = roster.find(p => p.id === onPlayerId);
     showToast(`🔄 ${on?.name || '?'} IN · ${off?.name || '?'} OUT`);
+    // If the player going off was the current GK, immediately prompt for the new keeper.
+    const wasGK = currentGKAt(updated, subAt - 1) === offPlayerId;
+    if (wasGK) {
+      setPendingEvent({ type: 'NEW_GK', defaultGK: onPlayerId, at: subAt });
+    } else {
+      setPendingEvent(null);
+    }
+  };
+
+  const setGameGK = (gameId, newGKPlayerId, atTs) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const change = { at: atTs || Date.now(), gkPlayerId: newGKPlayerId || null };
+    const updated = { ...game, gkChanges: [...(game.gkChanges || []), change] };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+    const p = roster.find(pl => pl.id === newGKPlayerId);
+    showToast(`🧤 ${p?.name || 'No GK'} now in goal`);
     setPendingEvent(null);
   };
 
@@ -705,8 +753,8 @@ function App() {
           roster={roster}
           setup={pendingGameSetup}
           onBack={() => { setView('gameSetup'); }}
-          onStart={(lineup) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup);
+          onStart={(lineup, gkPlayerId) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId);
             setPendingGameSetup(null);
           }}
         />
@@ -737,6 +785,8 @@ function App() {
             // fault: 'gk' | 'unstoppable' | null (neutral / unsure)
             logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: fault });
           }}
+          onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
+          onSwapGK={() => setPendingEvent({ type: 'NEW_GK', defaultGK: currentGKAt(activeGame) })}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
               setPendingEvent({ type: 'SUB', step: 'ON', offPlayerId: playerId });
@@ -1170,23 +1220,47 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
 function StartingLineupView({ roster, setup, onBack, onStart }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
   const [selected, setSelected] = useState(() => new Set(sorted.map(p => p.id)));
+  // Default the match GK to the first player with position='GK' if any.
+  const [gkId, setGkId] = useState(() => {
+    const defaultGK = sorted.find(p => p.position === 'GK');
+    return defaultGK ? defaultGK.id : null;
+  });
 
   const toggle = (id) => {
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+      // If we unselect the chosen GK, clear the tag too.
+      if (gkId === id) setGkId(null);
+    } else {
+      next.add(id);
+    }
     setSelected(next);
   };
 
+  const pickGK = (id, e) => {
+    e.stopPropagation();
+    // Picking GK auto-puts them on field.
+    if (!selected.has(id)) {
+      const next = new Set(selected);
+      next.add(id);
+      setSelected(next);
+    }
+    setGkId(gkId === id ? null : id);
+  };
+
   const selectAll = () => setSelected(new Set(sorted.map(p => p.id)));
-  const clearAll = () => setSelected(new Set());
+  const clearAll = () => { setSelected(new Set()); setGkId(null); };
+
+  const gkPlayer = sorted.find(p => p.id === gkId);
 
   return (
-    <div className="pb-32">
+    <div className="pb-40">
       <Header title="STARTING LINEUP" onBack={onBack} />
 
       <div className="px-4 pt-4">
         <div className="text-xs text-stone-500 mb-1">vs {setup.opponent} · {setup.isHome ? 'Home' : 'Away'}</div>
-        <div className="text-sm text-stone-700 mb-4">Tap to select players starting on the field. The rest go to the bench.</div>
+        <div className="text-sm text-stone-700 mb-3">Tap a player to put them on the field. Tap the <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">🧤 GK</span> button on the right to assign the goalie.</div>
 
         <div className="flex gap-2 mb-4">
           <button onClick={selectAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL ON</button>
@@ -1196,57 +1270,86 @@ function StartingLineupView({ roster, setup, onBack, onStart }) {
         <div className="space-y-1.5">
           {sorted.map(p => {
             const on = selected.has(p.id);
-            const isGK = p.position === 'GK';
+            const isGK = gkId === p.id;
+            const isDefaultGK = p.position === 'GK';
             return (
-              <button
+              <div
                 key={p.id}
-                onClick={() => toggle(p.id)}
-                className={`relative w-full flex items-center gap-3 p-2.5 rounded-xl border-2 transition active:scale-[0.98] ${
+                className={`relative w-full flex items-stretch rounded-xl border-2 transition ${
                   on
                     ? (isGK ? 'bg-amber-50 border-amber-400' : 'bg-lime-50 border-lime-400')
-                    : (isGK ? 'bg-amber-50/50 border-amber-200 opacity-60' : 'bg-white border-stone-200 opacity-60')
+                    : (isDefaultGK ? 'bg-amber-50/50 border-amber-200 opacity-60' : 'bg-white border-stone-200 opacity-60')
                 }`}
               >
                 {isGK && (
-                  <div className="absolute -top-2 -left-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5">
+                  <div className="absolute -top-2 -left-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5 z-10">
                     <span>🧤</span><span>GK</span>
                   </div>
                 )}
-                <div className={`w-11 h-11 rounded-lg flex items-center justify-center font-display text-xl tabular-nums ${
-                  on
-                    ? (isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400')
-                    : 'bg-stone-200 text-stone-500'
-                }`}>
-                  {p.number || '—'}
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-bold text-sm">{p.name}</div>
-                  <div className={`text-[10px] font-bold tracking-wider ${
-                    on ? (isGK ? 'text-amber-700' : 'text-lime-700') : 'text-stone-400'
+                <button
+                  onClick={() => toggle(p.id)}
+                  className="flex-1 flex items-center gap-3 p-2.5 text-left active:scale-[0.98] transition"
+                >
+                  <div className={`w-11 h-11 rounded-lg flex items-center justify-center font-display text-xl tabular-nums ${
+                    on
+                      ? (isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400')
+                      : 'bg-stone-200 text-stone-500'
                   }`}>
-                    {on ? 'ON FIELD' : 'BENCH'}
+                    {p.number || '—'}
                   </div>
-                </div>
-                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                  on
-                    ? (isGK ? 'bg-amber-500 border-amber-600' : 'bg-lime-500 border-lime-600')
-                    : 'bg-white border-stone-300'
-                }`}>
-                  {on && <span className="text-white text-sm font-bold">✓</span>}
-                </div>
-              </button>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">{p.name}</div>
+                    <div className={`text-[10px] font-bold tracking-wider ${
+                      on ? (isGK ? 'text-amber-700' : 'text-lime-700') : 'text-stone-400'
+                    }`}>
+                      {on ? (isGK ? 'IN GOAL' : 'ON FIELD') : 'BENCH'}{isDefaultGK && !isGK ? ' · default GK' : ''}
+                    </div>
+                  </div>
+                  <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                    on
+                      ? (isGK ? 'bg-amber-500 border-amber-600' : 'bg-lime-500 border-lime-600')
+                      : 'bg-white border-stone-300'
+                  }`}>
+                    {on && <span className="text-white text-sm font-bold">✓</span>}
+                  </div>
+                </button>
+                <button
+                  onClick={(e) => pickGK(p.id, e)}
+                  className={`shrink-0 w-12 flex flex-col items-center justify-center text-[10px] font-extrabold tracking-wider border-l-2 active:scale-[0.95] transition ${
+                    isGK
+                      ? 'bg-amber-400 text-stone-900 border-amber-500'
+                      : 'bg-white text-stone-400 border-stone-200 hover:text-amber-600'
+                  }`}
+                  aria-label={isGK ? 'Remove GK tag' : 'Set as GK'}
+                >
+                  <span className="text-lg leading-none">🧤</span>
+                  <span className="mt-0.5 leading-none">GK</span>
+                </button>
+              </div>
             );
           })}
         </div>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 p-4 shadow-xl">
-        <div className="text-center text-sm text-stone-600 mb-2">
+        <div className="text-center text-sm text-stone-600 mb-1">
           <span className="font-bold text-lime-700">{selected.size}</span> on field · <span className="font-bold text-stone-500">{sorted.length - selected.size}</span> on bench
         </div>
+        <div className="text-center text-xs mb-2">
+          {gkPlayer ? (
+            <span className="text-amber-700 font-bold">🧤 GK: {gkPlayer.name} #{gkPlayer.number}</span>
+          ) : (
+            <span className="text-red-600 font-bold">⚠ No goalie selected — tap the GK button on a player.</span>
+          )}
+        </div>
         <button
-          onClick={() => onStart(Array.from(selected))}
-          className="w-full bg-lime-500 text-stone-900 font-display text-2xl py-4 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition"
+          onClick={() => onStart(Array.from(selected), gkId)}
+          disabled={!gkId}
+          className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
+            gkId
+              ? 'bg-lime-500 text-stone-900 shadow-lime-500/30 border-lime-600'
+              : 'bg-stone-200 text-stone-400 border-stone-300 cursor-not-allowed'
+          }`}
         >
           ▶ START GAME
         </button>
@@ -1256,10 +1359,11 @@ function StartingLineupView({ roster, setup, onBack, onStart }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
   const playersSorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+  const gameGKId = currentGKAt(game);
 
   const [quickMode, setQuickMode] = useState(() => {
     try { return localStorage.getItem('stompers_quick_mode') === 'true'; } catch(e) { return false; }
@@ -1325,6 +1429,23 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           <div className={`${statusColor} flex-1 rounded-full py-2.5 text-center font-display text-base tracking-widest shadow`}>
             {statusLabel}
           </div>
+          {(() => {
+            const gk = roster.find(p => p.id === gameGKId);
+            return (
+              <button
+                onClick={onSwapGK}
+                className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${
+                  gk
+                    ? 'bg-amber-400 text-stone-900 border-amber-500 shadow'
+                    : 'bg-red-100 text-red-700 border-red-300 animate-pulse'
+                }`}
+                title="Tap to swap goalie"
+              >
+                <span>🧤</span>
+                <span className="truncate max-w-[80px]">{gk ? `#${gk.number || '?'} ${gk.name.split(' ')[0]}` : 'NO GK'}</span>
+              </button>
+            );
+          })()}
           {!inHalfTimeBreak && (
             <button
               onClick={toggleQuickMode}
@@ -1342,9 +1463,74 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       )}
 
       <div className="flex-1 flex flex-col px-4 pt-4">
-        {pendingEvent?.type === 'OPP_GOAL_FAULT' ? (() => {
+        {pendingEvent?.type === 'NEW_GK' ? (() => {
           const onField = onFieldAt(game);
-          const gkOnField = playersSorted.filter(p => p.position === 'GK' && onField.has(p.id));
+          const candidates = playersSorted.filter(p => onField.has(p.id));
+          const currentGKPlayer = roster.find(p => p.id === gameGKId);
+          return (
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <div>
+                  <div className="text-xs text-stone-500 font-bold tracking-widest">NEW GOALIE</div>
+                  <div className="font-display text-3xl flex items-center gap-2">
+                    <span>🧤</span>
+                    <span>WHO'S IN GOAL?</span>
+                  </div>
+                </div>
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              {currentGKPlayer && (
+                <div className="mb-3 bg-stone-100 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-600">
+                  Current GK: <span className="font-bold text-stone-800">{currentGKPlayer.name} #{currentGKPlayer.number}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2.5 pb-6 overflow-y-auto">
+                {candidates.length === 0 && (
+                  <div className="col-span-2 bg-white border border-stone-200 rounded-xl p-6 text-center text-stone-500 text-sm">
+                    No players on the field.
+                  </div>
+                )}
+                {candidates.map(p => {
+                  const isDefault = p.id === pendingEvent.defaultGK;
+                  const isCurrent = p.id === gameGKId;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => onConfirmGK(p.id)}
+                      className={`relative rounded-xl p-3 flex items-center gap-3 active:scale-[0.97] transition text-left border-2 ${
+                        isDefault ? 'bg-amber-100 border-amber-500' : 'bg-white border-stone-200 hover:border-amber-400'
+                      }`}
+                    >
+                      {isCurrent && (
+                        <div className="absolute -top-2 -right-2 bg-stone-700 text-white text-[9px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full shadow-sm">CURRENT</div>
+                      )}
+                      <div className="w-12 h-12 rounded-lg bg-amber-500 text-stone-900 flex items-center justify-center font-display text-2xl tabular-nums shrink-0">
+                        {p.number || '—'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-sm truncate">{p.name}</div>
+                        <div className="text-[10px] text-amber-700 font-bold tracking-wider">
+                          {isDefault ? 'SUGGESTED' : (p.position === 'GK' ? 'DEFAULT GK' : (p.position || 'OUTFIELD'))}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => onConfirmGK(null)}
+                className="mt-1 w-full bg-white text-stone-600 border border-stone-300 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+              >
+                NO GOALIE (empty net)
+              </button>
+            </div>
+          );
+        })() : pendingEvent?.type === 'OPP_GOAL_FAULT' ? (() => {
+          const onField = onFieldAt(game);
+          const gkPlayer = roster.find(p => p.id === gameGKId);
+          const gkOnField = gkPlayer && onField.has(gkPlayer.id) ? [gkPlayer] : [];
           return (
             <div className="flex flex-col h-full min-h-0">
               <div className="flex items-center justify-between mb-4 shrink-0">
@@ -1371,7 +1557,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               )}
               {gkOnField.length === 0 && (
                 <div className="mb-3 bg-stone-100 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-600">
-                  No GK-tagged player on the field. Pick a tag anyway — it'll be saved for record.
+                  No goalie set for this match. Pick a tag anyway — it'll be saved for record.
                 </div>
               )}
 
@@ -1402,8 +1588,8 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           let pickerEvent, pickerPlayers, pickerSkippable, pickerOnUnknown;
           // GK floats to top so the keeper is instantly visible
           const gkFirst = (a, b) => {
-            const ag = a.position === 'GK' ? 0 : 1;
-            const bg = b.position === 'GK' ? 0 : 1;
+            const ag = a.id === gameGKId ? 0 : 1;
+            const bg = b.id === gameGKId ? 0 : 1;
             if (ag !== bg) return ag - bg;
             return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
           };
@@ -1431,6 +1617,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <PlayerPicker
               event={pickerEvent}
               players={pickerPlayers}
+              gameGKId={gameGKId}
               skippable={pickerSkippable}
               onPick={onSelectPlayer}
               onSkip={onCancelEvent}
@@ -1540,13 +1727,22 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </>
             )}
 
-            <button
-              onClick={() => onSelectEvent('SUB')}
-              className={`mt-2.5 w-full ${TONE_CLASSES['purple']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-3 active:scale-[0.97] transition`}
-            >
-              <span className="text-2xl">🔄</span>
-              <span className="font-sans-pro font-extrabold tracking-tight text-lg leading-none">SUBSTITUTION</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2 mt-2.5">
+              <button
+                onClick={() => onSelectEvent('SUB')}
+                className={`${TONE_CLASSES['purple']} border-2 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
+              >
+                <span className="text-2xl">🔄</span>
+                <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SUBSTITUTION</span>
+              </button>
+              <button
+                onClick={onSwapGK}
+                className="bg-amber-100 text-amber-900 border-2 border-amber-400 rounded-2xl py-3.5 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+              >
+                <span className="text-2xl">🧤</span>
+                <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SWAP GK</span>
+              </button>
+            </div>
 
             {inFirstHalf ? (
               <button
@@ -1592,7 +1788,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   );
 }
 
-function PlayerPicker({ event, players, skippable, onPick, onSkip, onUnknown, onCancel, emptyMessage }) {
+function PlayerPicker({ event, players, gameGKId, skippable, onPick, onSkip, onUnknown, onCancel, emptyMessage }) {
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center justify-between mb-4 shrink-0">
@@ -1634,7 +1830,9 @@ function PlayerPicker({ event, players, skippable, onPick, onSkip, onUnknown, on
           </div>
         )}
         {players.map(p => {
-          const isGK = p.position === 'GK';
+          // In-game: highlight the actual match GK. Outside a game (no gameGKId),
+          // fall back to the player's roster position.
+          const isGK = gameGKId ? (p.id === gameGKId) : (p.position === 'GK');
           return (
             <button
               key={p.id}
@@ -1791,8 +1989,11 @@ function GameDetail({ game, roster, onBack, onDelete, onDeleteEvent }) {
             {Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
-                const pos = roster.find(p => p.id === pid)?.position;
-                const gkExtras = pos === 'GK' ? gkExtrasForGame(pid, game) : undefined;
+                const player = roster.find(p => p.id === pid);
+                // Treat as GK for scoring if they served any GK time in this game.
+                const wasGKThisGame = (game.gkPlayerId === pid) || (game.gkChanges || []).some(c => c.gkPlayerId === pid);
+                const pos = wasGKThisGame ? 'GK' : player?.position;
+                const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
                 const score = computePerformanceScore(pid, events, min, pos, gkExtras);
                 return { pid, stats, min, score, pos, gkExtras };
               })
@@ -1897,16 +2098,22 @@ function StatsView({ roster, games, onBack }) {
           if (e.playerId === p.id && e.type !== 'SUB') allEvents.push(e);
         }
       }
+      // GK = roster position OR any game where they served as GK.
+      let wasGKAnyGame = p.position === 'GK';
       let gkExtras;
-      if (p.position === 'GK') {
-        gkExtras = { oppGoalsConceded: 0, cleanSheets: 0 };
-        for (const g of finished) {
+      gkExtras = { oppGoalsConceded: 0, concededPenalty: 0, cleanSheets: 0 };
+      for (const g of finished) {
+        const servedAsGK = (g.gkPlayerId === p.id) || (g.gkChanges || []).some(c => c.gkPlayerId === p.id);
+        if (servedAsGK) wasGKAnyGame = true;
+        if (servedAsGK) {
           const gx = gkExtrasForGame(p.id, g);
           gkExtras.oppGoalsConceded += gx.oppGoalsConceded;
+          gkExtras.concededPenalty += gx.concededPenalty;
           gkExtras.cleanSheets += gx.cleanSheets;
         }
       }
-      map[p.id] = computePerformanceScore(p.id, allEvents, min, p.position, gkExtras);
+      const seasonPos = wasGKAnyGame ? 'GK' : p.position;
+      map[p.id] = computePerformanceScore(p.id, allEvents, min, seasonPos, wasGKAnyGame ? gkExtras : undefined);
     }
     return map;
   }, [roster, finished, stats]);
@@ -2117,6 +2324,10 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
+
+
 
 
 
