@@ -3556,14 +3556,26 @@ function PublicHomePage() {
   const past = active ? finished : finished.slice(1);
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-12">
+    <div className="min-h-screen bg-stone-50 pb-12 relative">
       <style>{FONT_STYLES}</style>
+      <a
+        href="./?coach"
+        className="absolute top-3 right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20"
+      >
+        🔑 COACH
+      </a>
       {featured ? (
         <LiveScoreboard game={featured} roster={roster} />
       ) : (
         <div className="stripes-bg text-white px-4 pt-14 pb-12 text-center">
+          <img
+            src="./stompers_logo.png"
+            alt="LaSalle Stompers"
+            className="w-24 h-24 mx-auto mb-4 drop-shadow-lg"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
           <div className="font-display text-4xl text-lime-400">LASALLE STOMPERS</div>
-          <div className="text-white/60 text-sm font-bold tracking-widest mt-1">U10 · 2016 SQUAD</div>
+          <div className="text-white/60 text-sm font-bold tracking-widest mt-1">U10 BOYS · 2016 SQUAD</div>
           <div className="mt-10 inline-block bg-white/10 rounded-2xl px-6 py-5">
             <div className="font-display text-2xl">No live match right now</div>
             <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
@@ -3774,6 +3786,10 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
 
 
 

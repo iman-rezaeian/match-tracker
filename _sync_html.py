@@ -14,9 +14,17 @@ contents, adapted as follows:
 """
 from __future__ import annotations
 import re
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
+
+# CLI flags: --preview (draft deploy) or --prod (promote to production).
+DEPLOY_MODE = None
+if "--prod" in sys.argv:
+    DEPLOY_MODE = "prod"
+elif "--preview" in sys.argv:
+    DEPLOY_MODE = "preview"
 JSX = HERE / "soccer_team_app.jsx"
 HTML = HERE / "soccer_team_app_standalone_backup.html"
 
@@ -290,3 +298,24 @@ if inlined:
 if copied_pwa:
     print(f"  PWA shell: {', '.join(copied_pwa)}")
 print("Drag the FOLDER (not just index.html) onto Netlify Drop so PWA install works.")
+
+# Optional: invoke Netlify CLI for one-step deploys.
+#   python3 _sync_html.py --preview   → draft URL, production untouched
+#   python3 _sync_html.py --prod      → promote to lasalle-stompers.netlify.app
+if DEPLOY_MODE:
+    import subprocess
+    cmd = ["netlify", "deploy", "--dir", str(DEPLOY_DIR)]
+    if DEPLOY_MODE == "prod":
+        cmd.append("--prod")
+        print(f"\n>>> Deploying to PRODUCTION: {' '.join(cmd)}")
+    else:
+        print(f"\n>>> Deploying DRAFT preview: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, cwd=DEPLOY_DIR, check=True)
+    except FileNotFoundError:
+        print("ERROR: netlify CLI not found. Install with: brew install netlify-cli")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: netlify deploy failed (exit {e.returncode})")
+        sys.exit(e.returncode)
+
