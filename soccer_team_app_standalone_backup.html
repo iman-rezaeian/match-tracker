@@ -3021,24 +3021,13 @@ function HelpView({ onBack }) {
             and season totals.
           </p>
           <p>The basic flow is always the same:</p>
-          <Step n={1}>Build your <strong>roster</strong> (once).</Step>
-          <Step n={2}>Tap <Pill tone="lime">START GAME</Pill> → opponent → squad → starting 7.</Step>
-          <Step n={3}>During play, tap actions as they happen.</Step>
-          <Step n={4}>End the game → scores save → review in <Pill>STATS</Pill> &amp; past games.</Step>
+          <Step n={1}>Tap <Pill tone="lime">START GAME</Pill> → opponent → squad → starting 7.</Step>
+          <Step n={2}>During play, tap actions as they happen.</Step>
+          <Step n={3}>End the game → scores save → review in <Pill>STATS</Pill> &amp; past games.</Step>
           <p className="text-xs text-stone-500">All data syncs to the cloud, so other coaches with the link see the same roster and live games.</p>
         </Section>
 
-        <Section id="roster" emoji="👥" title="1 · Building your roster" summary="Add players, photos, positions">
-          <p>From Home tap <Pill>ROSTER</Pill>. Use <Pill tone="lime">+ ADD PLAYER</Pill> for each kid.</p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li><strong>Number &amp; name</strong> are required. Position is optional (GK / DEF / MID / FWD) — used to label players in the picker.</li>
-            <li><strong>Photo</strong> (optional): take/upload one per player from the edit form. Photos make the live picker much faster to scan.</li>
-            <li><strong>Bulk photo import</strong>: in Roster tap the bulk-photo button and pick a whole folder. Files named with the jersey number (e.g. <code>10.jpg</code>, <code>#10.png</code>, <code>10-luca.heic</code>) auto-match.</li>
-          </ul>
-          <p className="text-xs text-stone-500">The roster is shared across all games. You only need to do this once a season.</p>
-        </Section>
-
-        <Section id="start" emoji="🚀" title="2 · Starting a match" summary="Opponent → squad → lineup → GK">
+        <Section id="start" emoji="🚀" title="1 · Starting a match" summary="Opponent → squad → lineup → GK">
           <p>From Home tap <Pill tone="lime">START GAME</Pill> and walk through the wizard:</p>
           <Step n={1}><strong>Game setup</strong>: opponent name, Home/Away, tournament/festival label.</Step>
           <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. For 7v7 leagues that cap rosters at 12, you'll see a soft warning over 12 — but no hard limit.</Step>
@@ -3047,7 +3036,7 @@ function HelpView({ onBack }) {
           <p className="text-xs text-stone-500">If you mis-pick the squad, tap <ChevronLeft className="inline w-3 h-3" /> to go back at any step — nothing is saved until kick-off.</p>
         </Section>
 
-        <Section id="clock" emoji="⏱" title="3 · The clock & periods" summary="First half, half time, second half">
+        <Section id="clock" emoji="⏱" title="2 · The clock & periods" summary="First half, half time, second half">
           <p>The clock starts as soon as the lineup is confirmed. It runs as <strong>1st half → half-time pause → 2nd half</strong>.</p>
           <ul className="list-disc pl-5 space-y-1">
             <li>Tap <Pill tone="amber">PAUSE FOR HALF TIME</Pill> when the ref blows for halftime — minutes stop counting.</li>
@@ -3057,7 +3046,7 @@ function HelpView({ onBack }) {
           </ul>
         </Section>
 
-        <Section id="actions" emoji="🎯" title="4 · Logging actions (EARN / LOSE)" summary="Tap event → tap player">
+        <Section id="actions" emoji="🎯" title="3 · Logging actions (EARN / LOSE)" summary="Tap event → tap player">
           <p>The action grid is split into two zones so the value of each tap is obvious:</p>
           <div className="bg-lime-50 border-2 border-lime-300 rounded-xl p-3">
             <div className="font-display text-sm text-lime-800 mb-1">EARN <span className="text-lime-700">+</span></div>
@@ -3075,7 +3064,7 @@ function HelpView({ onBack }) {
           <p className="text-xs text-stone-500">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
         </Section>
 
-        <Section id="subs" emoji="🔄" title="5 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
+        <Section id="subs" emoji="🔄" title="4 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
           <p>Tap <Pill tone="purple">SUBSTITUTION</Pill> then:</p>
           <Step n={1}><strong>Who's OFF?</strong> Picker shows only players on the field.</Step>
           <Step n={2}><strong>Who's ON?</strong> Picker shows only bench players (with minutes played so far so you can spread time fairly).</Step>
@@ -3084,12 +3073,12 @@ function HelpView({ onBack }) {
           <p className="text-xs text-stone-500">The system rejects impossible subs — you can't take the same player off twice, and you can't sub someone in who's already on the field.</p>
         </Section>
 
-        <Section id="minutes" emoji="⏲" title="6 · Tracking minutes played" summary="Make sure no one sits all game">
+        <Section id="minutes" emoji="⏲" title="5 · Tracking minutes played" summary="Make sure no one sits all game">
           <p>Tap <Pill>⏱ MINUTES</Pill> on the action screen at any time to see live minutes for every squad player, sorted highest → lowest. Use it before each sub so you can keep playing time balanced.</p>
           <p>The substitution ON picker also shows each bench player's current minutes, so you can sub on whoever needs the time.</p>
         </Section>
 
-        <Section id="scoring" emoji="📊" title="7 · How scores are calculated" summary="Four pillars · normalized per 20 min">
+        <Section id="scoring" emoji="📊" title="6 · How scores are calculated" summary="Four pillars · normalized per 20 min">
           <p>Every player gets an <strong>overall score</strong> built from four pillars:</p>
           <ul className="list-disc pl-5 space-y-1">
             <li><Pill tone="lime">ATK</Pill> Attacking — goals, assists, key passes, shots.</li>
@@ -3101,7 +3090,7 @@ function HelpView({ onBack }) {
           <p>Outfield players use a balanced blend; goalkeepers use a defence-heavy blend (DEF counts ~55%, ATK only ~10%).</p>
         </Section>
 
-        <Section id="weights" emoji="⚙" title="8 · Tuning scoring weights" summary="Adjust how much each action is worth">
+        <Section id="weights" emoji="⚙" title="7 · Tuning scoring weights" summary="Adjust how much each action is worth">
           <p>From Home tap <Pill>⚙ SCORING</Pill>. Three tabs:</p>
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>OUTFIELD</strong> — points per action for non-keepers.</li>
@@ -3111,13 +3100,13 @@ function HelpView({ onBack }) {
           <p>Negative numbers (red boxes) penalize the score. Tap <Pill>RESET</Pill> in the top-right to restore defaults. All past games re-score live with the new weights — nothing is baked in.</p>
         </Section>
 
-        <Section id="history" emoji="📜" title="9 · Past games & season stats" summary="Where to find recorded matches">
+        <Section id="history" emoji="📜" title="8 · Past games & season stats" summary="Where to find recorded matches">
           <p><strong>PAST GAMES</strong> list on Home shows every finished match with the result. Tap any game to see the timeline of every event, per-player scores, and minutes.</p>
           <p>Tap <Pill>STATS</Pill> for season-aggregate per-player numbers — total minutes, goals, season performance score, etc.</p>
           <p>To delete a game tap into it and use the trash button (top-right). To remove a single mis-logged event, tap the trash next to it in the event list.</p>
         </Section>
 
-        <Section id="tips" emoji="💡" title="10 · Tips for coaches" summary="Get the most out of the app">
+        <Section id="tips" emoji="💡" title="9 · Tips for coaches" summary="Get the most out of the app">
           <ul className="list-disc pl-5 space-y-1.5">
             <li><strong>Pre-load your squad</strong> at the field before warm-ups. It only takes a minute and you won't have to fiddle once the whistle blows.</li>
             <li><strong>One person, one phone.</strong> Don't have two coaches both logging on different devices — duplicates will appear.</li>
@@ -3128,7 +3117,7 @@ function HelpView({ onBack }) {
           </ul>
         </Section>
 
-        <Section id="data" emoji="☁" title="11 · Where data lives" summary="Cloud + offline behavior">
+        <Section id="data" emoji="☁" title="10 · Where data lives" summary="Cloud + offline behavior">
           <p>The deployed web app stores everything in Firebase (a Google cloud database). Anyone with the URL is editing the <em>same</em> shared team data, in real time.</p>
           <p>If your phone goes offline mid-game, you can keep logging — entries queue and sync when you reconnect. Just don't close the tab before the sync completes.</p>
         </Section>
@@ -3152,6 +3141,8 @@ function Header({ title, onBack, right }) {
     </div>
   );
 }
+
+
 
 
 

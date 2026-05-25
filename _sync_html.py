@@ -213,25 +213,45 @@ if new_html == html_src:
 HTML.write_text(new_html)
 print(f"Wrote {HTML} ({len(new_html.splitlines())} lines)")
 
-# Also build a Netlify-Drop-ready folder: index.html + any static assets that
-# the HTML references via "./" (so a single drag-and-drop deploys everything).
+# Also build a Netlify-Drop-ready folder: a SINGLE index.html with every static
+# asset inlined as a base64 data URI. One-file deploys = no separate asset
+# uploads on Netlify Drop (saves bandwidth / build minutes when only the HTML
+# actually changed).
 import shutil
+import base64
+import mimetypes
 
 DEPLOY_DIR = Path.home() / "Desktop" / "stompers_deploy"
 DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 
-# Always copy the HTML as index.html so Netlify serves it at the site root.
-shutil.copyfile(HTML, DEPLOY_DIR / "index.html")
-
-# Copy every static asset the HTML references with a "./" path
-# (e.g. ./stompers_logo.png). Skips anything not present in HERE.
+# Inline every "./asset" reference in src=/href= as base64. Files that don't
+# exist locally are left untouched (so external URLs still work).
 asset_refs = set(re.findall(r'(?:src|href)="\./([^"?#]+)"', new_html))
-copied = []
+deploy_html = new_html
+inlined = []
 for name in sorted(asset_refs):
     src = HERE / name
-    if src.is_file():
-        shutil.copyfile(src, DEPLOY_DIR / name)
-        copied.append(name)
+    if not src.is_file():
+        continue
+    mime, _ = mimetypes.guess_type(str(src))
+    if not mime:
+        mime = "application/octet-stream"
+    b64 = base64.b64encode(src.read_bytes()).decode("ascii")
+    data_uri = f"data:{mime};base64,{b64}"
+    deploy_html = deploy_html.replace(f'"./{name}"', f'"{data_uri}"')
+    inlined.append(f"{name} ({len(b64)//1024} KB b64)")
 
-print(f"Built {DEPLOY_DIR} (index.html + {len(copied)} asset(s): {', '.join(copied) or 'none'})")
-print("Drag that folder onto Netlify Drop to deploy.")
+# Also remove any leftover assets from previous (non-inlined) deploys.
+for stale in DEPLOY_DIR.iterdir():
+    if stale.name != "index.html":
+        if stale.is_file():
+            stale.unlink()
+        else:
+            shutil.rmtree(stale)
+
+(DEPLOY_DIR / "index.html").write_text(deploy_html)
+
+print(f"Built {DEPLOY_DIR} (single index.html, {len(deploy_html)//1024} KB)")
+if inlined:
+    print(f"  Inlined: {', '.join(inlined)}")
+print("Drag that folder (or just index.html) onto Netlify Drop to deploy.")
