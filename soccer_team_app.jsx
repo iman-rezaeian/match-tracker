@@ -692,6 +692,7 @@ export default function App() {
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
           onViewStats={() => setView('stats')}
           onViewWeights={() => setView('weights')}
+          onViewHelp={() => setView('help')}
         />
       )}
 
@@ -858,6 +859,10 @@ export default function App() {
         <WeightsView weights={weights} onSave={persistWeights} onBack={() => setView('home')} />
       )}
 
+      {view === 'help' && (
+        <HelpView onBack={() => setView('home')} />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -909,15 +914,29 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGame, onViewGame, onViewStats, onViewWeights }) {
+function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewHelp }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
   const draws = finishedGames.filter(g => g.ourScore === g.oppScore).length;
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try { return localStorage.getItem('stompers_welcome_dismissed') !== 'true'; } catch(e) { return true; }
+  });
+  const dismissWelcome = () => {
+    try { localStorage.setItem('stompers_welcome_dismissed', 'true'); } catch(e) {}
+    setShowWelcome(false);
+  };
 
   return (
     <div className="pb-24">
-      <div className="stripes-bg text-white px-5 pt-12 pb-8">
+      <div className="stripes-bg text-white px-5 pt-12 pb-8 relative">
+        <button
+          onClick={onViewHelp}
+          aria-label="Help & onboarding"
+          className="absolute top-12 right-4 w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-lg flex items-center justify-center border border-white/20 active:scale-95"
+        >
+          ?
+        </button>
         <div className="flex items-start gap-3">
           <img
             src="./stompers_logo.png"
@@ -958,6 +977,29 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
           </div>
           <ChevronRight className="w-5 h-5" />
         </button>
+      )}
+
+      {showWelcome && !activeGame && (
+        <div className="mx-4 -mt-4 bg-white border-2 border-stone-900 rounded-2xl p-4 shadow-md relative">
+          <button
+            onClick={dismissWelcome}
+            aria-label="Dismiss welcome"
+            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center"
+          >
+            <X className="w-4 h-4" />
+          </button>
+          <div className="text-2xl mb-1">👋</div>
+          <div className="font-display text-xl leading-tight mb-1">NEW HERE?</div>
+          <div className="text-sm text-stone-600 mb-3">
+            Track your match-day roster, log live events, and get per-player performance scores. Take the quick tour first.
+          </div>
+          <button
+            onClick={onViewHelp}
+            className="w-full bg-stone-900 text-lime-400 font-display text-lg py-3 rounded-xl active:scale-[0.98] transition"
+          >
+            OPEN HELP
+          </button>
+        </div>
       )}
 
       <div className="px-4 pt-6">
@@ -2823,6 +2865,191 @@ function WeightsView({ weights, onSave, onBack }) {
         >
           SAVE
         </button>
+      </div>
+    </div>
+  );
+}
+
+function HelpView({ onBack }) {
+  const [openId, setOpenId] = useState('welcome');
+  const toggle = (id) => setOpenId(prev => prev === id ? null : id);
+
+  const Section = ({ id, emoji, title, summary, children }) => {
+    const isOpen = openId === id;
+    return (
+      <div className="bg-white border-2 border-stone-200 rounded-2xl overflow-hidden">
+        <button
+          onClick={() => toggle(id)}
+          className="w-full text-left px-4 py-3 flex items-start gap-3 active:bg-stone-50"
+        >
+          <span className="text-2xl leading-none">{emoji}</span>
+          <div className="flex-1 min-w-0">
+            <div className="font-display text-base leading-tight">{title}</div>
+            {summary && <div className="text-xs text-stone-500 mt-0.5">{summary}</div>}
+          </div>
+          <ChevronRight className={`w-5 h-5 text-stone-400 mt-1 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+        </button>
+        {isOpen && (
+          <div className="px-4 pb-4 pt-1 text-sm text-stone-700 leading-relaxed space-y-2 border-t border-stone-100">
+            {children}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const Pill = ({ children, tone = 'stone' }) => {
+    const tones = {
+      stone: 'bg-stone-100 text-stone-700 border-stone-300',
+      lime:  'bg-lime-100 text-lime-800 border-lime-400',
+      red:   'bg-red-100 text-red-800 border-red-400',
+      amber: 'bg-amber-100 text-amber-900 border-amber-400',
+      sky:   'bg-sky-100 text-sky-800 border-sky-400',
+      purple:'bg-purple-100 text-purple-800 border-purple-400',
+    };
+    return <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold border ${tones[tone]} mx-0.5`}>{children}</span>;
+  };
+
+  const Step = ({ n, children }) => (
+    <div className="flex gap-2">
+      <div className="shrink-0 w-5 h-5 rounded-full bg-stone-900 text-lime-400 text-[11px] font-bold flex items-center justify-center mt-0.5">{n}</div>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="pb-24 bg-stone-50 min-h-screen">
+      <Header title="HELP & GUIDE" onBack={onBack} />
+
+      <div className="px-4 pt-3 space-y-2.5">
+        <Section
+          id="welcome"
+          emoji="👋"
+          title="Welcome"
+          summary="What this app does, in one screen"
+        >
+          <p>
+            This is your <strong>match-day tracker</strong>. Before each game you build a
+            squad of available players, set the starting lineup, then log every meaningful
+            moment as it happens. After the whistle you get per-player ratings, minutes,
+            and season totals.
+          </p>
+          <p>The basic flow is always the same:</p>
+          <Step n={1}>Build your <strong>roster</strong> (once).</Step>
+          <Step n={2}>Tap <Pill tone="lime">START GAME</Pill> → opponent → squad → starting 7.</Step>
+          <Step n={3}>During play, tap actions as they happen.</Step>
+          <Step n={4}>End the game → scores save → review in <Pill>STATS</Pill> &amp; past games.</Step>
+          <p className="text-xs text-stone-500">All data syncs to the cloud, so other coaches with the link see the same roster and live games.</p>
+        </Section>
+
+        <Section id="roster" emoji="👥" title="1 · Building your roster" summary="Add players, photos, positions">
+          <p>From Home tap <Pill>ROSTER</Pill>. Use <Pill tone="lime">+ ADD PLAYER</Pill> for each kid.</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Number &amp; name</strong> are required. Position is optional (GK / DEF / MID / FWD) — used to label players in the picker.</li>
+            <li><strong>Photo</strong> (optional): take/upload one per player from the edit form. Photos make the live picker much faster to scan.</li>
+            <li><strong>Bulk photo import</strong>: in Roster tap the bulk-photo button and pick a whole folder. Files named with the jersey number (e.g. <code>10.jpg</code>, <code>#10.png</code>, <code>10-luca.heic</code>) auto-match.</li>
+          </ul>
+          <p className="text-xs text-stone-500">The roster is shared across all games. You only need to do this once a season.</p>
+        </Section>
+
+        <Section id="start" emoji="🚀" title="2 · Starting a match" summary="Opponent → squad → lineup → GK">
+          <p>From Home tap <Pill tone="lime">START GAME</Pill> and walk through the wizard:</p>
+          <Step n={1}><strong>Game setup</strong>: opponent name, Home/Away, tournament/festival label.</Step>
+          <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. For 7v7 leagues that cap rosters at 12, you'll see a soft warning over 12 — but no hard limit.</Step>
+          <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or however many) who start on the field. Everyone else begins on the bench.</Step>
+          <Step n={4}><strong>Goalkeeper</strong>: tap the player wearing the gloves. You can change keeper at any time during the game.</Step>
+          <p className="text-xs text-stone-500">If you mis-pick the squad, tap <ChevronLeft className="inline w-3 h-3" /> to go back at any step — nothing is saved until kick-off.</p>
+        </Section>
+
+        <Section id="clock" emoji="⏱" title="3 · The clock & periods" summary="First half, half time, second half">
+          <p>The clock starts as soon as the lineup is confirmed. It runs as <strong>1st half → half-time pause → 2nd half</strong>.</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Tap <Pill tone="amber">PAUSE FOR HALF TIME</Pill> when the ref blows for halftime — minutes stop counting.</li>
+            <li>Tap <Pill tone="lime">START 2ND HALF</Pill> at kickoff.</li>
+            <li>If you paused too early, <Pill>RESUME 1ST HALF</Pill> undoes the pause.</li>
+            <li>Tap <Pill tone="red">END GAME</Pill> at the final whistle. The score and all stats lock in.</li>
+          </ul>
+        </Section>
+
+        <Section id="actions" emoji="🎯" title="4 · Logging actions (EARN / LOSE)" summary="Tap event → tap player">
+          <p>The action grid is split into two zones so the value of each tap is obvious:</p>
+          <div className="bg-lime-50 border-2 border-lime-300 rounded-xl p-3">
+            <div className="font-display text-sm text-lime-800 mb-1">EARN <span className="text-lime-700">+</span></div>
+            Good things your players do: <Pill tone="lime">⚽ GOAL</Pill> <Pill tone="lime">🔑 KEY PASS</Pill> <Pill tone="lime">🎯 SHOT ON</Pill> <Pill tone="lime">🧤 SAVE</Pill> <Pill tone="lime">🛡 BLOCK</Pill> <Pill tone="lime">🔥 BALL WIN</Pill> <Pill tone="lime">💪 1V1 WIN</Pill> <Pill tone="lime">🔄 GIVE &amp; GO</Pill> <Pill tone="lime">🚪 GATES</Pill>
+          </div>
+          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
+            <div className="font-display text-sm text-red-800 mb-1">LOSE <span className="text-red-700">−</span></div>
+            Things that hurt the score: <Pill tone="red">🛑 HOLDS BALL</Pill> <Pill tone="red">🔁 TURNOVER</Pill> <Pill tone="red">💢 1V1 LOSE</Pill> <Pill tone="red">🚨 OPP GOAL</Pill>
+          </div>
+          <p>Flow for every action:</p>
+          <Step n={1}>Tap the action button.</Step>
+          <Step n={2}>The picker shows everyone <strong>currently on the field</strong>. Tap the player.</Step>
+          <Step n={3}>For <Pill tone="lime">GOAL</Pill> you're asked if there was an assist — pick the assister, or <em>NO ASSIST</em>.</Step>
+          <Step n={4}>For <Pill tone="red">OPP GOAL</Pill> you'll be asked whose fault it was: <em>GK</em>, <em>UNSTOPPABLE</em>, or <em>NEUTRAL</em>. Affects the keeper's score.</Step>
+          <p className="text-xs text-stone-500">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
+        </Section>
+
+        <Section id="subs" emoji="🔄" title="5 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
+          <p>Tap <Pill tone="purple">SUBSTITUTION</Pill> then:</p>
+          <Step n={1}><strong>Who's OFF?</strong> Picker shows only players on the field.</Step>
+          <Step n={2}><strong>Who's ON?</strong> Picker shows only bench players (with minutes played so far so you can spread time fairly).</Step>
+          <p>If the player coming off is the current keeper, you'll be prompted to pick a new GK immediately.</p>
+          <p>To change the keeper without subbing anyone, tap <Pill tone="amber">SWAP GK</Pill>. You can pick from the entire squad (field <em>or</em> bench).</p>
+          <p className="text-xs text-stone-500">The system rejects impossible subs — you can't take the same player off twice, and you can't sub someone in who's already on the field.</p>
+        </Section>
+
+        <Section id="minutes" emoji="⏲" title="6 · Tracking minutes played" summary="Make sure no one sits all game">
+          <p>Tap <Pill>⏱ MINUTES</Pill> on the action screen at any time to see live minutes for every squad player, sorted highest → lowest. Use it before each sub so you can keep playing time balanced.</p>
+          <p>The substitution ON picker also shows each bench player's current minutes, so you can sub on whoever needs the time.</p>
+        </Section>
+
+        <Section id="scoring" emoji="📊" title="7 · How scores are calculated" summary="Four pillars · normalized per 20 min">
+          <p>Every player gets an <strong>overall score</strong> built from four pillars:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><Pill tone="lime">ATK</Pill> Attacking — goals, assists, key passes, shots.</li>
+            <li><Pill tone="sky">DEF</Pill> Defending — saves, blocks, ball wins, 1v1s, clean sheet (GK).</li>
+            <li><Pill tone="amber">DEC</Pill> Decisions — give &amp; go, gates, holds-ball/turnover penalties.</li>
+            <li><Pill>INV</Pill> Involvement — sheer number of actions per minute on the pitch.</li>
+          </ul>
+          <p>Each pillar is normalized to a "per 20 minutes" rate so a substitute who plays 10 minutes is compared fairly against a starter who plays 40.</p>
+          <p>Outfield players use a balanced blend; goalkeepers use a defence-heavy blend (DEF counts ~55%, ATK only ~10%).</p>
+        </Section>
+
+        <Section id="weights" emoji="⚙" title="8 · Tuning scoring weights" summary="Adjust how much each action is worth">
+          <p>From Home tap <Pill>⚙ SCORING</Pill>. Three tabs:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>OUTFIELD</strong> — points per action for non-keepers.</li>
+            <li><strong>GK</strong> — goalkeeper-specific overrides (saves &amp; key passes are worth more).</li>
+            <li><strong>PILLARS</strong> — how much each pillar contributes to the overall score. Each row should sum to 100% — the header turns red if it doesn't.</li>
+          </ul>
+          <p>Negative numbers (red boxes) penalize the score. Tap <Pill>RESET</Pill> in the top-right to restore defaults. All past games re-score live with the new weights — nothing is baked in.</p>
+        </Section>
+
+        <Section id="history" emoji="📜" title="9 · Past games & season stats" summary="Where to find recorded matches">
+          <p><strong>PAST GAMES</strong> list on Home shows every finished match with the result. Tap any game to see the timeline of every event, per-player scores, and minutes.</p>
+          <p>Tap <Pill>STATS</Pill> for season-aggregate per-player numbers — total minutes, goals, season performance score, etc.</p>
+          <p>To delete a game tap into it and use the trash button (top-right). To remove a single mis-logged event, tap the trash next to it in the event list.</p>
+        </Section>
+
+        <Section id="tips" emoji="💡" title="10 · Tips for coaches" summary="Get the most out of the app">
+          <ul className="list-disc pl-5 space-y-1.5">
+            <li><strong>Pre-load your squad</strong> at the field before warm-ups. It only takes a minute and you won't have to fiddle once the whistle blows.</li>
+            <li><strong>One person, one phone.</strong> Don't have two coaches both logging on different devices — duplicates will appear.</li>
+            <li><strong>Log events generously.</strong> Even rough tallies are useful for season trends. Missed one? No problem — undo is for the most recent only, so just keep going.</li>
+            <li><strong>Use ⏱ MINUTES</strong> early in the 2nd half — it makes sub decisions much faster.</li>
+            <li><strong>Don't stress accuracy.</strong> The pillars normalize across players so even imperfect logging produces useful relative scores.</li>
+            <li><strong>Reset welcome:</strong> If another coach takes over the device, clear <code>stompers_welcome_dismissed</code> in browser storage (or use a fresh browser profile) to show this guide on first launch.</li>
+          </ul>
+        </Section>
+
+        <Section id="data" emoji="☁" title="11 · Where data lives" summary="Cloud + offline behavior">
+          <p>The deployed web app stores everything in Firebase (a Google cloud database). Anyone with the URL is editing the <em>same</em> shared team data, in real time.</p>
+          <p>If your phone goes offline mid-game, you can keep logging — entries queue and sync when you reconnect. Just don't close the tab before the sync completes.</p>
+        </Section>
+
+        <div className="text-center text-xs text-stone-400 pt-2 pb-1">
+          Tap a row to expand · {String.fromCharCode(169)} LaSalle Stompers
+        </div>
       </div>
     </div>
   );
