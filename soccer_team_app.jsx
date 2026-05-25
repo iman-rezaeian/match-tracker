@@ -704,8 +704,47 @@ export default function App() {
   const setGameGK = (gameId, newGKPlayerId, atTs) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
-    const change = { at: atTs || Date.now(), gkPlayerId: newGKPlayerId || null };
-    const updated = { ...game, gkChanges: [...(game.gkChanges || []), change] };
+    const now = atTs || Date.now();
+    const prevGKId = currentGKAt(game, now - 1);
+    const elapsed = computeElapsed(game);
+    const onField = onFieldAt(game, now - 1);
+
+    let events = [...(game.events || [])];
+
+    // If swapping to a new GK who's currently on the bench, auto-sub them on
+    // for the old GK (who must come off to make room). This only fires for the
+    // standalone "SWAP GK" flow — when this is called as the follow-up to a
+    // SUB-triggered GK pick, the new GK is already on the field.
+    if (newGKPlayerId && prevGKId && newGKPlayerId !== prevGKId
+        && onField.has(prevGKId) && !onField.has(newGKPlayerId)) {
+      events.push({
+        id: uid(),
+        type: 'SUB',
+        playerId: prevGKId,
+        subOnPlayerId: newGKPlayerId,
+        period: game.period,
+        elapsed,
+        at: now,
+      });
+    }
+
+    // Always log a visible GK_CHANGE event so the swap appears in the feed.
+    events.push({
+      id: uid(),
+      type: 'GK_CHANGE',
+      playerId: newGKPlayerId,
+      prevGKId: prevGKId || null,
+      period: game.period,
+      elapsed,
+      at: now + 1, // ordered after the SUB above
+    });
+
+    const change = { at: now + 1, gkPlayerId: newGKPlayerId || null };
+    const updated = {
+      ...game,
+      events,
+      gkChanges: [...(game.gkChanges || []), change],
+    };
     persistGames(games.map(g => g.id === gameId ? updated : g));
     const p = roster.find(pl => pl.id === newGKPlayerId);
     showToast(`🧤 ${p?.name || 'No GK'} now in goal`);
@@ -2447,11 +2486,15 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
 
 function EventRow({ event, roster, onDelete }) {
   const isSub = event.type === 'SUB';
+  const isGKChange = event.type === 'GK_CHANGE';
   const ev = isSub
     ? { emoji: '🔄', label: 'SUB', requiresPlayer: true }
+    : isGKChange
+    ? { emoji: '🧤', label: 'GK SWAP', requiresPlayer: false }
     : (EVENT_TYPES[event.type] || { emoji: '•', label: event.type, requiresPlayer: false });
   const player = roster.find(p => p.id === event.playerId);
   const subOnPlayer = isSub ? roster.find(p => p.id === event.subOnPlayerId) : null;
+  const prevGK = isGKChange ? roster.find(p => p.id === event.prevGKId) : null;
   const partner = event.type === 'GIVE_GO' && event.partnerId
     ? roster.find(p => p.id === event.partnerId) : null;
   return (
@@ -2464,6 +2507,11 @@ function EventRow({ event, roster, onDelete }) {
             {subOnPlayer ? `${subOnPlayer.name} #${subOnPlayer.number}` : '?'} <span className="text-lime-600 font-bold">IN</span>
             {' · '}
             {player ? `${player.name} #${player.number}` : '?'} <span className="text-stone-500 font-bold">OUT</span>
+          </div>
+        ) : isGKChange ? (
+          <div className="text-xs text-stone-600 truncate">
+            {player ? `${player.name} #${player.number}` : 'No GK'} <span className="text-amber-700 font-bold">IN GOAL</span>
+            {prevGK && <span className="text-stone-500"> · {prevGK.name} #{prevGK.number} OUT</span>}
           </div>
         ) : (
           <>
