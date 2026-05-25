@@ -617,6 +617,41 @@ export default function App() {
     showToast('▶ Back to 1st half');
   };
 
+  const pauseClock = (gameId) => {
+    updateGame(gameId, g => {
+      if (!g.clockRunning) return g;
+      const now = Date.now();
+      const additional = g.segmentStartedAt
+        ? Math.floor((now - g.segmentStartedAt) / 1000) : 0;
+      return {
+        ...g,
+        clockRunning: false,
+        elapsedAtPause: (g.elapsedAtPause || 0) + additional,
+        segmentStartedAt: null,
+        pausePeriods: [...(g.pausePeriods || []), { startedAt: now, endedAt: null }],
+      };
+    });
+    showToast('⏸ Clock paused');
+  };
+
+  const resumeClock = (gameId) => {
+    updateGame(gameId, g => {
+      if (g.clockRunning) return g;
+      const now = Date.now();
+      const pp = [...(g.pausePeriods || [])];
+      if (pp.length > 0 && pp[pp.length-1].endedAt === null) {
+        pp[pp.length-1] = { ...pp[pp.length-1], endedAt: now };
+      }
+      return {
+        ...g,
+        clockRunning: true,
+        segmentStartedAt: now,
+        pausePeriods: pp,
+      };
+    });
+    showToast('▶ Clock resumed');
+  };
+
   const logSubEvent = (gameId, offPlayerId, onPlayerId) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
@@ -871,6 +906,8 @@ export default function App() {
           onPauseHalfTime={() => pauseHalfTime(activeGame.id)}
           onStartSecondHalf={() => startSecondHalf(activeGame.id)}
           onResumeFirstHalf={() => resumeFirstHalf(activeGame.id)}
+          onPauseClock={() => pauseClock(activeGame.id)}
+          onResumeClock={() => resumeClock(activeGame.id)}
           onEnd={() => askConfirm('End game and save final score?', () => endGame(activeGame.id))}
           onBack={() => setView('home')}
           tick={tick}
@@ -1835,7 +1872,7 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -1861,41 +1898,42 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="stripes-bg text-white px-4 pt-12 pb-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="stripes-bg text-white px-4 pt-6 pb-3">
+        <div className="flex items-center justify-between mb-2">
           <button onClick={onBack} className="text-white/70 active:scale-95">
             <ChevronLeft className="w-6 h-6" />
           </button>
-          <div className="text-center">
-            <div className="text-xs text-white font-bold tracking-widest truncate max-w-[180px]">
+          <div className="text-center flex-1">
+            <div className="text-sm text-white font-bold tracking-wide truncate">
               {game.tournament || 'Festival'}
             </div>
-            <div className="text-[10px] text-white/50">
-              {formatDate(game.date)}
+            <div className="text-xs text-white/50">
+              {formatDate(game.date)}{game.isHome != null && ` · ${game.isHome ? 'Home' : 'Away'}`}
             </div>
           </div>
-          <div className="bg-white/10 text-white/90 px-3 py-1.5 rounded-full text-[10px] font-bold tracking-widest">
-            {game.isHome ? 'HOME' : 'AWAY'}
-          </div>
+          <div className="w-6" />
         </div>
 
         <div className="grid grid-cols-3 items-center gap-3">
           <div className="text-center">
-            <div className="text-[10px] font-bold tracking-widest text-lime-400">US</div>
-            <div className="font-display text-7xl leading-none tabular-nums">{game.ourScore}</div>
+            <div className="text-[10px] font-bold tracking-widest text-lime-400">STOMPERS</div>
+            <div className="font-display text-6xl leading-none tabular-nums">{game.ourScore}</div>
           </div>
-          <div className="text-center">
+          <button
+            onClick={game.clockRunning ? onPauseClock : onResumeClock}
+            className="text-center active:scale-95 transition"
+          >
             <div className="text-[10px] font-bold tracking-widest text-white/50">
-              {game.clockRunning === false ? 'PAUSED' : 'CLOCK'}
+              {game.clockRunning === false ? '⏸ PAUSED' : '⏱ CLOCK'}
             </div>
             <div className={`font-display text-3xl tabular-nums ${game.clockRunning === false ? 'text-white/50' : 'text-white/90'}`}>
               {formatClock(elapsed)}
             </div>
-            <div className="text-[10px] text-white/50 mt-0.5 truncate">vs {game.opponent}</div>
-          </div>
+            <div className="text-[9px] text-white/40 mt-0.5">tap to {game.clockRunning ? 'pause' : 'resume'}</div>
+          </button>
           <div className="text-center">
-            <div className="text-[10px] font-bold tracking-widest text-red-400">OPP</div>
-            <div className="font-display text-7xl leading-none tabular-nums">{game.oppScore}</div>
+            <div className="text-[10px] font-bold tracking-widest text-red-400">{game.opponent || 'OPPONENT'}</div>
+            <div className="font-display text-6xl leading-none tabular-nums">{game.oppScore}</div>
           </div>
         </div>
       </div>
