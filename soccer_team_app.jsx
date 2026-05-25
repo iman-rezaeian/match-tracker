@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Users, Trash2, Edit3, ChevronLeft,
   PlayCircle, Undo2, X, ChevronRight,
-  BarChart3, Flag, Zap
+  BarChart3, Flag, Zap, Calendar, MapPin
 } from 'lucide-react';
 
-const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights' };
+const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule' };
 
 const EVENT_TYPES = {
   GOAL:      { id: 'GOAL',      label: 'GOAL',      emoji: '⚽', tone: 'big-green',  requiresPlayer: true,  delta: 'us' },
@@ -325,6 +325,12 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function formatTime12(time24) {
+  const [h, m] = time24.split(':').map(Number);
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
+}
+
 const COACH_PASS = 'ManUtd2016';
 
 export default function App() {
@@ -347,6 +353,7 @@ export default function App() {
   });
   const [roster, setRoster] = useState([]);
   const [games, setGames] = useState([]);
+  const [schedule, setSchedule] = useState([]);
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('home');
@@ -387,6 +394,10 @@ export default function App() {
         const w = await storageGet(STORAGE_KEYS.WEIGHTS);
         if (w?.value) setWeights(mergeWeights(JSON.parse(w.value)));
       } catch (e) {}
+      try {
+        const s = await storageGet(STORAGE_KEYS.SCHEDULE);
+        if (s?.value) setSchedule(JSON.parse(s.value));
+      } catch (e) {}
       setLoaded(true);
     })();
   }, []);
@@ -411,6 +422,11 @@ export default function App() {
     const merged = mergeWeights(next);
     setWeights(merged);
     try { await storageSet(STORAGE_KEYS.WEIGHTS, JSON.stringify(merged)); } catch (e) {}
+  };
+
+  const persistSchedule = async (next) => {
+    setSchedule(next);
+    try { await storageSet(STORAGE_KEYS.SCHEDULE, JSON.stringify(next)); } catch (e) {}
   };
 
   const showToast = (msg) => {
@@ -784,13 +800,19 @@ export default function App() {
         <HomeView
           roster={roster}
           games={games}
+          schedule={schedule}
           activeGame={activeGame}
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
+          onStartScheduled={(item) => {
+            setPendingGameSetup({ opponent: item.opponent, isHome: true, tournament: item.tournament });
+            setView('squad');
+          }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
           onViewStats={() => setView('stats')}
           onViewWeights={() => setView('weights')}
+          onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
         />
       )}
@@ -976,6 +998,14 @@ export default function App() {
         <HelpView onBack={() => setView('home')} />
       )}
 
+      {view === 'schedule' && (
+        <ScheduleView
+          schedule={schedule}
+          onSave={persistSchedule}
+          onBack={() => setView('home')}
+        />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -1027,7 +1057,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewHelp }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -1164,11 +1194,51 @@ function HomeView({ roster, games, activeGame, onGoRoster, onNewGame, onResumeGa
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 px-4 pt-3">
+      <div className="grid grid-cols-2 gap-3 px-4 pt-3">
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
+        <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
       </div>
+
+      {/* Upcoming games */}
+      {(() => {
+        const upcoming = schedule
+          .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+        if (upcoming.length === 0) return null;
+        return (
+          <div className="px-4 pt-6">
+            <h2 className="font-display text-2xl mb-3">UPCOMING</h2>
+            <div className="space-y-2">
+              {upcoming.slice(0, 5).map(item => (
+                <div key={item.id} className="bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                    <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
+                    <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">vs {item.opponent}</div>
+                    <div className="text-xs text-stone-500 truncate">
+                      {item.tournament && <span>{item.tournament} · </span>}
+                      {item.time && <span>{formatTime12(item.time)} · </span>}
+                      {item.location && <span>{item.location}</span>}
+                    </div>
+                  </div>
+                  {!activeGame && (
+                    <button
+                      onClick={() => onStartScheduled(item)}
+                      className="px-3 py-1.5 bg-lime-500 text-stone-900 font-display text-xs rounded-lg active:scale-95 transition"
+                    >
+                      START
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="px-4 pt-8">
         <div className="flex items-center justify-between mb-3">
@@ -3175,6 +3245,127 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
+function ScheduleView({ schedule, onSave, onBack }) {
+  const [opponent, setOpponent] = useState('');
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [tournament, setTournament] = useState('');
+  const [location, setLocation] = useState('');
+
+  const handleAdd = () => {
+    if (!opponent.trim() || !date) return;
+    const item = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      opponent: opponent.trim(),
+      date,
+      time: time || '',
+      tournament: tournament.trim(),
+      location: location.trim(),
+    };
+    onSave([...schedule, item]);
+    setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation('');
+  };
+
+  const handleDelete = (id) => {
+    onSave(schedule.filter(s => s.id !== id));
+  };
+
+  const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+
+  return (
+    <div className="min-h-screen bg-stone-100 pb-8">
+      <Header title="SCHEDULE" onBack={onBack} />
+
+      {/* Add form */}
+      <div className="px-4 pt-4 space-y-3">
+        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-3">
+          <div className="font-display text-lg">ADD GAME</div>
+          <input
+            type="text"
+            placeholder="Opponent *"
+            value={opponent}
+            onChange={e => setOpponent(e.target.value)}
+            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <input
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              className="border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+            />
+            <input
+              type="time"
+              value={time}
+              onChange={e => setTime(e.target.value)}
+              className="border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+            />
+          </div>
+          <input
+            type="text"
+            placeholder="Tournament / Festival"
+            value={tournament}
+            onChange={e => setTournament(e.target.value)}
+            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+          />
+          <input
+            type="text"
+            placeholder="Location (address or Google Maps link)"
+            value={location}
+            onChange={e => setLocation(e.target.value)}
+            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+          />
+          <button
+            onClick={handleAdd}
+            disabled={!opponent.trim() || !date}
+            className="w-full bg-stone-900 text-lime-400 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition"
+          >
+            ADD TO SCHEDULE
+          </button>
+        </div>
+      </div>
+
+      {/* List */}
+      <div className="px-4 pt-6">
+        <h2 className="font-display text-xl mb-3">ALL GAMES ({sorted.length})</h2>
+        {sorted.length === 0 ? (
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-stone-500 text-sm">
+            No scheduled games yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {sorted.map(item => {
+              const isPast = new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
+              return (
+                <div key={item.id} className={`bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3 ${isPast ? 'opacity-50' : ''}`}>
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                    <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
+                    <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">vs {item.opponent}</div>
+                    <div className="text-xs text-stone-500 truncate">
+                      {item.tournament && <span>{item.tournament} · </span>}
+                      {item.time && <span>{formatTime12(item.time)} · </span>}
+                      {item.location && <span>{item.location}</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="w-8 h-8 rounded-full bg-red-50 text-red-500 flex items-center justify-center active:scale-90 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HelpView({ onBack }) {
   const [openId, setOpenId] = useState('welcome');
   const toggle = (id) => setOpenId(prev => prev === id ? null : id);
@@ -3465,6 +3656,7 @@ function LiveScorePage({ gameId }) {
 function PublicHomePage() {
   const [games, setGames] = useState([]);
   const [roster, setRoster] = useState([]);
+  const [schedule, setSchedule] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
 
@@ -3491,6 +3683,7 @@ function PublicHomePage() {
           if (snap.exists) {
             const data = snap.data();
             if (Array.isArray(data.roster)) setRoster(data.roster);
+            if (Array.isArray(data.schedule)) setSchedule(data.schedule);
           }
         },
         () => {}
@@ -3534,6 +3727,47 @@ function PublicHomePage() {
           </div>
         </div>
       )}
+      {(() => {
+        const upcoming = schedule
+          .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+        if (upcoming.length === 0) return null;
+        return (
+          <div className="px-4 pt-6 max-w-md mx-auto">
+            <h3 className="font-display text-xl text-stone-700 mb-2">UPCOMING GAMES</h3>
+            <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+              {upcoming.map(item => (
+                <div key={item.id} className="flex items-center gap-3 p-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                    <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
+                    <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">vs {item.opponent}</div>
+                    <div className="text-xs text-stone-500 truncate">
+                      {item.tournament && <span>{item.tournament} · </span>}
+                      {item.time && <span>{formatTime12(item.time)}</span>}
+                    </div>
+                    {item.location && (
+                      <div className="text-xs text-blue-600 truncate mt-0.5">
+                        {item.location.startsWith('http') ? (
+                          <a href={item.location} target="_blank" rel="noopener noreferrer" className="underline flex items-center gap-1">
+                            <MapPin className="w-3 h-3 inline" /> View Map
+                          </a>
+                        ) : (
+                          <a href={`https://maps.google.com/?q=${encodeURIComponent(item.location)}`} target="_blank" rel="noopener noreferrer" className="underline flex items-center gap-1">
+                            <MapPin className="w-3 h-3 inline" /> {item.location}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
       {past.length > 0 && (
         <div className="px-4 pt-6 max-w-md mx-auto">
           <h3 className="font-display text-xl text-stone-700 mb-2">PAST MATCHES</h3>
