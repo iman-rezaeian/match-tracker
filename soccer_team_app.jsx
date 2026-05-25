@@ -19,7 +19,7 @@ const EVENT_TYPES = {
   DUEL_WIN:  { id: 'DUEL_WIN',  label: '1V1 WIN',   emoji: '💪', tone: 'soft-green', requiresPlayer: true },
   DUEL_LOSE: { id: 'DUEL_LOSE', label: '1V1 LOSE',  emoji: '👎', tone: 'soft-red',   requiresPlayer: true },
   GIVE_GO:   { id: 'GIVE_GO',   label: 'GIVE-GO',   emoji: '🔁', tone: 'soft-green', requiresPlayer: true },
-  GATES:     { id: 'GATES',     label: 'GATE PASS', emoji: '🚪', tone: 'blue',       requiresPlayer: true },
+  GATES:     { id: 'GATES',     label: 'GATE PASS', emoji: '🚪', tone: 'soft-green', requiresPlayer: true },
   TURNOVER:  { id: 'TURNOVER',  label: 'TURNOVER',  emoji: '💨', tone: 'soft-red',   requiresPlayer: true },
   HOLDS_BALL:{ id: 'HOLDS_BALL',label: 'HOLDS BALL',emoji: '⏳', tone: 'yellow',     requiresPlayer: true },
   OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
@@ -2351,7 +2351,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-lime-400/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'KEY_PASS', 'BALL_WIN', 'SHOT_ON', 'SAVE', 'BLOCK', 'DUEL_WIN', 'GIVE_GO', 'GATES', 'SHOT_OFF'].map(id => {
+                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK'].map(id => {
                   const ev = EVENT_TYPES[id];
                   const big = id === 'GOAL';
                   return (
@@ -4068,20 +4068,25 @@ function LiveScoreboard({ game, roster }) {
             <div className="font-display text-2xl truncate">{rightName}</div>
           </div>
         </div>
-        <div className="text-center mt-4">
+        <div className="text-center mt-4 flex items-center justify-center gap-2 flex-wrap">
+          {isActive && (
+            <span className="inline-block bg-white/10 border border-white/20 text-white/90 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
+              {game.period >= 2 ? '2ND HALF' : '1ST HALF'}
+            </span>
+          )}
           {isActive && game.clockRunning && (
-            <span className="inline-flex items-center gap-2 bg-red-500/20 border border-red-400/40 text-red-200 px-3 py-1 rounded-full text-xs font-bold">
+            <span className="inline-flex items-center gap-2 bg-red-500/25 border border-red-400/50 text-red-100 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
-              LIVE · {statusLabel}
+              LIVE · {mins}'
             </span>
           )}
           {isActive && !game.clockRunning && (
-            <span className="inline-block bg-yellow-500/20 border border-yellow-400/40 text-yellow-200 px-3 py-1 rounded-full text-xs font-bold">
+            <span className="inline-block bg-yellow-500/25 border border-yellow-400/50 text-yellow-100 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               {statusLabel}
             </span>
           )}
           {isFinished && (
-            <span className="inline-block bg-white/15 border border-white/20 text-white px-3 py-1 rounded-full text-xs font-bold">
+            <span className="inline-block bg-white/15 border border-white/20 text-white px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               FULL TIME
             </span>
           )}
@@ -4118,13 +4123,13 @@ function LiveScoreboard({ game, roster }) {
                       <div className="font-display text-sm text-lime-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
                     </div>
                   ) : (
-                    <div className="p-3 flex items-start gap-3 bg-red-50/40">
+                    <div className="p-3 flex items-start gap-3 bg-red-950/30">
                       <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
-                      <div className="text-2xl">🚨</div>
+                      <div className="text-2xl">⚽</div>
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-stone-100 truncate">{game.opponent || 'Opponent'}</div>
                       </div>
-                      <div className="font-display text-sm text-red-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
+                      <div className="font-display text-sm text-red-400 tabular-nums">{row.ourRun}–{row.oppRun}</div>
                     </div>
                   )}
                 </React.Fragment>
