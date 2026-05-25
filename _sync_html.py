@@ -95,6 +95,10 @@ old_load_effect = (
     "        const w = await storageGet(STORAGE_KEYS.WEIGHTS);\n"
     "        if (w?.value) setWeights(mergeWeights(JSON.parse(w.value)));\n"
     "      } catch (e) {}\n"
+    "      try {\n"
+    "        const s = await storageGet(STORAGE_KEYS.SCHEDULE);\n"
+    "        if (s?.value) setSchedule(JSON.parse(s.value));\n"
+    "      } catch (e) {}\n"
     "      setLoaded(true);\n"
     "    })();\n"
     "  }, []);"
@@ -116,6 +120,7 @@ new_load_effect = (
     "            teamDoc().set({ roster: SEED_ROSTER }, { merge: true });\n"
     "          }\n"
     "          if (data.weights) setWeights(mergeWeights(data.weights));\n"
+    "          if (Array.isArray(data.schedule)) setSchedule(data.schedule);\n"
     "        } else {\n"
     "          teamDoc().set({ roster: SEED_ROSTER });\n"
     "        }\n"
@@ -157,6 +162,10 @@ old_persist = (
     "    const merged = mergeWeights(next);\n"
     "    setWeights(merged);\n"
     "    try { await storageSet(STORAGE_KEYS.WEIGHTS, JSON.stringify(merged)); } catch (e) {}\n"
+    "  };\n\n"
+    "  const persistSchedule = async (next) => {\n"
+    "    setSchedule(next);\n"
+    "    try { await storageSet(STORAGE_KEYS.SCHEDULE, JSON.stringify(next)); } catch (e) {}\n"
     "  };"
 )
 new_persist = (
@@ -186,6 +195,10 @@ new_persist = (
     "    const merged = mergeWeights(next);\n"
     "    setWeights(merged); // optimistic\n"
     "    try { await teamDoc().set({ weights: merged }, { merge: true }); } catch (e) { console.error('Weights save error:', e); }\n"
+    "  };\n\n"
+    "  const persistSchedule = async (next) => {\n"
+    "    setSchedule(next); // optimistic\n"
+    "    try { await teamDoc().set({ schedule: next }, { merge: true }); } catch (e) { console.error('Schedule save error:', e); }\n"
     "  };"
 )
 if old_persist not in jsx_body:
