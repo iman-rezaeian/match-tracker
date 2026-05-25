@@ -1221,9 +1221,18 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
                     <div className="text-xs text-stone-500 truncate">
                       {item.tournament && <span>{item.tournament} · </span>}
-                      {item.time && <span>{formatTime12(item.time)} · </span>}
-                      {item.location && <span>{item.location}</span>}
+                      {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
+                    {item.location && (
+                      <a
+                        href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-600 underline flex items-center gap-1 mt-0.5"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
+                      </a>
+                    )}
                   </div>
                   {!activeGame && (
                     <button
@@ -3358,9 +3367,18 @@ function ScheduleView({ schedule, onSave, onBack }) {
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
                     <div className="text-xs text-stone-500 truncate">
                       {item.tournament && <span>{item.tournament} · </span>}
-                      {item.time && <span>{formatTime12(item.time)} · </span>}
-                      {item.location && <span>{item.location}</span>}
+                      {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
+                    {item.location && (
+                      <a
+                        href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
+                        target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-600 underline flex items-center gap-1 mt-0.5"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
+                      </a>
+                    )}
                   </div>
                   <button
                     onClick={() => handleDelete(item.id)}
