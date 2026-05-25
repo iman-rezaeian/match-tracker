@@ -27,8 +27,10 @@
   <script src="https://www.gstatic.com/firebasejs/12.13.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore-compat.js"></script>
   <style>
-    html, body { background: #fafaf7; overscroll-behavior-y: none; }
+    html, body { background: #0c0a09; color: #e7e5e4; overscroll-behavior-y: none; }
     body { font-family: 'Outfit', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+    input, textarea, select { background-color: #1c1917; color: #e7e5e4; color-scheme: dark; }
+    input::placeholder, textarea::placeholder { color: #78716c; }
     .font-display { font-family: 'Outfit', system-ui, sans-serif; font-weight: 800; letter-spacing: 0.03em; }
     .font-sans-pro { font-family: 'Outfit', system-ui, sans-serif; }
     .stripes-bg {
@@ -137,12 +139,12 @@ const EVENT_TYPES = {
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-white shadow-lg shadow-lime-500/30 border-lime-600',
   'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-600',
-  'soft-green': 'bg-lime-50 hover:bg-lime-100 text-lime-900 border-lime-200',
-  'soft-red':   'bg-red-50 hover:bg-red-100 text-red-900 border-red-200',
-  'blue':       'bg-sky-50 hover:bg-sky-100 text-sky-900 border-sky-200',
-  'yellow':     'bg-yellow-50 hover:bg-yellow-100 text-yellow-900 border-yellow-300',
-  'purple':     'bg-violet-100 hover:bg-violet-200 text-violet-900 border-violet-300',
-  'neutral':    'bg-stone-50 hover:bg-stone-100 text-stone-900 border-stone-200',
+  'soft-green': 'bg-lime-500/15 hover:bg-lime-500/25 text-lime-300 border-lime-500/30',
+  'soft-red':   'bg-red-500/15 hover:bg-red-500/25 text-red-300 border-red-500/30',
+  'blue':       'bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border-sky-500/30',
+  'yellow':     'bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-300 border-yellow-500/30',
+  'purple':     'bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border-violet-500/30',
+  'neutral':    'bg-stone-800 hover:bg-stone-700 text-stone-100 border-stone-800',
 };
 
 const SEED_ROSTER = [
@@ -168,6 +170,14 @@ const FONT_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
   .font-display { font-family: 'Outfit', system-ui, sans-serif; font-weight: 800; letter-spacing: 0.03em; }
   .font-sans-pro { font-family: 'Outfit', system-ui, sans-serif; }
+  html, body { background-color: #0c0a09; color: #e7e5e4; }
+  body { font-family: 'Outfit', system-ui, sans-serif; }
+  input, textarea, select {
+    background-color: #1c1917 !important;
+    color: #e7e5e4 !important;
+    color-scheme: dark;
+  }
+  input::placeholder, textarea::placeholder { color: #78716c !important; }
   .stripes-bg {
     background-color: #0d2818;
     background-image:
@@ -887,9 +897,9 @@ function App() {
 
   if (!loaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50">
+      <div className="min-h-screen flex items-center justify-center bg-stone-950">
         <style>{FONT_STYLES}</style>
-        <div className="font-sans-pro text-stone-500">Loading…</div>
+        <div className="font-sans-pro text-stone-400">Loading…</div>
       </div>
     );
   }
@@ -898,7 +908,7 @@ function App() {
   const viewingGame = games.find(g => g.id === viewingGameId);
 
   return (
-    <div className="min-h-screen bg-stone-50 font-sans-pro text-stone-900">
+    <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100">
       <style>{FONT_STYLES}</style>
 
       {toast && (
@@ -1142,14 +1152,14 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
       onClick={onCancel}
     >
       <div
-        className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm p-5 pb-8 sm:pb-5 shadow-2xl"
+        className="bg-stone-900 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-sm p-5 pb-8 sm:pb-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-stone-900 text-center font-semibold text-base mb-5 pt-2">{message}</div>
+        <div className="text-stone-100 text-center font-semibold text-base mb-5 pt-2">{message}</div>
         <div className="grid grid-cols-2 gap-2.5">
           <button
             onClick={onCancel}
-            className="py-4 rounded-xl bg-stone-100 text-stone-700 font-display text-lg active:scale-[0.98] transition"
+            className="py-4 rounded-xl bg-stone-800 text-stone-300 font-display text-lg active:scale-[0.98] transition"
           >
             CANCEL
           </button>
@@ -1217,7 +1227,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
             <button
               onClick={() => setShowInstallModal(true)}
               aria-label="Install app on this device"
-              className="h-9 px-3 rounded-full bg-lime-400/90 hover:bg-lime-400 text-stone-900 font-display text-xs flex items-center gap-1 border border-lime-300 active:scale-95 shadow"
+              className="h-9 px-3 rounded-full bg-lime-400/90 hover:bg-lime-400 text-stone-100 font-display text-xs flex items-center gap-1 border border-lime-300 active:scale-95 shadow"
             >
               <span>📲</span><span>INSTALL</span>
             </button>
@@ -1273,17 +1283,17 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
       )}
 
       {showWelcome && !activeGame && (
-        <div className="mx-4 -mt-4 bg-white border-2 border-stone-900 rounded-2xl p-4 shadow-md relative">
+        <div className="mx-4 -mt-4 bg-stone-900 border-2 border-stone-900 rounded-2xl p-4 shadow-md relative">
           <button
             onClick={dismissWelcome}
             aria-label="Dismiss welcome"
-            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center"
+            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-stone-800 hover:bg-stone-700 flex items-center justify-center"
           >
             <X className="w-4 h-4" />
           </button>
           <div className="text-2xl mb-1">👋</div>
           <div className="font-display text-xl leading-tight mb-1">NEW HERE?</div>
-          <div className="text-sm text-stone-600 mb-3">
+          <div className="text-sm text-stone-300 mb-3">
             Track your match-day roster, log live events, and get per-player performance scores. Take the quick tour first.
           </div>
           <button
@@ -1298,7 +1308,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
       <div className="px-4 pt-6">
         <button
           onClick={onNewGame}
-          className="w-full bg-lime-500 hover:bg-lime-600 text-stone-900 font-display text-3xl py-6 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition flex items-center justify-center gap-3"
+          className="w-full bg-lime-500 hover:bg-lime-600 text-stone-100 font-display text-3xl py-6 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition flex items-center justify-center gap-3"
         >
           <Zap className="w-7 h-7" />
           START GAME
@@ -1323,14 +1333,14 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
             <h2 className="font-display text-2xl mb-3">UPCOMING</h2>
             <div className="space-y-2">
               {upcoming.slice(0, 5).map(item => (
-                <div key={item.id} className="bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                <div key={item.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
                     <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
                     <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-500 truncate">
+                    <div className="text-xs text-stone-400 truncate">
                       {item.tournament && <span>{item.tournament} · </span>}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
@@ -1338,7 +1348,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                       <a
                         href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
                         target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-600 underline flex items-center gap-1 mt-0.5"
+                        className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
                         onClick={e => e.stopPropagation()}
                       >
                         <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
@@ -1348,7 +1358,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                   {!activeGame && (
                     <button
                       onClick={() => onStartScheduled(item)}
-                      className="px-3 py-1.5 bg-lime-500 text-stone-900 font-display text-xs rounded-lg active:scale-95 transition"
+                      className="px-3 py-1.5 bg-lime-500 text-stone-100 font-display text-xs rounded-lg active:scale-95 transition"
                     >
                       START
                     </button>
@@ -1363,11 +1373,11 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
       <div className="px-4 pt-8">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-display text-2xl">PAST GAMES</h2>
-          <div className="text-xs text-stone-500 font-semibold">{finishedGames.length} total</div>
+          <div className="text-xs text-stone-400 font-semibold">{finishedGames.length} total</div>
         </div>
         {finishedGames.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-stone-500 text-sm">
-            No games yet. Tap <span className="font-bold text-stone-900">START GAME</span> when you're at the field.
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
+            No games yet. Tap <span className="font-bold text-stone-100">START GAME</span> when you're at the field.
           </div>
         ) : (
           <div className="space-y-2">
@@ -1375,18 +1385,18 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
               <button
                 key={g.id}
                 onClick={() => onViewGame(g.id)}
-                className="w-full bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3 active:scale-[0.99] transition text-left"
+                className="w-full bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3 active:scale-[0.99] transition text-left"
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-display text-base ${
-                  g.ourScore > g.oppScore ? 'bg-lime-100 text-lime-800' :
-                  g.ourScore < g.oppScore ? 'bg-red-100 text-red-800' :
-                  'bg-stone-100 text-stone-700'
+                  g.ourScore > g.oppScore ? 'bg-lime-500/15 text-lime-300' :
+                  g.ourScore < g.oppScore ? 'bg-red-500/15 text-red-300' :
+                  'bg-stone-800 text-stone-300'
                 }`}>
                   {g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D'}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                  <div className="text-xs text-stone-500 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
+                  <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
                 </div>
                 <div className="font-display text-xl tabular-nums">
                   {g.ourScore}–{g.oppScore}
@@ -1432,31 +1442,31 @@ function InstallModal({ canPrompt, onTriggerPrompt, onClose }) {
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md p-5 pb-8 sm:pb-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-stone-900 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md p-5 pb-8 sm:pb-5 shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 mb-3">
           <div className="text-2xl">📲</div>
           <div className="font-display text-2xl">INSTALL ON YOUR PHONE</div>
         </div>
-        <p className="text-sm text-stone-600 mb-4">
+        <p className="text-sm text-stone-300 mb-4">
           Adds a Stompers icon to your home screen. Opens fullscreen — no browser bar — and works offline.
         </p>
 
         {canPrompt && (
           <button
             onClick={onTriggerPrompt}
-            className="w-full bg-lime-500 text-stone-900 font-display text-xl py-4 rounded-xl border-2 border-lime-600 active:scale-[0.98] transition mb-4"
+            className="w-full bg-lime-500 text-stone-100 font-display text-xl py-4 rounded-xl border-2 border-lime-600 active:scale-[0.98] transition mb-4"
           >
             ⬇ INSTALL NOW
           </button>
         )}
 
         {isIOS && (
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3">
-            <div className="font-display text-sm text-stone-700 mb-2">📱 iPhone / iPad (Safari)</div>
-            <ol className="text-sm text-stone-700 space-y-1.5 list-decimal pl-5">
-              <li>Tap the <strong>Share</strong> button <span className="inline-block px-1.5 py-0.5 bg-white border border-stone-300 rounded text-xs">⬆</span> at the bottom of Safari.</li>
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mb-3">
+            <div className="font-display text-sm text-stone-200 mb-2">📱 iPhone / iPad (Safari)</div>
+            <ol className="text-sm text-stone-200 space-y-1.5 list-decimal pl-5">
+              <li>Tap the <strong>Share</strong> button <span className="inline-block px-1.5 py-0.5 bg-stone-900 border border-stone-700 rounded text-xs">⬆</span> at the bottom of Safari.</li>
               <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
               <li>Tap <strong>Add</strong> in the top-right.</li>
             </ol>
@@ -1467,26 +1477,26 @@ function InstallModal({ canPrompt, onTriggerPrompt, onClose }) {
         )}
 
         {isAndroid && !canPrompt && (
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3">
-            <div className="font-display text-sm text-stone-700 mb-2">🤖 Android (Chrome)</div>
-            <ol className="text-sm text-stone-700 space-y-1.5 list-decimal pl-5">
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mb-3">
+            <div className="font-display text-sm text-stone-200 mb-2">🤖 Android (Chrome)</div>
+            <ol className="text-sm text-stone-200 space-y-1.5 list-decimal pl-5">
               <li>Tap the <strong>⋮</strong> menu (top-right of Chrome).</li>
               <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
               <li>Confirm <strong>Install</strong>.</li>
             </ol>
-            <p className="text-xs text-stone-500 mt-2 italic">If you don't see the option, reload the page and try again.</p>
+            <p className="text-xs text-stone-400 mt-2 italic">If you don't see the option, reload the page and try again.</p>
           </div>
         )}
 
         {!isIOS && !isAndroid && !canPrompt && (
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mb-3 text-sm text-stone-700">
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mb-3 text-sm text-stone-200">
             <p>Look for an <strong>install</strong> or <strong>add to home screen</strong> option in your browser's menu (usually under <strong>⋮</strong> or the address bar).</p>
           </div>
         )}
 
         <button
           onClick={onClose}
-          className="w-full py-3 mt-2 rounded-xl bg-stone-100 text-stone-700 font-display text-base active:scale-[0.98] transition"
+          className="w-full py-3 mt-2 rounded-xl bg-stone-800 text-stone-300 font-display text-base active:scale-[0.98] transition"
         >
           CLOSE
         </button>
@@ -1508,13 +1518,13 @@ function TileButton({ onClick, icon, label, sub }) {
   return (
     <button
       onClick={onClick}
-      className="bg-white border border-stone-200 rounded-2xl p-4 text-left active:scale-[0.98] transition shadow-sm"
+      className="bg-stone-900 border border-stone-800 rounded-2xl p-4 text-left active:scale-[0.98] transition shadow-sm"
     >
       <div className="w-10 h-10 rounded-xl bg-stone-900 text-lime-400 flex items-center justify-center mb-2">
         {icon}
       </div>
       <div className="font-display text-lg leading-none">{label}</div>
-      <div className="text-xs text-stone-500 mt-1">{sub}</div>
+      <div className="text-xs text-stone-400 mt-1">{sub}</div>
     </button>
   );
 }
@@ -1539,7 +1549,7 @@ function RosterView({ roster, onBack, onAdd, onEdit, onDelete, onBulkPhotos }) {
   return (
     <div className="pb-24">
       <Header title="ROSTER" onBack={onBack} right={
-        <button onClick={onAdd} className="bg-lime-500 text-stone-900 w-10 h-10 rounded-full flex items-center justify-center font-bold shadow active:scale-95 transition">
+        <button onClick={onAdd} className="bg-lime-500 text-stone-100 w-10 h-10 rounded-full flex items-center justify-center font-bold shadow active:scale-95 transition">
           <Plus className="w-5 h-5" />
         </button>
       } />
@@ -1563,7 +1573,7 @@ function RosterView({ roster, onBack, onAdd, onEdit, onDelete, onBulkPhotos }) {
             <span>📷</span>
             <span>{bulkBusy ? 'Importing…' : 'BULK IMPORT PHOTOS'}</span>
           </button>
-          <div className="text-[11px] text-stone-500 mt-1.5 text-center px-2">
+          <div className="text-[11px] text-stone-400 mt-1.5 text-center px-2">
             Pick multiple files — names like <span className="font-mono">#10.PNG</span> match by jersey number.
           </div>
         </div>
@@ -1571,10 +1581,10 @@ function RosterView({ roster, onBack, onAdd, onEdit, onDelete, onBulkPhotos }) {
 
       <div className="px-4 pt-4">
         {sorted.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-8 text-center">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-8 text-center">
             <Users className="w-10 h-10 text-stone-300 mx-auto mb-3" />
             <div className="font-display text-xl mb-1">NO PLAYERS YET</div>
-            <div className="text-sm text-stone-500 mb-4">Add your squad to start logging games.</div>
+            <div className="text-sm text-stone-400 mb-4">Add your squad to start logging games.</div>
             <button onClick={onAdd} className="bg-stone-900 text-white px-5 py-3 rounded-full font-bold text-sm">
               + Add first player
             </button>
@@ -1582,18 +1592,18 @@ function RosterView({ roster, onBack, onAdd, onEdit, onDelete, onBulkPhotos }) {
         ) : (
           <div className="space-y-2">
             {sorted.map(p => (
-              <div key={p.id} className="bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3">
+              <div key={p.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
                 <PlayerAvatar player={p} />
                 <div className="flex-1 min-w-0">
                   <div className="font-bold truncate">{p.name}</div>
-                  {p.position && <div className="text-xs text-stone-500 uppercase tracking-wide">{p.position}</div>}
+                  {p.position && <div className="text-xs text-stone-400 uppercase tracking-wide">{p.position}</div>}
                 </div>
-                <button onClick={() => onEdit(p)} className="w-9 h-9 rounded-full bg-stone-100 flex items-center justify-center active:scale-95">
-                  <Edit3 className="w-4 h-4 text-stone-700" />
+                <button onClick={() => onEdit(p)} className="w-9 h-9 rounded-full bg-stone-900 flex items-center justify-center active:scale-95">
+                  <Edit3 className="w-4 h-4 text-stone-200" />
                 </button>
                 <button
                   onClick={() => onDelete(p)}
-                  className="w-9 h-9 rounded-full bg-red-50 flex items-center justify-center active:scale-95"
+                  className="w-9 h-9 rounded-full bg-red-500/10 flex items-center justify-center active:scale-95"
                 >
                   <Trash2 className="w-4 h-4 text-red-600" />
                 </button>
@@ -1645,7 +1655,7 @@ function PlayerForm({ player, onSave, onCancel }) {
             onChange={e => handlePhotoFile(e.target.files?.[0])}
           />
           <div className="flex items-center gap-4">
-            <div className="w-24 h-24 rounded-2xl overflow-hidden bg-stone-100 border-2 border-stone-200 flex items-center justify-center shrink-0">
+            <div className="w-24 h-24 rounded-2xl overflow-hidden bg-stone-900 border-2 border-stone-800 flex items-center justify-center shrink-0">
               {photo ? (
                 <img src={photo} alt="" className="w-full h-full object-cover" />
               ) : (
@@ -1665,7 +1675,7 @@ function PlayerForm({ player, onSave, onCancel }) {
                 <button
                   type="button"
                   onClick={() => setPhoto('')}
-                  className="bg-stone-100 text-stone-600 font-bold text-xs px-4 py-2 rounded-xl active:scale-[0.98] transition"
+                  className="bg-stone-900 text-stone-300 font-bold text-xs px-4 py-2 rounded-xl active:scale-[0.98] transition"
                 >
                   Remove
                 </button>
@@ -1680,7 +1690,7 @@ function PlayerForm({ player, onSave, onCancel }) {
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="First name"
-            className="w-full bg-white border-2 border-stone-200 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
+            className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
         </Field>
 
@@ -1691,7 +1701,7 @@ function PlayerForm({ player, onSave, onCancel }) {
             value={number}
             onChange={e => setNumber(e.target.value)}
             placeholder="0"
-            className="w-full bg-white border-2 border-stone-200 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-2xl font-display tabular-nums"
+            className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-2xl font-display tabular-nums"
           />
         </Field>
 
@@ -1705,7 +1715,7 @@ function PlayerForm({ player, onSave, onCancel }) {
                 className={`py-3 rounded-xl font-display text-lg border-2 transition ${
                   position === pos
                     ? 'bg-stone-900 text-lime-400 border-stone-900'
-                    : 'bg-white text-stone-700 border-stone-200'
+                    : 'bg-stone-900 text-stone-200 border-stone-800'
                 }`}
               >
                 {pos}
@@ -1717,7 +1727,7 @@ function PlayerForm({ player, onSave, onCancel }) {
         <button
           onClick={() => valid && onSave({ ...player, name: name.trim(), number, position, photo: photo || null })}
           disabled={!valid}
-          className="w-full bg-lime-500 disabled:bg-stone-300 disabled:text-stone-500 text-stone-900 font-display text-2xl py-4 rounded-2xl shadow-lg shadow-lime-500/20 border-2 border-lime-600 disabled:border-stone-300 active:scale-[0.99] transition mt-4"
+          className="w-full bg-lime-500 disabled:bg-stone-700 disabled:text-stone-400 text-stone-100 font-display text-2xl py-4 rounded-2xl shadow-lg shadow-lime-500/20 border-2 border-lime-600 disabled:border-stone-700 active:scale-[0.99] transition mt-4"
         >
           SAVE PLAYER
         </button>
@@ -1729,7 +1739,7 @@ function PlayerForm({ player, onSave, onCancel }) {
 function Field({ label, children }) {
   return (
     <div>
-      <label className="block text-xs font-bold tracking-widest text-stone-500 mb-2">{label}</label>
+      <label className="block text-xs font-bold tracking-widest text-stone-400 mb-2">{label}</label>
       {children}
     </div>
   );
@@ -1767,7 +1777,7 @@ function resizePhoto(file, size = 256, quality = 0.85) {
 function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-stone-900 text-lime-400', textSize = 'text-2xl', rounded = 'rounded-lg' }) {
   if (player?.photo) {
     return (
-      <div className={`${sizeClass} ${rounded} overflow-hidden bg-stone-100 shrink-0`}>
+      <div className={`${sizeClass} ${rounded} overflow-hidden bg-stone-900 shrink-0`}>
         <img src={player.photo} alt="" className="w-full h-full object-cover" />
       </div>
     );
@@ -1789,10 +1799,10 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
       <div>
         <Header title="NEW GAME" onBack={onCancel} />
         <div className="p-6 text-center">
-          <div className="bg-white border border-stone-200 rounded-2xl p-8">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-8">
             <Users className="w-10 h-10 text-stone-300 mx-auto mb-3" />
             <div className="font-display text-xl mb-2">ADD PLAYERS FIRST</div>
-            <div className="text-sm text-stone-500 mb-4">You need a roster before starting a game.</div>
+            <div className="text-sm text-stone-400 mb-4">You need a roster before starting a game.</div>
             <button onClick={onGoRoster} className="bg-stone-900 text-white px-5 py-3 rounded-full font-bold text-sm">
               Go to Roster
             </button>
@@ -1813,7 +1823,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
             value={tournament}
             onChange={e => setTournament(e.target.value)}
             placeholder="Festival"
-            className="w-full bg-white border-2 border-stone-200 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
+            className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
         </Field>
 
@@ -1823,7 +1833,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
             placeholder="e.g., Lions FC"
-            className="w-full bg-white border-2 border-stone-200 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
+            className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
         </Field>
 
@@ -1831,7 +1841,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
 
         <button
           onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival')}
-          className="w-full bg-lime-500 text-stone-900 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
+          className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
           KICK OFF
@@ -1866,15 +1876,15 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
       <Header title="MATCH-DAY SQUAD" onBack={onBack} />
 
       <div className="px-4 pt-4">
-        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent}</div>
-        <div className="text-sm text-stone-700 mb-3">
+        <div className="text-xs text-stone-400 mb-1">vs {setup.opponent}</div>
+        <div className="text-sm text-stone-200 mb-3">
           Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
           Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.
         </div>
 
         <div className="flex gap-2 mb-4">
-          <button onClick={selectAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL IN</button>
-          <button onClick={clearAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL OUT</button>
+          <button onClick={selectAll} className="flex-1 py-2 bg-stone-900 rounded-lg text-xs font-bold tracking-wider text-stone-200 active:scale-95">ALL IN</button>
+          <button onClick={clearAll} className="flex-1 py-2 bg-stone-900 rounded-lg text-xs font-bold tracking-wider text-stone-200 active:scale-95">ALL OUT</button>
         </div>
 
         <div className="space-y-1.5">
@@ -1885,14 +1895,14 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
                 key={p.id}
                 onClick={() => toggle(p.id)}
                 className={`w-full flex items-center gap-3 p-2.5 rounded-xl border-2 text-left active:scale-[0.98] transition ${
-                  on ? 'bg-lime-50 border-lime-400' : 'bg-white border-stone-200 opacity-60'
+                  on ? 'bg-lime-500/10 border-lime-400' : 'bg-stone-900 border-stone-800 opacity-60'
                 }`}
               >
                 <PlayerAvatar
                   player={p}
                   sizeClass="w-11 h-11"
                   textSize="text-xl"
-                  numberClasses={on ? 'bg-stone-900 text-lime-400' : 'bg-stone-200 text-stone-500'}
+                  numberClasses={on ? 'bg-stone-900 text-lime-400' : 'bg-stone-800 text-stone-400'}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm truncate">{p.name}</div>
@@ -1901,7 +1911,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
                   </div>
                 </div>
                 <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                  on ? 'bg-lime-500 border-lime-600' : 'bg-white border-stone-300'
+                  on ? 'bg-lime-500 border-lime-600' : 'bg-stone-900 border-stone-700'
                 }`}>
                   {on && <span className="text-white text-sm font-bold">✓</span>}
                 </div>
@@ -1911,8 +1921,8 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 p-4 shadow-xl">
-        <div className={`text-center text-sm mb-2 ${overCap ? 'text-amber-700' : 'text-stone-600'}`}>
+      <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 p-4 shadow-xl">
+        <div className={`text-center text-sm mb-2 ${overCap ? 'text-amber-700' : 'text-stone-300'}`}>
           <span className={`font-bold ${overCap ? 'text-amber-700' : 'text-lime-700'}`}>{selected.size}</span> in squad
           {overCap && <span className="ml-1 text-xs">⚠ over {SOFT_CAP}</span>}
         </div>
@@ -1922,7 +1932,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
             canProceed
               ? 'bg-stone-900 text-lime-400 border-stone-900'
-              : 'bg-stone-200 text-stone-400 border-stone-300 cursor-not-allowed'
+              : 'bg-stone-800 text-stone-400 border-stone-700 cursor-not-allowed'
           }`}
         >
           NEXT: STARTING LINEUP →
@@ -1978,12 +1988,12 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
       <Header title="STARTING LINEUP" onBack={onBack} />
 
       <div className="px-4 pt-4">
-        <div className="text-xs text-stone-500 mb-1">vs {setup.opponent}</div>
-        <div className="text-sm text-stone-700 mb-3">Tap a player to put them on the field. Tap the <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">🧤 GK</span> button on the right to assign the goalie.</div>
+        <div className="text-xs text-stone-400 mb-1">vs {setup.opponent}</div>
+        <div className="text-sm text-stone-200 mb-3">Tap a player to put them on the field. Tap the <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">🧤 GK</span> button on the right to assign the goalie.</div>
 
         <div className="flex gap-2 mb-4">
-          <button onClick={selectAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL ON</button>
-          <button onClick={clearAll} className="flex-1 py-2 bg-stone-100 rounded-lg text-xs font-bold tracking-wider text-stone-700 active:scale-95">ALL BENCH</button>
+          <button onClick={selectAll} className="flex-1 py-2 bg-stone-900 rounded-lg text-xs font-bold tracking-wider text-stone-200 active:scale-95">ALL ON</button>
+          <button onClick={clearAll} className="flex-1 py-2 bg-stone-900 rounded-lg text-xs font-bold tracking-wider text-stone-200 active:scale-95">ALL BENCH</button>
         </div>
 
         <div className="space-y-1.5">
@@ -1996,12 +2006,12 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
                 key={p.id}
                 className={`relative w-full flex items-stretch rounded-xl border-2 transition ${
                   on
-                    ? (isGK ? 'bg-amber-50 border-amber-400' : 'bg-lime-50 border-lime-400')
-                    : (isDefaultGK ? 'bg-amber-50/50 border-amber-200 opacity-60' : 'bg-white border-stone-200 opacity-60')
+                    ? (isGK ? 'bg-amber-500/10 border-amber-400' : 'bg-lime-500/10 border-lime-400')
+                    : (isDefaultGK ? 'bg-amber-50/50 border-amber-200 opacity-60' : 'bg-stone-900 border-stone-800 opacity-60')
                 }`}
               >
                 {isGK && (
-                  <div className="absolute -top-2 -left-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5 z-10">
+                  <div className="absolute -top-2 -left-2 bg-amber-400 text-stone-100 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5 z-10">
                     <span>🧤</span><span>GK</span>
                   </div>
                 )}
@@ -2014,8 +2024,8 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
                     sizeClass="w-11 h-11"
                     textSize="text-xl"
                     numberClasses={on
-                      ? (isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400')
-                      : 'bg-stone-200 text-stone-500'}
+                      ? (isGK ? 'bg-amber-500 text-stone-100' : 'bg-stone-900 text-lime-400')
+                      : 'bg-stone-800 text-stone-400'}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">{p.name}</div>
@@ -2028,7 +2038,7 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
                   <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
                     on
                       ? (isGK ? 'bg-amber-500 border-amber-600' : 'bg-lime-500 border-lime-600')
-                      : 'bg-white border-stone-300'
+                      : 'bg-stone-900 border-stone-700'
                   }`}>
                     {on && <span className="text-white text-sm font-bold">✓</span>}
                   </div>
@@ -2037,8 +2047,8 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
                   onClick={(e) => pickGK(p.id, e)}
                   className={`shrink-0 w-12 flex flex-col items-center justify-center text-[10px] font-extrabold tracking-wider border-l-2 active:scale-[0.95] transition ${
                     isGK
-                      ? 'bg-amber-400 text-stone-900 border-amber-500'
-                      : 'bg-white text-stone-400 border-stone-200 hover:text-amber-600'
+                      ? 'bg-amber-400 text-stone-100 border-amber-500'
+                      : 'bg-stone-900 text-stone-400 border-stone-800 hover:text-amber-600'
                   }`}
                   aria-label={isGK ? 'Remove GK tag' : 'Set as GK'}
                 >
@@ -2051,9 +2061,9 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 p-4 shadow-xl">
-        <div className="text-center text-sm text-stone-600 mb-1">
-          <span className="font-bold text-lime-700">{selected.size}</span> on field · <span className="font-bold text-stone-500">{sorted.length - selected.size}</span> on bench
+      <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 p-4 shadow-xl">
+        <div className="text-center text-sm text-stone-300 mb-1">
+          <span className="font-bold text-lime-700">{selected.size}</span> on field · <span className="font-bold text-stone-400">{sorted.length - selected.size}</span> on bench
         </div>
         <div className="text-center text-xs mb-2">
           {gkPlayer ? (
@@ -2067,8 +2077,8 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
             gkId
-              ? 'bg-lime-500 text-stone-900 shadow-lime-500/30 border-lime-600'
-              : 'bg-stone-200 text-stone-400 border-stone-300 cursor-not-allowed'
+              ? 'bg-lime-500 text-stone-100 shadow-lime-500/30 border-lime-600'
+              : 'bg-stone-800 text-stone-400 border-stone-700 cursor-not-allowed'
           }`}
         >
           ▶ START GAME
@@ -2101,7 +2111,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   const inSecondHalf = game.period === 2;
 
   const statusLabel = inHalfTimeBreak ? 'HALF TIME' : inSecondHalf ? '2ND HALF' : '1ST HALF';
-  const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-900' : 'bg-stone-900 text-lime-400';
+  const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-100' : 'bg-stone-900 text-lime-400';
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -2157,8 +2167,8 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 onClick={onSwapGK}
                 className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${
                   gk
-                    ? 'bg-amber-400 text-stone-900 border-amber-500 shadow'
-                    : 'bg-red-100 text-red-700 border-red-300 animate-pulse'
+                    ? 'bg-amber-400 text-stone-100 border-amber-500 shadow'
+                    : 'bg-red-500/15 text-red-700 border-red-300 animate-pulse'
                 }`}
                 title="Tap to swap goalie"
               >
@@ -2170,7 +2180,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           {!inHalfTimeBreak && (
             <button
               onClick={() => onSelectEvent('__MINS__')}
-              className="shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 bg-white text-stone-600 border-stone-200 active:scale-95 transition flex items-center gap-1"
+              className="shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 bg-stone-900 text-stone-300 border-stone-800 active:scale-95 transition flex items-center gap-1"
               title="Live minutes played"
             >
               <span>⏱</span>
@@ -2189,10 +2199,10 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <div className="flex flex-col h-full min-h-0">
               <div className="flex items-center justify-between mb-3 shrink-0">
                 <div>
-                  <div className="text-xs text-stone-500 font-bold tracking-widest">LIVE</div>
+                  <div className="text-xs text-stone-400 font-bold tracking-widest">LIVE</div>
                   <div className="font-display text-3xl flex items-center gap-2"><span>⏱</span><span>MINUTES</span></div>
                 </div>
-                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -2205,27 +2215,27 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                   const pct = Math.round((sec / maxSec) * 100);
                   return (
                     <div key={p.id} className={`relative rounded-xl border-2 p-2.5 flex items-center gap-3 ${
-                      isGK ? 'bg-amber-50 border-amber-300' : isOn ? 'bg-lime-50 border-lime-300' : 'bg-white border-stone-200'
+                      isGK ? 'bg-amber-500/10 border-amber-300' : isOn ? 'bg-lime-500/10 border-lime-300' : 'bg-stone-900 border-stone-800'
                     }`}>
                       <div className="absolute inset-y-0 left-0 rounded-xl opacity-30" style={{ width: `${pct}%`, background: isGK ? '#fbbf24' : isOn ? '#a3e635' : '#e7e5e4' }} />
                       <div className="relative z-10 flex items-center gap-3 w-full">
-                        <PlayerAvatar player={p} sizeClass="w-10 h-10" textSize="text-lg" numberClasses={isGK ? 'bg-amber-500 text-stone-900' : isOn ? 'bg-stone-900 text-lime-400' : 'bg-stone-200 text-stone-500'} />
+                        <PlayerAvatar player={p} sizeClass="w-10 h-10" textSize="text-lg" numberClasses={isGK ? 'bg-amber-500 text-stone-100' : isOn ? 'bg-stone-900 text-lime-400' : 'bg-stone-800 text-stone-400'} />
                         <div className="flex-1 min-w-0">
                           <div className="font-bold text-sm truncate">{p.name}</div>
-                          <div className="text-[10px] font-bold tracking-wider text-stone-500">
+                          <div className="text-[10px] font-bold tracking-wider text-stone-400">
                             {isGK ? '🧤 IN GOAL' : isOn ? 'ON FIELD' : 'BENCH'}{p.position ? ` · ${p.position}` : ''}
                           </div>
                         </div>
                         <div className="text-right">
                           <div className="font-display text-2xl tabular-nums leading-none">{min}</div>
-                          <div className="text-[9px] font-bold tracking-wider text-stone-500">MIN</div>
+                          <div className="text-[9px] font-bold tracking-wider text-stone-400">MIN</div>
                         </div>
                       </div>
                     </div>
                   );
                 })}
                 {rows.length === 0 && (
-                  <div className="bg-white border border-stone-200 rounded-xl p-6 text-center text-stone-500 text-sm">
+                  <div className="bg-stone-900 border border-stone-800 rounded-xl p-6 text-center text-stone-400 text-sm">
                     No squad players.
                   </div>
                 )}
@@ -2242,24 +2252,24 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <div className="flex flex-col h-full min-h-0">
               <div className="flex items-center justify-between mb-3 shrink-0">
                 <div>
-                  <div className="text-xs text-stone-500 font-bold tracking-widest">NEW GOALIE</div>
+                  <div className="text-xs text-stone-400 font-bold tracking-widest">NEW GOALIE</div>
                   <div className="font-display text-3xl flex items-center gap-2">
                     <span>🧤</span>
                     <span>WHO'S IN GOAL?</span>
                   </div>
                 </div>
-                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
                   <X className="w-5 h-5" />
                 </button>
               </div>
               {currentGKPlayer && (
-                <div className="mb-3 bg-stone-100 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-600">
-                  Current GK: <span className="font-bold text-stone-800">{currentGKPlayer.name} #{currentGKPlayer.number}</span>
+                <div className="mb-3 bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-300">
+                  Current GK: <span className="font-bold text-stone-100">{currentGKPlayer.name} #{currentGKPlayer.number}</span>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-2.5 pb-6 overflow-y-auto">
                 {candidates.length === 0 && (
-                  <div className="col-span-2 bg-white border border-stone-200 rounded-xl p-6 text-center text-stone-500 text-sm">
+                  <div className="col-span-2 bg-stone-900 border border-stone-800 rounded-xl p-6 text-center text-stone-400 text-sm">
                     No players on the field.
                   </div>
                 )}
@@ -2272,13 +2282,13 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                       key={p.id}
                       onClick={() => onConfirmGK(p.id)}
                       className={`relative rounded-xl p-3 flex items-center gap-3 active:scale-[0.97] transition text-left border-2 ${
-                        isDefault ? 'bg-amber-100 border-amber-500' : 'bg-white border-stone-200 hover:border-amber-400'
+                        isDefault ? 'bg-amber-100 border-amber-500' : 'bg-stone-900 border-stone-800 hover:border-amber-400'
                       }`}
                     >
                       {isCurrent && (
                         <div className="absolute -top-2 -right-2 bg-stone-700 text-white text-[9px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full shadow-sm">CURRENT</div>
                       )}
-                      <PlayerAvatar player={p} numberClasses="bg-amber-500 text-stone-900" />
+                      <PlayerAvatar player={p} numberClasses="bg-amber-500 text-stone-100" />
                       <div className="min-w-0 flex-1">
                         <div className="font-bold text-sm truncate">{p.name}</div>
                         <div className="text-[10px] text-amber-700 font-bold tracking-wider">
@@ -2291,7 +2301,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </div>
               <button
                 onClick={() => onConfirmGK(null)}
-                className="mt-1 w-full bg-white text-stone-600 border border-stone-300 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+                className="mt-1 w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
               >
                 NO GOALIE (empty net)
               </button>
@@ -2305,19 +2315,19 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <div className="flex flex-col h-full min-h-0">
               <div className="flex items-center justify-between mb-4 shrink-0">
                 <div>
-                  <div className="text-xs text-stone-500 font-bold tracking-widest">OPP GOAL — GK FAULT?</div>
+                  <div className="text-xs text-stone-400 font-bold tracking-widest">OPP GOAL — GK FAULT?</div>
                   <div className="font-display text-3xl flex items-center gap-2">
                     <span>🚨</span>
                     <span>WHY?</span>
                   </div>
                 </div>
-                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+                <button onClick={onCancelEvent} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               {gkOnField.length > 0 && (
-                <div className="mb-3 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2">
+                <div className="mb-3 bg-amber-500/10 border border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2">
                   <span className="text-lg">🧤</span>
                   <div className="text-xs text-amber-800">
                     <span className="font-bold tracking-wider">GK ON FIELD:</span>{' '}
@@ -2326,28 +2336,28 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 </div>
               )}
               {gkOnField.length === 0 && (
-                <div className="mb-3 bg-stone-100 border border-stone-200 rounded-xl px-3 py-2 text-xs text-stone-600">
+                <div className="mb-3 bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-300">
                   No goalie set for this match. Pick a tag anyway — it'll be saved for record.
                 </div>
               )}
 
               <button
                 onClick={() => onResolveOppGoal('gk')}
-                className="mb-2 w-full bg-red-100 text-red-900 border-2 border-red-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+                className="mb-2 w-full bg-red-500/15 text-red-300 border-2 border-red-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
               >
                 <span className="text-3xl">🧤</span>
                 <span>GK FAULT</span>
               </button>
               <button
                 onClick={() => onResolveOppGoal('unstoppable')}
-                className="mb-2 w-full bg-stone-100 text-stone-800 border-2 border-stone-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+                className="mb-2 w-full bg-stone-900 text-stone-100 border-2 border-stone-400 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
               >
                 <span className="text-3xl">😮</span>
                 <span>UNSTOPPABLE</span>
               </button>
               <button
                 onClick={() => onResolveOppGoal(null)}
-                className="w-full bg-white text-stone-600 border border-stone-300 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+                className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
               >
                 NEUTRAL / UNSURE
               </button>
@@ -2413,19 +2423,19 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           <div className="flex flex-col items-center text-center pt-6">
             <div className="text-6xl mb-3">⏸️</div>
             <div className="font-display text-4xl mb-2">HALF TIME</div>
-            <div className="text-stone-500 text-sm mb-8 max-w-xs">
+            <div className="text-stone-400 text-sm mb-8 max-w-xs">
               Clock is paused. Tap below when the 2nd half kicks off.
             </div>
             <button
               onClick={onStartSecondHalf}
-              className="w-full max-w-sm bg-lime-500 text-stone-900 font-display text-2xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition flex items-center justify-center gap-2"
+              className="w-full max-w-sm bg-lime-500 text-stone-100 font-display text-2xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition flex items-center justify-center gap-2"
             >
               <span>▶</span>
               <span>START 2ND HALF</span>
             </button>
             <button
               onClick={onResumeFirstHalf}
-              className="mt-3 text-stone-500 font-bold text-sm active:scale-95"
+              className="mt-3 text-stone-400 font-bold text-sm active:scale-95"
             >
               ← Back to 1st half
             </button>
@@ -2527,7 +2537,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             {inFirstHalf ? (
               <button
                 onClick={onPauseHalfTime}
-                className="mt-2.5 w-full bg-amber-500 text-stone-900 font-display text-xl py-4 rounded-2xl active:scale-[0.99] transition border-2 border-amber-600 shadow"
+                className="mt-2.5 w-full bg-amber-500 text-stone-100 font-display text-xl py-4 rounded-2xl active:scale-[0.99] transition border-2 border-amber-600 shadow"
               >
                 ⏸ HALF TIME
               </button>
@@ -2546,7 +2556,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 {game.events.length > 0 && (
                   <button
                     onClick={onUndo}
-                    className="text-xs font-bold text-stone-500 flex items-center gap-1 active:scale-95 bg-stone-100 px-3 py-1.5 rounded-full"
+                    className="text-xs font-bold text-stone-400 flex items-center gap-1 active:scale-95 bg-stone-900 px-3 py-1.5 rounded-full"
                   >
                     <Undo2 className="w-3.5 h-3.5" /> UNDO
                   </button>
@@ -2573,13 +2583,13 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
     <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center justify-between mb-4 shrink-0">
         <div>
-          <div className="text-xs text-stone-500 font-bold tracking-widest">WHO?</div>
+          <div className="text-xs text-stone-400 font-bold tracking-widest">WHO?</div>
           <div className="font-display text-3xl flex items-center gap-2">
             <span>{event.emoji}</span>
             <span>{event.label}</span>
           </div>
         </div>
-        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-200 flex items-center justify-center active:scale-95">
+        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -2597,7 +2607,7 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
       {skippable && (
         <button
           onClick={onSkip}
-          className="mb-3 w-full bg-stone-50 text-stone-600 font-display text-sm py-2.5 rounded-xl border border-stone-200 active:scale-[0.98] transition"
+          className="mb-3 w-full bg-stone-950 text-stone-300 font-display text-sm py-2.5 rounded-xl border border-stone-800 active:scale-[0.98] transition"
         >
           NO {event.label}
         </button>
@@ -2605,7 +2615,7 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
 
       <div className="grid grid-cols-2 gap-2.5 pb-6 overflow-y-auto">
         {players.length === 0 && emptyMessage && (
-          <div className="col-span-2 bg-white border border-stone-200 rounded-xl p-6 text-center text-stone-500 text-sm">
+          <div className="col-span-2 bg-stone-900 border border-stone-800 rounded-xl p-6 text-center text-stone-400 text-sm">
             {emptyMessage}
           </div>
         )}
@@ -2619,27 +2629,27 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
               onClick={() => onPick(p.id)}
               className={`relative rounded-xl p-3 flex items-center gap-3 active:scale-[0.97] transition text-left border-2 ${
                 isGK
-                  ? 'bg-amber-50 border-amber-400 hover:border-amber-500'
-                  : 'bg-white border-stone-200 hover:border-stone-900'
+                  ? 'bg-amber-500/10 border-amber-400 hover:border-amber-500'
+                  : 'bg-stone-900 border-stone-800 hover:border-stone-900'
               }`}
             >
               {isGK && (
-                <div className="absolute -top-2 -right-2 bg-amber-400 text-stone-900 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5">
+                <div className="absolute -top-2 -right-2 bg-amber-400 text-stone-100 text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded-full border border-amber-600 shadow-sm flex items-center gap-0.5">
                   <span>🧤</span><span>GK</span>
                 </div>
               )}
               <PlayerAvatar
                 player={p}
-                numberClasses={isGK ? 'bg-amber-500 text-stone-900' : 'bg-stone-900 text-lime-400'}
+                numberClasses={isGK ? 'bg-amber-500 text-stone-100' : 'bg-stone-900 text-lime-400'}
               />
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-sm truncate">{p.name}</div>
                 {secondsByPlayer ? (
-                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-500'}`}>
+                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-400'}`}>
                     {Math.round((secondsByPlayer[p.id] || 0) / 60)} min{p.position ? ` · ${p.position}` : ''}
                   </div>
                 ) : (p.position && (
-                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-500'}`}>
+                  <div className={`text-[10px] font-bold tracking-wider ${isGK ? 'text-amber-700' : 'text-stone-400'}`}>
                     {p.position}
                   </div>
                 ))}
@@ -2666,40 +2676,40 @@ function EventRow({ event, roster, onDelete }) {
   const partner = event.type === 'GIVE_GO' && event.partnerId
     ? roster.find(p => p.id === event.partnerId) : null;
   return (
-    <div className="bg-white border border-stone-200 rounded-lg px-3 py-2 flex items-center gap-3">
+    <div className="bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 flex items-center gap-3">
       <div className="text-xl">{ev.emoji}</div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-bold">{ev.label}</div>
         {isSub ? (
-          <div className="text-xs text-stone-600 truncate">
+          <div className="text-xs text-stone-300 truncate">
             {subOnPlayer ? `${subOnPlayer.name} #${subOnPlayer.number}` : '?'} <span className="text-lime-600 font-bold">IN</span>
             {' · '}
-            {player ? `${player.name} #${player.number}` : '?'} <span className="text-stone-500 font-bold">OUT</span>
+            {player ? `${player.name} #${player.number}` : '?'} <span className="text-stone-400 font-bold">OUT</span>
           </div>
         ) : isGKChange ? (
-          <div className="text-xs text-stone-600 truncate">
+          <div className="text-xs text-stone-300 truncate">
             {player ? `${player.name} #${player.number}` : 'No GK'} <span className="text-amber-700 font-bold">IN GOAL</span>
-            {prevGK && <span className="text-stone-500"> · {prevGK.name} #{prevGK.number} OUT</span>}
+            {prevGK && <span className="text-stone-400"> · {prevGK.name} #{prevGK.number} OUT</span>}
           </div>
         ) : (
           <>
             {player && (
-              <div className="text-xs text-stone-600 truncate">
+              <div className="text-xs text-stone-300 truncate">
                 {player.name} · #{player.number}
                 {partner && (
-                  <span className="text-stone-500"> → 🤝 {partner.name} #{partner.number}</span>
+                  <span className="text-stone-400"> → 🤝 {partner.name} #{partner.number}</span>
                 )}
               </div>
             )}
-            {!player && ev.requiresPlayer && <div className="text-xs text-stone-500 italic">Unknown player</div>}
-            {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && <div className="text-xs text-stone-500">No player</div>}
+            {!player && ev.requiresPlayer && <div className="text-xs text-stone-400 italic">Unknown player</div>}
+            {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && <div className="text-xs text-stone-400">No player</div>}
             {event.type === 'OPP_GOAL' && (
               <div className="mt-0.5">
                 {event.gkFault === 'gk' && (
-                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-300">🧤 GK FAULT</span>
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-red-500/15 text-red-700 border border-red-300">🧤 GK FAULT</span>
                 )}
                 {event.gkFault === 'unstoppable' && (
-                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-100 text-stone-700 border border-stone-300">😮 UNSTOPPABLE</span>
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 border border-stone-700">😮 UNSTOPPABLE</span>
                 )}
                 {!event.gkFault && (
                   <span className="text-[10px] text-stone-400 italic">unmarked</span>
@@ -2713,7 +2723,7 @@ function EventRow({ event, roster, onDelete }) {
         {formatClock(event.elapsed)} · P{event.period}
       </div>
       {onDelete && (
-        <button onClick={() => onDelete(event.id)} className="w-7 h-7 rounded-full bg-red-50 flex items-center justify-center active:scale-95 shrink-0">
+        <button onClick={() => onDelete(event.id)} className="w-7 h-7 rounded-full bg-red-500/10 flex items-center justify-center active:scale-95 shrink-0">
           <Trash2 className="w-3.5 h-3.5 text-red-600" />
         </button>
       )}
@@ -2723,15 +2733,15 @@ function EventRow({ event, roster, onDelete }) {
 
 /* ---------- PILLAR MINI BAR ---------- */
 function PillarMini({ label, value }) {
-  const color = value >= 6 ? 'bg-lime-500' : value >= 3 ? 'bg-sky-400' : value >= 0 ? 'bg-stone-300' : 'bg-red-400';
+  const color = value >= 6 ? 'bg-lime-500' : value >= 3 ? 'bg-sky-400' : value >= 0 ? 'bg-stone-700' : 'bg-red-400';
   const width = Math.min(100, Math.max(5, (Math.abs(value) / 15) * 100));
   return (
     <div>
-      <div className="text-[9px] font-bold tracking-wider text-stone-500 mb-0.5">{label}</div>
-      <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
+      <div className="text-[9px] font-bold tracking-wider text-stone-400 mb-0.5">{label}</div>
+      <div className="h-2 bg-stone-900 rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${width}%` }}></div>
       </div>
-      <div className="text-[10px] font-display tabular-nums text-stone-600 mt-0.5">{value}</div>
+      <div className="text-[10px] font-display tabular-nums text-stone-300 mt-0.5">{value}</div>
     </div>
   );
 }
@@ -2799,7 +2809,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
             <button
               onClick={shareLiveLink}
               title="Share live scoreboard link"
-              className="h-9 px-3 rounded-full bg-lime-400/90 text-stone-900 flex items-center gap-1 active:scale-95 font-bold text-xs"
+              className="h-9 px-3 rounded-full bg-lime-400/90 text-stone-100 flex items-center gap-1 active:scale-95 font-bold text-xs"
             >
               📡 SHARE
             </button>
@@ -2825,7 +2835,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
       {Object.keys(tally).length > 0 && (
         <div className="px-4 pt-5">
           <h3 className="font-display text-xl mb-2">PERFORMANCE SCORES</h3>
-          <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800">
             {Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
@@ -2862,9 +2872,9 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm">{player?.name || 'Removed player'}</div>
-                        <div className="text-xs text-stone-500">{parts.join(' · ') || '—'}{min > 0 ? ` · ${min}min` : ''}</div>
+                        <div className="text-xs text-stone-400">{parts.join(' · ') || '—'}{min > 0 ? ` · ${min}min` : ''}</div>
                       </div>
-                      <div className={`font-display text-2xl tabular-nums ${score.overall >= 8 ? 'text-lime-600' : score.overall >= 4 ? 'text-stone-900' : score.overall >= 0 ? 'text-stone-500' : 'text-red-600'}`}>
+                      <div className={`font-display text-2xl tabular-nums ${score.overall >= 8 ? 'text-lime-600' : score.overall >= 4 ? 'text-stone-100' : score.overall >= 0 ? 'text-stone-400' : 'text-red-600'}`}>
                         {score.overall}
                       </div>
                     </div>
@@ -2884,7 +2894,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
       <div className="px-4 pt-5">
         <h3 className="font-display text-xl mb-2">TIMELINE</h3>
         {events.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-sm text-stone-500">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
             No events recorded.
           </div>
         ) : (
@@ -2975,16 +2985,16 @@ function StatsView({ roster, games, weights, onBack }) {
       <Header title="SEASON STATS" onBack={onBack} />
 
       <div className="px-4 pt-5">
-        <div className="text-xs text-stone-500 mb-1">Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.</div>
+        <div className="text-xs text-stone-400 mb-1">Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.</div>
         <div className="text-xs text-stone-400 italic mb-3">Sorted by performance score. Tap a player for full breakdown.</div>
 
         {roster.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-sm text-stone-500">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
             Add players to track stats.
           </div>
         ) : (
-          <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-2 bg-stone-100 text-[9px] font-bold tracking-wider text-stone-600">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+            <div className="grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-2 bg-stone-900 text-[9px] font-bold tracking-wider text-stone-300">
               <div>#</div>
               <div>PLAYER</div>
               <div className="text-center">GP</div>
@@ -2993,7 +3003,7 @@ function StatsView({ roster, games, weights, onBack }) {
               <div className="text-center">A</div>
               <div className="text-center">SCORE</div>
             </div>
-            <div className="divide-y divide-stone-100">
+            <div className="divide-y divide-stone-800">
               {sorted.map(p => {
                 const s = stats[p.id] || {};
                 const min = Math.round((s.totalSeconds || 0) / 60);
@@ -3002,18 +3012,18 @@ function StatsView({ roster, games, weights, onBack }) {
                   <button
                     key={p.id}
                     onClick={() => setDetailPlayerId(p.id)}
-                    className="w-full grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-50 transition"
+                    className="w-full grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-950 transition"
                   >
-                    <PlayerAvatar player={p} sizeClass="w-9 h-9" textSize="text-base" numberClasses="bg-stone-100 text-stone-900" />
+                    <PlayerAvatar player={p} sizeClass="w-9 h-9" textSize="text-base" numberClasses="bg-stone-900 text-stone-100" />
                     <div className="min-w-0">
                       <div className="font-bold text-sm truncate">{p.name}</div>
-                      {p.position && <div className="text-[10px] text-stone-500 font-bold tracking-wider">{p.position}</div>}
+                      {p.position && <div className="text-[10px] text-stone-400 font-bold tracking-wider">{p.position}</div>}
                     </div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-700">{s.gamesPlayed || 0}</div>
+                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.gamesPlayed || 0}</div>
                     <div className="text-center font-display text-sm tabular-nums text-sky-700">{min}</div>
                     <div className="text-center font-display text-sm tabular-nums text-lime-700">{s.GOAL || 0}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-700">{s.ASSIST || 0}</div>
-                    <div className={`text-center font-display text-base tabular-nums ${(sc.overall || 0) >= 6 ? 'text-lime-600' : (sc.overall || 0) >= 3 ? 'text-stone-900' : 'text-stone-500'}`}>{sc.overall || 0}</div>
+                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.ASSIST || 0}</div>
+                    <div className={`text-center font-display text-base tabular-nums ${(sc.overall || 0) >= 6 ? 'text-lime-600' : (sc.overall || 0) >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{sc.overall || 0}</div>
                   </button>
                 );
               })}
@@ -3021,7 +3031,7 @@ function StatsView({ roster, games, weights, onBack }) {
           </div>
         )}
 
-        <div className="mt-4 bg-stone-100 rounded-xl p-3 text-xs text-stone-600">
+        <div className="mt-4 bg-stone-900 rounded-xl p-3 text-xs text-stone-300">
           <span className="font-bold">SCORE</span> = weighted per-20min rate (ATK 30% · DEF 25% · DEC 30% · INV 15%) · <span className="font-bold">GP</span> Games · <span className="font-bold">MIN</span> Minutes · <span className="font-bold">G</span> Goals · <span className="font-bold">A</span> Assists
         </div>
       </div>
@@ -3062,26 +3072,26 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-y-auto shadow-2xl"
+        className="bg-stone-900 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-y-auto shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-white border-b border-stone-200 px-5 py-4 flex items-center gap-3 z-10">
+        <div className="sticky top-0 bg-stone-900 border-b border-stone-800 px-5 py-4 flex items-center gap-3 z-10">
           <div className="w-12 h-12 rounded-xl bg-stone-900 text-lime-400 flex items-center justify-center font-display text-2xl tabular-nums">
             {player.number || '—'}
           </div>
           <div className="flex-1 min-w-0">
             <div className="font-display text-xl truncate">{player.name}</div>
-            {player.position && <div className="text-xs text-stone-500 font-bold tracking-wider">{player.position}</div>}
+            {player.position && <div className="text-xs text-stone-400 font-bold tracking-wider">{player.position}</div>}
           </div>
-          <button onClick={onClose} className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center active:scale-95">
+          <button onClick={onClose} className="w-10 h-10 rounded-full bg-stone-900 flex items-center justify-center active:scale-95">
             <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-5">
-          <div className="bg-stone-50 rounded-xl p-4 mb-4">
+          <div className="bg-stone-950 rounded-xl p-4 mb-4">
             <div className="flex items-center justify-between mb-3">
               <div className="font-display text-lg">PERFORMANCE SCORE</div>
-              <div className={`font-display text-3xl tabular-nums ${(score.overall || 0) >= 6 ? 'text-lime-600' : (score.overall || 0) >= 3 ? 'text-stone-900' : 'text-stone-500'}`}>{score.overall || 0}</div>
+              <div className={`font-display text-3xl tabular-nums ${(score.overall || 0) >= 6 ? 'text-lime-600' : (score.overall || 0) >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{score.overall || 0}</div>
             </div>
             <div className="grid grid-cols-4 gap-2">
               <PillarMini label="ATK" value={score.attacking || 0} />
@@ -3091,11 +3101,11 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
             </div>
           </div>
 
-          <div className="divide-y divide-stone-100">
+          <div className="divide-y divide-stone-800">
             {rows.map(r => (
               <div key={r.label} className="flex items-center justify-between py-3">
-                <div className="text-sm text-stone-700">{r.label}</div>
-                <div className={`font-display text-2xl tabular-nums ${r.accent || 'text-stone-900'}`}>{r.value}</div>
+                <div className="text-sm text-stone-200">{r.label}</div>
+                <div className={`font-display text-2xl tabular-nums ${r.accent || 'text-stone-100'}`}>{r.value}</div>
               </div>
             ))}
           </div>
@@ -3146,15 +3156,15 @@ function LockScreen({ onUnlock }) {
           placeholder="••••••••"
           className={`w-full text-center text-2xl py-4 rounded-xl border-2 outline-none transition ${
             error
-              ? 'bg-red-100 border-red-400 text-red-700 animate-[shake_0.3s_ease-in-out]'
-              : 'bg-white border-stone-200 text-stone-900'
+              ? 'bg-red-500/15 border-red-400 text-red-700 animate-[shake_0.3s_ease-in-out]'
+              : 'bg-stone-900 border-stone-800 text-stone-100'
           }`}
           autoFocus
         />
         {error && <div className="text-red-400 text-sm font-bold mt-2">Wrong password. Try again.</div>}
         <button
           onClick={handleSubmit}
-          className="mt-4 w-full bg-lime-500 text-stone-900 font-display text-2xl py-4 rounded-xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition"
+          className="mt-4 w-full bg-lime-500 text-stone-100 font-display text-2xl py-4 rounded-xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition"
         >
           ENTER
         </button>
@@ -3234,10 +3244,10 @@ function WeightsView({ weights, onSave, onBack }) {
     const val = draft[group][key];
     const isNeg = typeof val === 'number' && val < 0;
     return (
-      <div key={key} className="flex items-center justify-between gap-3 py-2 border-b border-stone-100 last:border-b-0">
+      <div key={key} className="flex items-center justify-between gap-3 py-2 border-b border-stone-800 last:border-b-0">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span className="text-lg">{emoji}</span>
-          <span className="text-sm text-stone-700 truncate">{label}</span>
+          <span className="text-sm text-stone-200 truncate">{label}</span>
         </div>
         <input
           type="number"
@@ -3245,7 +3255,7 @@ function WeightsView({ weights, onSave, onBack }) {
           inputMode="numeric"
           value={val}
           onChange={(e) => setPoint(group, key, e.target.value)}
-          className={`w-20 text-center font-display text-lg py-1 rounded-lg border-2 ${isNeg ? 'border-red-300 bg-red-50 text-red-700' : 'border-stone-200 bg-white text-stone-800'} focus:outline-none focus:border-stone-500`}
+          className={`w-20 text-center font-display text-lg py-1 rounded-lg border-2 ${isNeg ? 'border-red-300 bg-red-500/10 text-red-700' : 'border-stone-800 bg-stone-900 text-stone-100'} focus:outline-none focus:border-stone-500`}
         />
       </div>
     );
@@ -3253,19 +3263,19 @@ function WeightsView({ weights, onSave, onBack }) {
 
   const PointsSection = ({ group }) => (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl border-2 border-lime-200 px-4 py-3">
+      <div className="bg-stone-900 rounded-2xl border-2 border-lime-500/30 px-4 py-3">
         <div className="font-display text-sm text-lime-700 mb-1">ATTACKING</div>
         {ATK_ROWS.map(r => renderPointRow(group, r))}
       </div>
-      <div className="bg-white rounded-2xl border-2 border-sky-200 px-4 py-3">
+      <div className="bg-stone-900 rounded-2xl border-2 border-sky-500/30 px-4 py-3">
         <div className="font-display text-sm text-sky-700 mb-1">DEFENDING</div>
         {DEF_ROWS.map(r => renderPointRow(group, r))}
       </div>
-      <div className="bg-white rounded-2xl border-2 border-amber-200 px-4 py-3">
+      <div className="bg-stone-900 rounded-2xl border-2 border-amber-200 px-4 py-3">
         <div className="font-display text-sm text-amber-700 mb-1">DECISIONS</div>
         {DEC_ROWS.map(r => renderPointRow(group, r))}
       </div>
-      <p className="text-xs text-stone-500 px-1">
+      <p className="text-xs text-stone-400 px-1">
         Points per action. Negative values penalize the score. Goalkeepers and outfield players use the same per-action values — their roles differ via the PILLAR mix.
       </p>
     </div>
@@ -3277,15 +3287,15 @@ function WeightsView({ weights, onSave, onBack }) {
       const s = sum(role);
       const ok = s === 100;
       return (
-        <div className="bg-white rounded-2xl border-2 border-stone-200 px-4 py-3">
+        <div className="bg-stone-900 rounded-2xl border-2 border-stone-800 px-4 py-3">
           <div className="flex items-center justify-between mb-2">
-            <div className="font-display text-sm text-stone-700">{label}</div>
+            <div className="font-display text-sm text-stone-200">{label}</div>
             <div className={`text-xs font-display ${ok ? 'text-lime-700' : 'text-red-600'}`}>Σ {s}%</div>
           </div>
           <div className="grid grid-cols-4 gap-2">
             {[['atk', 'ATK'], ['def', 'DEF'], ['dec', 'DEC'], ['inv', 'INV']].map(([k, lab]) => (
               <label key={k} className="flex flex-col items-center gap-1">
-                <span className="text-[10px] font-display text-stone-500">{lab}</span>
+                <span className="text-[10px] font-display text-stone-400">{lab}</span>
                 <input
                   type="number"
                   step="1"
@@ -3294,7 +3304,7 @@ function WeightsView({ weights, onSave, onBack }) {
                   inputMode="numeric"
                   value={draft.pillars[role][k]}
                   onChange={(e) => setPillar(role, k, e.target.value)}
-                  className="w-full text-center font-display text-base py-1 rounded-lg border-2 border-stone-200 bg-white focus:outline-none focus:border-stone-500"
+                  className="w-full text-center font-display text-base py-1 rounded-lg border-2 border-stone-800 bg-stone-900 focus:outline-none focus:border-stone-500"
                 />
               </label>
             ))}
@@ -3306,7 +3316,7 @@ function WeightsView({ weights, onSave, onBack }) {
       <div className="space-y-4">
         {renderPillar('outfield', 'OUTFIELD pillar mix')}
         {renderPillar('gk',       'GOALKEEPER pillar mix')}
-        <p className="text-xs text-stone-500 px-1">
+        <p className="text-xs text-stone-400 px-1">
           Overall score = weighted blend of the four pillars (ATK · DEF · DEC · INV). Values are percentages — each row should sum to 100.
         </p>
       </div>
@@ -3316,7 +3326,7 @@ function WeightsView({ weights, onSave, onBack }) {
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
-      className={`flex-1 py-2 font-display text-sm rounded-xl border-2 transition ${tab === id ? 'bg-stone-900 text-white border-stone-900' : 'bg-white text-stone-600 border-stone-200'}`}
+      className={`flex-1 py-2 font-display text-sm rounded-xl border-2 transition ${tab === id ? 'bg-stone-900 text-white border-stone-900' : 'bg-stone-900 text-stone-300 border-stone-800'}`}
     >
       {label}
     </button>
@@ -3330,7 +3340,7 @@ function WeightsView({ weights, onSave, onBack }) {
         right={
           <button
             onClick={resetDefaults}
-            className="text-xs font-display text-stone-500 hover:text-stone-800 px-2 py-1 rounded-lg border border-stone-200"
+            className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
           >
             RESET
           </button>
@@ -3347,16 +3357,16 @@ function WeightsView({ weights, onSave, onBack }) {
         {tab === 'pillars' && <PillarsSection />}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 px-4 py-3 flex gap-2">
+      <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 px-4 py-3 flex gap-2">
         <button
           onClick={onBack}
-          className="flex-1 py-3 rounded-xl border-2 border-stone-200 bg-white text-stone-700 font-display"
+          className="flex-1 py-3 rounded-xl border-2 border-stone-800 bg-stone-900 text-stone-200 font-display"
         >
           CANCEL
         </button>
         <button
           onClick={saveAndExit}
-          className="flex-1 py-3 rounded-xl bg-lime-500 hover:bg-lime-600 text-stone-900 font-display border-2 border-lime-600"
+          className="flex-1 py-3 rounded-xl bg-lime-500 hover:bg-lime-600 text-stone-100 font-display border-2 border-lime-600"
         >
           SAVE
         </button>
@@ -3475,20 +3485,20 @@ function ScheduleView({ schedule, onSave, onBack }) {
   const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
 
   return (
-    <div className="min-h-screen bg-stone-100 pb-8">
+    <div className="min-h-screen bg-stone-900 pb-8">
       <Header title="SCHEDULE" onBack={onBack} />
 
       {/* Import from ECSL */}
       <div className="px-4 pt-4">
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-3">
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
           <div className="font-display text-lg">IMPORT FROM ECSL</div>
-          <p className="text-xs text-stone-500">Go to ecslsoccer.ca → Schedule → select your team → copy the table rows → paste below.</p>
+          <p className="text-xs text-stone-400">Go to ecslsoccer.ca → Schedule → select your team → copy the table rows → paste below.</p>
           <textarea
             placeholder="Paste schedule rows here..."
             value={pasteText}
             onChange={e => setPasteText(e.target.value)}
             rows={3}
-            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500 resize-none"
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500 resize-none"
           />
           {pasteText.trim() && !parsed && (
             <button
@@ -3504,9 +3514,9 @@ function ScheduleView({ schedule, onSave, onBack }) {
                 <div className="text-sm text-red-600">Could not parse any games. Make sure you copied the table rows.</div>
               ) : (
                 <>
-                  <div className="text-xs font-semibold text-stone-600">Found {parsed.length} game{parsed.length > 1 ? 's' : ''}:</div>
+                  <div className="text-xs font-semibold text-stone-300">Found {parsed.length} game{parsed.length > 1 ? 's' : ''}:</div>
                   {parsed.map((p, i) => (
-                    <div key={i} className="bg-stone-50 rounded-lg px-3 py-2 text-sm">
+                    <div key={i} className="bg-stone-950 rounded-lg px-3 py-2 text-sm">
                       <span className="font-bold">vs {p.opponent}</span> · {new Date(p.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' })}
                       {p.time && ` · ${formatTime12(p.time)}`}
                       {p.location && ` · ${p.location}`}
@@ -3514,13 +3524,13 @@ function ScheduleView({ schedule, onSave, onBack }) {
                   ))}
                   <button
                     onClick={handleImport}
-                    className="w-full bg-lime-500 text-stone-900 font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
+                    className="w-full bg-lime-500 text-stone-100 font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
                   >
                     ADD {parsed.length} GAME{parsed.length > 1 ? 'S' : ''}
                   </button>
                   <button
                     onClick={() => { setParsed(null); setPasteText(''); }}
-                    className="w-full text-stone-500 text-sm py-1"
+                    className="w-full text-stone-400 text-sm py-1"
                   >
                     Cancel
                   </button>
@@ -3533,19 +3543,19 @@ function ScheduleView({ schedule, onSave, onBack }) {
 
       {/* Add form */}
       <div className="px-4 pt-4 space-y-3">
-        <div className="bg-white border border-stone-200 rounded-2xl p-4 space-y-3">
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
           <div className="font-display text-lg">ADD GAME</div>
           <input
             type="text"
             placeholder="Opponent *"
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
-            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
           <div className="grid grid-cols-2 gap-3">
             <label className="relative block">
-              <span className="text-xs font-semibold text-stone-500 mb-1 block">DATE *</span>
-              <div className="w-full border border-stone-300 bg-white rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+              <span className="text-xs font-semibold text-stone-400 mb-1 block">DATE *</span>
+              <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
                 {date ? new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : <span className="text-stone-400">Select date</span>}
               </div>
               <input
@@ -3556,8 +3566,8 @@ function ScheduleView({ schedule, onSave, onBack }) {
               />
             </label>
             <label className="relative block">
-              <span className="text-xs font-semibold text-stone-500 mb-1 block">TIME</span>
-              <div className="w-full border border-stone-300 bg-white rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+              <span className="text-xs font-semibold text-stone-400 mb-1 block">TIME</span>
+              <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
                 {time ? formatTime12(time) : <span className="text-stone-400">Select time</span>}
               </div>
               <input
@@ -3573,14 +3583,14 @@ function ScheduleView({ schedule, onSave, onBack }) {
             placeholder="Tournament / Festival"
             value={tournament}
             onChange={e => setTournament(e.target.value)}
-            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
           <input
             type="text"
             placeholder="Location (address or Google Maps link)"
             value={location}
             onChange={e => setLocation(e.target.value)}
-            className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
           <button
             onClick={handleAdd}
@@ -3596,7 +3606,7 @@ function ScheduleView({ schedule, onSave, onBack }) {
       <div className="px-4 pt-6">
         <h2 className="font-display text-xl mb-3">ALL GAMES ({sorted.length})</h2>
         {sorted.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-stone-500 text-sm">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
             No scheduled games yet.
           </div>
         ) : (
@@ -3604,14 +3614,14 @@ function ScheduleView({ schedule, onSave, onBack }) {
             {sorted.map(item => {
               const isPast = new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
               return (
-                <div key={item.id} className={`bg-white border border-stone-200 rounded-xl p-3 flex items-center gap-3 ${isPast ? 'opacity-50' : ''}`}>
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                <div key={item.id} className={`bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3 ${isPast ? 'opacity-50' : ''}`}>
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
                     <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
                     <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-500 truncate">
+                    <div className="text-xs text-stone-400 truncate">
                       {item.tournament && <span>{item.tournament} · </span>}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
@@ -3619,7 +3629,7 @@ function ScheduleView({ schedule, onSave, onBack }) {
                       <a
                         href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
                         target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-600 underline flex items-center gap-1 mt-0.5"
+                        className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
                         onClick={e => e.stopPropagation()}
                       >
                         <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
@@ -3628,7 +3638,7 @@ function ScheduleView({ schedule, onSave, onBack }) {
                   </div>
                   <button
                     onClick={() => handleDelete(item.id)}
-                    className="w-8 h-8 rounded-full bg-red-50 text-red-500 flex items-center justify-center active:scale-90 transition"
+                    className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -3649,20 +3659,20 @@ function HelpView({ onBack }) {
   const Section = ({ id, emoji, title, summary, children }) => {
     const isOpen = openId === id;
     return (
-      <div className="bg-white border-2 border-stone-200 rounded-2xl overflow-hidden">
+      <div className="bg-stone-900 border-2 border-stone-800 rounded-2xl overflow-hidden">
         <button
           onClick={() => toggle(id)}
-          className="w-full text-left px-4 py-3 flex items-start gap-3 active:bg-stone-50"
+          className="w-full text-left px-4 py-3 flex items-start gap-3 active:bg-stone-950"
         >
           <span className="text-2xl leading-none">{emoji}</span>
           <div className="flex-1 min-w-0">
             <div className="font-display text-base leading-tight">{title}</div>
-            {summary && <div className="text-xs text-stone-500 mt-0.5">{summary}</div>}
+            {summary && <div className="text-xs text-stone-400 mt-0.5">{summary}</div>}
           </div>
           <ChevronRight className={`w-5 h-5 text-stone-400 mt-1 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
         </button>
         {isOpen && (
-          <div className="px-4 pb-4 pt-1 text-sm text-stone-700 leading-relaxed space-y-2 border-t border-stone-100">
+          <div className="px-4 pb-4 pt-1 text-sm text-stone-200 leading-relaxed space-y-2 border-t border-stone-800">
             {children}
           </div>
         )}
@@ -3672,11 +3682,11 @@ function HelpView({ onBack }) {
 
   const Pill = ({ children, tone = 'stone' }) => {
     const tones = {
-      stone: 'bg-stone-100 text-stone-700 border-stone-300',
-      lime:  'bg-lime-100 text-lime-800 border-lime-400',
-      red:   'bg-red-100 text-red-800 border-red-400',
+      stone: 'bg-stone-800 text-stone-300 border-stone-700',
+      lime:  'bg-lime-500/15 text-lime-300 border-lime-400',
+      red:   'bg-red-500/15 text-red-300 border-red-400',
       amber: 'bg-amber-100 text-amber-900 border-amber-400',
-      sky:   'bg-sky-100 text-sky-800 border-sky-400',
+      sky:   'bg-sky-500/15 text-sky-800 border-sky-400',
       purple:'bg-purple-100 text-purple-800 border-purple-400',
     };
     return <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold border ${tones[tone]} mx-0.5`}>{children}</span>;
@@ -3690,7 +3700,7 @@ function HelpView({ onBack }) {
   );
 
   return (
-    <div className="pb-24 bg-stone-50 min-h-screen">
+    <div className="pb-24 bg-stone-950 min-h-screen">
       <Header title="HELP & GUIDE" onBack={onBack} />
 
       <div className="px-4 pt-3 space-y-2.5">
@@ -3710,7 +3720,7 @@ function HelpView({ onBack }) {
           <Step n={1}>Tap <Pill tone="lime">START GAME</Pill> → opponent → squad → starting 7.</Step>
           <Step n={2}>During play, tap actions as they happen.</Step>
           <Step n={3}>End the game → scores save → review in <Pill>STATS</Pill> &amp; past games.</Step>
-          <p className="text-xs text-stone-500">All data syncs to the cloud, so other coaches with the link see the same roster and live games.</p>
+          <p className="text-xs text-stone-400">All data syncs to the cloud, so other coaches with the link see the same roster and live games.</p>
         </Section>
 
         <Section id="start" emoji="🚀" title="1 · Starting a match" summary="Opponent → squad → lineup → GK">
@@ -3719,7 +3729,7 @@ function HelpView({ onBack }) {
           <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. For 7v7 leagues that cap rosters at 12, you'll see a soft warning over 12 — but no hard limit.</Step>
           <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or however many) who start on the field. Everyone else begins on the bench.</Step>
           <Step n={4}><strong>Goalkeeper</strong>: tap the player wearing the gloves. You can change keeper at any time during the game.</Step>
-          <p className="text-xs text-stone-500">If you mis-pick the squad, tap <ChevronLeft className="inline w-3 h-3" /> to go back at any step — nothing is saved until kick-off.</p>
+          <p className="text-xs text-stone-400">If you mis-pick the squad, tap <ChevronLeft className="inline w-3 h-3" /> to go back at any step — nothing is saved until kick-off.</p>
         </Section>
 
         <Section id="clock" emoji="⏱" title="2 · The clock & periods" summary="First half, half time, second half">
@@ -3734,11 +3744,11 @@ function HelpView({ onBack }) {
 
         <Section id="actions" emoji="🎯" title="3 · Logging actions (EARN / LOSE)" summary="Tap event → tap player">
           <p>The action grid is split into two zones so the value of each tap is obvious:</p>
-          <div className="bg-lime-50 border-2 border-lime-300 rounded-xl p-3">
+          <div className="bg-lime-500/10 border-2 border-lime-300 rounded-xl p-3">
             <div className="font-display text-sm text-lime-800 mb-1">EARN <span className="text-lime-700">+</span></div>
             Good things your players do: <Pill tone="lime">⚽ GOAL</Pill> <Pill tone="lime">🔑 KEY PASS</Pill> <Pill tone="lime">🎯 SHOT ON</Pill> <Pill tone="lime">🧤 SAVE</Pill> <Pill tone="lime">🛡 BLOCK</Pill> <Pill tone="lime">🔥 BALL WIN</Pill> <Pill tone="lime">💪 1V1 WIN</Pill> <Pill tone="lime">🔄 GIVE &amp; GO</Pill> <Pill tone="lime">🚪 GATES</Pill>
           </div>
-          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
+          <div className="bg-red-500/10 border-2 border-red-300 rounded-xl p-3">
             <div className="font-display text-sm text-red-800 mb-1">LOSE <span className="text-red-700">−</span></div>
             Things that hurt the score: <Pill tone="red">🛑 HOLDS BALL</Pill> <Pill tone="red">🔁 TURNOVER</Pill> <Pill tone="red">💢 1V1 LOSE</Pill> <Pill tone="red">🚨 OPP GOAL</Pill>
           </div>
@@ -3748,7 +3758,7 @@ function HelpView({ onBack }) {
           <Step n={3}>For <Pill tone="lime">GOAL</Pill> you're asked if there was an assist — pick the assister, or <em>NO ASSIST</em>.</Step>
           <Step n={4}>For <Pill tone="lime">🔄 GIVE &amp; GO</Pill> you're asked for the <strong>wall-pass partner</strong> — the teammate who returned the ball. Initiator gets full credit, partner gets half. Tap <em>SKIP</em> if you didn't catch who.</Step>
           <Step n={5}>For <Pill tone="red">OPP GOAL</Pill> you'll be asked whose fault it was: <em>GK</em>, <em>UNSTOPPABLE</em>, or <em>NEUTRAL</em>. Affects the keeper's score.</Step>
-          <p className="text-xs text-stone-500">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
+          <p className="text-xs text-stone-400">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
         </Section>
 
         <Section id="subs" emoji="🔄" title="4 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
@@ -3757,7 +3767,7 @@ function HelpView({ onBack }) {
           <Step n={2}><strong>Who's ON?</strong> Picker shows only bench players (with minutes played so far so you can spread time fairly).</Step>
           <p>If the player coming off is the current keeper, you'll be prompted to pick a new GK immediately.</p>
           <p>To change the keeper without subbing anyone, tap <Pill tone="amber">SWAP GK</Pill>. You can pick from the entire squad (field <em>or</em> bench).</p>
-          <p className="text-xs text-stone-500">The system rejects impossible subs — you can't take the same player off twice, and you can't sub someone in who's already on the field.</p>
+          <p className="text-xs text-stone-400">The system rejects impossible subs — you can't take the same player off twice, and you can't sub someone in who's already on the field.</p>
         </Section>
 
         <Section id="minutes" emoji="⏲" title="5 · Tracking minutes played" summary="Make sure no one sits all game">
@@ -3810,45 +3820,45 @@ function HelpView({ onBack }) {
 
         <Section id="install" emoji="📲" title="11 · Install on your phone" summary="iPhone + Android — feels like a real app">
           <p>The app is a <strong>PWA</strong> — install it to your home screen and it launches fullscreen with its own icon, no browser bar, and works offline.</p>
-          <p className="text-xs text-stone-500">Tap the green <Pill tone="lime">📲 INSTALL</Pill> button on the home screen at any time to open these steps.</p>
+          <p className="text-xs text-stone-400">Tap the green <Pill tone="lime">📲 INSTALL</Pill> button on the home screen at any time to open these steps.</p>
 
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2">
-            <div className="font-display text-sm text-stone-700 mb-2">📱 iPhone &amp; iPad (Safari only)</div>
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mt-2">
+            <div className="font-display text-sm text-stone-200 mb-2">📱 iPhone &amp; iPad (Safari only)</div>
             <Step n={1}>Open the app in <strong>Safari</strong> (not Chrome — Apple doesn't allow other browsers to install PWAs on iOS).</Step>
             <Step n={2}>Tap the <strong>Share</strong> button <Pill>⬆</Pill> at the bottom of Safari.</Step>
             <Step n={3}>Scroll down and tap <strong>Add to Home Screen</strong>.</Step>
             <Step n={4}>Confirm with <strong>Add</strong> in the top-right. Done!</Step>
           </div>
 
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2">
-            <div className="font-display text-sm text-stone-700 mb-2">🤖 Android (Chrome, Edge, Samsung Internet)</div>
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mt-2">
+            <div className="font-display text-sm text-stone-200 mb-2">🤖 Android (Chrome, Edge, Samsung Internet)</div>
             <p className="text-sm">On most Android browsers a one-tap install banner appears the first time you visit. If you missed it:</p>
             <Step n={1}>Tap the <strong>⋮</strong> menu (top-right of the browser).</Step>
             <Step n={2}>Tap <strong>Install app</strong> (or <strong>Add to Home screen</strong>).</Step>
             <Step n={3}>Confirm <strong>Install</strong>.</Step>
-            <p className="text-xs text-stone-500 mt-1">After install, launch from the home-screen icon — it runs fullscreen with no browser UI.</p>
+            <p className="text-xs text-stone-400 mt-1">After install, launch from the home-screen icon — it runs fullscreen with no browser UI.</p>
           </div>
 
-          <p className="text-xs text-stone-500 mt-2">Sharing the app with another parent or coach? Just send them the same URL — they install on their own device and see the same shared team data in real time.</p>
+          <p className="text-xs text-stone-400 mt-2">Sharing the app with another parent or coach? Just send them the same URL — they install on their own device and see the same shared team data in real time.</p>
         </Section>
 
         <Section id="live" emoji="📡" title="12 · Public scoreboard & coach access" summary="How URLs are split between parents and coaches">
           <p>The site has <strong>three URLs</strong>, each for a different audience:</p>
-          <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 mt-2 text-sm space-y-2">
+          <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mt-2 text-sm space-y-2">
             <div>
-              <div className="font-display text-sm text-stone-700">👩‍👦 Parents — public scoreboard</div>
-              <div className="text-xs text-stone-600">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past matches. First name + jersey number only — no full names.</div>
+              <div className="font-display text-sm text-stone-200">👩‍👦 Parents — public scoreboard</div>
+              <div className="text-xs text-stone-300">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past matches. First name + jersey number only — no full names.</div>
             </div>
             <div>
-              <div className="font-display text-sm text-stone-700">📎 Share a specific game</div>
-              <div className="text-xs text-stone-600">Tap <Pill tone="lime">📡 SHARE</Pill> on any game to copy a link like <code>?live=GAME_ID</code> — great for tournament recaps or revisiting a past match in a TeamSnap event post.</div>
+              <div className="font-display text-sm text-stone-200">📎 Share a specific game</div>
+              <div className="text-xs text-stone-300">Tap <Pill tone="lime">📡 SHARE</Pill> on any game to copy a link like <code>?live=GAME_ID</code> — great for tournament recaps or revisiting a past match in a TeamSnap event post.</div>
             </div>
             <div>
-              <div className="font-display text-sm text-stone-700">🔑 Coaches — password-gated app</div>
-              <div className="text-xs text-stone-600">Coach app lives at <code>?coach</code> (e.g. <code>stompers2016.com/?coach</code>). Bookmark this URL on your phone — enter the coach password once and it remembers your device.</div>
+              <div className="font-display text-sm text-stone-200">🔑 Coaches — password-gated app</div>
+              <div className="text-xs text-stone-300">Coach app lives at <code>?coach</code> (e.g. <code>stompers2016.com/?coach</code>). Bookmark this URL on your phone — enter the coach password once and it remembers your device.</div>
             </div>
           </div>
-          <p className="text-xs text-stone-500 mt-2">Parents never need a password or to install anything — they just open the bare URL and bookmark it. Coaches install the PWA on the <code>?coach</code> URL for the full app experience.</p>
+          <p className="text-xs text-stone-400 mt-2">Parents never need a password or to install anything — they just open the bare URL and bookmark it. Coaches install the PWA on the <code>?coach</code> URL for the full app experience.</p>
         </Section>
 
         <div className="text-center text-xs text-stone-400 pt-2 pb-1">
@@ -3861,8 +3871,8 @@ function HelpView({ onBack }) {
 
 function Header({ title, onBack, right }) {
   return (
-    <div className="bg-white border-b border-stone-200 px-4 pt-12 pb-3 flex items-center gap-3">
-      <button onClick={onBack} className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center active:scale-95">
+    <div className="bg-stone-900 border-b border-stone-800 px-4 pt-12 pb-3 flex items-center gap-3">
+      <button onClick={onBack} className="w-10 h-10 rounded-full bg-stone-900 flex items-center justify-center active:scale-95">
         <ChevronLeft className="w-5 h-5" />
       </button>
       <h1 className="font-display text-2xl flex-1">{title}</h1>
@@ -3921,7 +3931,7 @@ function LiveScorePage({ gameId }) {
   if (error) return <PublicErrorScreen msg={error} />;
   if (!game) return <PublicLoadingScreen />;
   return (
-    <div className="min-h-screen bg-stone-50 pb-12">
+    <div className="min-h-screen bg-stone-950 pb-12">
       <style>{FONT_STYLES}</style>
       <LiveScoreboard game={game} roster={roster} />
     </div>
@@ -3977,7 +3987,7 @@ function PublicHomePage() {
   const past = active ? finished : finished.slice(1);
 
   return (
-    <div className="min-h-screen bg-stone-50 pb-12 relative">
+    <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
       <a
         href="./?coach"
@@ -4010,22 +4020,22 @@ function PublicHomePage() {
         if (upcoming.length === 0) return null;
         return (
           <div className="px-4 pt-6 max-w-md mx-auto">
-            <h3 className="font-display text-xl text-stone-700 mb-2">UPCOMING GAMES</h3>
-            <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+            <h3 className="font-display text-xl text-stone-200 mb-2">UPCOMING GAMES</h3>
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
               {upcoming.map(item => (
                 <div key={item.id} className="flex items-center gap-3 p-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-700 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
                     <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
                     <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-500 truncate">
+                    <div className="text-xs text-stone-400 truncate">
                       {item.tournament && <span>{item.tournament} · </span>}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
-                      <div className="text-xs text-blue-600 truncate mt-0.5">
+                      <div className="text-xs text-blue-400 truncate mt-0.5">
                         {item.location.startsWith('http') ? (
                           <a href={item.location} target="_blank" rel="noopener noreferrer" className="underline flex items-center gap-1">
                             <MapPin className="w-3 h-3 inline" /> View Map
@@ -4046,19 +4056,19 @@ function PublicHomePage() {
       })()}
       {past.length > 0 && (
         <div className="px-4 pt-6 max-w-md mx-auto">
-          <h3 className="font-display text-xl text-stone-700 mb-2">PAST MATCHES</h3>
-          <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+          <h3 className="font-display text-xl text-stone-200 mb-2">PAST MATCHES</h3>
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
             {past.map((g) => {
               const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
-              const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-300 text-stone-800';
+              const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-700 text-stone-100';
               return (
-                <a key={g.id} href={`./?live=${g.id}`} className="flex items-center gap-3 p-3 active:bg-stone-50">
+                <a key={g.id} href={`./?live=${g.id}`} className="flex items-center gap-3 p-3 active:bg-stone-950">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                    <div className="text-xs text-stone-500 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
+                    <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
                   </div>
-                  <div className="font-display text-lg tabular-nums text-stone-900">{g.ourScore}–{g.oppScore}</div>
+                  <div className="font-display text-lg tabular-nums text-stone-100">{g.ourScore}–{g.oppScore}</div>
                   <ChevronRight className="w-4 h-4 text-stone-400" />
                 </a>
               );
@@ -4191,20 +4201,20 @@ function LiveScoreboard({ game, roster }) {
         </div>
       </div>
       <div className="px-4 pt-5 max-w-md mx-auto">
-        <h3 className="font-display text-xl text-stone-700 mb-2">GOALS</h3>
+        <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
         {feed.length === 0 ? (
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center text-sm text-stone-500">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
             No goals yet.
           </div>
         ) : (
-          <div className="bg-white border border-stone-200 rounded-2xl divide-y divide-stone-100 overflow-hidden">
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
             {feed.map((row, idx) => {
               const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
               const isHt = idx > 0 && feed[idx - 1].period === 1 && row.period === 2;
               return (
                 <React.Fragment key={idx}>
                   {isHt && (
-                    <div className="bg-stone-100 px-3 py-1.5 text-center text-xs font-bold text-stone-500 uppercase tracking-widest">
+                    <div className="bg-stone-900 px-3 py-1.5 text-center text-xs font-bold text-stone-400 uppercase tracking-widest">
                       — Half Time —
                     </div>
                   )}
@@ -4213,9 +4223,9 @@ function LiveScoreboard({ game, roster }) {
                       <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
                       <div className="text-2xl">⚽</div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-900 truncate">{nameOf(row.scorerId)}</div>
+                        <div className="font-bold text-stone-100 truncate">{nameOf(row.scorerId)}</div>
                         {row.assistId && (
-                          <div className="text-xs text-stone-500 truncate">🅰️ {nameOf(row.assistId)}</div>
+                          <div className="text-xs text-stone-400 truncate">🅰️ {nameOf(row.assistId)}</div>
                         )}
                       </div>
                       <div className="font-display text-sm text-lime-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
@@ -4225,7 +4235,7 @@ function LiveScoreboard({ game, roster }) {
                       <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
                       <div className="text-2xl">🚨</div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-900 truncate">{game.opponent || 'Opponent'}</div>
+                        <div className="font-bold text-stone-100 truncate">{game.opponent || 'Opponent'}</div>
                       </div>
                       <div className="font-display text-sm text-red-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
                     </div>
@@ -4239,6 +4249,12 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
+
+
 
 
 
