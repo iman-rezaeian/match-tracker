@@ -3288,18 +3288,24 @@ function ScheduleView({ schedule, onSave, onBack }) {
             className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
           <div className="grid grid-cols-2 gap-3">
-            <input
-              type="date"
-              value={date}
-              onChange={e => setDate(e.target.value)}
-              className="border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-            />
-            <input
-              type="time"
-              value={time}
-              onChange={e => setTime(e.target.value)}
-              className="border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-            />
+            <div>
+              <label className="text-xs font-semibold text-stone-500 mb-1 block">DATE *</label>
+              <input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-stone-500 mb-1 block">TIME</label>
+              <input
+                type="time"
+                value={time}
+                onChange={e => setTime(e.target.value)}
+                className="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+              />
+            </div>
           </div>
           <input
             type="text"
