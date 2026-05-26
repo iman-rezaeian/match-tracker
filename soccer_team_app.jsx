@@ -1305,8 +1305,12 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate">
-                      {item.tournament && <span>{item.tournament} · </span>}
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.tournament && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          {item.tournament.toUpperCase()}
+                        </span>
+                      )}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -3959,8 +3963,12 @@ function ScheduleView({ schedule, onSave, onBack }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate">
-                      {item.tournament && <span>{item.tournament} · </span>}
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.tournament && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          {item.tournament.toUpperCase()}
+                        </span>
+                      )}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -4383,8 +4391,12 @@ function PublicHomePage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate">
-                      {item.tournament && <span>{item.tournament} · </span>}
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.tournament && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          {item.tournament.toUpperCase()}
+                        </span>
+                      )}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
