@@ -1119,6 +1119,13 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
               <span>📲</span><span>INSTALL</span>
             </button>
           )}
+          <a
+            href="./"
+            aria-label="Exit coach — back to public scoreboard"
+            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+          >
+            <span>📡</span><span>PUBLIC</span>
+          </a>
           <button
             onClick={onViewHelp}
             aria-label="Help & onboarding"
@@ -3818,8 +3825,14 @@ function LiveScorePage({ gameId }) {
   if (error) return <PublicErrorScreen msg={error} />;
   if (!game) return <PublicLoadingScreen />;
   return (
-    <div className="min-h-screen bg-stone-950 pb-12">
+    <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
+      <a
+        href="./"
+        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
+      >
+        <ChevronLeft className="w-4 h-4" /> ALL MATCHES
+      </a>
       <LiveScoreboard game={game} roster={roster} />
     </div>
   );
@@ -4093,13 +4106,19 @@ function LiveScoreboard({ game, roster }) {
         </div>
       </div>
       <div className="px-4 pt-5 max-w-md mx-auto">
-        <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
         {feed.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            No goals yet.
-          </div>
+          isActive ? (
+            <>
+              <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
+              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+                No goals yet.
+              </div>
+            </>
+          ) : null
         ) : (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
+          <>
+            <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
             {feed.map((row, idx) => {
               const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
               const isHt = idx > 0 && feed[idx - 1].period === 1 && row.period === 2;
@@ -4135,7 +4154,8 @@ function LiveScoreboard({ game, roster }) {
                 </React.Fragment>
               );
             })}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </>
