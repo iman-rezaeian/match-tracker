@@ -3883,8 +3883,11 @@ function PublicHomePage() {
 
   const active = games.find((g) => g.status === 'active');
   const finished = games.filter((g) => g.status === 'finished');
-  const featured = active || finished[0] || null;
-  const past = active ? finished : finished.slice(1);
+  // Feature a finished game only if it was played today; otherwise demote to past.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const featuredFinished = finished[0] && finished[0].date >= todayStr ? finished[0] : null;
+  const featured = active || featuredFinished || null;
+  const past = active ? finished : (featuredFinished ? finished.slice(1) : finished);
 
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
