@@ -1419,6 +1419,11 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.cancelled && (
+                        <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          CANCELLED
+                        </span>
+                      )}
                       {item.tournament && (
                         <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                           {item.tournament.toUpperCase()}
@@ -1437,7 +1442,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                       </a>
                     )}
                   </div>
-                  {!activeGame && (
+                  {!activeGame && !item.cancelled && (
                     <button
                       onClick={() => onStartScheduled(item)}
                       className="px-3 py-1.5 bg-lime-500 text-stone-100 font-display text-xs rounded-lg active:scale-95 transition"
@@ -3838,6 +3843,8 @@ function ScheduleView({ schedule, onSave, onBack }) {
   const [location, setLocation] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [parsed, setParsed] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const formRef = React.useRef(null);
 
   const parseECSL = (text) => {
     // ECSL table rows: # | Date | KO | Field | Home | Away
@@ -3921,6 +3928,18 @@ function ScheduleView({ schedule, onSave, onBack }) {
 
   const handleAdd = () => {
     if (!opponent.trim() || !date) return;
+    if (editingId) {
+      onSave(schedule.map(s => s.id === editingId ? {
+        ...s,
+        opponent: opponent.trim(),
+        date,
+        time: time || '',
+        tournament: tournament.trim(),
+        location: location.trim(),
+      } : s));
+      resetForm();
+      return;
+    }
     const item = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       opponent: opponent.trim(),
@@ -3930,10 +3949,30 @@ function ScheduleView({ schedule, onSave, onBack }) {
       location: location.trim(),
     };
     onSave([...schedule, item]);
+    resetForm();
+  };
+
+  const resetForm = () => {
     setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation('');
+    setEditingId(null);
+  };
+
+  const handleEdit = (item) => {
+    setEditingId(item.id);
+    setOpponent(item.opponent || '');
+    setDate(item.date || '');
+    setTime(item.time || '');
+    setTournament(item.tournament || '');
+    setLocation(item.location || '');
+    if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleToggleCancel = (item) => {
+    onSave(schedule.map(s => s.id === item.id ? { ...s, cancelled: !s.cancelled } : s));
   };
 
   const handleDelete = (id) => {
+    if (editingId === id) resetForm();
     onSave(schedule.filter(s => s.id !== id));
   };
 
@@ -3997,9 +4036,11 @@ function ScheduleView({ schedule, onSave, onBack }) {
       </div>
 
       {/* Add form */}
-      <div className="px-4 pt-4 space-y-3">
-        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
-          <div className="font-display text-lg">ADD GAME</div>
+      <div className="px-4 pt-4 space-y-3" ref={formRef}>
+        <div className={`bg-stone-900 border rounded-2xl p-4 space-y-3 ${editingId ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-stone-800'}`}>
+          <div className="font-display text-lg flex items-center gap-2">
+            {editingId ? <><span>✏️</span><span>EDIT GAME</span></> : <span>ADD GAME</span>}
+          </div>
           <input
             type="text"
             placeholder="Opponent *"
@@ -4047,13 +4088,23 @@ function ScheduleView({ schedule, onSave, onBack }) {
             onChange={e => setLocation(e.target.value)}
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
-          <button
-            onClick={handleAdd}
-            disabled={!opponent.trim() || !date}
-            className="w-full bg-stone-900 text-lime-400 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition"
-          >
-            ADD TO SCHEDULE
-          </button>
+          <div className="flex gap-2">
+            {editingId && (
+              <button
+                onClick={resetForm}
+                className="flex-1 bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+              >
+                CANCEL
+              </button>
+            )}
+            <button
+              onClick={handleAdd}
+              disabled={!opponent.trim() || !date}
+              className={`flex-1 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition ${editingId ? 'bg-amber-500 text-stone-950 border-2 border-amber-400' : 'bg-stone-900 text-lime-400'}`}
+            >
+              {editingId ? 'SAVE CHANGES' : 'ADD TO SCHEDULE'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -4068,15 +4119,30 @@ function ScheduleView({ schedule, onSave, onBack }) {
           <div className="space-y-2">
             {sorted.map(item => {
               const isPast = new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
+              const isCancelled = !!item.cancelled;
+              const isEditing = editingId === item.id;
               return (
-                <div key={item.id} className={`bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3 ${isPast ? 'opacity-50' : ''}`}>
+                <div
+                  key={item.id}
+                  className={`bg-stone-900 border rounded-xl p-3 flex items-center gap-3 ${
+                    isEditing ? 'border-amber-500/60 ring-1 ring-amber-500/30'
+                    : isCancelled ? 'border-red-900/60 opacity-70'
+                    : isPast ? 'border-stone-800 opacity-50'
+                    : 'border-stone-800'
+                  }`}
+                >
                   <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
                     <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
                     <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-sm truncate">vs {item.opponent}</div>
+                    <div className={`font-bold text-sm truncate ${isCancelled ? 'line-through text-stone-400' : ''}`}>vs {item.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {isCancelled && (
+                        <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          CANCELLED
+                        </span>
+                      )}
                       {item.tournament && (
                         <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                           {item.tournament.toUpperCase()}
@@ -4095,12 +4161,29 @@ function ScheduleView({ schedule, onSave, onBack }) {
                       </a>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleDelete(item.id)}
-                    className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    <button
+                      onClick={() => handleEdit(item)}
+                      className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
+                      title="Edit"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      onClick={() => handleToggleCancel(item)}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${isCancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'}`}
+                      title={isCancelled ? 'Restore' : 'Mark cancelled'}
+                    >
+                      {isCancelled ? '↻' : '🚫'}
+                    </button>
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -4505,6 +4588,11 @@ function PublicHomePage() {
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {item.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.cancelled && (
+                        <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          CANCELLED
+                        </span>
+                      )}
                       {item.tournament && (
                         <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                           {item.tournament.toUpperCase()}
@@ -4739,6 +4827,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
