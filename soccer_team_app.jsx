@@ -1082,6 +1082,7 @@ export default function App() {
           schedule={schedule}
           onSave={persistSchedule}
           onBack={() => setView('home')}
+          askConfirm={askConfirm}
         />
       )}
 
@@ -3722,7 +3723,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, onSave, onBack }) {
+function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -3859,8 +3860,12 @@ function ScheduleView({ schedule, onSave, onBack }) {
   };
 
   const handleDelete = (id) => {
-    if (editingId === id) resetForm();
-    onSave(schedule.filter(s => s.id !== id));
+    const item = schedule.find(s => s.id === id);
+    const label = item ? `vs ${item.opponent}${item.date ? ' on ' + new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}` : 'this game';
+    askConfirm(`Delete ${label} from the schedule?`, () => {
+      if (editingId === id) resetForm();
+      onSave(schedule.filter(s => s.id !== id));
+    }, { danger: true, yesLabel: 'DELETE' });
   };
 
   const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
