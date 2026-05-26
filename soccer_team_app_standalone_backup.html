@@ -2934,7 +2934,7 @@ function StatsView({ roster, games, weights, onBack }) {
   const finished = games.filter(g => g.status === 'finished');
 
   const stats = useMemo(() => {
-    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0 });
+    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0, gkSeconds: 0, cleanSheets: 0, oppGoalsConceded: 0, gamesAsGK: 0 });
     const map = {};
     for (const p of roster) map[p.id] = init();
     for (const g of finished) {
@@ -2956,6 +2956,15 @@ function StatsView({ roster, games, weights, onBack }) {
         if (sec > 0) {
           if (map[p.id]) map[p.id].totalSeconds += sec;
           seen.add(p.id);
+        }
+        // Aggregate GK time + clean sheets + goals conceded for any player who served as GK in this game
+        const servedAsGK = (g.gkPlayerId === p.id) || (g.gkChanges || []).some(c => c.gkPlayerId === p.id);
+        if (servedAsGK && map[p.id]) {
+          const gx = gkExtrasForGame(p.id, g);
+          map[p.id].gkSeconds += gx.secondsAsGK || 0;
+          map[p.id].cleanSheets += gx.cleanSheets || 0;
+          map[p.id].oppGoalsConceded += gx.oppGoalsConceded || 0;
+          if ((gx.secondsAsGK || 0) > 0) map[p.id].gamesAsGK += 1;
         }
       }
       for (const pid of seen) if (map[pid]) map[pid].gamesPlayed++;
@@ -3072,9 +3081,17 @@ function StatsView({ roster, games, weights, onBack }) {
 /* ---------- PLAYER STATS DETAIL ---------- */
 function PlayerStatsDetail({ player, stats, score, onClose }) {
   const min = Math.round((stats.totalSeconds || 0) / 60);
+  const gkMin = Math.round((stats.gkSeconds || 0) / 60);
+  const isGK = gkMin > 0 || player.position === 'GK';
   const rows = [
     { label: 'Games played', value: stats.gamesPlayed || 0 },
     { label: 'Minutes played', value: min },
+    ...(isGK ? [
+      { label: 'Minutes as GK', value: gkMin, accent: 'text-sky-400' },
+      { label: 'Games as GK', value: stats.gamesAsGK || 0, accent: 'text-sky-400' },
+      { label: 'Clean sheets', value: stats.cleanSheets || 0, accent: 'text-lime-500' },
+      { label: 'Goals conceded (as GK)', value: stats.oppGoalsConceded || 0, accent: 'text-red-400' },
+    ] : []),
     { label: 'Goals', value: stats.GOAL || 0, accent: 'text-lime-700' },
     { label: 'Assists', value: stats.ASSIST || 0, accent: 'text-lime-700' },
     { label: 'Key passes', value: stats.KEY_PASS || 0, accent: 'text-lime-700' },
@@ -4297,6 +4314,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
