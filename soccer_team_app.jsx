@@ -593,6 +593,25 @@ export default function App() {
     persistGames(games.map(g => g.id === gameId ? updated : g));
   };
 
+  // Post-game tagging: patch zone/pressure/decision on an existing event.
+  // Pass null/undefined for a field to remove that tag.
+  const updateEvent = (gameId, eventId, patch) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const events = game.events.map(e => {
+      if (e.id !== eventId) return e;
+      const next = { ...e };
+      for (const k of ['zone', 'pressure', 'decision']) {
+        if (k in patch) {
+          if (patch[k] == null) delete next[k];
+          else next[k] = patch[k];
+        }
+      }
+      return next;
+    });
+    persistGames(games.map(g => g.id === gameId ? { ...g, events } : g));
+  };
+
   const endGame = (gameId) => {
     updateGame(gameId, g => {
       const now = Date.now();
@@ -990,50 +1009,22 @@ export default function App() {
               return;
             }
             // Give & go: first pick = initiator, then ask for the wall partner.
-            if (pendingEvent?.type === 'GIVE_GO' && !pendingEvent.initiatorId && !pendingEvent.step) {
+            if (pendingEvent?.type === 'GIVE_GO' && !pendingEvent.initiatorId) {
               setPendingEvent({ type: 'GIVE_GO_PARTNER', initiatorId: playerId });
               return;
             }
             if (pendingEvent?.type === 'GIVE_GO_PARTNER') {
               // playerId === null means coach tapped SKIP / unknown — log
               // the give & go with no partner credit.
-              const partnerExtras = playerId ? { partnerId: playerId } : {};
-              // GIVE_GO needs zone+pressure — transition into the modifier chain.
-              setPendingEvent({ type: 'GIVE_GO', step: 'zone', playerId: pendingEvent.initiatorId, extras: partnerExtras });
+              const extras = playerId ? { partnerId: playerId } : {};
+              logEvent(activeGame.id, 'GIVE_GO', pendingEvent.initiatorId, extras);
               return;
             }
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
-            // Generic path: after player pick, route through optional zone + pressure steps.
-            if (EVENT_NEEDS_ZONE.has(t)) {
-              setPendingEvent({ type: t, step: 'zone', playerId, extras: {} });
-            } else if (EVENT_NEEDS_PRESSURE.has(t)) {
-              setPendingEvent({ type: t, step: 'pressure', playerId, extras: {} });
-            } else {
-              logEvent(activeGame.id, t, playerId);
-            }
-          }}
-          onSelectZone={(zone) => {
-            const { type, playerId, extras } = pendingEvent || {};
-            const nextExtras = zone ? { ...(extras || {}), zone } : (extras || {});
-            if (EVENT_NEEDS_PRESSURE.has(type)) {
-              setPendingEvent({ type, step: 'pressure', playerId, extras: nextExtras });
-            } else {
-              logEvent(activeGame.id, type, playerId, nextExtras);
-            }
-          }}
-          onSelectPressure={(pressure) => {
-            const { type, playerId, extras } = pendingEvent || {};
-            const nextExtras = pressure ? { ...(extras || {}), pressure } : (extras || {});
-            if (EVENT_NEEDS_DECISION.has(type)) {
-              setPendingEvent({ type, step: 'decision', playerId, extras: nextExtras });
-            } else {
-              logEvent(activeGame.id, type, playerId, nextExtras);
-            }
-          }}
-          onSelectDecision={(decision) => {
-            const { type, playerId, extras } = pendingEvent || {};
-            const nextExtras = decision ? { ...(extras || {}), decision } : (extras || {});
-            logEvent(activeGame.id, type, playerId, nextExtras);
+            // Live flow is ruthlessly single-tap. Zone / pressure / decision modifiers are
+            // applied post-game from GameDetail's TAG button, so the coach never misses
+            // the next play.
+            logEvent(activeGame.id, t, playerId);
           }}
           onCancelEvent={() => setPendingEvent(null)}
           onUndo={() => undoLastEvent(activeGame.id)}
@@ -1070,6 +1061,7 @@ export default function App() {
             askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' });
           }}
           onDeleteEvent={(eid) => deleteEvent(viewingGame.id, eid)}
+          onUpdateEvent={(eid, patch) => updateEvent(viewingGame.id, eid, patch)}
         />
       )}
 
@@ -2062,7 +2054,7 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onSelectZone, onSelectPressure, onSelectDecision, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -2336,28 +2328,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
           );
-        })() : pendingEvent?.step === 'zone' ? (
-          <ZonePicker
-            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
-            onPick={(zone) => onSelectZone(zone)}
-            onSkip={() => onSelectZone(null)}
-            onCancel={onCancelEvent}
-          />
-        ) : pendingEvent?.step === 'pressure' ? (
-          <PressurePicker
-            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
-            onPick={(pressure) => onSelectPressure(pressure)}
-            onSkip={() => onSelectPressure(null)}
-            onCancel={onCancelEvent}
-          />
-        ) : pendingEvent?.step === 'decision' ? (
-          <DecisionPicker
-            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
-            onPick={(decision) => onSelectDecision(decision)}
-            onSkip={() => onSelectDecision(null)}
-            onCancel={onCancelEvent}
-          />
-        ) : pendingEvent ? (() => {
+        })() : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
           const isGGPartner = pendingEvent.type === 'GIVE_GO_PARTNER';
           let pickerEvent, pickerPlayers, pickerSkippable, pickerOnUnknown;
@@ -2798,7 +2769,7 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
   );
 }
 
-function EventRow({ event, roster, onDelete }) {
+function EventRow({ event, roster, onDelete, onTag }) {
   const isSub = event.type === 'SUB';
   const isGKChange = event.type === 'GK_CHANGE';
   const ev = isSub
@@ -2892,6 +2863,15 @@ function EventRow({ event, roster, onDelete }) {
       <div className="text-xs text-stone-400 tabular-nums shrink-0">
         {formatClock(event.elapsed)} · P{event.period}
       </div>
+      {onTag && (
+        <button
+          onClick={() => onTag(event)}
+          className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 shrink-0 text-[11px] font-extrabold tracking-wider ${event.zone || event.pressure || event.decision ? 'bg-lime-500/15 text-lime-300 border border-lime-700' : 'bg-stone-800 text-stone-400 border border-stone-700'}`}
+          title="Tag zone / pressure / decision"
+        >
+          🏷
+        </button>
+      )}
       {onDelete && (
         <button onClick={() => onDelete(event.id)} className="w-7 h-7 rounded-full bg-red-500/10 flex items-center justify-center active:scale-95 shrink-0">
           <Trash2 className="w-3.5 h-3.5 text-red-600" />
@@ -2917,11 +2897,12 @@ function PillarMini({ label, value }) {
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) {
+function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
   const [shareMsg, setShareMsg] = useState(null);
+  const [taggingEvent, setTaggingEvent] = useState(null);
 
   const shareLiveLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?live=${game.id}`;
@@ -3069,9 +3050,179 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent }) 
           </div>
         ) : (
           <div className="space-y-1.5">
-            {events.map(e => <EventRow key={e.id} event={e} roster={roster} onDelete={onDeleteEvent} />)}
+            {events.map(e => (
+              <EventRow
+                key={e.id}
+                event={e}
+                roster={roster}
+                onDelete={onDeleteEvent}
+                onTag={EVENT_TYPES[e.type] && (EVENT_NEEDS_ZONE.has(e.type) || EVENT_NEEDS_PRESSURE.has(e.type) || EVENT_NEEDS_DECISION.has(e.type))
+                  ? () => setTaggingEvent(e)
+                  : null}
+              />
+            ))}
           </div>
         )}
+      </div>
+
+      {taggingEvent && (
+        <TagSheet
+          event={taggingEvent}
+          roster={roster}
+          onSave={(patch) => { onUpdateEvent(taggingEvent.id, patch); setTaggingEvent(null); }}
+          onClose={() => setTaggingEvent(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- TAG SHEET (post-game modifier tagging) ---------- */
+function TagSheet({ event, roster, onSave, onClose }) {
+  const ev = EVENT_TYPES[event.type] || { emoji: '•', label: event.type };
+  const player = roster.find(p => p.id === event.playerId);
+  const allowZone = EVENT_NEEDS_ZONE.has(event.type);
+  const allowPressure = EVENT_NEEDS_PRESSURE.has(event.type);
+  const allowDecision = EVENT_NEEDS_DECISION.has(event.type);
+
+  const [zone, setZone] = useState(event.zone || null);
+  const [pressure, setPressure] = useState(event.pressure || null);
+  const [decision, setDecision] = useState(event.decision || null);
+
+  const dirty = (zone || null) !== (event.zone || null)
+    || (pressure || null) !== (event.pressure || null)
+    || (decision || null) !== (event.decision || null);
+
+  const handleSave = () => {
+    onSave({
+      ...(allowZone ? { zone: zone || null } : {}),
+      ...(allowPressure ? { pressure: pressure || null } : {}),
+      ...(allowDecision ? { decision: decision || null } : {}),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-stone-950 border-t-2 sm:border-2 border-stone-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[92vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between p-4 border-b border-stone-800 sticky top-0 bg-stone-950">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-2xl">{ev.emoji}</span>
+            <div className="min-w-0">
+              <div className="font-display text-lg leading-none truncate">{ev.label}</div>
+              <div className="text-[11px] text-stone-400 tracking-wider truncate">
+                {player ? `${player.name} #${player.number}` : 'No player'} · {formatClock(event.elapsed)} P{event.period}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center active:scale-95 shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-5">
+          {allowZone && (
+            <div>
+              <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2 flex items-center justify-between">
+                <span>📍 ZONE</span>
+                {zone && <button onClick={() => setZone(null)} className="text-stone-500 text-[10px] tracking-wider">clear</button>}
+              </div>
+              <div className="grid grid-cols-3 grid-rows-3 gap-1.5 aspect-[3/2]">
+                {['A', 'M', 'D'].flatMap(band =>
+                  ['L', 'C', 'R'].map(side => {
+                    const id = `${band}-${side}`;
+                    const isSel = zone === id;
+                    const baseTone = band === 'A'
+                      ? 'bg-lime-900/40 border-lime-800 text-lime-200'
+                      : band === 'M'
+                      ? 'bg-stone-800 border-stone-700 text-stone-200'
+                      : 'bg-red-950/40 border-red-900 text-red-200';
+                    const selTone = isSel ? ' ring-2 ring-amber-400 ring-offset-2 ring-offset-stone-950' : '';
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => setZone(id)}
+                        className={`rounded-lg border-2 ${baseTone}${selTone} active:scale-[0.97] transition flex flex-col items-center justify-center py-2`}
+                      >
+                        <div className="text-[10px] tracking-widest font-bold">{ZONE_LABEL[id]}</div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {allowPressure && (
+            <div>
+              <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2 flex items-center justify-between">
+                <span>⚡ PRESSURE</span>
+                {pressure && <button onClick={() => setPressure(null)} className="text-stone-500 text-[10px] tracking-wider">clear</button>}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setPressure('open')}
+                  className={`rounded-xl border-2 py-3 font-display text-base active:scale-[0.97] transition ${pressure === 'open' ? 'bg-lime-900/60 border-lime-500 text-lime-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+                >
+                  🆓 OPEN
+                </button>
+                <button
+                  onClick={() => setPressure('pressure')}
+                  className={`rounded-xl border-2 py-3 font-display text-base active:scale-[0.97] transition ${pressure === 'pressure' ? 'bg-orange-900/60 border-orange-500 text-orange-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+                >
+                  ⚡ PRESSURE
+                </button>
+              </div>
+            </div>
+          )}
+
+          {allowDecision && (
+            <div>
+              <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2 flex items-center justify-between">
+                <span>🎯 DECISION</span>
+                {decision && <button onClick={() => setDecision(null)} className="text-stone-500 text-[10px] tracking-wider">clear</button>}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => setDecision('good')}
+                  className={`rounded-xl border-2 py-3 font-display text-sm active:scale-[0.97] transition ${decision === 'good' ? 'bg-lime-900/60 border-lime-500 text-lime-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+                >
+                  🎯 GOOD
+                </button>
+                <button
+                  onClick={() => setDecision('forced')}
+                  className={`rounded-xl border-2 py-3 font-display text-sm active:scale-[0.97] transition ${decision === 'forced' ? 'bg-amber-900/60 border-amber-500 text-amber-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+                >
+                  🤔 FORCED
+                </button>
+                <button
+                  onClick={() => setDecision('bad')}
+                  className={`rounded-xl border-2 py-3 font-display text-sm active:scale-[0.97] transition ${decision === 'bad' ? 'bg-red-900/60 border-red-500 text-red-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+                >
+                  ❌ POOR
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-stone-800 sticky bottom-0 bg-stone-950 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!dirty}
+            className={`flex-1 font-display text-base py-3 rounded-xl active:scale-[0.98] transition border-2 ${dirty ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-600 border-stone-800'}`}
+          >
+            SAVE
+          </button>
+        </div>
       </div>
     </div>
   );
