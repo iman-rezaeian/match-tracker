@@ -1222,7 +1222,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
   return (
     <div className="pb-24">
       <div className="stripes-bg text-white px-5 pt-16 pb-10 relative">
-        <div className="absolute top-16 right-4 flex items-center gap-2">
+        <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
           {!isStandalone && (
             <button
               onClick={() => setShowInstallModal(true)}
@@ -1247,7 +1247,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
             ?
           </button>
         </div>
-        <div className="flex items-center gap-4 mt-4">
+        <div className="flex items-center gap-4 mt-12">
           <img
             src="./stompers_logo.png"
             alt=""
@@ -4188,7 +4188,7 @@ function LiveScoreboard({ game, roster }) {
 
   return (
     <>
-      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)] pb-6">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
@@ -4283,6 +4283,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
