@@ -25,6 +25,40 @@ const EVENT_TYPES = {
   OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
 };
 
+// Events that get an optional zone tag (where on the field it happened).
+// Skip continuous/ambient events (HOLDS_BALL) and events with implicit location (ASSIST, OPP_GOAL).
+const EVENT_NEEDS_ZONE = new Set([
+  'GOAL', 'SHOT_ON', 'SHOT_OFF', 'BALL_WIN', 'TURNOVER',
+  'DUEL_WIN', 'DUEL_LOSE', 'KEY_PASS', 'GIVE_GO', 'GATES',
+  'SAVE', 'BLOCK',
+]);
+
+// Events that get an optional pressure modifier (was the player under pressure when they did this?).
+// Limited to decision-bearing events where pressure changes the meaning a lot.
+const EVENT_NEEDS_PRESSURE = new Set([
+  'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN',
+  'SHOT_ON', 'SHOT_OFF', 'DUEL_WIN',
+]);
+
+// Events that get an optional decision-quality flag (was this the right choice?).
+// Focus on choice-points: passes, dribbles, shots, turnovers. Skip pure outcomes (GOAL, SAVE, BLOCK).
+const EVENT_NEEDS_DECISION = new Set([
+  'KEY_PASS', 'GIVE_GO', 'GATES',
+  'SHOT_ON', 'SHOT_OFF', 'TURNOVER',
+]);
+
+// 3x3 field grid, normalized to attack direction (D = our defensive third, A = our attacking third).
+const ZONES = [
+  { id: 'D-L', row: 0, col: 0 }, { id: 'D-C', row: 0, col: 1 }, { id: 'D-R', row: 0, col: 2 },
+  { id: 'M-L', row: 1, col: 0 }, { id: 'M-C', row: 1, col: 1 }, { id: 'M-R', row: 1, col: 2 },
+  { id: 'A-L', row: 2, col: 0 }, { id: 'A-C', row: 2, col: 1 }, { id: 'A-R', row: 2, col: 2 },
+];
+const ZONE_LABEL = {
+  'D-L': 'Def · Left',   'D-C': 'Def · Center',   'D-R': 'Def · Right',
+  'M-L': 'Mid · Left',   'M-C': 'Mid · Center',   'M-R': 'Mid · Right',
+  'A-L': 'Att · Left',   'A-C': 'Att · Center',   'A-R': 'Att · Right',
+};
+
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
   'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-400',
@@ -956,19 +990,50 @@ export default function App() {
               return;
             }
             // Give & go: first pick = initiator, then ask for the wall partner.
-            if (pendingEvent?.type === 'GIVE_GO' && !pendingEvent.initiatorId) {
+            if (pendingEvent?.type === 'GIVE_GO' && !pendingEvent.initiatorId && !pendingEvent.step) {
               setPendingEvent({ type: 'GIVE_GO_PARTNER', initiatorId: playerId });
               return;
             }
             if (pendingEvent?.type === 'GIVE_GO_PARTNER') {
               // playerId === null means coach tapped SKIP / unknown — log
               // the give & go with no partner credit.
-              const extras = playerId ? { partnerId: playerId } : {};
-              logEvent(activeGame.id, 'GIVE_GO', pendingEvent.initiatorId, extras);
+              const partnerExtras = playerId ? { partnerId: playerId } : {};
+              // GIVE_GO needs zone+pressure — transition into the modifier chain.
+              setPendingEvent({ type: 'GIVE_GO', step: 'zone', playerId: pendingEvent.initiatorId, extras: partnerExtras });
               return;
             }
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
-            logEvent(activeGame.id, t, playerId);
+            // Generic path: after player pick, route through optional zone + pressure steps.
+            if (EVENT_NEEDS_ZONE.has(t)) {
+              setPendingEvent({ type: t, step: 'zone', playerId, extras: {} });
+            } else if (EVENT_NEEDS_PRESSURE.has(t)) {
+              setPendingEvent({ type: t, step: 'pressure', playerId, extras: {} });
+            } else {
+              logEvent(activeGame.id, t, playerId);
+            }
+          }}
+          onSelectZone={(zone) => {
+            const { type, playerId, extras } = pendingEvent || {};
+            const nextExtras = zone ? { ...(extras || {}), zone } : (extras || {});
+            if (EVENT_NEEDS_PRESSURE.has(type)) {
+              setPendingEvent({ type, step: 'pressure', playerId, extras: nextExtras });
+            } else {
+              logEvent(activeGame.id, type, playerId, nextExtras);
+            }
+          }}
+          onSelectPressure={(pressure) => {
+            const { type, playerId, extras } = pendingEvent || {};
+            const nextExtras = pressure ? { ...(extras || {}), pressure } : (extras || {});
+            if (EVENT_NEEDS_DECISION.has(type)) {
+              setPendingEvent({ type, step: 'decision', playerId, extras: nextExtras });
+            } else {
+              logEvent(activeGame.id, type, playerId, nextExtras);
+            }
+          }}
+          onSelectDecision={(decision) => {
+            const { type, playerId, extras } = pendingEvent || {};
+            const nextExtras = decision ? { ...(extras || {}), decision } : (extras || {});
+            logEvent(activeGame.id, type, playerId, nextExtras);
           }}
           onCancelEvent={() => setPendingEvent(null)}
           onUndo={() => undoLastEvent(activeGame.id)}
@@ -1997,7 +2062,7 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onSelectZone, onSelectPressure, onSelectDecision, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -2271,7 +2336,28 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
           );
-        })() : pendingEvent ? (() => {
+        })() : pendingEvent?.step === 'zone' ? (
+          <ZonePicker
+            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
+            onPick={(zone) => onSelectZone(zone)}
+            onSkip={() => onSelectZone(null)}
+            onCancel={onCancelEvent}
+          />
+        ) : pendingEvent?.step === 'pressure' ? (
+          <PressurePicker
+            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
+            onPick={(pressure) => onSelectPressure(pressure)}
+            onSkip={() => onSelectPressure(null)}
+            onCancel={onCancelEvent}
+          />
+        ) : pendingEvent?.step === 'decision' ? (
+          <DecisionPicker
+            event={EVENT_TYPES[pendingEvent.type] || { emoji: '•', label: pendingEvent.type }}
+            onPick={(decision) => onSelectDecision(decision)}
+            onSkip={() => onSelectDecision(null)}
+            onCancel={onCancelEvent}
+          />
+        ) : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
           const isGGPartner = pendingEvent.type === 'GIVE_GO_PARTNER';
           let pickerEvent, pickerPlayers, pickerSkippable, pickerOnUnknown;
@@ -2570,6 +2656,148 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
   );
 }
 
+function ZonePicker({ event, onPick, onSkip, onCancel }) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between mb-4 shrink-0">
+        <div>
+          <div className="text-xs text-stone-400 font-bold tracking-widest">WHERE?</div>
+          <div className="font-display text-3xl flex items-center gap-2">
+            <span>{event.emoji}</span>
+            <span>{event.label}</span>
+          </div>
+        </div>
+        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="mb-2 text-[11px] text-stone-400 tracking-wider font-bold flex items-center justify-between">
+        <span>⬆ OUR ATTACK</span>
+        <span className="text-stone-500">(tap a third)</span>
+      </div>
+
+      <div className="grid grid-cols-3 grid-rows-3 gap-2 mb-3 aspect-[3/4]" style={{ direction: 'ltr' }}>
+        {/* Render top row first = attacking third (row 2 in ZONES) so the field reads goal-up. */}
+        {['A', 'M', 'D'].flatMap(band =>
+          ['L', 'C', 'R'].map(side => {
+            const id = `${band}-${side}`;
+            const tone = band === 'A'
+              ? 'bg-lime-900/40 border-lime-700 text-lime-200 hover:border-lime-500'
+              : band === 'M'
+              ? 'bg-stone-800 border-stone-700 text-stone-200 hover:border-stone-500'
+              : 'bg-red-950/40 border-red-900 text-red-200 hover:border-red-700';
+            return (
+              <button
+                key={id}
+                onClick={() => onPick(id)}
+                className={`rounded-xl border-2 ${tone} active:scale-[0.97] transition flex flex-col items-center justify-center font-display`}
+              >
+                <div className="text-2xl">{band === 'A' ? '🥅' : band === 'M' ? '•' : '🛡️'}</div>
+                <div className="text-[11px] tracking-widest font-bold">{ZONE_LABEL[id]}</div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      <button
+        onClick={onSkip}
+        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
+      >
+        SKIP ZONE
+      </button>
+    </div>
+  );
+}
+
+function PressurePicker({ event, onPick, onSkip, onCancel }) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between mb-4 shrink-0">
+        <div>
+          <div className="text-xs text-stone-400 font-bold tracking-widest">PRESSURE?</div>
+          <div className="font-display text-3xl flex items-center gap-2">
+            <span>{event.emoji}</span>
+            <span>{event.label}</span>
+          </div>
+        </div>
+        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <button
+        onClick={() => onPick('open')}
+        className="mb-2 w-full bg-lime-900/40 text-lime-200 border-2 border-lime-700 font-display text-2xl py-6 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+      >
+        <span className="text-3xl">🆓</span>
+        <span>OPEN</span>
+      </button>
+      <button
+        onClick={() => onPick('pressure')}
+        className="mb-3 w-full bg-orange-900/40 text-orange-200 border-2 border-orange-700 font-display text-2xl py-6 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+      >
+        <span className="text-3xl">⚡</span>
+        <span>UNDER PRESSURE</span>
+      </button>
+      <button
+        onClick={onSkip}
+        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
+      >
+        SKIP
+      </button>
+    </div>
+  );
+}
+
+function DecisionPicker({ event, onPick, onSkip, onCancel }) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between mb-4 shrink-0">
+        <div>
+          <div className="text-xs text-stone-400 font-bold tracking-widest">RIGHT CHOICE?</div>
+          <div className="font-display text-3xl flex items-center gap-2">
+            <span>{event.emoji}</span>
+            <span>{event.label}</span>
+          </div>
+        </div>
+        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+
+      <button
+        onClick={() => onPick('good')}
+        className="mb-2 w-full bg-lime-900/40 text-lime-200 border-2 border-lime-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+      >
+        <span className="text-3xl">🎯</span>
+        <span>GOOD CALL</span>
+      </button>
+      <button
+        onClick={() => onPick('forced')}
+        className="mb-2 w-full bg-amber-900/40 text-amber-200 border-2 border-amber-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+      >
+        <span className="text-3xl">🤔</span>
+        <span>FORCED / 50–50</span>
+      </button>
+      <button
+        onClick={() => onPick('bad')}
+        className="mb-3 w-full bg-red-900/40 text-red-200 border-2 border-red-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
+      >
+        <span className="text-3xl">❌</span>
+        <span>POOR CHOICE</span>
+      </button>
+      <button
+        onClick={onSkip}
+        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
+      >
+        SKIP
+      </button>
+    </div>
+  );
+}
+
 function EventRow({ event, roster, onDelete }) {
   const isSub = event.type === 'SUB';
   const isGKChange = event.type === 'GK_CHANGE';
@@ -2621,6 +2849,40 @@ function EventRow({ event, roster, onDelete }) {
                 )}
                 {!event.gkFault && (
                   <span className="text-[10px] text-stone-400 italic">unmarked</span>
+                )}
+              </div>
+            )}
+            {(event.zone || event.pressure || event.decision) && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {event.zone && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-800 text-stone-200 border border-stone-700">
+                    📍 {event.zone}
+                  </span>
+                )}
+                {event.pressure === 'pressure' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-orange-900/40 text-orange-200 border border-orange-700">
+                    ⚡ PRESSURE
+                  </span>
+                )}
+                {event.pressure === 'open' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-lime-900/40 text-lime-200 border border-lime-700">
+                    🆓 OPEN
+                  </span>
+                )}
+                {event.decision === 'good' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-lime-900/40 text-lime-200 border border-lime-700">
+                    🎯 GOOD
+                  </span>
+                )}
+                {event.decision === 'forced' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-200 border border-amber-700">
+                    🤔 FORCED
+                  </span>
+                )}
+                {event.decision === 'bad' && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-red-900/40 text-red-200 border border-red-700">
+                    ❌ POOR
+                  </span>
                 )}
               </div>
             )}
