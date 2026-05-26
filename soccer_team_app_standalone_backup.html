@@ -3971,7 +3971,13 @@ function PublicHomePage() {
       unsubGames = teamRef.collection('games').onSnapshot(
         (snap) => {
           const list = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
-          list.sort((a, b) => new Date(b.date) - new Date(a.date));
+          // Sort: newest date first, then newest endedAt (so the most recently
+          // finished game of a tournament day stays featured).
+          list.sort((a, b) => {
+            const dc = new Date(b.date) - new Date(a.date);
+            if (dc !== 0) return dc;
+            return (b.endedAt || 0) - (a.endedAt || 0);
+          });
           setGames(list);
           setLoaded(true);
         },
@@ -4277,6 +4283,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
