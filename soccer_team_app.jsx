@@ -989,7 +989,21 @@ export default function App() {
           roster={roster}
           weights={weights}
           onBack={() => setView('home')}
-          onDelete={() => askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' })}
+          onDelete={() => {
+            // In production, require the coach password before deleting a game.
+            // Beta/dev hosts skip this so we can create and trash dummy games freely.
+            const host = (typeof window !== 'undefined' && window.location.hostname) || '';
+            const isProd = !/beta|localhost|127\.0\.0\.1|deploy-preview/i.test(host);
+            if (isProd) {
+              const entered = window.prompt('Enter coach password to delete this game:');
+              if (entered == null) return;
+              if (entered.trim() !== COACH_PASS) {
+                window.alert('Wrong password. Game not deleted.');
+                return;
+              }
+            }
+            askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' });
+          }}
           onDeleteEvent={(eid) => deleteEvent(viewingGame.id, eid)}
         />
       )}
