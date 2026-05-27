@@ -507,7 +507,7 @@ export default function App() {
       opponent: opponent || 'Opponent',
       tournament: tournament || 'Festival',
       isHome: !!isHome,
-      date: new Date().toISOString(),
+      date: new Date().toLocaleDateString('en-CA'),
       ourScore: 0,
       oppScore: 0,
       period: 1,
