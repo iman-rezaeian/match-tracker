@@ -400,7 +400,7 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
-const COACH_PASS = 'ManUtd2016';
+const R2_WORKER_KEY = 'ManUtd2016'; // API key for R2 upload worker auth
 
 export default function App() {
   // URL-based routing — computed once at mount; the URL doesn't change without
@@ -417,9 +417,7 @@ export default function App() {
   if (!isCoach) return <PublicHomePage />;
 
   // ---- coach app below ----
-  const [unlocked, setUnlocked] = useState(() => {
-    try { return localStorage.getItem('stompers_unlocked') === 'true'; } catch(e) { return false; }
-  });
+  const [unlocked, setUnlocked] = useState(false);
   const [roster, setRoster] = useState([]);
   const [games, setGames] = useState([]);
   const [schedule, setSchedule] = useState([]);
@@ -438,6 +436,17 @@ export default function App() {
   const askConfirm = (message, onYes, opts = {}) => {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
+
+  // Auto-unlock for coaches based on Firestore role
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
+    const email = window.fbUserInfo.email?.toLowerCase();
+    if (!email) { window.location.replace('./'); return; }
+    window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
+      if (doc.exists && doc.data().role === 'coach') setUnlocked(true);
+      else window.location.replace('./');
+    }).catch(() => { window.location.replace('./'); });
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -859,10 +868,12 @@ export default function App() {
   };
 
   if (!unlocked) {
-    return <LockScreen onUnlock={() => {
-      try { localStorage.setItem('stompers_unlocked', 'true'); } catch(e) {}
-      setUnlocked(true);
-    }} />;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-950">
+        <style>{FONT_STYLES}</style>
+        <div className="font-sans-pro text-stone-400">Checking access…</div>
+      </div>
+    );
   }
 
   if (!loaded) {
@@ -1082,12 +1093,7 @@ export default function App() {
             const host = (typeof window !== 'undefined' && window.location.hostname) || '';
             const isProd = !/beta|localhost|127\.0\.0\.1|deploy-preview/i.test(host);
             if (isProd) {
-              const entered = window.prompt('Enter coach password to delete this game:');
-              if (entered == null) return;
-              if (entered.trim() !== COACH_PASS) {
-                window.alert('Wrong password. Game not deleted.');
-                return;
-              }
+              if (!window.confirm('Are you sure? This is a production game.')) return;
             }
             askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' });
           }}
@@ -3740,7 +3746,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
     fetch(`${R2_UPLOAD_WORKER}/live-input`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: COACH_PASS, name: `stompers-${game.id}` }),
+      body: JSON.stringify({ password: R2_WORKER_KEY, name: `stompers-${game.id}` }),
     })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
       .then((info) => {
@@ -3758,7 +3764,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
     fetch(`${R2_UPLOAD_WORKER}/live-input/${game.liveInput.uid}/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: COACH_PASS }),
+      body: JSON.stringify({ password: R2_WORKER_KEY }),
     })
       .catch(() => {})
       .finally(() => {
@@ -3781,7 +3787,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
     fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: COACH_PASS, filename, contentType }),
+      body: JSON.stringify({ password: R2_WORKER_KEY, filename, contentType }),
     })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'upload-url failed')))
       .then(({ uploadUrl, publicUrl }) => new Promise((resolve, reject) => {
@@ -4527,66 +4533,7 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
   );
 }
 
-/* ---------- LOCK SCREEN ---------- */
-function LockScreen({ onUnlock }) {
-  const [code, setCode] = useState('');
-  const [error, setError] = useState(false);
-
-  const handleSubmit = () => {
-    if (code.trim() === COACH_PASS) {
-      onUnlock();
-    } else {
-      setError(true);
-      setCode('');
-      setTimeout(() => setError(false), 1500);
-    }
-  };
-
-  return (
-    <div className="min-h-screen stripes-bg flex flex-col items-center justify-center px-6 text-center">
-      <style>{FONT_STYLES}</style>
-      <img
-        src="./stompers_logo.png"
-        alt="LaSalle Stompers"
-        className="w-28 h-28 mb-4 drop-shadow-lg"
-        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-      />
-      <div className="text-5xl text-white leading-none font-bold tracking-wide">LASALLE</div>
-      <div className="text-3xl text-lime-400 leading-tight mb-2 font-bold tracking-wide">STOMPERS</div>
-      <div className="text-white/50 text-xs font-bold tracking-widest mb-8">COACH ACCESS</div>
-
-      <div className="w-full max-w-xs">
-        <label className="block text-white/70 text-xs font-bold tracking-widest mb-2">ENTER COACH PASSWORD</label>
-        <input
-          type="password"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          value={code}
-          onChange={e => setCode(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          placeholder="••••••••"
-          className={`w-full text-center text-2xl py-4 rounded-xl border-2 outline-none transition ${
-            error
-              ? 'bg-red-500/15 border-red-400 text-red-700 animate-[shake_0.3s_ease-in-out]'
-              : 'bg-stone-900 border-stone-800 text-stone-100'
-          }`}
-          autoFocus
-        />
-        {error && <div className="text-red-400 text-sm font-bold mt-2">Wrong password. Try again.</div>}
-        <button
-          onClick={handleSubmit}
-          className="mt-4 w-full bg-lime-500 text-stone-100 font-display text-2xl py-4 rounded-xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.98] transition"
-        >
-          ENTER
-        </button>
-        <div className="mt-6 text-white/40 text-xs">
-          Looking for the live scoreboard? <a href="./" className="text-lime-400 underline">Tap here</a>.
-        </div>
-      </div>
-    </div>
-  );
-}
+/* ---------- LOCK SCREEN (removed — coach access is now role-based) ---------- */
 
 /* ---------- HEADER ---------- */
 function WeightsView({ weights, onSave, onBack }) {
@@ -5153,156 +5100,343 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
 /* ---------- VIEWERS PANEL ---------- */
 function ViewersPanel({ onBack }) {
   const [logs, setLogs] = useState([]);
-  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [timeRange, setTimeRange] = useState(7); // days
+  const [tab, setTab] = useState('overview'); // overview | people | activity
 
   useEffect(() => {
     if (!window.fbDb) { setLoading(false); return; }
 
-    // Get recent viewer logs (last 7 days)
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    const since = new Date();
+    since.setDate(since.getDate() - timeRange);
 
     const unsub = window.fbDb.collection('viewerLog')
-      .where('ts', '>=', weekAgo)
+      .where('ts', '>=', since)
       .orderBy('ts', 'desc')
-      .limit(100)
+      .limit(500)
       .onSnapshot((snap) => {
         const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setLogs(items);
         setLoading(false);
       }, () => setLoading(false));
 
-    // Get allowed users list
-    window.fbDb.collection('allowedUsers').get().then((snap) => {
-      setUsers(snap.docs.map(d => ({ email: d.id, ...d.data() })));
-    }).catch(() => {});
-
     return unsub;
-  }, []);
+  }, [timeRange]);
 
-  // Derive stats
+  // --- Derived analytics ---
   const currentlyWatching = logs.filter(l =>
     (l.action === 'watch_live' || l.action === 'watch_replay') && !l.endTs
   );
-  const uniqueViewers = [...new Set(logs.map(l => l.email))];
-  const loginCount = logs.filter(l => l.action === 'login').length;
+  const uniqueEmails = [...new Set(logs.map(l => l.email))];
+  const loginEvents = logs.filter(l => l.action === 'login');
+  const watchEvents = logs.filter(l => l.action === 'watch_live' || l.action === 'watch_replay');
+  const liveWatchEvents = logs.filter(l => l.action === 'watch_live');
+  const replayWatchEvents = logs.filter(l => l.action === 'watch_replay');
 
-  const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState('parent');
-  const [addBusy, setAddBusy] = useState(false);
+  // Per-person aggregation
+  const peopleMap = {};
+  logs.forEach(l => {
+    if (!peopleMap[l.email]) {
+      peopleMap[l.email] = { email: l.email, name: l.name, photo: l.photo, logins: 0, watches: 0, liveWatches: 0, lastSeen: null };
+    }
+    const p = peopleMap[l.email];
+    if (l.name && !p.name) p.name = l.name;
+    if (l.photo && !p.photo) p.photo = l.photo;
+    if (l.action === 'login') p.logins++;
+    if (l.action === 'watch_live' || l.action === 'watch_replay') p.watches++;
+    if (l.action === 'watch_live') p.liveWatches++;
+    const ts = l.ts?.toDate ? l.ts.toDate() : (l.ts ? new Date(l.ts) : null);
+    if (ts && (!p.lastSeen || ts > p.lastSeen)) p.lastSeen = ts;
+  });
+  const people = Object.values(peopleMap).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
 
-  const addUser = async () => {
-    const email = newEmail.trim().toLowerCase();
-    if (!email || !email.includes('@')) return;
-    setAddBusy(true);
-    try {
-      await window.fbDb.collection('allowedUsers').doc(email).set({ role: newRole, addedAt: new Date() });
-      setUsers(prev => [...prev.filter(u => u.email !== email), { email, role: newRole }]);
-      setNewEmail('');
-    } catch (e) { console.error(e); }
-    setAddBusy(false);
-  };
+  // Daily activity for sparkline (last N days)
+  const dailyCounts = {};
+  for (let i = 0; i < timeRange; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    dailyCounts[d.toLocaleDateString('en-CA')] = { logins: 0, watches: 0 };
+  }
+  logs.forEach(l => {
+    const ts = l.ts?.toDate ? l.ts.toDate() : (l.ts ? new Date(l.ts) : null);
+    if (!ts) return;
+    const key = ts.toLocaleDateString('en-CA');
+    if (dailyCounts[key]) {
+      if (l.action === 'login') dailyCounts[key].logins++;
+      else dailyCounts[key].watches++;
+    }
+  });
+  const dailyArr = Object.entries(dailyCounts).sort(([a], [b]) => a.localeCompare(b));
 
-  const removeUser = async (email) => {
-    try {
-      await window.fbDb.collection('allowedUsers').doc(email).delete();
-      setUsers(prev => prev.filter(u => u.email !== email));
-    } catch (e) { console.error(e); }
-  };
+  // Peak day
+  const peakDay = dailyArr.reduce((best, [day, c]) => {
+    const total = c.logins + c.watches;
+    return total > best.total ? { day, total } : best;
+  }, { day: '', total: 0 });
 
   const fmtTs = (ts) => {
     if (!ts) return '';
     const d = ts.toDate ? ts.toDate() : new Date(ts);
     return d.toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   };
+  const fmtDay = (iso) => {
+    const d = new Date(iso + 'T12:00');
+    return d.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+  const relativeTime = (date) => {
+    if (!date) return 'Never';
+    const diff = Date.now() - date.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
+
+  // Mini bar chart
+  const Sparkline = ({ data }) => {
+    const maxVal = Math.max(...data.map(([, c]) => c.logins + c.watches), 1);
+    return (
+      <div className="flex items-end gap-[2px] h-10">
+        {data.map(([day, c]) => {
+          const total = c.logins + c.watches;
+          const pct = (total / maxVal) * 100;
+          const isToday = day === new Date().toLocaleDateString('en-CA');
+          return (
+            <div key={day} className="flex-1 flex flex-col items-center gap-0.5" title={`${fmtDay(day)}: ${total} events`}>
+              <div
+                className={`w-full rounded-sm min-h-[2px] transition-all ${isToday ? 'bg-lime-400' : 'bg-stone-600'}`}
+                style={{ height: `${Math.max(pct, 5)}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const TabBtn = ({ id, label, count }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`px-3 py-1.5 text-xs font-bold tracking-wider rounded-lg transition ${
+        tab === id ? 'bg-stone-800 text-white' : 'text-stone-500 hover:text-stone-300'
+      }`}
+    >
+      {label}{count != null && <span className="ml-1 text-stone-500">({count})</span>}
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-stone-950 pb-20">
-      <Header title="VIEWERS" onBack={onBack} />
+      <Header title="AUDIENCE" onBack={onBack} />
 
       {loading ? (
-        <div className="p-6 text-center text-stone-500 animate-pulse">Loading…</div>
+        <div className="p-6 text-center text-stone-500 animate-pulse">Loading analytics…</div>
       ) : (
-        <div className="px-4 pt-4 space-y-6">
-          {/* Stats cards */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
-              <div className="text-2xl font-display text-lime-400">{currentlyWatching.length}</div>
-              <div className="text-[10px] text-stone-400 font-bold tracking-wider">WATCHING NOW</div>
-            </div>
-            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
-              <div className="text-2xl font-display text-white">{uniqueViewers.length}</div>
-              <div className="text-[10px] text-stone-400 font-bold tracking-wider">UNIQUE (7d)</div>
-            </div>
-            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
-              <div className="text-2xl font-display text-white">{loginCount}</div>
-              <div className="text-[10px] text-stone-400 font-bold tracking-wider">LOGINS (7d)</div>
-            </div>
+        <div className="px-4 pt-4 space-y-5">
+
+          {/* Time range selector */}
+          <div className="flex gap-1.5 justify-center">
+            {[7, 14, 30].map(d => (
+              <button
+                key={d}
+                onClick={() => setTimeRange(d)}
+                className={`px-3 py-1 text-[10px] font-bold tracking-wider rounded-full border transition ${
+                  timeRange === d
+                    ? 'bg-lime-500/20 border-lime-500/50 text-lime-400'
+                    : 'border-stone-700 text-stone-500 hover:text-stone-300'
+                }`}
+              >
+                {d}D
+              </button>
+            ))}
           </div>
 
-          {/* Currently watching */}
+          {/* Currently watching - live indicator */}
           {currentlyWatching.length > 0 && (
-            <div>
-              <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">🟢 WATCHING NOW</h3>
-              <div className="space-y-1.5">
+            <div className="bg-gradient-to-r from-lime-950/60 to-stone-900 border border-lime-800/40 rounded-2xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-lime-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-lime-500"></span>
+                </span>
+                <span className="text-xs font-bold text-lime-400 tracking-wider">WATCHING NOW ({currentlyWatching.length})</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 {currentlyWatching.map(l => (
-                  <div key={l.id} className="flex items-center gap-2 bg-stone-900 border border-lime-900/40 rounded-lg px-3 py-2">
-                    {l.photo && <img src={l.photo} className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />}
-                    <span className="text-sm font-medium text-white flex-1 truncate">{l.name || l.email}</span>
-                    <span className="text-[10px] text-lime-400 font-bold">{l.action === 'watch_live' ? 'LIVE' : 'REPLAY'}</span>
+                  <div key={l.id} className="flex items-center gap-1.5 bg-stone-900/80 rounded-full pl-1 pr-3 py-1">
+                    {l.photo ? (
+                      <img src={l.photo} className="w-6 h-6 rounded-full ring-2 ring-lime-500/40" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-[10px] text-stone-400 ring-2 ring-lime-500/40">
+                        {(l.name || l.email || '?')[0].toUpperCase()}
+                      </div>
+                    )}
+                    <span className="text-xs text-white font-medium truncate max-w-[100px]">{l.name || l.email?.split('@')[0]}</span>
+                    <span className="text-[9px] text-lime-400/80 font-bold">{l.action === 'watch_live' ? '🔴' : '▶'}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Approved users management */}
-          <div>
-            <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">APPROVED USERS ({users.length})</h3>
-            <div className="space-y-1.5 mb-3">
-              {users.map(u => (
-                <div key={u.email} className="flex items-center gap-2 bg-stone-900 border border-stone-800 rounded-lg px-3 py-2">
-                  <span className="text-sm text-white flex-1 truncate">{u.email}</span>
-                  <span className="text-[10px] font-bold text-stone-500 uppercase">{u.role || 'parent'}</span>
-                  <button onClick={() => removeUser(u.email)} className="text-red-400 text-xs active:scale-95">✕</button>
-                </div>
-              ))}
+          {/* Stats grid */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+              <div className="text-3xl font-display text-white">{uniqueEmails.length}</div>
+              <div className="text-[10px] text-stone-500 font-bold tracking-wider mt-1">UNIQUE VIEWERS</div>
             </div>
-            {/* Add user form */}
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="email@example.com"
-                className="flex-1 rounded-lg border border-stone-700 px-3 py-2 text-sm"
-              />
-              <select value={newRole} onChange={(e) => setNewRole(e.target.value)} className="rounded-lg border border-stone-700 px-2 py-2 text-xs">
-                <option value="parent">Parent</option>
-                <option value="coach">Coach</option>
-              </select>
-              <button onClick={addUser} disabled={addBusy} className="bg-lime-600 text-black font-bold px-3 py-2 rounded-lg text-xs active:scale-95 disabled:opacity-50">
-                ADD
-              </button>
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+              <div className="text-3xl font-display text-white">{loginEvents.length}</div>
+              <div className="text-[10px] text-stone-500 font-bold tracking-wider mt-1">TOTAL LOGINS</div>
+            </div>
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+              <div className="text-3xl font-display text-lime-400">{liveWatchEvents.length}</div>
+              <div className="text-[10px] text-stone-500 font-bold tracking-wider mt-1">LIVE VIEWS</div>
+            </div>
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+              <div className="text-3xl font-display text-sky-400">{replayWatchEvents.length}</div>
+              <div className="text-[10px] text-stone-500 font-bold tracking-wider mt-1">REPLAY VIEWS</div>
             </div>
           </div>
 
-          {/* Recent activity */}
-          <div>
-            <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">RECENT ACTIVITY</h3>
-            <div className="space-y-1">
-              {logs.slice(0, 30).map(l => (
-                <div key={l.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-stone-800/50">
-                  {l.photo && <img src={l.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-                  <span className="text-stone-300 flex-1 truncate">{l.name || l.email}</span>
-                  <span className="text-stone-500">{l.action === 'login' ? '🔓' : l.action === 'watch_live' ? '🔴' : '🎬'}</span>
-                  <span className="text-stone-500 text-[10px]">{fmtTs(l.ts)}</span>
+          {/* Activity sparkline */}
+          {dailyArr.length > 1 && (
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] text-stone-500 font-bold tracking-wider">DAILY ACTIVITY</span>
+                {peakDay.total > 0 && (
+                  <span className="text-[10px] text-stone-500">Peak: <span className="text-white font-bold">{peakDay.total}</span> on {fmtDay(peakDay.day)}</span>
+                )}
+              </div>
+              <Sparkline data={dailyArr} />
+              <div className="flex justify-between mt-1.5">
+                <span className="text-[9px] text-stone-600">{fmtDay(dailyArr[0]?.[0])}</span>
+                <span className="text-[9px] text-stone-600">Today</span>
+              </div>
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div className="flex gap-1 bg-stone-900/50 rounded-lg p-1">
+            <TabBtn id="overview" label="OVERVIEW" />
+            <TabBtn id="people" label="PEOPLE" count={people.length} />
+            <TabBtn id="activity" label="LOG" count={logs.length} />
+          </div>
+
+          {/* Tab: Overview — engagement summary */}
+          {tab === 'overview' && (
+            <div className="space-y-4">
+              {/* Engagement funnel */}
+              <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+                <h3 className="text-[10px] text-stone-500 font-bold tracking-wider mb-3">ENGAGEMENT FUNNEL</h3>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Signed in', count: uniqueEmails.length, color: 'bg-stone-500' },
+                    { label: 'Watched content', count: [...new Set(watchEvents.map(l => l.email))].length, color: 'bg-sky-500' },
+                    { label: 'Watched live', count: [...new Set(liveWatchEvents.map(l => l.email))].length, color: 'bg-lime-500' },
+                  ].map(({ label, count, color }) => {
+                    const pct = uniqueEmails.length > 0 ? Math.round((count / uniqueEmails.length) * 100) : 0;
+                    return (
+                      <div key={label} className="flex items-center gap-3">
+                        <span className="text-xs text-stone-400 w-24 shrink-0">{label}</span>
+                        <div className="flex-1 h-4 bg-stone-800 rounded-full overflow-hidden">
+                          <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${Math.max(pct, 3)}%` }} />
+                        </div>
+                        <span className="text-xs font-bold text-white w-8 text-right">{count}</span>
+                        <span className="text-[10px] text-stone-500 w-8">{pct}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Top viewers */}
+              {people.length > 0 && (
+                <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
+                  <h3 className="text-[10px] text-stone-500 font-bold tracking-wider mb-3">TOP VIEWERS</h3>
+                  <div className="space-y-2">
+                    {people.sort((a, b) => b.watches - a.watches).slice(0, 5).map((p, i) => (
+                      <div key={p.email} className="flex items-center gap-2">
+                        <span className="text-[10px] text-stone-600 w-4">{i + 1}.</span>
+                        {p.photo ? (
+                          <img src={p.photo} className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-stone-700 flex items-center justify-center text-[10px] text-stone-400">
+                            {(p.name || p.email || '?')[0].toUpperCase()}
+                          </div>
+                        )}
+                        <span className="text-sm text-white flex-1 truncate">{p.name || p.email?.split('@')[0]}</span>
+                        <span className="text-xs text-stone-400">{p.watches} views</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab: People — full user list */}
+          {tab === 'people' && (
+            <div className="space-y-2">
+              {people.map(p => (
+                <div key={p.email} className="flex items-center gap-3 bg-stone-900 border border-stone-800 rounded-xl px-4 py-3">
+                  {p.photo ? (
+                    <img src={p.photo} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-stone-700 flex items-center justify-center text-sm text-stone-400 font-bold">
+                      {(p.name || p.email || '?')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white font-medium truncate">{p.name || p.email?.split('@')[0]}</div>
+                    <div className="text-[10px] text-stone-500 truncate">{p.email}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      {p.liveWatches > 0 && <span className="text-lime-400">🔴 {p.liveWatches}</span>}
+                      {p.watches > 0 && <span className="text-sky-400">▶ {p.watches}</span>}
+                      <span className="text-stone-500">🔓 {p.logins}</span>
+                    </div>
+                    <div className="text-[9px] text-stone-600 mt-0.5">{relativeTime(p.lastSeen)}</div>
+                  </div>
                 </div>
               ))}
-              {logs.length === 0 && <p className="text-stone-500 text-sm">No activity yet.</p>}
+              {people.length === 0 && <p className="text-stone-500 text-sm text-center py-4">No viewers yet.</p>}
             </div>
-          </div>
+          )}
+
+          {/* Tab: Activity — raw log */}
+          {tab === 'activity' && (
+            <div className="space-y-1">
+              {logs.slice(0, 50).map(l => (
+                <div key={l.id} className="flex items-center gap-2 py-2 border-b border-stone-800/40">
+                  {l.photo ? (
+                    <img src={l.photo} className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-stone-800 flex items-center justify-center text-[10px] text-stone-500">
+                      {(l.name || l.email || '?')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs text-stone-200 truncate block">{l.name || l.email?.split('@')[0]}</span>
+                  </div>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                    l.action === 'login' ? 'bg-stone-800 text-stone-400' :
+                    l.action === 'watch_live' ? 'bg-lime-950 text-lime-400' :
+                    'bg-sky-950 text-sky-400'
+                  }`}>
+                    {l.action === 'login' ? 'LOGIN' : l.action === 'watch_live' ? 'LIVE' : 'REPLAY'}
+                  </span>
+                  <span className="text-[10px] text-stone-600 w-20 text-right shrink-0">{fmtTs(l.ts)}</span>
+                </div>
+              ))}
+              {logs.length === 0 && <p className="text-stone-500 text-sm text-center py-4">No activity yet.</p>}
+              {logs.length > 50 && <p className="text-stone-600 text-xs text-center py-2">Showing 50 of {logs.length} events</p>}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -5672,6 +5806,16 @@ function PublicHomePage() {
   const [schedule, setSchedule] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
+  const [isCoachUser, setIsCoachUser] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
+    const email = window.fbUserInfo.email?.toLowerCase();
+    if (!email) return;
+    window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
+      if (doc.exists && doc.data().role === 'coach') setIsCoachUser(true);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
@@ -5727,7 +5871,7 @@ function PublicHomePage() {
       <style>{FONT_STYLES}</style>
       <a
         href="./?coach"
-        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20"
+        className={`absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 ${isCoachUser ? '' : 'hidden'}`}
       >
         🔑 COACH
       </a>
