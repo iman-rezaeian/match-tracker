@@ -5707,13 +5707,15 @@ function LiveScoreboard({ game, roster }) {
   const leftScore = game.ourScore;
   const rightScore = game.oppScore;
   // Pick a font size that keeps both names on one line based on the longer name.
+  // Names now get the full half-width each (score sits below), so we can go bigger.
   const longestName = Math.max(leftName.length, rightName.length);
   const nameSizeClass =
-    longestName <= 8 ? 'text-2xl'
-    : longestName <= 10 ? 'text-xl'
-    : longestName <= 13 ? 'text-lg'
-    : longestName <= 17 ? 'text-base'
-    : 'text-sm';
+    longestName <= 7 ? 'text-4xl'
+    : longestName <= 9 ? 'text-3xl'
+    : longestName <= 12 ? 'text-2xl'
+    : longestName <= 16 ? 'text-xl'
+    : longestName <= 20 ? 'text-lg'
+    : 'text-base';
 
   // Privacy: first name + jersey number only — never last names on public pages.
   const nameOf = (pid) => {
@@ -5729,16 +5731,17 @@ function LiveScoreboard({ game, roster }) {
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
-        <div className="flex items-center justify-center gap-3 mt-4">
-          <div className="flex-1 text-right min-w-0">
-            <div className={`font-display ${nameSizeClass} leading-tight break-words`}>{leftName}</div>
+        {/* Names on top, full half-width each. Score sits below for breathing room. */}
+        <div className="flex items-start justify-between gap-4 mt-5 px-2">
+          <div className="flex-1 min-w-0 text-center">
+            <div className={`font-display ${nameSizeClass} leading-tight`}>{leftName}</div>
           </div>
-          <div className="font-display text-6xl tabular-nums px-3 shrink-0">
-            {leftScore}<span className="text-white/40 mx-2">–</span>{rightScore}
+          <div className="flex-1 min-w-0 text-center">
+            <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
           </div>
-          <div className="flex-1 text-left min-w-0">
-            <div className={`font-display ${nameSizeClass} leading-tight break-words`}>{rightName}</div>
-          </div>
+        </div>
+        <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
+          {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
         </div>
         <div className="text-center mt-4 flex items-center justify-center gap-2 flex-wrap">
           {isActive && (
@@ -5820,6 +5823,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
