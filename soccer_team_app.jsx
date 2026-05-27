@@ -3185,6 +3185,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           if (dAlpha < -180) dAlpha += 360;
           // Apply gyro deltas to target (alpha = yaw/lon, beta = pitch/lat)
           st.targetLon -= dAlpha * 0.8;
+          st.targetLon = Math.max(-100, Math.min(100, st.targetLon));
           st.targetLat -= dBeta * 0.8;
           const maxLat = st.tvMode ? [45, 10] : [85, 85];
           st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
@@ -3377,7 +3378,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           statusTone = 'bg-stone-800/90 text-white';
         }
         return (
-          <div className={`absolute z-10 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'} ${isFullscreen && !controlsVisible ? 'opacity-0' : 'opacity-100'}`}>
+          <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
             <div
               className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
               style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
