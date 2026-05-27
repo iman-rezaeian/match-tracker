@@ -59,16 +59,12 @@
     window.fbAuth = firebase.auth();
     // Offline persistence (so the app survives field wifi)
     window.fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-    // Anonymous sign-in (required by security rules)
-    window.fbReady = window.fbAuth.signInAnonymously().then(() => true).catch((err) => {
-      document.getElementById('root').innerHTML =
-        '<div style="padding:2rem;font-family:sans-serif;color:#7f1d1d;background:#fef2f2;border-radius:1rem;margin:2rem;">' +
-        '<h2 style="margin:0 0 0.5rem 0">Firebase setup needed</h2>' +
-        '<p style="margin:0 0 0.5rem 0">Anonymous sign-in is not enabled yet.</p>' +
-        '<p style="margin:0;font-size:0.9em">Firebase Console → Build → Authentication → Sign-in method → Anonymous → Enable</p>' +
-        '<p style="margin:1rem 0 0 0;font-size:0.8em;color:#991b1b">Error: ' + err.message + '</p>' +
-        '</div>';
-      return false;
+    // Google sign-in — fbReady resolves once auth state is known
+    window.fbReady = new Promise((resolve) => {
+      window.fbAuth.onAuthStateChanged((user) => {
+        window.fbUser = user;
+        resolve(!!user);
+      });
     });
 
     // ----- PWA service worker + install prompt -----
@@ -5991,8 +5987,106 @@ function LiveScoreboard({ game, roster }) {
 
     // ===== APP CODE ENDS =====
 
+    // ===== AUTH GATE =====
+    function AuthGate() {
+      const [user, setUser] = useState(window.fbAuth.currentUser);
+      const [checking, setChecking] = useState(true);
+      const [allowed, setAllowed] = useState(null); // null=checking, true/false
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        const unsub = window.fbAuth.onAuthStateChanged((u) => {
+          setUser(u);
+          setChecking(false);
+        });
+        return unsub;
+      }, []);
+
+      // Check whitelist once user is signed in
+      useEffect(() => {
+        if (!user) { setAllowed(null); return; }
+        const email = user.email?.toLowerCase();
+        if (!email) { setAllowed(false); return; }
+        window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
+          if (doc.exists) {
+            setAllowed(true);
+            // Track login for analytics
+            window.fbDb.collection('viewerLog').add({
+              email, name: user.displayName || '', photo: user.photoURL || '',
+              action: 'login', ts: firebase.firestore.FieldValue.serverTimestamp()
+            }).catch(() => {});
+          } else {
+            setAllowed(false);
+          }
+        }).catch((err) => { setError(err.message); setAllowed(false); });
+      }, [user]);
+
+      const signIn = async () => {
+        try {
+          const provider = new firebase.auth.GoogleAuthProvider();
+          await window.fbAuth.signInWithPopup(provider);
+        } catch (err) {
+          // On mobile, popup might fail — try redirect
+          if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            await window.fbAuth.signInWithRedirect(provider);
+          } else {
+            setError(err.message);
+          }
+        }
+      };
+
+      const signOut = () => window.fbAuth.signOut();
+
+      if (checking) return (
+        <div className="min-h-screen flex items-center justify-center bg-stone-950">
+          <div className="text-stone-400 animate-pulse text-lg font-display">Loading…</div>
+        </div>
+      );
+
+      if (!user) return (
+        <div className="min-h-screen flex items-center justify-center bg-stone-950 px-6">
+          <div className="max-w-sm w-full text-center space-y-6">
+            <div className="text-5xl">⚽</div>
+            <h1 className="text-2xl font-display text-white">LaSalle Stompers</h1>
+            <p className="text-stone-400 text-sm">Sign in with your Google account to access the team tracker.</p>
+            <button onClick={signIn} className="w-full flex items-center justify-center gap-3 bg-white text-stone-900 font-bold py-3 px-6 rounded-xl hover:bg-stone-100 active:scale-[0.98] transition shadow-lg">
+              <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#34A853" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#FBBC05" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+              Sign in with Google
+            </button>
+            {error && <p className="text-red-400 text-xs">{error}</p>}
+          </div>
+        </div>
+      );
+
+      if (allowed === null) return (
+        <div className="min-h-screen flex items-center justify-center bg-stone-950">
+          <div className="text-stone-400 animate-pulse text-sm">Verifying access…</div>
+        </div>
+      );
+
+      if (!allowed) return (
+        <div className="min-h-screen flex items-center justify-center bg-stone-950 px-6">
+          <div className="max-w-sm w-full text-center space-y-4">
+            <div className="text-4xl">🔒</div>
+            <h2 className="text-xl font-display text-white">Access Denied</h2>
+            <p className="text-stone-400 text-sm">
+              <span className="text-stone-300 font-medium">{user.email}</span> is not on the approved list.
+              Contact the coach to get access.
+            </p>
+            <button onClick={signOut} className="text-xs text-stone-500 underline">Sign out</button>
+          </div>
+        </div>
+      );
+
+      // User is authenticated and whitelisted — render app
+      // Expose user info for the app to use
+      window.fbUserInfo = { email: user.email, name: user.displayName, photo: user.photoURL, uid: user.uid };
+      return <App />;
+    }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    root.render(<AuthGate />);
   </script>
 </body>
 </html>

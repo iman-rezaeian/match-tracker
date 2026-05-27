@@ -67,6 +67,24 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 // Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
 const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 
+// Viewer tracking — logs to Firestore when users watch video/live
+function trackViewer(action, gameId) {
+  if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return null;
+  const { email, name, photo } = window.fbUserInfo;
+  const docRef = window.fbDb.collection('viewerLog').doc();
+  docRef.set({
+    email, name, photo, action, gameId,
+    ts: window.firebase?.firestore?.FieldValue?.serverTimestamp?.() || new Date()
+  }).catch(() => {});
+  return docRef.id;
+}
+function untrackViewer(docId) {
+  if (!docId || !window.fbDb) return;
+  window.fbDb.collection('viewerLog').doc(docId).update({
+    endTs: window.firebase?.firestore?.FieldValue?.serverTimestamp?.() || new Date()
+  }).catch(() => {});
+}
+
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
   'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-400',
@@ -887,6 +905,7 @@ export default function App() {
           onViewWeights={() => setView('weights')}
           onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
+          onViewViewers={() => setView('viewers')}
         />
       )}
 
@@ -1099,6 +1118,10 @@ export default function App() {
         />
       )}
 
+      {view === 'viewers' && (
+        <ViewersPanel onBack={() => setView('home')} />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -1150,7 +1173,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -1195,6 +1218,16 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
     <div className="pb-24">
       <div className="stripes-bg text-white px-5 pt-16 pb-10 relative">
         <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+          {window.fbUserInfo && (
+            <button
+              onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+              aria-label="Sign out"
+              className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+            >
+              {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+              <span className="text-[10px] text-white/70 font-bold">OUT</span>
+            </button>
+          )}
           {!isStandalone && (
             <button
               onClick={() => setShowInstallModal(true)}
@@ -1299,6 +1332,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
+        <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
       </div>
 
       {/* Upcoming games */}
@@ -2958,6 +2992,13 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
 
+  // Track viewer presence
+  useEffect(() => {
+    const isLive = gameInfo && gameInfo.status === 'active';
+    const docId = trackViewer(isLive ? 'watch_live' : 'watch_replay', gameInfo?.gameId);
+    return () => { untrackViewer(docId); };
+  }, []);
+
   // Fullscreen toggle — portal + position:fixed (escapes parent transforms; works on iOS PWA)
   const toggleFullscreen = () => setIsFullscreen(f => {
     const next = !f;
@@ -3863,7 +3904,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                     videoUrl={game.liveInput.hlsUrl}
                     events={game.events || []}
                     onClose={() => setShowLive(false)}
-                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }}
+                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status, gameId: game.id }}
                   />
                 </div>
               )}
@@ -3933,7 +3974,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                   seekTo={seekTo}
                   events={events}
                   onClose={() => setShowVideo(false)}
-                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }}
+                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status, gameId: game.id }}
                 />
                 <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
               </div>
@@ -5109,6 +5150,170 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
   );
 }
 
+/* ---------- VIEWERS PANEL ---------- */
+function ViewersPanel({ onBack }) {
+  const [logs, setLogs] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!window.fbDb) { setLoading(false); return; }
+
+    // Get recent viewer logs (last 7 days)
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+
+    const unsub = window.fbDb.collection('viewerLog')
+      .where('ts', '>=', weekAgo)
+      .orderBy('ts', 'desc')
+      .limit(100)
+      .onSnapshot((snap) => {
+        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setLogs(items);
+        setLoading(false);
+      }, () => setLoading(false));
+
+    // Get allowed users list
+    window.fbDb.collection('allowedUsers').get().then((snap) => {
+      setUsers(snap.docs.map(d => ({ email: d.id, ...d.data() })));
+    }).catch(() => {});
+
+    return unsub;
+  }, []);
+
+  // Derive stats
+  const currentlyWatching = logs.filter(l =>
+    (l.action === 'watch_live' || l.action === 'watch_replay') && !l.endTs
+  );
+  const uniqueViewers = [...new Set(logs.map(l => l.email))];
+  const loginCount = logs.filter(l => l.action === 'login').length;
+
+  const [newEmail, setNewEmail] = useState('');
+  const [newRole, setNewRole] = useState('parent');
+  const [addBusy, setAddBusy] = useState(false);
+
+  const addUser = async () => {
+    const email = newEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    setAddBusy(true);
+    try {
+      await window.fbDb.collection('allowedUsers').doc(email).set({ role: newRole, addedAt: new Date() });
+      setUsers(prev => [...prev.filter(u => u.email !== email), { email, role: newRole }]);
+      setNewEmail('');
+    } catch (e) { console.error(e); }
+    setAddBusy(false);
+  };
+
+  const removeUser = async (email) => {
+    try {
+      await window.fbDb.collection('allowedUsers').doc(email).delete();
+      setUsers(prev => prev.filter(u => u.email !== email));
+    } catch (e) { console.error(e); }
+  };
+
+  const fmtTs = (ts) => {
+    if (!ts) return '';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  return (
+    <div className="min-h-screen bg-stone-950 pb-20">
+      <div className="sticky top-0 z-20 bg-stone-950/95 backdrop-blur-sm border-b border-stone-800 px-4 py-3 flex items-center gap-3">
+        <button onClick={onBack} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
+          <ChevronLeft className="w-5 h-5" />
+        </button>
+        <h1 className="font-display text-xl">VIEWERS</h1>
+      </div>
+
+      {loading ? (
+        <div className="p-6 text-center text-stone-500 animate-pulse">Loading…</div>
+      ) : (
+        <div className="px-4 pt-4 space-y-6">
+          {/* Stats cards */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
+              <div className="text-2xl font-display text-lime-400">{currentlyWatching.length}</div>
+              <div className="text-[10px] text-stone-400 font-bold tracking-wider">WATCHING NOW</div>
+            </div>
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
+              <div className="text-2xl font-display text-white">{uniqueViewers.length}</div>
+              <div className="text-[10px] text-stone-400 font-bold tracking-wider">UNIQUE (7d)</div>
+            </div>
+            <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 text-center">
+              <div className="text-2xl font-display text-white">{loginCount}</div>
+              <div className="text-[10px] text-stone-400 font-bold tracking-wider">LOGINS (7d)</div>
+            </div>
+          </div>
+
+          {/* Currently watching */}
+          {currentlyWatching.length > 0 && (
+            <div>
+              <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">🟢 WATCHING NOW</h3>
+              <div className="space-y-1.5">
+                {currentlyWatching.map(l => (
+                  <div key={l.id} className="flex items-center gap-2 bg-stone-900 border border-lime-900/40 rounded-lg px-3 py-2">
+                    {l.photo && <img src={l.photo} className="w-6 h-6 rounded-full" referrerPolicy="no-referrer" />}
+                    <span className="text-sm font-medium text-white flex-1 truncate">{l.name || l.email}</span>
+                    <span className="text-[10px] text-lime-400 font-bold">{l.action === 'watch_live' ? 'LIVE' : 'REPLAY'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Approved users management */}
+          <div>
+            <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">APPROVED USERS ({users.length})</h3>
+            <div className="space-y-1.5 mb-3">
+              {users.map(u => (
+                <div key={u.email} className="flex items-center gap-2 bg-stone-900 border border-stone-800 rounded-lg px-3 py-2">
+                  <span className="text-sm text-white flex-1 truncate">{u.email}</span>
+                  <span className="text-[10px] font-bold text-stone-500 uppercase">{u.role || 'parent'}</span>
+                  <button onClick={() => removeUser(u.email)} className="text-red-400 text-xs active:scale-95">✕</button>
+                </div>
+              ))}
+            </div>
+            {/* Add user form */}
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="email@example.com"
+                className="flex-1 rounded-lg border border-stone-700 px-3 py-2 text-sm"
+              />
+              <select value={newRole} onChange={(e) => setNewRole(e.target.value)} className="rounded-lg border border-stone-700 px-2 py-2 text-xs">
+                <option value="parent">Parent</option>
+                <option value="coach">Coach</option>
+              </select>
+              <button onClick={addUser} disabled={addBusy} className="bg-lime-600 text-black font-bold px-3 py-2 rounded-lg text-xs active:scale-95 disabled:opacity-50">
+                ADD
+              </button>
+            </div>
+          </div>
+
+          {/* Recent activity */}
+          <div>
+            <h3 className="text-xs font-bold text-stone-400 tracking-wider mb-2">RECENT ACTIVITY</h3>
+            <div className="space-y-1">
+              {logs.slice(0, 30).map(l => (
+                <div key={l.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-stone-800/50">
+                  {l.photo && <img src={l.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                  <span className="text-stone-300 flex-1 truncate">{l.name || l.email}</span>
+                  <span className="text-stone-500">{l.action === 'login' ? '🔓' : l.action === 'watch_live' ? '🔴' : '🎬'}</span>
+                  <span className="text-stone-500 text-[10px]">{fmtTs(l.ts)}</span>
+                </div>
+              ))}
+              {logs.length === 0 && <p className="text-stone-500 text-sm">No activity yet.</p>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HelpView({ onBack }) {
   const [openId, setOpenId] = useState('welcome');
   const toggle = (id) => setOpenId(prev => prev === id ? null : id);
@@ -5385,6 +5590,7 @@ function PublicVideoToggle({ url, game, label }) {
           homeColor: game.homeColor,
           awayColor: game.awayColor,
           status: game.status,
+          gameId: game.id,
         }}
       />
     </div>
