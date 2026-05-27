@@ -2946,7 +2946,7 @@ async function attachHls(video, url) {
   return () => { try { hls.destroy(); } catch {} };
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const rendererRef = useRef(null);
@@ -2959,6 +2959,19 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
+  const [tvMode, setTvMode] = useState(false);
+
+  // TV mode: snap FOV and clamp vertical
+  useEffect(() => {
+    const st = stateRef.current;
+    st.tvMode = tvMode;
+    if (tvMode) {
+      st.targetFov = 50;
+      st.targetLat = Math.max(-20, Math.min(20, st.targetLat));
+    } else {
+      st.targetFov = 75;
+    }
+  }, [tvMode]);
 
   // Load Three.js and set up scene
   useEffect(() => {
@@ -3046,11 +3059,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
           const sensitivity = 0.1 * (st.fov / 75);
           st.targetLon -= dx * sensitivity;
           st.targetLat += dy * sensitivity;
-          st.targetLat = Math.max(-85, Math.min(85, st.targetLat));
+          const maxLat = st.tvMode ? 20 : 85;
+          st.targetLat = Math.max(-maxLat, Math.min(maxLat, st.targetLat));
           dragLast = { x: e.clientX, y: e.clientY };
         } else if (pointers.size === 2 && pinchStartDist > 0) {
           const ratio = pinchStartDist / pointerDist();
-          st.targetFov = Math.max(25, Math.min(110, pinchStartFov * ratio));
+          if (!st.tvMode) st.targetFov = Math.max(25, Math.min(110, pinchStartFov * ratio));
         }
       });
       const endPointer = (e) => {
@@ -3063,7 +3077,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
       canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
+        if (!stateRef.current.tvMode) stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
       }, { passive: false });
 
       // Render loop
@@ -3148,6 +3162,16 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
           <X className="w-4 h-4" />
         </button>
       )}
+      {/* Score overlay */}
+      {gameInfo && (
+        <div className="absolute top-2 left-2 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-2.5 py-1.5 flex items-center gap-2 border border-white/10 pointer-events-none">
+          <span className="text-[10px] font-bold text-white truncate max-w-[4rem]">{gameInfo.home || 'STM'}</span>
+          <span className="text-sm font-display tabular-nums text-white">{gameInfo.homeScore ?? 0}<span className="text-white/40 mx-0.5">–</span>{gameInfo.awayScore ?? 0}</span>
+          <span className="text-[10px] font-bold text-white truncate max-w-[4rem]">{gameInfo.away || 'OPP'}</span>
+          <span className="text-[9px] text-white/60 font-bold ml-1">{gameInfo.period >= 2 ? '2H' : '1H'}</span>
+          <span className="text-[9px] text-white/60 tabular-nums">{Math.floor(currentTime / 60)}'</span>
+        </div>
+      )}
       {/* Canvas container */}
       <div ref={containerRef} className="w-full max-w-2xl mx-auto h-[40vh] max-h-80 bg-black" />
       {/* Controls */}
@@ -3182,6 +3206,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
         </div>
         <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
         <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
+        <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
+          📺 TV
+        </button>
       </div>
     </div>
   );
@@ -3505,6 +3532,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                     videoUrl={game.liveInput.hlsUrl}
                     events={[]}
                     onClose={() => setShowLive(false)}
+                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }}
                   />
                 </div>
               )}
@@ -3574,6 +3602,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                   seekTo={seekTo}
                   events={events}
                   onClose={() => setShowVideo(false)}
+                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }}
                 />
                 <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
               </div>
@@ -5043,7 +5072,7 @@ function LiveScorePage({ gameId }) {
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm font-bold text-red-300">LIVE NOW</span>
           </div>
-          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={[]} />
+          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={[]} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }} />
         </div>
       )}
       {!game.liveInput?.hlsUrl && game.videoUrl && (
@@ -5051,7 +5080,7 @@ function LiveScorePage({ gameId }) {
           <div className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-2 mb-3">
             <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
           </div>
-          <VideoPlayer360 videoUrl={game.videoUrl} events={[]} />
+          <VideoPlayer360 videoUrl={game.videoUrl} events={[]} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }} />
         </div>
       )}
     </div>
@@ -5399,6 +5428,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
