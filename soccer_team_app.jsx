@@ -2851,22 +2851,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const [tvMode, setTvMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Fullscreen toggle
-  const toggleFullscreen = () => {
-    const el = wrapperRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen).call(el);
-    } else {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    }
-  };
-  useEffect(() => {
-    const handler = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handler);
-    document.addEventListener('webkitfullscreenchange', handler);
-    return () => { document.removeEventListener('fullscreenchange', handler); document.removeEventListener('webkitfullscreenchange', handler); };
-  }, []);
+  // Fullscreen toggle — CSS-based (works on iOS)
+  const toggleFullscreen = () => setIsFullscreen(f => !f);
 
   // TV mode: snap FOV and clamp vertical
   useEffect(() => {
@@ -3059,9 +3045,16 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   };
 
   return (
-    <div ref={wrapperRef} className={`relative bg-black overflow-hidden border border-stone-800 ${isFullscreen ? 'rounded-none' : 'rounded-2xl'}`}>
-      {/* Close button */}
-      {onClose && !isFullscreen && (
+    <div ref={wrapperRef} className={`relative bg-black overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50 rounded-none' : 'rounded-2xl border border-stone-800'}`}>
+      {/* Close / Exit fullscreen button */}
+      {isFullscreen ? (
+        <button
+          onClick={toggleFullscreen}
+          className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      ) : onClose && (
         <button
           onClick={onClose}
           className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
@@ -3069,37 +3062,35 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           <X className="w-4 h-4" />
         </button>
       )}
-      {/* Score overlay — Premier League style */}
+      {/* Score overlay — compact scorebug */}
       {gameInfo && (
-        <div className="absolute top-3 left-3 z-10 pointer-events-none">
-          <div className="bg-gradient-to-r from-stone-900/95 to-stone-800/90 backdrop-blur-md rounded-lg shadow-lg border border-white/10 overflow-hidden">
-            {/* Top row: teams + score */}
-            <div className="flex items-center">
-              <div className="bg-lime-500 px-2.5 py-1.5 flex items-center">
-                <span className="text-[11px] font-extrabold text-black tracking-wide truncate max-w-[4.5rem]">{gameInfo.home || 'STM'}</span>
+        <div className="absolute top-2 left-2 z-10 pointer-events-none">
+          <div className="bg-black/80 backdrop-blur-sm rounded shadow-lg border border-white/10 overflow-hidden">
+            <div className="flex items-center text-[10px]">
+              <div className="bg-lime-600 px-1.5 py-0.5">
+                <span className="font-bold text-white tracking-wide truncate max-w-[3.5rem] block">{gameInfo.home || 'STM'}</span>
               </div>
-              <div className="px-3 py-1.5 flex items-center gap-1">
-                <span className="text-base font-display tabular-nums text-white">{gameInfo.homeScore ?? 0}</span>
-                <span className="text-white/30 text-xs">–</span>
-                <span className="text-base font-display tabular-nums text-white">{gameInfo.awayScore ?? 0}</span>
+              <div className="px-2 py-0.5 flex items-center gap-0.5">
+                <span className="font-display tabular-nums text-white text-xs">{gameInfo.homeScore ?? 0}</span>
+                <span className="text-white/30">-</span>
+                <span className="font-display tabular-nums text-white text-xs">{gameInfo.awayScore ?? 0}</span>
               </div>
-              <div className="bg-red-500 px-2.5 py-1.5 flex items-center">
-                <span className="text-[11px] font-extrabold text-white tracking-wide truncate max-w-[4.5rem]">{gameInfo.away || 'OPP'}</span>
+              <div className="bg-red-600 px-1.5 py-0.5">
+                <span className="font-bold text-white tracking-wide truncate max-w-[3.5rem] block">{gameInfo.away || 'OPP'}</span>
               </div>
             </div>
-            {/* Bottom row: half + clock */}
-            <div className="bg-black/60 px-2.5 py-0.5 flex items-center justify-center gap-2">
-              <span className="text-[9px] font-bold text-lime-400 uppercase tracking-wider">{gameInfo.period >= 2 ? '2nd Half' : '1st Half'}</span>
-              <span className="text-[9px] text-white/50">•</span>
-              <span className="text-[9px] font-bold text-white/80 tabular-nums">{Math.floor(currentTime / 60)}'</span>
+            <div className="bg-stone-900 px-2 py-px flex items-center justify-center gap-1.5">
+              <span className="text-[8px] font-bold text-lime-400 uppercase">{gameInfo.period >= 2 ? '2nd Half' : '1st Half'}</span>
+              <span className="text-[8px] text-white/40">•</span>
+              <span className="text-[8px] font-bold text-white/70 tabular-nums">{Math.floor(currentTime / 60)}'</span>
             </div>
           </div>
         </div>
       )}
       {/* Canvas container — 16:9 aspect ratio */}
-      <div ref={containerRef} className={`w-full bg-black ${isFullscreen ? 'h-full' : 'aspect-video max-h-[70vh]'}`} />
+      <div ref={containerRef} className={`w-full bg-black ${isFullscreen ? 'h-[calc(100%-44px)]' : 'aspect-video max-h-[70vh]'}`} />
       {/* Controls */}
-      <div className="px-3 py-2 flex items-center gap-2 bg-stone-900">
+      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 ${isFullscreen ? 'absolute bottom-0 left-0 right-0' : ''}`}>
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
           {playing ? '⏸' : '▶'}
         </button>
