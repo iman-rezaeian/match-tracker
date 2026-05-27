@@ -3024,7 +3024,7 @@ async function attachHls(video, url) {
   return () => { try { hls.destroy(); } catch {} };
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode = 'all' }) {
   const wrapperRef = useRef(null);
   const placeholderRef = useRef(null);
   const containerRef = useRef(null);
@@ -3335,7 +3335,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const half2StartElapsed = (events || [])
     .filter(e => e.period === 2 && isFinite(e.elapsed))
     .reduce((min, e) => Math.min(min, e.elapsed), Infinity);
+  const isLive = gameInfo && gameInfo.status === 'active';
   const isFinished = gameInfo && gameInfo.status === 'finished';
+  const videoEnded = duration > 0 && currentTime >= duration - 0.5;
   const inSecondHalf = isFinite(half2StartElapsed)
     ? currentTime >= half2StartElapsed
     : (gameInfo && gameInfo.period >= 2);
@@ -3386,10 +3388,20 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
       )}
       {/* Score overlay — modern broadcast scorebug */}
       {gameInfo && (() => {
-        const homeText = textOnColor(homeColor);
-        const awayText = textOnColor(awayColor);
-        const statusLabel = isFinished ? 'FT' : (inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`);
-        const statusTone = isFinished ? 'bg-stone-700/90 text-stone-100' : 'bg-red-600/95 text-white';
+        // TV-style status pill: derive from playback, not from stored game state.
+        // FT only when video has actually ended.
+        let statusLabel, statusTone, showPulse = false;
+        if (isFinished && videoEnded) {
+          statusLabel = 'FT';
+          statusTone = 'bg-stone-700/90 text-stone-100';
+        } else if (isLive) {
+          statusLabel = `LIVE · ${displayedMinute}'`;
+          statusTone = 'bg-red-600/95 text-white';
+          showPulse = true;
+        } else {
+          statusLabel = inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`;
+          statusTone = 'bg-stone-800/90 text-white';
+        }
         return (
           <div className={`absolute z-10 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'} ${isFullscreen && !controlsVisible ? 'opacity-0' : 'opacity-100'}`}>
             <div
@@ -3417,7 +3429,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
               {/* Status row */}
               <div className="px-2 pb-1.5 pt-0.5 flex items-center justify-center">
                 <div className={`flex items-center gap-1 px-1.5 py-px rounded-md ${statusTone}`}>
-                  {!isFinished && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                   <span className="text-[9px] font-bold tracking-wider">{statusLabel}</span>
                 </div>
               </div>
@@ -3425,14 +3437,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           </div>
         );
       })()}
-      {/* Canvas container — fills wrapper; letterboxed 16:9 in portrait fullscreen */}
-      {isFullscreen && isPortrait ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-black" onClick={toggleControls}>
-          <div ref={containerRef} className="w-full bg-black" style={{ aspectRatio: '16 / 9' }} />
-        </div>
-      ) : (
-        <div ref={containerRef} onClick={toggleControls} className="w-full h-full bg-black" />
-      )}
+      {/* Canvas container — single DOM node always, styled by mode */}
+      <div
+        ref={containerRef}
+        onClick={toggleControls}
+        className="bg-black"
+        style={
+          isFullscreen && isPortrait
+            ? { position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', width: '100vw', height: 'calc(100vw * 9 / 16)' }
+            : { width: '100%', height: '100%' }
+        }
+      />
       {/* Controls */}
       <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
@@ -3448,7 +3463,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
             onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
             className="w-full h-1 accent-lime-400 block"
           />
-          {duration > 0 && events.filter(e => e.elapsed > 0 && e.elapsed <= duration && e.type !== 'SUB' && e.type !== 'GK_CHANGE').map(e => {
+          {duration > 0 && dotsMode !== 'none' && events.filter(e => {
+            if (e.elapsed <= 0 || e.elapsed > duration) return false;
+            if (dotsMode === 'goals') return e.type === 'GOAL' || e.type === 'OPP_GOAL';
+            return e.type !== 'SUB' && e.type !== 'GK_CHANGE';
+          }).map(e => {
             const pct = (e.elapsed / duration) * 100;
             const ev = EVENT_TYPES[e.type];
             const color = e.type === 'GOAL' ? 'bg-lime-400' : e.type === 'OPP_GOAL' ? 'bg-red-500' : e.type === 'SHOT_ON' || e.type === 'SHOT_OFF' ? 'bg-yellow-400' : e.type === 'SAVE' || e.type === 'BLOCK' ? 'bg-sky-400' : 'bg-stone-400';
@@ -5291,6 +5310,46 @@ function Header({ title, onBack, right }) {
    never pillar events, rosters, or weights.
    Auth: existing anonymous Firebase auth covers public viewers transparently.
    ========================================================================= */
+/* ---- PublicVideoToggle: collapsed by default, expands to show 360° player ---- */
+function PublicVideoToggle({ url, game, label }) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+      >
+        <span className="text-sm font-bold">{label}</span>
+        <span className="text-xs text-stone-400 tracking-wider">TAP TO PLAY</span>
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-stone-400 tracking-wider">{label}</span>
+        <button onClick={() => setOpen(false)} className="text-[10px] font-bold text-stone-500 hover:text-stone-300">HIDE</button>
+      </div>
+      <VideoPlayer360
+        videoUrl={url}
+        events={game.events || []}
+        dotsMode="goals"
+        gameInfo={{
+          home: 'Stompers',
+          away: game.opponent || 'OPP',
+          homeScore: game.ourScore,
+          awayScore: game.oppScore,
+          period: game.period || 1,
+          halfLengthMin: game.halfLengthMin || 25,
+          homeColor: game.homeColor,
+          awayColor: game.awayColor,
+          status: game.status,
+        }}
+      />
+    </div>
+  );
+}
+
 function LiveScorePage({ gameId }) {
   const [game, setGame] = useState(null);
   const [roster, setRoster] = useState([]);
@@ -5344,15 +5403,20 @@ function LiveScorePage({ gameId }) {
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm font-bold text-red-300">LIVE NOW</span>
           </div>
-          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }} />
+          <PublicVideoToggle
+            url={game.liveInput.hlsUrl}
+            game={game}
+            label="🔴 WATCH LIVE"
+          />
         </div>
       )}
       {!game.liveInput?.hlsUrl && game.videoUrl && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
-          <div className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-2 mb-3">
-            <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
-          </div>
-          <VideoPlayer360 videoUrl={game.videoUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }} />
+          <PublicVideoToggle
+            url={game.videoUrl}
+            game={game}
+            label="🎥 WATCH 360° VIDEO"
+          />
         </div>
       )}
     </div>
@@ -5432,12 +5496,12 @@ function PublicHomePage() {
           </a>
           {featured.videoUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.videoUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25, homeColor: featured.homeColor, awayColor: featured.awayColor, status: featured.status }} />
+              <PublicVideoToggle url={featured.videoUrl} game={featured} label="🎥 WATCH 360° VIDEO" />
             </div>
           )}
           {featured.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.liveInput.hlsUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25, homeColor: featured.homeColor, awayColor: featured.awayColor, status: featured.status }} />
+              <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
             </div>
           )}
         </>
@@ -5714,6 +5778,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
