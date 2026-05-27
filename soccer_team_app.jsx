@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Plus, Users, Trash2, Edit3, ChevronLeft,
   PlayCircle, Undo2, X, ChevronRight,
@@ -58,6 +58,9 @@ const ZONE_LABEL = {
   'M-L': 'Mid · Left',   'M-C': 'Mid · Center',   'M-R': 'Mid · Right',
   'A-L': 'Att · Left',   'A-C': 'Att · Center',   'A-R': 'Att · Right',
 };
+
+// R2 public bucket URL (stompers-videos bucket, CORS enabled).
+const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
@@ -848,7 +851,7 @@ export default function App() {
   const viewingGame = games.find(g => g.id === viewingGameId);
 
   return (
-    <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100">
+    <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100 max-w-2xl mx-auto sm:border-x sm:border-stone-900">
       <style>{FONT_STYLES}</style>
 
       {toast && (
@@ -1062,6 +1065,7 @@ export default function App() {
           }}
           onDeleteEvent={(eid) => deleteEvent(viewingGame.id, eid)}
           onUpdateEvent={(eid, patch) => updateEvent(viewingGame.id, eid, patch)}
+          onUpdateGame={(patch) => updateGame(viewingGame.id, g => ({ ...g, ...patch }))}
         />
       )}
 
@@ -2779,7 +2783,235 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
   );
 }
 
-function EventRow({ event, roster, onDelete, onTag }) {
+/* ---------- 360° VIDEO PLAYER ---------- */
+function loadThreeJS() {
+  if (window.THREE) return Promise.resolve(window.THREE);
+  if (window._threePromise) return window._threePromise;
+  window._threePromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js';
+    s.onload = () => resolve(window.THREE);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return window._threePromise;
+}
+
+function VideoPlayer360({ videoUrl, seekTo, onClose }) {
+  const containerRef = useRef(null);
+  const videoRef = useRef(null);
+  const rendererRef = useRef(null);
+  const cameraRef = useRef(null);
+  const animRef = useRef(null);
+  const stateRef = useRef({ lon: 0, lat: 0, targetLon: 0, targetLat: 0, fov: 75, targetFov: 75 });
+  const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [muted, setMuted] = useState(true);
+
+  // Load Three.js and set up scene
+  useEffect(() => {
+    let cancelled = false;
+    loadThreeJS().then((THREE) => {
+      if (cancelled || !containerRef.current) return;
+
+      const container = containerRef.current;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(w, h);
+      container.appendChild(renderer.domElement);
+      rendererRef.current = renderer;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, w / h, 0.1, 1100);
+      camera.position.set(0, 0, 0.01);
+      cameraRef.current = camera;
+
+      const geometry = new THREE.SphereGeometry(500, 64, 40);
+      geometry.scale(-1, 1, 1);
+
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.playsInline = true;
+      video.loop = false;
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = videoUrl;
+      videoRef.current = video;
+
+      const texture = new THREE.VideoTexture(video);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+
+      const material = new THREE.MeshBasicMaterial({ map: texture });
+      scene.add(new THREE.Mesh(geometry, material));
+
+      video.addEventListener('loadedmetadata', () => {
+        setDuration(video.duration);
+        setReady(true);
+      });
+      video.addEventListener('timeupdate', () => setCurrentTime(video.currentTime));
+      video.addEventListener('play', () => setPlaying(true));
+      video.addEventListener('pause', () => setPlaying(false));
+      video.load();
+
+      // Pointer handling
+      let dragLast = null;
+      const pointers = new Map();
+      let pinchStartDist = 0, pinchStartFov = 75;
+
+      const pointerDist = () => {
+        const pts = [...pointers.values()];
+        if (pts.length < 2) return 0;
+        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      };
+
+      const canvas = renderer.domElement;
+      canvas.style.touchAction = 'none';
+
+      canvas.addEventListener('pointerdown', (e) => {
+        canvas.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) dragLast = { x: e.clientX, y: e.clientY };
+        else if (pointers.size === 2) { dragLast = null; pinchStartDist = pointerDist(); pinchStartFov = stateRef.current.fov; }
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const st = stateRef.current;
+        if (pointers.size === 1 && dragLast) {
+          const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          const sensitivity = 0.1 * (st.fov / 75);
+          st.targetLon -= dx * sensitivity;
+          st.targetLat += dy * sensitivity;
+          st.targetLat = Math.max(-85, Math.min(85, st.targetLat));
+          dragLast = { x: e.clientX, y: e.clientY };
+        } else if (pointers.size === 2 && pinchStartDist > 0) {
+          const ratio = pinchStartDist / pointerDist();
+          st.targetFov = Math.max(25, Math.min(110, pinchStartFov * ratio));
+        }
+      });
+      const endPointer = (e) => {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinchStartDist = 0;
+        if (pointers.size === 0) dragLast = null;
+        if (pointers.size === 1) { const p = [...pointers.values()][0]; dragLast = { x: p.x, y: p.y }; }
+      };
+      canvas.addEventListener('pointerup', endPointer);
+      canvas.addEventListener('pointercancel', endPointer);
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
+      }, { passive: false });
+
+      // Render loop
+      const animate = () => {
+        animRef.current = requestAnimationFrame(animate);
+        const st = stateRef.current;
+        st.lon += (st.targetLon - st.lon) * 0.18;
+        st.lat += (st.targetLat - st.lat) * 0.18;
+        st.fov += (st.targetFov - st.fov) * 0.18;
+        camera.fov = st.fov;
+        camera.updateProjectionMatrix();
+        const phi = THREE.MathUtils.degToRad(90 - st.lat);
+        const theta = THREE.MathUtils.degToRad(st.lon);
+        camera.lookAt(new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta)
+        ));
+        renderer.render(scene, camera);
+      };
+      animate();
+
+      // Resize handler
+      const onResize = () => {
+        if (!containerRef.current) return;
+        const nw = containerRef.current.clientWidth;
+        const nh = containerRef.current.clientHeight;
+        camera.aspect = nw / nh;
+        camera.updateProjectionMatrix();
+        renderer.setSize(nw, nh);
+      };
+      window.addEventListener('resize', onResize);
+      container._cleanup = () => {
+        window.removeEventListener('resize', onResize);
+      };
+    });
+
+    return () => {
+      cancelled = true;
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+      if (videoRef.current) { videoRef.current.pause(); videoRef.current.src = ''; }
+      if (rendererRef.current) rendererRef.current.dispose();
+      if (containerRef.current) {
+        if (containerRef.current._cleanup) containerRef.current._cleanup();
+        containerRef.current.innerHTML = '';
+      }
+    };
+  }, [videoUrl]);
+
+  // Seek when seekTo changes
+  useEffect(() => {
+    if (seekTo != null && videoRef.current && isFinite(seekTo.time)) {
+      videoRef.current.currentTime = seekTo.time;
+    }
+  }, [seekTo]);
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) videoRef.current.play();
+    else videoRef.current.pause();
+  };
+
+  const toggleMute = () => {
+    if (!videoRef.current) return;
+    videoRef.current.muted = !videoRef.current.muted;
+    setMuted(videoRef.current.muted);
+  };
+
+  const fmtTime = (t) => {
+    if (!isFinite(t)) return '0:00';
+    const m = Math.floor(t / 60), s = Math.floor(t % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="relative bg-black rounded-2xl overflow-hidden border border-stone-800">
+      {/* Close button */}
+      <button
+        onClick={onClose}
+        className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
+      >
+        <X className="w-4 h-4" />
+      </button>
+      {/* Canvas container */}
+      <div ref={containerRef} className="w-full max-w-2xl mx-auto h-[40vh] max-h-80 bg-black" />
+      {/* Controls */}
+      <div className="px-3 py-2 flex items-center gap-2 bg-stone-900">
+        <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
+          {playing ? '⏸' : '▶'}
+        </button>
+        <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10); }}
+          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏪</button>
+        <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10); }}
+          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏩</button>
+        <input
+          type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
+          onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
+          className="flex-1 h-1 accent-lime-400"
+        />
+        <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+        <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
+      </div>
+    </div>
+  );
+}
+
+function EventRow({ event, roster, onDelete, onTag, onSeek }) {
   const isSub = event.type === 'SUB';
   const isGKChange = event.type === 'GK_CHANGE';
   const ev = isSub
@@ -2793,7 +3025,9 @@ function EventRow({ event, roster, onDelete, onTag }) {
   const partner = event.type === 'GIVE_GO' && event.partnerId
     ? roster.find(p => p.id === event.partnerId) : null;
   return (
-    <div className="bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 flex items-center gap-3">
+    <div className={`bg-stone-900 border border-stone-800 rounded-lg px-3 py-2 flex items-center gap-3 ${onSeek ? 'cursor-pointer active:bg-stone-800' : ''}`}
+      onClick={onSeek || undefined}
+    >
       <div className="text-xl">{ev.emoji}</div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-bold">{ev.label}</div>
@@ -2870,12 +3104,12 @@ function EventRow({ event, roster, onDelete, onTag }) {
           </>
         )}
       </div>
-      <div className="text-xs text-stone-400 tabular-nums shrink-0">
-        {formatClock(event.elapsed)} · P{event.period}
+      <div className={`text-xs tabular-nums shrink-0 ${onSeek ? 'text-lime-400 font-bold' : 'text-stone-400'}`}>
+        {onSeek && <span className="mr-1">▶</span>}{formatClock(event.elapsed)} · P{event.period}
       </div>
       {onTag && (
         <button
-          onClick={() => onTag(event)}
+          onClick={(e) => { e.stopPropagation(); onTag(event); }}
           className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 shrink-0 text-[11px] font-extrabold tracking-wider ${event.zone || event.pressure || event.decision ? 'bg-lime-500/15 text-lime-300 border border-lime-700' : 'bg-stone-800 text-stone-400 border border-stone-700'}`}
           title="Tag zone / pressure / decision"
         >
@@ -2883,7 +3117,7 @@ function EventRow({ event, roster, onDelete, onTag }) {
         </button>
       )}
       {onDelete && (
-        <button onClick={() => onDelete(event.id)} className="w-7 h-7 rounded-full bg-red-500/10 flex items-center justify-center active:scale-95 shrink-0">
+        <button onClick={(e) => { e.stopPropagation(); onDelete(event.id); }} className="w-7 h-7 rounded-full bg-red-500/10 flex items-center justify-center active:scale-95 shrink-0">
           <Trash2 className="w-3.5 h-3.5 text-red-600" />
         </button>
       )}
@@ -2907,12 +3141,16 @@ function PillarMini({ label, value }) {
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent }) {
+function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
   const [shareMsg, setShareMsg] = useState(null);
   const [taggingEvent, setTaggingEvent] = useState(null);
+  const [showVideo, setShowVideo] = useState(false);
+  const [seekTo, setSeekTo] = useState(null);
+  const [linkingVideo, setLinkingVideo] = useState(false);
+  const [linkInput, setLinkInput] = useState('');
 
   const shareLiveLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?live=${game.id}`;
@@ -2992,6 +3230,95 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         </div>
       </div>
 
+      {/* 360° Video Section */}
+      <div className="px-4 pt-4">
+        {game.videoUrl ? (
+          <>
+            <button
+              onClick={() => setShowVideo(!showVideo)}
+              className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+            >
+              <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
+              <span className="text-xs text-stone-400">{showVideo ? 'HIDE' : 'WATCH'}</span>
+            </button>
+            {showVideo && (
+              <div className="mt-3">
+                <VideoPlayer360
+                  videoUrl={game.videoUrl}
+                  seekTo={seekTo}
+                  onClose={() => setShowVideo(false)}
+                />
+                <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {!linkingVideo ? (
+              <button
+                onClick={() => setLinkingVideo(true)}
+                className="w-full bg-stone-900 border border-dashed border-stone-700 rounded-xl px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.98] transition"
+              >
+                <span className="text-sm text-stone-400">🎥 LINK 360° VIDEO</span>
+              </button>
+            ) : (
+              <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 space-y-2">
+                <p className="text-xs text-stone-400">Enter R2 filename (e.g. <code className="text-lime-400">game-may-26.mp4</code>) or full URL:</p>
+                <input
+                  type="text"
+                  value={linkInput}
+                  onChange={(e) => setLinkInput(e.target.value)}
+                  placeholder="latest.mp4"
+                  className="w-full px-3 py-2 rounded-lg bg-stone-800 border border-stone-700 text-sm text-white placeholder:text-stone-500"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setLinkingVideo(false); setLinkInput(''); }}
+                    className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95"
+                  >CANCEL</button>
+                  <button
+                    onClick={() => {
+                      const val = linkInput.trim();
+                      if (!val) return;
+                      const url = val.startsWith('http') ? val : `${R2_PUBLIC}/${val}`;
+                      onUpdateGame({ videoUrl: url });
+                      setLinkingVideo(false);
+                      setLinkInput('');
+                    }}
+                    disabled={!linkInput.trim()}
+                    className="flex-1 py-2 rounded-lg bg-lime-600 text-stone-950 text-xs font-bold active:scale-95 disabled:opacity-40"
+                  >SAVE</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="px-4 pt-5">
+        <h3 className="font-display text-xl mb-2">TIMELINE</h3>
+        {events.length === 0 ? (
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+            No events recorded.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {events.map(e => (
+              <EventRow
+                key={e.id}
+                event={e}
+                roster={roster}
+                onDelete={onDeleteEvent}
+                onSeek={showVideo && game.videoUrl ? () => setSeekTo({ time: e.elapsed, _t: Date.now() }) : null}
+                onTag={EVENT_TYPES[e.type] && (EVENT_NEEDS_ZONE.has(e.type) || EVENT_NEEDS_PRESSURE.has(e.type) || EVENT_NEEDS_DECISION.has(e.type))
+                  ? () => setTaggingEvent(e)
+                  : null}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Performance Scores */}
       {Object.keys(tally).length > 0 && (
         <div className="px-4 pt-5">
@@ -3051,29 +3378,6 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
           </div>
         </div>
       )}
-
-      <div className="px-4 pt-5">
-        <h3 className="font-display text-xl mb-2">TIMELINE</h3>
-        {events.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            No events recorded.
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {events.map(e => (
-              <EventRow
-                key={e.id}
-                event={e}
-                roster={roster}
-                onDelete={onDeleteEvent}
-                onTag={EVENT_TYPES[e.type] && (EVENT_NEEDS_ZONE.has(e.type) || EVENT_NEEDS_PRESSURE.has(e.type) || EVENT_NEEDS_DECISION.has(e.type))
-                  ? () => setTaggingEvent(e)
-                  : null}
-              />
-            ))}
-          </div>
-        )}
-      </div>
 
       {taggingEvent && (
         <TagSheet
