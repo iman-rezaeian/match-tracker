@@ -2949,6 +2949,7 @@ async function attachHls(video, url) {
 
 function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const wrapperRef = useRef(null);
+  const placeholderRef = useRef(null);
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const rendererRef = useRef(null);
@@ -2964,6 +2965,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const [tvMode, setTvMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
 
   // Fullscreen toggle — portal + position:fixed (escapes parent transforms; works on iOS PWA)
@@ -3006,18 +3008,47 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     setControlsVisible(v => !v);
   };
 
-  // Trigger renderer resize when fullscreen toggles (window resize doesn't fire on layout change)
+  // Track placeholder bounding rect so the portal'd wrapper can overlay it in inline mode.
+  // Canvas stays mounted in body the whole time — never re-parented — so iOS Safari
+  // doesn't lose the WebGL context.
+  useEffect(() => {
+    if (isFullscreen) return;
+    const update = () => {
+      if (!placeholderRef.current) return;
+      const r = placeholderRef.current.getBoundingClientRect();
+      setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    update();
+    const raf = requestAnimationFrame(update);
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    let ro;
+    if (typeof ResizeObserver !== 'undefined' && placeholderRef.current) {
+      ro = new ResizeObserver(update);
+      ro.observe(placeholderRef.current);
+      ro.observe(document.documentElement);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+      if (ro) ro.disconnect();
+    };
+  }, [isFullscreen]);
+
+  // Trigger renderer resize when fullscreen toggles or inline rect changes
   useEffect(() => {
     const t = setTimeout(() => {
       if (!containerRef.current || !rendererRef.current || !cameraRef.current) return;
       const nw = containerRef.current.clientWidth;
       const nh = containerRef.current.clientHeight;
+      if (nw === 0 || nh === 0) return;
       cameraRef.current.aspect = nw / nh;
       cameraRef.current.updateProjectionMatrix();
       rendererRef.current.setSize(nw, nh);
     }, 50);
     return () => clearTimeout(t);
-  }, [isFullscreen]);
+  }, [isFullscreen, rect.width, rect.height]);
 
   // TV mode: snap FOV and clamp vertical
   useEffect(() => {
@@ -3038,8 +3069,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
       if (cancelled || !containerRef.current) return;
 
       const container = containerRef.current;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      const w = container.clientWidth || 640;
+      const h = container.clientHeight || 360;
 
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -3209,8 +3240,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  const wrapperStyle = isFullscreen
+    ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
+    : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
+
   const playerNode = (
-    <div ref={wrapperRef} style={isFullscreen ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 } : undefined} className={`relative bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
+    <div ref={wrapperRef} style={wrapperStyle} className={`bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
       {/* Close / Exit fullscreen button */}
       {isFullscreen ? (
         <button
@@ -3253,10 +3288,10 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           </div>
         </div>
       )}
-      {/* Canvas container — 16:9 aspect ratio; tap toggles controls in fullscreen */}
-      <div ref={containerRef} onClick={toggleControls} className={`w-full bg-black ${isFullscreen ? 'h-full' : 'aspect-video max-h-[70vh]'}`} />
+      {/* Canvas container — fills wrapper; tap toggles controls in fullscreen */}
+      <div ref={containerRef} onClick={toggleControls} className="w-full h-full bg-black" />
       {/* Controls */}
-      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 transition-opacity duration-300 ${isFullscreen ? 'absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
+      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
           {playing ? '⏸' : '▶'}
         </button>
@@ -3297,9 +3332,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     </div>
   );
 
-  return isFullscreen && typeof ReactDOM !== 'undefined' && ReactDOM.createPortal
-    ? ReactDOM.createPortal(playerNode, document.body)
-    : playerNode;
+  return (
+    <>
+      {/* Placeholder reserves layout space in original tree */}
+      <div ref={placeholderRef} className={isFullscreen ? 'hidden' : 'aspect-video max-h-[70vh] w-full'} />
+      {typeof ReactDOM !== 'undefined' && ReactDOM.createPortal
+        ? ReactDOM.createPortal(playerNode, document.body)
+        : playerNode}
+    </>
+  );
 }
 
 function EventRow({ event, roster, onDelete, onTag, onSeek }) {
@@ -5530,6 +5571,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
