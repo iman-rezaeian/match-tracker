@@ -2850,13 +2850,61 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const [muted, setMuted] = useState(true);
   const [tvMode, setTvMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideTimerRef = useRef(null);
 
-  // Fullscreen toggle — CSS-based (works on iOS)
+  // Fullscreen toggle — portal + position:fixed (escapes parent transforms; works on iOS PWA)
   const toggleFullscreen = () => setIsFullscreen(f => {
-    if (!f) document.body.style.overflow = 'hidden';
-    else document.body.style.overflow = '';
-    return !f;
+    const next = !f;
+    if (next) {
+      document.body.style.overflow = 'hidden';
+      document.documentElement.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
+    }
+    setControlsVisible(true);
+    return next;
   });
+
+  // Auto-hide controls after 3s of inactivity while in fullscreen
+  useEffect(() => {
+    if (!isFullscreen) { setControlsVisible(true); return; }
+    const arm = () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+    };
+    arm();
+    return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); };
+  }, [isFullscreen, controlsVisible]);
+
+  // Cleanup body overflow if unmounted while fullscreen
+  useEffect(() => () => {
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+  }, []);
+
+  const showControls = () => {
+    if (!isFullscreen) return;
+    setControlsVisible(true);
+  };
+  const toggleControls = () => {
+    if (!isFullscreen) return;
+    setControlsVisible(v => !v);
+  };
+
+  // Trigger renderer resize when fullscreen toggles (window resize doesn't fire on layout change)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!containerRef.current || !rendererRef.current || !cameraRef.current) return;
+      const nw = containerRef.current.clientWidth;
+      const nh = containerRef.current.clientHeight;
+      cameraRef.current.aspect = nw / nh;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(nw, nh);
+    }, 50);
+    return () => clearTimeout(t);
+  }, [isFullscreen]);
 
   // TV mode: snap FOV and clamp vertical
   useEffect(() => {
@@ -3048,13 +3096,13 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <div ref={wrapperRef} style={isFullscreen ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99999, background: '#000', borderRadius: 0 } : undefined} className={`relative bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
+  const playerNode = (
+    <div ref={wrapperRef} style={isFullscreen ? { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 } : undefined} className={`relative bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
       {/* Close / Exit fullscreen button */}
       {isFullscreen ? (
         <button
           onClick={toggleFullscreen}
-          className="absolute top-[env(safe-area-inset-top,12px)] right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95"
+          className={`absolute right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
           style={{ top: 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' }}
         >
           <X className="w-5 h-5" />
@@ -3069,7 +3117,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
       )}
       {/* Score overlay — compact scorebug */}
       {gameInfo && (
-        <div className="absolute top-2 left-2 z-10 pointer-events-none">
+        <div className={`absolute z-10 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+8px,12px)] left-3' : 'top-2 left-2'} ${isFullscreen && !controlsVisible ? 'opacity-0' : 'opacity-100'}`}>
           <div className="bg-black/80 backdrop-blur-sm rounded shadow-lg border border-white/10 overflow-hidden">
             <div className="flex items-center text-[10px]">
               <div className="bg-lime-600 px-1.5 py-0.5">
@@ -3092,10 +3140,10 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           </div>
         </div>
       )}
-      {/* Canvas container — 16:9 aspect ratio */}
-      <div ref={containerRef} className={`w-full bg-black ${isFullscreen ? 'h-[calc(100%-44px)]' : 'aspect-video max-h-[70vh]'}`} />
+      {/* Canvas container — 16:9 aspect ratio; tap toggles controls in fullscreen */}
+      <div ref={containerRef} onClick={toggleControls} className={`w-full bg-black ${isFullscreen ? 'h-full' : 'aspect-video max-h-[70vh]'}`} />
       {/* Controls */}
-      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 ${isFullscreen ? 'absolute bottom-0 left-0 right-0' : ''}`}>
+      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 transition-opacity duration-300 ${isFullscreen ? 'absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
           {playing ? '⏸' : '▶'}
         </button>
@@ -3135,6 +3183,10 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
       </div>
     </div>
   );
+
+  return isFullscreen && typeof ReactDOM !== 'undefined' && ReactDOM.createPortal
+    ? ReactDOM.createPortal(playerNode, document.body)
+    : playerNode;
 }
 
 function EventRow({ event, roster, onDelete, onTag, onSeek }) {
