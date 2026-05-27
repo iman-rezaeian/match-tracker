@@ -372,7 +372,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
 }
 
 function formatDate(iso) {
-  return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return new Date(iso + 'T12:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function formatTime12(time24) {
