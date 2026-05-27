@@ -65,7 +65,7 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 // Cloudflare Worker URL for direct browser uploads. Leave '' to hide UPLOAD button
 // and only show the LINK flow. After deploying r2-upload-worker.js, paste the
 // Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
-const R2_UPLOAD_WORKER = '';
+const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
