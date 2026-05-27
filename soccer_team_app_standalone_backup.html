@@ -1897,10 +1897,16 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
   const [halfLengthMin, setHalfLengthMin] = useState(25);
   const [homeColor, setHomeColor] = useState('#0a0a0a');
   const [awayColor, setAwayColor] = useState('#dc2626');
+  const isLightColor = (hex) => {
+    try {
+      const h = (hex || '').replace('#', '');
+      const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) > 160;
+    } catch { return false; }
+  };
   const STOMPERS_PRESETS = [
     { label: 'Black', color: '#0a0a0a' },
     { label: 'Green', color: '#16a34a' },
-    { label: 'Beanie', color: '#facc15' },
   ];
 
   if (rosterCount === 0) {
@@ -1947,17 +1953,23 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
         </Field>
 
         <Field label="HALF LENGTH (MIN)">
-          <div className="flex gap-2">
-            {[20, 25, 30, 35, 45].map(m => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setHalfLengthMin(m)}
-                className={`flex-1 py-3 rounded-xl font-display text-lg border-2 active:scale-95 transition ${halfLengthMin === m ? 'bg-lime-500 text-stone-100 border-lime-600' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
-              >
-                {m}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+              className="w-14 h-14 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-2xl font-bold active:scale-95 transition"
+              aria-label="Decrease half length"
+            >−</button>
+            <div className="flex-1 py-3 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
+              <div className="font-display text-3xl text-stone-100 tabular-nums leading-none">{halfLengthMin}</div>
+              <div className="text-[10px] uppercase tracking-widest text-stone-500 mt-1">minutes</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+              className="w-14 h-14 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-2xl font-bold active:scale-95 transition"
+              aria-label="Increase half length"
+            >+</button>
           </div>
         </Field>
 
@@ -1969,18 +1981,24 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
                 type="button"
                 onClick={() => setHomeColor(p.color)}
                 className={`flex-1 py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                style={{ background: p.color, color: p.color === '#facc15' ? '#0a0a0a' : '#fff' }}
+                style={{ background: p.color, color: '#fff' }}
               >
                 {p.label.toUpperCase()}
               </button>
             ))}
-            <input
-              type="color"
-              value={homeColor}
-              onChange={e => setHomeColor(e.target.value)}
-              className="w-12 h-12 rounded-xl border-2 border-stone-800 bg-stone-900 cursor-pointer"
-              title="Custom color"
-            />
+            <label
+              className={`flex-1 relative py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${STOMPERS_PRESETS.every(p => p.color !== homeColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+              style={{ background: homeColor, color: isLightColor(homeColor) ? '#0a0a0a' : '#fff' }}
+              title="Pick a custom color"
+            >
+              🎨 CUSTOM
+              <input
+                type="color"
+                value={homeColor}
+                onChange={e => setHomeColor(e.target.value)}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+            </label>
           </div>
         </Field>
 
@@ -1990,25 +2008,30 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
               { label: 'Red', color: '#dc2626' },
               { label: 'Blue', color: '#2563eb' },
               { label: 'White', color: '#f5f5f4' },
-              { label: 'Yellow', color: '#facc15' },
             ].map(p => (
               <button
                 key={p.color}
                 type="button"
                 onClick={() => setAwayColor(p.color)}
                 className={`flex-1 py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                style={{ background: p.color, color: (p.color === '#f5f5f4' || p.color === '#facc15') ? '#0a0a0a' : '#fff' }}
+                style={{ background: p.color, color: p.color === '#f5f5f4' ? '#0a0a0a' : '#fff' }}
               >
                 {p.label.toUpperCase()}
               </button>
             ))}
-            <input
-              type="color"
-              value={awayColor}
-              onChange={e => setAwayColor(e.target.value)}
-              className="w-12 h-12 rounded-xl border-2 border-stone-800 bg-stone-900 cursor-pointer"
-              title="Custom color"
-            />
+            <label
+              className={`flex-1 relative py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#dc2626', '#2563eb', '#f5f5f4'].includes(awayColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+              style={{ background: awayColor, color: isLightColor(awayColor) ? '#0a0a0a' : '#fff' }}
+              title="Pick a custom color"
+            >
+              🎨 CUSTOM
+              <input
+                type="color"
+                value={awayColor}
+                onChange={e => setAwayColor(e.target.value)}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+            </label>
           </div>
         </Field>
 
@@ -5683,6 +5706,14 @@ function LiveScoreboard({ game, roster }) {
   const rightName = game.opponent || 'Opponent';
   const leftScore = game.ourScore;
   const rightScore = game.oppScore;
+  // Pick a font size that keeps both names on one line based on the longer name.
+  const longestName = Math.max(leftName.length, rightName.length);
+  const nameSizeClass =
+    longestName <= 8 ? 'text-2xl'
+    : longestName <= 10 ? 'text-xl'
+    : longestName <= 13 ? 'text-lg'
+    : longestName <= 17 ? 'text-base'
+    : 'text-sm';
 
   // Privacy: first name + jersey number only — never last names on public pages.
   const nameOf = (pid) => {
@@ -5699,14 +5730,14 @@ function LiveScoreboard({ game, roster }) {
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
         <div className="flex items-center justify-center gap-3 mt-4">
-          <div className="flex-1 text-right">
-            <div className="font-display text-2xl truncate">{leftName}</div>
+          <div className="flex-1 text-right min-w-0">
+            <div className={`font-display ${nameSizeClass} leading-tight break-words`}>{leftName}</div>
           </div>
-          <div className="font-display text-6xl tabular-nums px-3">
+          <div className="font-display text-6xl tabular-nums px-3 shrink-0">
             {leftScore}<span className="text-white/40 mx-2">–</span>{rightScore}
           </div>
-          <div className="flex-1 text-left">
-            <div className="font-display text-2xl truncate">{rightName}</div>
+          <div className="flex-1 text-left min-w-0">
+            <div className={`font-display ${nameSizeClass} leading-tight break-words`}>{rightName}</div>
           </div>
         </div>
         <div className="text-center mt-4 flex items-center justify-center gap-2 flex-wrap">
@@ -5789,6 +5820,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
