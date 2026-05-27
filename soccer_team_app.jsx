@@ -2834,6 +2834,7 @@ async function attachHls(video, url) {
 }
 
 function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
+  const wrapperRef = useRef(null);
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const rendererRef = useRef(null);
@@ -2847,6 +2848,24 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
   const [tvMode, setTvMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Fullscreen toggle
+  const toggleFullscreen = () => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
+  };
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    document.addEventListener('webkitfullscreenchange', handler);
+    return () => { document.removeEventListener('fullscreenchange', handler); document.removeEventListener('webkitfullscreenchange', handler); };
+  }, []);
 
   // TV mode: snap FOV and clamp vertical
   useEffect(() => {
@@ -3039,9 +3058,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   };
 
   return (
-    <div className="relative bg-black rounded-2xl overflow-hidden border border-stone-800">
+    <div ref={wrapperRef} className={`relative bg-black overflow-hidden border border-stone-800 ${isFullscreen ? 'rounded-none' : 'rounded-2xl'}`}>
       {/* Close button */}
-      {onClose && (
+      {onClose && !isFullscreen && (
         <button
           onClick={onClose}
           className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
@@ -3049,18 +3068,35 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           <X className="w-4 h-4" />
         </button>
       )}
-      {/* Score overlay */}
+      {/* Score overlay — Premier League style */}
       {gameInfo && (
-        <div className="absolute top-2 left-2 z-10 bg-black/70 backdrop-blur-sm rounded-lg px-2.5 py-1.5 flex items-center gap-2 border border-white/10 pointer-events-none">
-          <span className="text-[10px] font-bold text-white truncate max-w-[4rem]">{gameInfo.home || 'STM'}</span>
-          <span className="text-sm font-display tabular-nums text-white">{gameInfo.homeScore ?? 0}<span className="text-white/40 mx-0.5">–</span>{gameInfo.awayScore ?? 0}</span>
-          <span className="text-[10px] font-bold text-white truncate max-w-[4rem]">{gameInfo.away || 'OPP'}</span>
-          <span className="text-[9px] text-white/60 font-bold ml-1">{gameInfo.period >= 2 ? '2H' : '1H'}</span>
-          <span className="text-[9px] text-white/60 tabular-nums">{Math.floor(currentTime / 60)}'</span>
+        <div className="absolute top-3 left-3 z-10 pointer-events-none">
+          <div className="bg-gradient-to-r from-stone-900/95 to-stone-800/90 backdrop-blur-md rounded-lg shadow-lg border border-white/10 overflow-hidden">
+            {/* Top row: teams + score */}
+            <div className="flex items-center">
+              <div className="bg-lime-500 px-2.5 py-1.5 flex items-center">
+                <span className="text-[11px] font-extrabold text-black tracking-wide truncate max-w-[4.5rem]">{gameInfo.home || 'STM'}</span>
+              </div>
+              <div className="px-3 py-1.5 flex items-center gap-1">
+                <span className="text-base font-display tabular-nums text-white">{gameInfo.homeScore ?? 0}</span>
+                <span className="text-white/30 text-xs">–</span>
+                <span className="text-base font-display tabular-nums text-white">{gameInfo.awayScore ?? 0}</span>
+              </div>
+              <div className="bg-red-500 px-2.5 py-1.5 flex items-center">
+                <span className="text-[11px] font-extrabold text-white tracking-wide truncate max-w-[4.5rem]">{gameInfo.away || 'OPP'}</span>
+              </div>
+            </div>
+            {/* Bottom row: half + clock */}
+            <div className="bg-black/60 px-2.5 py-0.5 flex items-center justify-center gap-2">
+              <span className="text-[9px] font-bold text-lime-400 uppercase tracking-wider">{gameInfo.period >= 2 ? '2nd Half' : '1st Half'}</span>
+              <span className="text-[9px] text-white/50">•</span>
+              <span className="text-[9px] font-bold text-white/80 tabular-nums">{Math.floor(currentTime / 60)}'</span>
+            </div>
+          </div>
         </div>
       )}
-      {/* Canvas container */}
-      <div ref={containerRef} className="w-full max-w-2xl mx-auto h-[40vh] max-h-80 bg-black" />
+      {/* Canvas container — 16:9 aspect ratio */}
+      <div ref={containerRef} className={`w-full bg-black ${isFullscreen ? 'h-full' : 'aspect-video max-h-[70vh]'}`} />
       {/* Controls */}
       <div className="px-3 py-2 flex items-center gap-2 bg-stone-900">
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
@@ -3095,6 +3131,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
         <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
         <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
           📺 TV
+        </button>
+        <button onClick={toggleFullscreen} className="text-[10px] font-bold px-2 py-1 rounded bg-stone-800 text-stone-400 active:scale-95">
+          {isFullscreen ? '⊡' : '⛶'}
         </button>
       </div>
     </div>
