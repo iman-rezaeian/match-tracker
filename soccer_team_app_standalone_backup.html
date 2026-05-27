@@ -173,6 +173,11 @@ const ZONE_LABEL = {
 // R2 public bucket URL (stompers-videos bucket, CORS enabled).
 const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 
+// Cloudflare Worker URL for direct browser uploads. Leave '' to hide UPLOAD button
+// and only show the LINK flow. After deploying r2-upload-worker.js, paste the
+// Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
+const R2_UPLOAD_WORKER = '';
+
 const TONE_CLASSES = {
   'big-green':  'bg-lime-500 hover:bg-lime-600 text-stone-950 shadow-lg shadow-lime-500/30 border-lime-400',
   'big-red':    'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/30 border-red-400',
@@ -2910,12 +2915,44 @@ function loadThreeJS() {
   return window._threePromise;
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose }) {
+function loadHlsJS() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (window._hlsPromise) return window._hlsPromise;
+  window._hlsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';
+    s.onload = () => resolve(window.Hls);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return window._hlsPromise;
+}
+
+// Attach an HLS source (.m3u8) to a <video> element. Uses native HLS on Safari,
+// falls back to hls.js on Chrome/Firefox. Returns a cleanup function.
+async function attachHls(video, url) {
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = url;
+    return () => { video.removeAttribute('src'); video.load(); };
+  }
+  const Hls = await loadHlsJS();
+  if (!Hls.isSupported()) {
+    video.src = url; // last-ditch fallback
+    return () => {};
+  }
+  const hls = new Hls({ lowLatencyMode: true });
+  hls.loadSource(url);
+  hls.attachMedia(video);
+  return () => { try { hls.destroy(); } catch {} };
+}
+
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [] }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const rendererRef = useRef(null);
   const cameraRef = useRef(null);
   const animRef = useRef(null);
+  const hlsCleanupRef = useRef(null);
   const stateRef = useRef({ lon: 0, lat: 0, targetLon: 0, targetLat: 0, fov: 75, targetFov: 75 });
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -2953,8 +2990,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose }) {
       video.loop = false;
       video.muted = true;
       video.preload = 'auto';
-      video.src = videoUrl;
       videoRef.current = video;
+
+      // HLS (.m3u8) needs hls.js on non-Safari; plain MP4 just sets src directly.
+      const isHls = /\.m3u8(\?|$)/i.test(videoUrl);
+      if (isHls) {
+        attachHls(video, videoUrl).then(fn => { hlsCleanupRef.current = fn; }).catch(() => {});
+      } else {
+        video.src = videoUrl;
+      }
 
       const texture = new THREE.VideoTexture(video);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -3058,6 +3102,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose }) {
     return () => {
       cancelled = true;
       if (animRef.current) cancelAnimationFrame(animRef.current);
+      if (hlsCleanupRef.current) { try { hlsCleanupRef.current(); } catch {} hlsCleanupRef.current = null; }
       if (videoRef.current) { videoRef.current.pause(); videoRef.current.src = ''; }
       if (rendererRef.current) rendererRef.current.dispose();
       if (containerRef.current) {
@@ -3095,12 +3140,14 @@ function VideoPlayer360({ videoUrl, seekTo, onClose }) {
   return (
     <div className="relative bg-black rounded-2xl overflow-hidden border border-stone-800">
       {/* Close button */}
-      <button
-        onClick={onClose}
-        className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
-      >
-        <X className="w-4 h-4" />
-      </button>
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       {/* Canvas container */}
       <div ref={containerRef} className="w-full max-w-2xl mx-auto h-[40vh] max-h-80 bg-black" />
       {/* Controls */}
@@ -3112,11 +3159,27 @@ function VideoPlayer360({ videoUrl, seekTo, onClose }) {
           className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏪</button>
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10); }}
           className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏩</button>
-        <input
-          type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
-          onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
-          className="flex-1 h-1 accent-lime-400"
-        />
+        <div className="flex-1 relative">
+          <input
+            type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
+            onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
+            className="w-full h-1 accent-lime-400 block"
+          />
+          {duration > 0 && events.filter(e => e.elapsed > 0 && e.elapsed <= duration && e.type !== 'SUB' && e.type !== 'GK_CHANGE').map(e => {
+            const pct = (e.elapsed / duration) * 100;
+            const ev = EVENT_TYPES[e.type];
+            const color = e.type === 'GOAL' ? 'bg-lime-400' : e.type === 'OPP_GOAL' ? 'bg-red-500' : e.type === 'SHOT_ON' || e.type === 'SHOT_OFF' ? 'bg-yellow-400' : e.type === 'SAVE' || e.type === 'BLOCK' ? 'bg-sky-400' : 'bg-stone-400';
+            return (
+              <button
+                key={e.id}
+                onClick={() => { if (videoRef.current) videoRef.current.currentTime = e.elapsed; }}
+                title={`${ev?.label || e.type} @ ${fmtTime(e.elapsed)}`}
+                className={`absolute -top-1.5 w-2 h-2 rounded-full ${color} border border-stone-950 hover:scale-150 transition`}
+                style={{ left: `calc(${pct}% - 4px)` }}
+              />
+            );
+          })}
+        </div>
         <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
         <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
       </div>
@@ -3264,6 +3327,84 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
   const [seekTo, setSeekTo] = useState(null);
   const [linkingVideo, setLinkingVideo] = useState(false);
   const [linkInput, setLinkInput] = useState('');
+  const [uploadPct, setUploadPct] = useState(null); // null = idle, 0-100 = uploading
+  const [uploadErr, setUploadErr] = useState(null);
+  const fileInputRef = useRef(null);
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveErr, setLiveErr] = useState(null);
+  const [showLive, setShowLive] = useState(false);
+  const [showLiveCreds, setShowLiveCreds] = useState(false);
+
+  const goLive = () => {
+    if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
+    setLiveBusy(true);
+    setLiveErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/live-input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: COACH_PASS, name: `stompers-${game.id}` }),
+    })
+      .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
+      .then((info) => {
+        onUpdateGame({ liveInput: { ...info, createdAt: Date.now() } });
+        setShowLiveCreds(true);
+        setShowLive(true);
+      })
+      .catch((err) => setLiveErr(String(err)))
+      .finally(() => setLiveBusy(false));
+  };
+
+  const stopLive = () => {
+    if (!game.liveInput?.uid) { onUpdateGame({ liveInput: null }); return; }
+    setLiveBusy(true);
+    fetch(`${R2_UPLOAD_WORKER}/live-input/${game.liveInput.uid}/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: COACH_PASS }),
+    })
+      .catch(() => {})
+      .finally(() => {
+        onUpdateGame({ liveInput: null });
+        setShowLive(false);
+        setShowLiveCreds(false);
+        setLiveBusy(false);
+      });
+  };
+
+  const handleUpload = (file) => {
+    if (!file) return;
+    setUploadErr(null);
+    setUploadPct(0);
+    // Filename: <gameId>-<sanitized-original>
+    const ext = (file.name.match(/\.[a-zA-Z0-9]+$/) || ['.mp4'])[0];
+    const base = file.name.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
+    const filename = `${game.id}-${base}${ext}`;
+    fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: COACH_PASS, filename }),
+    })
+      .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'upload-url failed')))
+      .then(({ uploadUrl, publicUrl }) => new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve(publicUrl) : reject(`PUT failed ${xhr.status}`);
+        xhr.onerror = () => reject('network error');
+        xhr.send(file);
+      }))
+      .then((publicUrl) => {
+        onUpdateGame({ videoUrl: publicUrl });
+        setUploadPct(null);
+      })
+      .catch((err) => {
+        setUploadErr(String(err));
+        setUploadPct(null);
+      });
+  };
 
   const shareLiveLink = async () => {
     const url = `${window.location.origin}${window.location.pathname}?live=${game.id}`;
@@ -3343,6 +3484,78 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         </div>
       </div>
 
+      {/* Live Stream Section */}
+      {(game.liveInput || game.status === 'active') && (
+        <div className="px-4 pt-4">
+          {game.liveInput ? (
+            <>
+              <button
+                onClick={() => setShowLive(!showLive)}
+                className="w-full bg-red-950/40 border border-red-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+              >
+                <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  LIVE NOW
+                </span>
+                <span className="text-xs text-stone-400">{showLive ? 'HIDE' : 'WATCH'}</span>
+              </button>
+              {showLive && game.liveInput.hlsUrl && (
+                <div className="mt-3">
+                  <VideoPlayer360
+                    videoUrl={game.liveInput.hlsUrl}
+                    events={[]}
+                    onClose={() => setShowLive(false)}
+                  />
+                </div>
+              )}
+              {showLiveCreds && game.liveInput.streamKey && (
+                <div className="mt-3 bg-stone-900 border border-stone-800 rounded-xl p-3 space-y-2 text-xs">
+                  <p className="text-stone-400 font-bold">📡 Stream from X5 / OBS using these credentials:</p>
+                  <div>
+                    <div className="text-stone-500">RTMPS Server</div>
+                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{game.liveInput.rtmpsUrl}</code>
+                  </div>
+                  <div>
+                    <div className="text-stone-500">Stream Key</div>
+                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{game.liveInput.streamKey}</code>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => setShowLiveCreds(false)}
+                      className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 font-bold active:scale-95"
+                    >HIDE CREDENTIALS</button>
+                    <button
+                      onClick={() => { if (confirm('Stop the live stream? This deletes the Cloudflare Live Input.')) stopLive(); }}
+                      disabled={liveBusy}
+                      className="flex-1 py-2 rounded-lg bg-red-700 text-white font-bold active:scale-95 disabled:opacity-50"
+                    >END LIVE</button>
+                  </div>
+                </div>
+              )}
+              {!showLiveCreds && (
+                <button
+                  onClick={() => setShowLiveCreds(true)}
+                  className="mt-2 text-[10px] text-stone-500 underline w-full text-center"
+                >show stream credentials</button>
+              )}
+            </>
+          ) : (
+            <>
+              {liveErr && <p className="text-[10px] text-red-400 text-center mb-2">{liveErr}</p>}
+              <button
+                onClick={goLive}
+                disabled={liveBusy || !R2_UPLOAD_WORKER}
+                className="w-full bg-stone-900 border border-dashed border-red-700 rounded-xl px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.98] transition disabled:opacity-40"
+              >
+                <span className="text-sm text-red-400">
+                  {liveBusy ? '⏳ STARTING…' : R2_UPLOAD_WORKER ? '🔴 GO LIVE (Cloudflare Stream)' : '🔴 GO LIVE (deploy worker first)'}
+                </span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* 360° Video Section */}
       <div className="px-4 pt-4">
         {game.videoUrl ? (
@@ -3359,6 +3572,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                 <VideoPlayer360
                   videoUrl={game.videoUrl}
                   seekTo={seekTo}
+                  events={events}
                   onClose={() => setShowVideo(false)}
                 />
                 <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
@@ -3367,13 +3581,45 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
           </>
         ) : (
           <>
-            {!linkingVideo ? (
-              <button
-                onClick={() => setLinkingVideo(true)}
-                className="w-full bg-stone-900 border border-dashed border-stone-700 rounded-xl px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.98] transition"
-              >
-                <span className="text-sm text-stone-400">🎥 LINK 360° VIDEO</span>
-              </button>
+            {uploadPct !== null ? (
+              <div className="bg-stone-900 border border-stone-800 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-stone-400">Uploading…</span>
+                  <span className="text-xs text-lime-400 font-bold tabular-nums">{uploadPct}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-stone-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-lime-500 transition-all" style={{ width: `${uploadPct}%` }} />
+                </div>
+              </div>
+            ) : !linkingVideo ? (
+              <div className="space-y-2">
+                {uploadErr && <p className="text-[10px] text-red-400 text-center">Upload failed: {uploadErr}</p>}
+                <div className="flex gap-2">
+                  {R2_UPLOAD_WORKER && (
+                    <>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="video/*"
+                        className="hidden"
+                        onChange={(e) => { handleUpload(e.target.files?.[0]); e.target.value = ''; }}
+                      />
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1 bg-stone-900 border border-dashed border-lime-700 rounded-xl px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.98] transition"
+                      >
+                        <span className="text-sm text-lime-400">⬆️ UPLOAD 360° VIDEO</span>
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => setLinkingVideo(true)}
+                    className="flex-1 bg-stone-900 border border-dashed border-stone-700 rounded-xl px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.98] transition"
+                  >
+                    <span className="text-sm text-stone-400">🔗 LINK 360° VIDEO</span>
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 space-y-2">
                 <p className="text-xs text-stone-400">Enter R2 filename (e.g. <code className="text-lime-400">game-may-26.mp4</code>) or full URL:</p>
@@ -4791,6 +5037,23 @@ function LiveScorePage({ gameId }) {
         <ChevronLeft className="w-4 h-4" /> ALL MATCHES
       </a>
       <LiveScoreboard game={game} roster={roster} />
+      {game.liveInput?.hlsUrl && (
+        <div className="px-4 pt-4 max-w-2xl mx-auto">
+          <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-sm font-bold text-red-300">LIVE NOW</span>
+          </div>
+          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={[]} />
+        </div>
+      )}
+      {!game.liveInput?.hlsUrl && game.videoUrl && (
+        <div className="px-4 pt-4 max-w-2xl mx-auto">
+          <div className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-2 mb-3">
+            <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
+          </div>
+          <VideoPlayer360 videoUrl={game.videoUrl} events={[]} />
+        </div>
+      )}
     </div>
   );
 }
@@ -5136,6 +5399,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 

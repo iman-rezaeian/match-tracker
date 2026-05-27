@@ -1,115 +1,165 @@
 /**
- * Cloudflare Worker — R2 Upload Presigner for Stompers Match Tracker
+ * Cloudflare Worker — R2 Upload Proxy + CF Stream Live Input Provisioner
  *
- * DEPLOY: Cloudflare Dashboard → Workers & Pages → Create → "Create Worker" →
- *         paste this code → Save and Deploy → bind R2 bucket in Settings → Variables.
+ * Two responsibilities:
+ *   A) Stream browser uploads directly into the R2 bucket (post-game 360° video)
+ *   B) Mint Cloudflare Stream Live Inputs on demand for live game streaming
  *
- * SETTINGS (after deploy):
- *   1. Go to Worker → Settings → Variables and Secrets
- *   2. Add variable: COACH_PASS = "ManUtd2016" (encrypted)
- *   3. Go to Settings → Bindings → R2 Bucket Bindings
- *   4. Add binding: Variable name = BUCKET, R2 bucket = "stompers-videos"
+ * Auth for both: shared coach password.
  *
- * USAGE from browser:
- *   // 1. Get a presigned upload URL
- *   const res = await fetch('https://<worker>.workers.dev/upload-url', {
- *     method: 'POST',
- *     headers: { 'Content-Type': 'application/json' },
- *     body: JSON.stringify({ password: 'ManUtd2016', filename: 'game-2026-05-26.mp4', contentType: 'video/mp4' })
- *   });
- *   const { uploadUrl, publicUrl } = await res.json();
+ * DEPLOY:
+ *   1. Cloudflare Dashboard → Workers & Pages → Create → "Create Worker"
+ *   2. Paste this file, click Save and Deploy
+ *   3. Worker → Settings → Variables and Secrets, add SECRETS:
+ *        - COACH_PASS    = "ManUtd2016"
+ *        - CF_API_TOKEN  = <token with Stream:Edit permission>  (only needed for Live Inputs)
+ *        - CF_ACCOUNT_ID = <your account id>                    (only needed for Live Inputs)
+ *   4. Worker → Settings → Bindings → R2 Bucket Bindings:
+ *        - Variable name: BUCKET
+ *        - R2 bucket:     stompers-videos
+ *   5. Copy the Worker URL and paste it into R2_UPLOAD_WORKER in soccer_team_app.jsx
  *
- *   // 2. PUT the file directly to R2
- *   await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': 'video/mp4' } });
- *
- *   // 3. Save publicUrl to Firestore game.videoUrl
+ * ENDPOINTS:
+ *   POST /upload-url       { password, filename } → { uploadUrl, publicUrl }
+ *   PUT  /put/:filename?auth=<pass>  (raw file body) → { ok, publicUrl }
+ *   POST /live-input       { password, name }     → { uid, rtmpsUrl, streamKey, hlsUrl, dashUrl }
+ *   POST /live-input/:uid/delete  { password }    → { ok }
  */
+
+const PUBLIC_BASE = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+
+const json = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+
+async function createLiveInput(env, name) {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/stream/live_inputs`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.CF_API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        meta: { name: name || 'stompers-live' },
+        recording: { mode: 'automatic' }, // auto-record to a VOD when the stream ends
+        defaultCreator: 'stompers-match-tracker',
+      }),
+    }
+  );
+  const data = await res.json();
+  if (!res.ok || !data?.success) {
+    throw new Error(data?.errors?.[0]?.message || `live_input create failed (${res.status})`);
+  }
+  const r = data.result;
+  return {
+    uid: r.uid,
+    rtmpsUrl: r.rtmps?.url || 'rtmps://live.cloudflare.com:443/live/',
+    streamKey: r.rtmps?.streamKey,
+    // Cloudflare Stream HLS playback (works even before any recording exists)
+    hlsUrl: `https://customer-${env.CF_STREAM_SUBDOMAIN || ''}.cloudflarestream.com/${r.uid}/manifest/video.m3u8`,
+    // Fallback that works without subdomain: use the iframe form
+    iframeUrl: `https://iframe.videodelivery.net/${r.uid}`,
+    customerCode: env.CF_STREAM_SUBDOMAIN || null,
+  };
+}
+
+async function deleteLiveInput(env, uid) {
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/stream/live_inputs/${uid}`,
+    {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${env.CF_API_TOKEN}` },
+    }
+  );
+  if (!res.ok && res.status !== 404) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.errors?.[0]?.message || `live_input delete failed (${res.status})`);
+  }
+  return true;
+}
 
 export default {
   async fetch(request, env) {
-    // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        },
-      });
-    }
-
-    if (request.method !== 'POST') {
-      return new Response('Method not allowed', { status: 405 });
+      return new Response(null, { headers: corsHeaders });
     }
 
     const url = new URL(request.url);
 
-    // ---- /upload-url: mint a presigned PUT URL ----
-    if (url.pathname === '/upload-url') {
+    // ---- POST /upload-url ----
+    if (request.method === 'POST' && url.pathname === '/upload-url') {
       let body;
-      try { body = await request.json(); } catch { return new Response('Bad JSON', { status: 400 }); }
+      try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+      const { password, filename } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      if (!filename) return json({ error: 'filename required' }, 400);
 
-      const { password, filename, contentType } = body;
-      if (!password || password !== env.COACH_PASS) {
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-      }
-      if (!filename) {
-        return new Response(JSON.stringify({ error: 'filename required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-      }
-
-      // Sanitize filename — alphanumeric, hyphens, dots only
-      const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-
-      // Generate a presigned URL valid for 1 hour
-      const key = safe;
-      const signedUrl = await env.BUCKET.createMultipartUpload(key);
-      // Actually, R2 Workers bindings don't have presigned URLs directly.
-      // Instead, we'll do a direct PUT through the Worker itself.
-
-      // Alternative approach: Worker acts as a proxy for the PUT.
-      // The browser sends the file to the Worker, Worker streams it into R2.
-      // This avoids presigned URL complexity entirely.
-      return new Response(JSON.stringify({
-        uploadUrl: `${url.origin}/put/${safe}`,
-        publicUrl: `https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev/${safe}`,
+      const safe = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+      return json({
+        uploadUrl: `${url.origin}/put/${encodeURIComponent(safe)}?auth=${encodeURIComponent(password)}`,
+        publicUrl: `${PUBLIC_BASE}/${safe}`,
         key: safe,
-      }), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
       });
     }
 
-    // ---- /put/:filename: stream file body into R2 ----
-    if (url.pathname.startsWith('/put/')) {
-      // Auth via query param (set by the upload flow after getting the URL)
+    // ---- PUT /put/:filename ----
+    if (request.method === 'PUT' && url.pathname.startsWith('/put/')) {
       const authParam = url.searchParams.get('auth');
-      if (!authParam || authParam !== env.COACH_PASS) {
-        return new Response('Unauthorized', { status: 401 });
-      }
-
-      const key = url.pathname.slice(5); // strip "/put/"
-      if (!key) return new Response('No key', { status: 400 });
-
+      if (!authParam || authParam !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      const key = decodeURIComponent(url.pathname.slice('/put/'.length));
+      if (!key) return json({ error: 'no key' }, 400);
       const contentType = request.headers.get('content-type') || 'video/mp4';
-
-      // Stream the request body directly into R2 (no memory buffering for large files)
-      await env.BUCKET.put(key, request.body, {
-        httpMetadata: { contentType },
-      });
-
-      return new Response(JSON.stringify({
-        ok: true,
-        publicUrl: `https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev/${key}`,
-      }), {
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
+      await env.BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+      return json({ ok: true, publicUrl: `${PUBLIC_BASE}/${key}` });
     }
 
-    return new Response('Not found', { status: 404 });
+    // ---- POST /live-input ----
+    if (request.method === 'POST' && url.pathname === '/live-input') {
+      let body;
+      try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+      const { password, name } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) {
+        return json({ error: 'CF Stream not configured on worker (missing CF_API_TOKEN or CF_ACCOUNT_ID)' }, 500);
+      }
+      try {
+        const info = await createLiveInput(env, name);
+        return json(info);
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    // ---- POST /live-input/:uid/delete ----
+    const delMatch = url.pathname.match(/^\/live-input\/([a-zA-Z0-9_-]+)\/delete$/);
+    if (request.method === 'POST' && delMatch) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) {
+        return json({ error: 'CF Stream not configured on worker' }, 500);
+      }
+      try {
+        await deleteLiveInput(env, delMatch[1]);
+        return json({ ok: true });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    return json({ error: 'not found' }, 404);
   },
 };
+
