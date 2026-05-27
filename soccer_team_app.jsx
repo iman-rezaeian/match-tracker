@@ -5219,12 +5219,7 @@ function ViewersPanel({ onBack }) {
 
   return (
     <div className="min-h-screen bg-stone-950 pb-20">
-      <div className="sticky top-0 z-20 bg-stone-950/95 backdrop-blur-sm border-b border-stone-800 px-4 py-3 flex items-center gap-3">
-        <button onClick={onBack} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <h1 className="font-display text-xl">VIEWERS</h1>
-      </div>
+      <Header title="VIEWERS" onBack={onBack} />
 
       {loading ? (
         <div className="p-6 text-center text-stone-500 animate-pulse">Loading…</div>
