@@ -499,7 +499,7 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
@@ -507,6 +507,7 @@ export default function App() {
       opponent: opponent || 'Opponent',
       tournament: tournament || 'Festival',
       isHome: !!isHome,
+      halfLengthMin: halfLengthMin || 25,
       date: new Date().toLocaleDateString('en-CA'),
       ourScore: 0,
       oppScore: 0,
@@ -934,8 +935,8 @@ export default function App() {
         <GameSetup
           rosterCount={roster.length}
           onCancel={() => setView('home')}
-          onStart={(opponent, isHome, tournament) => {
-            setPendingGameSetup({ opponent, isHome, tournament });
+          onStart={(opponent, isHome, tournament, halfLengthMin) => {
+            setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -962,7 +963,7 @@ export default function App() {
           setup={pendingGameSetup}
           onBack={() => { setView('squad'); }}
           onStart={(lineup, gkPlayerId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin);
             setPendingGameSetup(null);
           }}
         />
@@ -1778,6 +1779,7 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
   const [opponent, setOpponent] = useState('');
   const [tournament, setTournament] = useState('Festival');
+  const [halfLengthMin, setHalfLengthMin] = useState(25);
 
   if (rosterCount === 0) {
     return (
@@ -1822,10 +1824,25 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
           />
         </Field>
 
+        <Field label="HALF LENGTH (MIN)">
+          <div className="flex gap-2">
+            {[20, 25, 30, 35, 45].map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setHalfLengthMin(m)}
+                className={`flex-1 py-3 rounded-xl font-display text-lg border-2 active:scale-95 transition ${halfLengthMin === m ? 'bg-lime-500 text-stone-100 border-lime-600' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </Field>
+
 
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival')}
+          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival', halfLengthMin)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -3127,6 +3144,21 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Derive period & displayed minute from playback time (TV-broadcast style).
+  // Find the smallest event.elapsed where event.period === 2 → that's when 2nd half started.
+  const halfLen = (gameInfo && gameInfo.halfLengthMin) || 25;
+  const half2StartElapsed = (events || [])
+    .filter(e => e.period === 2 && isFinite(e.elapsed))
+    .reduce((min, e) => Math.min(min, e.elapsed), Infinity);
+  const inSecondHalf = isFinite(half2StartElapsed)
+    ? currentTime >= half2StartElapsed
+    : (gameInfo && gameInfo.period >= 2);
+  const displayedMinute = inSecondHalf
+    ? (isFinite(half2StartElapsed)
+        ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
+        : Math.floor(currentTime / 60) + halfLen)
+    : Math.floor(currentTime / 60);
+
   const wrapperStyle = isFullscreen
     ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
@@ -3168,9 +3200,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
               </div>
             </div>
             <div className="bg-stone-900 px-2 py-px flex items-center justify-center gap-1.5">
-              <span className="text-[8px] font-bold text-lime-400 uppercase">{gameInfo.period >= 2 ? '2nd Half' : '1st Half'}</span>
+              <span className="text-[8px] font-bold text-lime-400 uppercase">{inSecondHalf ? '2nd Half' : '1st Half'}</span>
               <span className="text-[8px] text-white/40">•</span>
-              <span className="text-[8px] font-bold text-white/70 tabular-nums">{Math.floor(currentTime / 60)}'</span>
+              <span className="text-[8px] font-bold text-white/70 tabular-nums">{displayedMinute}'</span>
             </div>
           </div>
         </div>
@@ -3546,9 +3578,9 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                 <div className="mt-3">
                   <VideoPlayer360
                     videoUrl={game.liveInput.hlsUrl}
-                    events={[]}
+                    events={game.events || []}
                     onClose={() => setShowLive(false)}
-                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }}
+                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }}
                   />
                 </div>
               )}
@@ -3618,7 +3650,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                   seekTo={seekTo}
                   events={events}
                   onClose={() => setShowVideo(false)}
-                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }}
+                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }}
                 />
                 <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
               </div>
@@ -5088,7 +5120,7 @@ function LiveScorePage({ gameId }) {
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm font-bold text-red-300">LIVE NOW</span>
           </div>
-          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={[]} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }} />
+          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }} />
         </div>
       )}
       {!game.liveInput?.hlsUrl && game.videoUrl && (
@@ -5096,7 +5128,7 @@ function LiveScorePage({ gameId }) {
           <div className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-2 mb-3">
             <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
           </div>
-          <VideoPlayer360 videoUrl={game.videoUrl} events={[]} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1 }} />
+          <VideoPlayer360 videoUrl={game.videoUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }} />
         </div>
       )}
     </div>
@@ -5176,12 +5208,12 @@ function PublicHomePage() {
           </a>
           {featured.videoUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.videoUrl} events={[]} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1 }} />
+              <VideoPlayer360 videoUrl={featured.videoUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25 }} />
             </div>
           )}
           {featured.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.liveInput.hlsUrl} events={[]} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1 }} />
+              <VideoPlayer360 videoUrl={featured.liveInput.hlsUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25 }} />
             </div>
           )}
         </>
