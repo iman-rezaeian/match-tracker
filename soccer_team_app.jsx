@@ -2950,6 +2950,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
   const [tvMode, setTvMode] = useState(false);
+  const [gyroActive, setGyroActive] = useState(false);
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
@@ -3113,6 +3114,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       video.addEventListener('loadedmetadata', () => {
         setDuration(video.duration);
         setReady(true);
+        video.play().catch(() => {});
       });
       video.addEventListener('timeupdate', () => setCurrentTime(video.currentTime));
       video.addEventListener('play', () => setPlaying(true));
@@ -3169,6 +3171,54 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         if (!stateRef.current.tvMode) stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
       }, { passive: false });
 
+      // Gyroscope support (like YouTube 360°)
+      let gyroEnabled = false;
+      let gyroPrevAlpha = null, gyroPrevBeta = null;
+      const onDeviceOrientation = (e) => {
+        if (e.alpha == null || e.beta == null) return;
+        const st = stateRef.current;
+        if (gyroPrevAlpha != null && gyroPrevBeta != null) {
+          let dAlpha = e.alpha - gyroPrevAlpha;
+          let dBeta = e.beta - gyroPrevBeta;
+          // Handle wrap-around for alpha (0-360)
+          if (dAlpha > 180) dAlpha -= 360;
+          if (dAlpha < -180) dAlpha += 360;
+          // Apply gyro deltas to target (alpha = yaw/lon, beta = pitch/lat)
+          st.targetLon -= dAlpha * 0.8;
+          st.targetLat -= dBeta * 0.8;
+          const maxLat = st.tvMode ? [45, 10] : [85, 85];
+          st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
+        }
+        gyroPrevAlpha = e.alpha;
+        gyroPrevBeta = e.beta;
+      };
+      // Request permission on iOS 13+
+      const enableGyro = () => {
+        if (gyroEnabled) return;
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          DeviceOrientationEvent.requestPermission().then(state => {
+            if (state === 'granted') {
+              gyroEnabled = true;
+              window.addEventListener('deviceorientation', onDeviceOrientation);
+            }
+          }).catch(() => {});
+        } else if ('DeviceOrientationEvent' in window) {
+          gyroEnabled = true;
+          window.addEventListener('deviceorientation', onDeviceOrientation);
+        }
+      };
+      // Auto-enable on Android (no permission needed); on iOS triggered by user gesture
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission !== 'function') {
+        enableGyro();
+      }
+      container._enableGyro = enableGyro;
+      container._disableGyro = () => {
+        gyroEnabled = false;
+        gyroPrevAlpha = null;
+        gyroPrevBeta = null;
+        window.removeEventListener('deviceorientation', onDeviceOrientation);
+      };
+
       // Render loop
       const animate = () => {
         animRef.current = requestAnimationFrame(animate);
@@ -3199,6 +3249,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       window.addEventListener('resize', onResize);
       container._cleanup = () => {
         window.removeEventListener('resize', onResize);
+        if (container._disableGyro) container._disableGyro();
       };
     });
 
@@ -3274,6 +3325,18 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const homeColor = (gameInfo && gameInfo.homeColor) || '#65a30d';
   const awayColor = (gameInfo && gameInfo.awayColor) || '#dc2626';
 
+  // Compute running score based on goal events up to current playback time
+  const runningScore = useMemo(() => {
+    let home = 0, away = 0;
+    (events || []).forEach(e => {
+      if (!isFinite(e.elapsed)) return;
+      if (e.elapsed > currentTime) return;
+      if (e.type === 'GOAL') home++;
+      else if (e.type === 'OPP_GOAL') away++;
+    });
+    return { home, away };
+  }, [events, currentTime]);
+
   const wrapperStyle = isFullscreen
     ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
@@ -3327,9 +3390,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
                 </div>
                 {/* Score */}
                 <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
-                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{gameInfo.homeScore ?? 0}</span>
+                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.home}</span>
                   <span className="text-white/30 text-xs">–</span>
-                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{gameInfo.awayScore ?? 0}</span>
+                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.away}</span>
                 </div>
                 {/* Away */}
                 <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
@@ -3406,6 +3469,19 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         )}
         <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
           📺 TV
+        </button>
+        <button onClick={() => {
+          const c = containerRef.current;
+          if (!c) return;
+          if (gyroActive) {
+            if (c._disableGyro) c._disableGyro();
+            setGyroActive(false);
+          } else {
+            if (c._enableGyro) c._enableGyro();
+            setGyroActive(true);
+          }
+        }} className={`text-[10px] font-bold px-2 py-1 rounded ${gyroActive ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
+          🔄 GYRO
         </button>
         <button onClick={toggleFullscreen} className="text-[10px] font-bold px-2 py-1 rounded bg-stone-800 text-stone-400 active:scale-95">
           {isFullscreen ? '⊡' : '⛶'}
