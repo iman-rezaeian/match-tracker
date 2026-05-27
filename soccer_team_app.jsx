@@ -499,7 +499,7 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
@@ -508,6 +508,8 @@ export default function App() {
       tournament: tournament || 'Festival',
       isHome: !!isHome,
       halfLengthMin: halfLengthMin || 25,
+      homeColor: homeColor || '#0a0a0a',
+      awayColor: awayColor || '#dc2626',
       date: new Date().toLocaleDateString('en-CA'),
       ourScore: 0,
       oppScore: 0,
@@ -935,8 +937,8 @@ export default function App() {
         <GameSetup
           rosterCount={roster.length}
           onCancel={() => setView('home')}
-          onStart={(opponent, isHome, tournament, halfLengthMin) => {
-            setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin });
+          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
+            setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -963,7 +965,7 @@ export default function App() {
           setup={pendingGameSetup}
           onBack={() => { setView('squad'); }}
           onStart={(lineup, gkPlayerId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor);
             setPendingGameSetup(null);
           }}
         />
@@ -1780,6 +1782,13 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
   const [opponent, setOpponent] = useState('');
   const [tournament, setTournament] = useState('Festival');
   const [halfLengthMin, setHalfLengthMin] = useState(25);
+  const [homeColor, setHomeColor] = useState('#0a0a0a');
+  const [awayColor, setAwayColor] = useState('#dc2626');
+  const STOMPERS_PRESETS = [
+    { label: 'Black', color: '#0a0a0a' },
+    { label: 'Green', color: '#16a34a' },
+    { label: 'Beanie', color: '#facc15' },
+  ];
 
   if (rosterCount === 0) {
     return (
@@ -1839,10 +1848,61 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
           </div>
         </Field>
 
+        <Field label="STOMPERS JERSEY">
+          <div className="flex gap-2 items-center">
+            {STOMPERS_PRESETS.map(p => (
+              <button
+                key={p.color}
+                type="button"
+                onClick={() => setHomeColor(p.color)}
+                className={`flex-1 py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                style={{ background: p.color, color: p.color === '#facc15' ? '#0a0a0a' : '#fff' }}
+              >
+                {p.label.toUpperCase()}
+              </button>
+            ))}
+            <input
+              type="color"
+              value={homeColor}
+              onChange={e => setHomeColor(e.target.value)}
+              className="w-12 h-12 rounded-xl border-2 border-stone-800 bg-stone-900 cursor-pointer"
+              title="Custom color"
+            />
+          </div>
+        </Field>
+
+        <Field label="OPPONENT JERSEY">
+          <div className="flex gap-2 items-center">
+            {[
+              { label: 'Red', color: '#dc2626' },
+              { label: 'Blue', color: '#2563eb' },
+              { label: 'White', color: '#f5f5f4' },
+              { label: 'Yellow', color: '#facc15' },
+            ].map(p => (
+              <button
+                key={p.color}
+                type="button"
+                onClick={() => setAwayColor(p.color)}
+                className={`flex-1 py-3 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                style={{ background: p.color, color: (p.color === '#f5f5f4' || p.color === '#facc15') ? '#0a0a0a' : '#fff' }}
+              >
+                {p.label.toUpperCase()}
+              </button>
+            ))}
+            <input
+              type="color"
+              value={awayColor}
+              onChange={e => setAwayColor(e.target.value)}
+              className="w-12 h-12 rounded-xl border-2 border-stone-800 bg-stone-900 cursor-pointer"
+              title="Custom color"
+            />
+          </div>
+        </Field>
+
 
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival', halfLengthMin)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -2868,6 +2928,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const [muted, setMuted] = useState(true);
   const [tvMode, setTvMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -2940,6 +3001,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
     };
   }, [isFullscreen]);
 
+  // Track orientation for portrait-fullscreen letterboxing
+  useEffect(() => {
+    const onOrient = () => setIsPortrait(window.innerHeight > window.innerWidth);
+    window.addEventListener('resize', onOrient);
+    window.addEventListener('orientationchange', onOrient);
+    return () => {
+      window.removeEventListener('resize', onOrient);
+      window.removeEventListener('orientationchange', onOrient);
+    };
+  }, []);
+
   // Trigger renderer resize when fullscreen toggles or inline rect changes
   useEffect(() => {
     const t = setTimeout(() => {
@@ -2952,7 +3024,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
       rendererRef.current.setSize(nw, nh);
     }, 50);
     return () => clearTimeout(t);
-  }, [isFullscreen, rect.width, rect.height]);
+  }, [isFullscreen, isPortrait, rect.width, rect.height]);
 
   // TV mode: snap FOV and clamp vertical
   useEffect(() => {
@@ -3150,6 +3222,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
   const half2StartElapsed = (events || [])
     .filter(e => e.period === 2 && isFinite(e.elapsed))
     .reduce((min, e) => Math.min(min, e.elapsed), Infinity);
+  const isFinished = gameInfo && gameInfo.status === 'finished';
   const inSecondHalf = isFinite(half2StartElapsed)
     ? currentTime >= half2StartElapsed
     : (gameInfo && gameInfo.period >= 2);
@@ -3158,6 +3231,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
         ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
         : Math.floor(currentTime / 60) + halfLen)
     : Math.floor(currentTime / 60);
+
+  // Auto-pick readable text color for a jersey background (WCAG luminance)
+  const textOnColor = (hex) => {
+    if (!hex || typeof hex !== 'string') return '#fff';
+    const h = hex.replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    if (full.length !== 6) return '#fff';
+    const r = parseInt(full.slice(0, 2), 16) / 255;
+    const g = parseInt(full.slice(2, 4), 16) / 255;
+    const b = parseInt(full.slice(4, 6), 16) / 255;
+    const toLin = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    const lum = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+    return lum > 0.5 ? '#0a0a0a' : '#ffffff';
+  };
+  const homeColor = (gameInfo && gameInfo.homeColor) || '#65a30d';
+  const awayColor = (gameInfo && gameInfo.awayColor) || '#dc2626';
 
   const wrapperStyle = isFullscreen
     ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
@@ -3182,33 +3271,55 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo }) {
           <X className="w-4 h-4" />
         </button>
       )}
-      {/* Score overlay — compact scorebug */}
-      {gameInfo && (
-        <div className={`absolute z-10 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+8px,12px)] left-3' : 'top-2 left-2'} ${isFullscreen && !controlsVisible ? 'opacity-0' : 'opacity-100'}`}>
-          <div className="bg-black/80 backdrop-blur-sm rounded shadow-lg border border-white/10 overflow-hidden">
-            <div className="flex items-center text-[10px]">
-              <div className="bg-lime-600 px-1.5 py-0.5">
-                <span className="font-bold text-white tracking-wide truncate max-w-[3.5rem] block">{gameInfo.home || 'STM'}</span>
+      {/* Score overlay — modern broadcast scorebug */}
+      {gameInfo && (() => {
+        const homeText = textOnColor(homeColor);
+        const awayText = textOnColor(awayColor);
+        const statusLabel = isFinished ? 'FT' : (inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`);
+        const statusTone = isFinished ? 'bg-stone-700/90 text-stone-100' : 'bg-red-600/95 text-white';
+        return (
+          <div className={`absolute z-10 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'} ${isFullscreen && !controlsVisible ? 'opacity-0' : 'opacity-100'}`}>
+            <div
+              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+              style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
+            >
+              <div className="flex items-stretch text-[11px]">
+                {/* Home */}
+                <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
+                  <div className="w-[3px] h-5 rounded-full mr-2" style={{ background: homeColor, boxShadow: `0 0 6px ${homeColor}80` }} />
+                  <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
+                </div>
+                {/* Score */}
+                <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{gameInfo.homeScore ?? 0}</span>
+                  <span className="text-white/30 text-xs">–</span>
+                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{gameInfo.awayScore ?? 0}</span>
+                </div>
+                {/* Away */}
+                <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
+                  <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
+                  <div className="w-[3px] h-5 rounded-full ml-2" style={{ background: awayColor, boxShadow: `0 0 6px ${awayColor}80` }} />
+                </div>
               </div>
-              <div className="px-2 py-0.5 flex items-center gap-0.5">
-                <span className="font-display tabular-nums text-white text-xs">{gameInfo.homeScore ?? 0}</span>
-                <span className="text-white/30">-</span>
-                <span className="font-display tabular-nums text-white text-xs">{gameInfo.awayScore ?? 0}</span>
+              {/* Status row */}
+              <div className="px-2 pb-1.5 pt-0.5 flex items-center justify-center">
+                <div className={`flex items-center gap-1 px-1.5 py-px rounded-md ${statusTone}`}>
+                  {!isFinished && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  <span className="text-[9px] font-bold tracking-wider">{statusLabel}</span>
+                </div>
               </div>
-              <div className="bg-red-600 px-1.5 py-0.5">
-                <span className="font-bold text-white tracking-wide truncate max-w-[3.5rem] block">{gameInfo.away || 'OPP'}</span>
-              </div>
-            </div>
-            <div className="bg-stone-900 px-2 py-px flex items-center justify-center gap-1.5">
-              <span className="text-[8px] font-bold text-lime-400 uppercase">{inSecondHalf ? '2nd Half' : '1st Half'}</span>
-              <span className="text-[8px] text-white/40">•</span>
-              <span className="text-[8px] font-bold text-white/70 tabular-nums">{displayedMinute}'</span>
             </div>
           </div>
+        );
+      })()}
+      {/* Canvas container — fills wrapper; letterboxed 16:9 in portrait fullscreen */}
+      {isFullscreen && isPortrait ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-black" onClick={toggleControls}>
+          <div ref={containerRef} className="w-full bg-black" style={{ aspectRatio: '16 / 9' }} />
         </div>
+      ) : (
+        <div ref={containerRef} onClick={toggleControls} className="w-full h-full bg-black" />
       )}
-      {/* Canvas container — fills wrapper; tap toggles controls in fullscreen */}
-      <div ref={containerRef} onClick={toggleControls} className="w-full h-full bg-black" />
       {/* Controls */}
       <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
         <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
@@ -3580,7 +3691,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                     videoUrl={game.liveInput.hlsUrl}
                     events={game.events || []}
                     onClose={() => setShowLive(false)}
-                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }}
+                    gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }}
                   />
                 </div>
               )}
@@ -3650,7 +3761,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
                   seekTo={seekTo}
                   events={events}
                   onClose={() => setShowVideo(false)}
-                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }}
+                  gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }}
                 />
                 <p className="text-[10px] text-stone-500 mt-1 text-center">Tap an event below to jump to that moment</p>
               </div>
@@ -5120,7 +5231,7 @@ function LiveScorePage({ gameId }) {
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-sm font-bold text-red-300">LIVE NOW</span>
           </div>
-          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }} />
+          <VideoPlayer360 videoUrl={game.liveInput.hlsUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }} />
         </div>
       )}
       {!game.liveInput?.hlsUrl && game.videoUrl && (
@@ -5128,7 +5239,7 @@ function LiveScorePage({ gameId }) {
           <div className="bg-stone-900 border border-stone-800 rounded-xl px-4 py-2 mb-3">
             <span className="text-sm font-bold">🎥 360° GAME VIDEO</span>
           </div>
-          <VideoPlayer360 videoUrl={game.videoUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25 }} />
+          <VideoPlayer360 videoUrl={game.videoUrl} events={game.events || []} gameInfo={{ home: 'Stompers', away: game.opponent || 'OPP', homeScore: game.ourScore, awayScore: game.oppScore, period: game.period || 1, halfLengthMin: game.halfLengthMin || 25, homeColor: game.homeColor, awayColor: game.awayColor, status: game.status }} />
         </div>
       )}
     </div>
@@ -5208,12 +5319,12 @@ function PublicHomePage() {
           </a>
           {featured.videoUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.videoUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25 }} />
+              <VideoPlayer360 videoUrl={featured.videoUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25, homeColor: featured.homeColor, awayColor: featured.awayColor, status: featured.status }} />
             </div>
           )}
           {featured.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <VideoPlayer360 videoUrl={featured.liveInput.hlsUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25 }} />
+              <VideoPlayer360 videoUrl={featured.liveInput.hlsUrl} events={featured.events || []} gameInfo={{ home: 'Stompers', away: featured.opponent || 'OPP', homeScore: featured.ourScore, awayScore: featured.oppScore, period: featured.period || 1, halfLengthMin: featured.halfLengthMin || 25, homeColor: featured.homeColor, awayColor: featured.awayColor, status: featured.status }} />
             </div>
           )}
         </>
