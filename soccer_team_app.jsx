@@ -3056,7 +3056,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     st.tvMode = tvMode;
     if (tvMode) {
       st.targetFov = 50;
-      st.targetLat = Math.max(-20, Math.min(20, st.targetLat));
+      st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
     } else {
       st.targetFov = 75;
     }
@@ -3148,8 +3148,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           const sensitivity = 0.1 * (st.fov / 75);
           st.targetLon -= dx * sensitivity;
           st.targetLat += dy * sensitivity;
-          const maxLat = st.tvMode ? 20 : 85;
-          st.targetLat = Math.max(-maxLat, Math.min(maxLat, st.targetLat));
+          const maxLat = st.tvMode ? [45, 10] : [85, 85];
+          st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
           dragLast = { x: e.clientX, y: e.clientY };
         } else if (pointers.size === 2 && pinchStartDist > 0) {
           const ratio = pinchStartDist / pointerDist();
