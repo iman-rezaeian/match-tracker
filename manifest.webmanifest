@@ -6,7 +6,7 @@
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen", "minimal-ui"],
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#0d2818",
   "theme_color": "#0d2818",
   "categories": ["sports", "productivity"],
