@@ -3730,16 +3730,17 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
     const ext = (file.name.match(/\.[a-zA-Z0-9]+$/) || ['.mp4'])[0];
     const base = file.name.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
     const filename = `${game.id}-${base}${ext}`;
+    const contentType = file.type || 'video/mp4';
     fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: COACH_PASS, filename }),
+      body: JSON.stringify({ password: COACH_PASS, filename, contentType }),
     })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'upload-url failed')))
       .then(({ uploadUrl, publicUrl }) => new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', uploadUrl);
-        xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+        xhr.setRequestHeader('Content-Type', contentType);
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100));
         };
@@ -5823,6 +5824,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
