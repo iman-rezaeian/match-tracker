@@ -3172,27 +3172,68 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       }, { passive: false });
 
       // Gyroscope support (like YouTube 360°)
+      // Uses absolute orientation relative to the position when gyro was enabled.
       let gyroEnabled = false;
-      let gyroPrevAlpha = null, gyroPrevBeta = null;
+      let gyroBaseAlpha = null, gyroBaseBeta = null, gyroBaseGamma = null;
+      let gyroAnchorLon = 0, gyroAnchorLat = 0;
+      let gyroSmoothedLon = 0, gyroSmoothedLat = 0;
+
       const onDeviceOrientation = (e) => {
-        if (e.alpha == null || e.beta == null) return;
+        if (e.alpha == null || e.beta == null || e.gamma == null) return;
         const st = stateRef.current;
-        if (gyroPrevAlpha != null && gyroPrevBeta != null) {
-          let dAlpha = e.alpha - gyroPrevAlpha;
-          let dBeta = e.beta - gyroPrevBeta;
-          // Handle wrap-around for alpha (0-360)
-          if (dAlpha > 180) dAlpha -= 360;
-          if (dAlpha < -180) dAlpha += 360;
-          // Apply gyro deltas to target (alpha = yaw/lon, beta = pitch/lat)
-          st.targetLon -= dAlpha * 0.8;
-          st.targetLon = Math.max(-100, Math.min(100, st.targetLon));
-          st.targetLat -= dBeta * 0.8;
-          const maxLat = st.tvMode ? [45, 10] : [85, 85];
-          st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
+
+        // On first reading, capture baseline and current view as anchor
+        if (gyroBaseAlpha == null) {
+          gyroBaseAlpha = e.alpha;
+          gyroBaseBeta = e.beta;
+          gyroBaseGamma = e.gamma;
+          gyroAnchorLon = st.targetLon;
+          gyroAnchorLat = st.targetLat;
+          gyroSmoothedLon = st.targetLon;
+          gyroSmoothedLat = st.targetLat;
+          return;
         }
-        gyroPrevAlpha = e.alpha;
-        gyroPrevBeta = e.beta;
+
+        // Delta from baseline
+        let dAlpha = e.alpha - gyroBaseAlpha;
+        if (dAlpha > 180) dAlpha -= 360;
+        if (dAlpha < -180) dAlpha += 360;
+        let dBeta = e.beta - gyroBaseBeta;
+        let dGamma = e.gamma - gyroBaseGamma;
+
+        // Map axes based on screen orientation (portrait vs landscape)
+        const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+        let dLon, dLat;
+        if (screenAngle === 0 || screenAngle === 180) {
+          // Portrait: alpha→yaw, beta→pitch
+          dLon = -dAlpha;
+          dLat = -dBeta;
+        } else if (screenAngle === 90) {
+          // Landscape left (home button on right)
+          dLon = -dAlpha;
+          dLat = dGamma;
+        } else {
+          // Landscape right (home button on left, screenAngle === -90 or 270)
+          dLon = -dAlpha;
+          dLat = -dGamma;
+        }
+
+        // Compute desired position (anchor + offset)
+        const desiredLon = gyroAnchorLon + dLon;
+        let desiredLat = gyroAnchorLat + dLat;
+
+        // Clamp lat to TV mode or free limits (no lon clamp)
+        const maxLat = st.tvMode ? [45, 10] : [85, 85];
+        desiredLat = Math.max(-maxLat[0], Math.min(maxLat[1], desiredLat));
+
+        // Low-pass filter for smooth movement
+        gyroSmoothedLon += (desiredLon - gyroSmoothedLon) * 0.25;
+        gyroSmoothedLat += (desiredLat - gyroSmoothedLat) * 0.25;
+
+        st.targetLon = gyroSmoothedLon;
+        st.targetLat = gyroSmoothedLat;
       };
+
       // Request permission on iOS 13+
       const enableGyro = () => {
         if (gyroEnabled) return;
@@ -3215,8 +3256,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       container._enableGyro = enableGyro;
       container._disableGyro = () => {
         gyroEnabled = false;
-        gyroPrevAlpha = null;
-        gyroPrevBeta = null;
+        gyroBaseAlpha = null;
+        gyroBaseBeta = null;
+        gyroBaseGamma = null;
         window.removeEventListener('deviceorientation', onDeviceOrientation);
       };
 
