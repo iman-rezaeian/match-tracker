@@ -5991,35 +5991,22 @@ function LiveScoreboard({ game, roster }) {
     function AuthGate() {
       const [user, setUser] = useState(window.fbAuth.currentUser);
       const [checking, setChecking] = useState(true);
-      const [allowed, setAllowed] = useState(null); // null=checking, true/false
       const [error, setError] = useState(null);
 
       useEffect(() => {
         const unsub = window.fbAuth.onAuthStateChanged((u) => {
           setUser(u);
           setChecking(false);
+          // Track login for analytics
+          if (u && u.email) {
+            window.fbDb.collection('viewerLog').add({
+              email: u.email.toLowerCase(), name: u.displayName || '', photo: u.photoURL || '',
+              action: 'login', ts: firebase.firestore.FieldValue.serverTimestamp()
+            }).catch(() => {});
+          }
         });
         return unsub;
       }, []);
-
-      // Check whitelist once user is signed in
-      useEffect(() => {
-        if (!user) { setAllowed(null); return; }
-        const email = user.email?.toLowerCase();
-        if (!email) { setAllowed(false); return; }
-        window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
-          if (doc.exists) {
-            setAllowed(true);
-            // Track login for analytics
-            window.fbDb.collection('viewerLog').add({
-              email, name: user.displayName || '', photo: user.photoURL || '',
-              action: 'login', ts: firebase.firestore.FieldValue.serverTimestamp()
-            }).catch(() => {});
-          } else {
-            setAllowed(false);
-          }
-        }).catch((err) => { setError(err.message); setAllowed(false); });
-      }, [user]);
 
       const signIn = async () => {
         try {
@@ -6035,8 +6022,6 @@ function LiveScoreboard({ game, roster }) {
           }
         }
       };
-
-      const signOut = () => window.fbAuth.signOut();
 
       if (checking) return (
         <div className="min-h-screen flex items-center justify-center bg-stone-950">
@@ -6059,28 +6044,7 @@ function LiveScoreboard({ game, roster }) {
         </div>
       );
 
-      if (allowed === null) return (
-        <div className="min-h-screen flex items-center justify-center bg-stone-950">
-          <div className="text-stone-400 animate-pulse text-sm">Verifying access…</div>
-        </div>
-      );
-
-      if (!allowed) return (
-        <div className="min-h-screen flex items-center justify-center bg-stone-950 px-6">
-          <div className="max-w-sm w-full text-center space-y-4">
-            <div className="text-4xl">🔒</div>
-            <h2 className="text-xl font-display text-white">Access Denied</h2>
-            <p className="text-stone-400 text-sm">
-              <span className="text-stone-300 font-medium">{user.email}</span> is not on the approved list.
-              Contact the coach to get access.
-            </p>
-            <button onClick={signOut} className="text-xs text-stone-500 underline">Sign out</button>
-          </div>
-        </div>
-      );
-
-      // User is authenticated and whitelisted — render app
-      // Expose user info for the app to use
+      // User is authenticated — render app (coach features still behind coach password)
       window.fbUserInfo = { email: user.email, name: user.displayName, photo: user.photoURL, uid: user.uid };
       return <App />;
     }
