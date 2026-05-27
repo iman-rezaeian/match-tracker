@@ -2911,7 +2911,7 @@ async function attachHls(video, url) {
   return () => { try { hls.destroy(); } catch {} };
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode = 'all' }) {
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode: initialDotsMode = 'all', lockDots = false }) {
   const wrapperRef = useRef(null);
   const placeholderRef = useRef(null);
   const containerRef = useRef(null);
@@ -2927,6 +2927,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
   const [tvMode, setTvMode] = useState(false);
+  const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -3350,7 +3351,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
             className="w-full h-1 accent-lime-400 block"
           />
-          {duration > 0 && dotsMode !== 'none' && events.filter(e => {
+          {duration > 0 && events.filter(e => {
             if (e.elapsed <= 0 || e.elapsed > duration) return false;
             if (dotsMode === 'goals') return e.type === 'GOAL' || e.type === 'OPP_GOAL';
             return e.type !== 'SUB' && e.type !== 'GK_CHANGE';
@@ -3371,6 +3372,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         </div>
         <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
         <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
+        {!lockDots && (
+          <button
+            onClick={() => setDotsMode(dotsMode === 'all' ? 'goals' : 'all')}
+            title={dotsMode === 'all' ? 'Showing all events — tap for goals only' : 'Showing goals only — tap for all events'}
+            className={`text-[10px] font-bold px-2 py-1 rounded ${dotsMode === 'goals' ? 'bg-stone-800 text-stone-400' : 'bg-lime-500 text-black'} active:scale-95`}
+          >
+            {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
+          </button>
+        )}
         <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
           📺 TV
         </button>
@@ -5221,6 +5231,7 @@ function PublicVideoToggle({ url, game, label }) {
         videoUrl={url}
         events={game.events || []}
         dotsMode="goals"
+        lockDots
         gameInfo={{
           home: 'Stompers',
           away: game.opponent || 'OPP',
