@@ -5072,7 +5072,9 @@ function PublicHomePage() {
         🔑 COACH
       </a>
       {featured ? (
-        <LiveScoreboard game={featured} roster={roster} />
+        <a href={`./?live=${featured.id}`} className="block">
+          <LiveScoreboard game={featured} roster={roster} />
+        </a>
       ) : (
         <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+2rem)] pb-12 text-center">
           <img
