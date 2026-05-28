@@ -67,6 +67,12 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 // Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
 const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 
+// Live-streaming provider toggle.
+// 'youtube'    — free: coach pastes YouTube video ID, app embeds the iframe
+// 'cloudflare' — paid ($5/mo): one-tap GO LIVE via Cloudflare Stream Live Input
+// Switch to 'cloudflare' when you subscribe to Cloudflare Stream Starter Bundle.
+const LIVE_MODE = 'youtube';
+
 // Viewer tracking — logs to Firestore when users watch video/live
 function trackViewer(action, gameId) {
   if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return null;
@@ -550,7 +556,7 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
@@ -577,6 +583,7 @@ export default function App() {
       gkChanges: [],
       pausePeriods: [],
       ...(liveInput ? { liveInput } : {}),
+      ...(youtubeVideoId ? { youtubeVideoId } : {}),
     };
     persistGames([game, ...games]);
     setActiveGameId(game.id);
@@ -1021,8 +1028,8 @@ export default function App() {
           teamLiveInput={teamLiveInput}
           onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
-          onStart={(lineup, gkPlayerId, liveInput) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput);
+          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId);
             setPendingGameSetup(null);
           }}
         />
@@ -2122,6 +2129,11 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
   const [showCreds, setShowCreds] = useState(false); // toggle visible creds panel
   const [copied, setCopied] = useState(null);
 
+  // YouTube Live mode state — coach pastes the video ID from YouTube's
+  // "Go Live" screen. E.g. URL youtube.com/watch?v=ABC123 → ID is "ABC123".
+  const [ytInput, setYtInput] = useState('');
+  const [ytVideoId, setYtVideoId] = useState(null);
+
   // Tap "GO LIVE". If the team has a saved live input, just attach it to
   // this game — no copying, no waiting. If not, kick off the one-time setup
   // flow that creates the persistent input and shows the credentials.
@@ -2308,70 +2320,109 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
           )}
         </div>
 
-        {/* Livestream attach toggle. After one-time setup, this is a single
-            tap — the saved team RTMPS URL + Stream Key are already in the
-            Insta360 / OBS app, so the coach just confirms "yes, I'm
-            streaming this game" and taps START GAME. */}
+        {/* Livestream section — gated by LIVE_MODE.
+            'youtube':    simple video ID input (free, paste once per game)
+            'cloudflare': one-tap attach via persistent team Cloudflare Stream Live Input ($5/mo) */}
         {liveErr && (
           <div className="text-center text-[11px] text-red-400 mb-2">{liveErr}</div>
         )}
-        {!teamLiveInput ? (
-          <button
-            onClick={onGoLive}
-            disabled={liveBusy}
-            className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
-          >
-            {liveBusy ? '⏳ SETTING UP STREAM…' : '🔴 GO LIVE (one-time setup)'}
-          </button>
-        ) : !attached ? (
-          <button
-            onClick={() => setAttached(true)}
-            className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition"
-          >
-            🔴 GO LIVE (Insta360 should be streaming)
-          </button>
-        ) : (
-          <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 overflow-hidden">
-            <div className="px-3 py-2 flex items-center justify-between">
-              <span className="text-sm font-bold text-red-300 flex items-center gap-2">
-                <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                LIVE ATTACHED
-              </span>
-              <button onClick={() => setAttached(false)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
-            </div>
-            <div className="px-3 pb-2 text-[11px] text-stone-400">
-              The public page will show 🔴 LIVE the moment you tap START GAME.
-              Make sure the Insta360 / OBS app is pushing to your saved RTMPS key.
-            </div>
-            <div className="px-3 pb-3 flex items-center gap-3">
-              <button onClick={() => setShowCreds(s => !s)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">
-                {showCreds ? 'HIDE' : 'SHOW'} STREAM KEY
-              </button>
-              <button onClick={resetTeamKey} className="text-[10px] text-stone-500 tracking-wider active:text-red-400">RESET KEY</button>
-            </div>
-            {showCreds && (
-              <div className="px-3 pb-3 space-y-2 text-[11px] border-t border-red-800/60 pt-2">
-                <div>
-                  <div className="flex items-center justify-between text-stone-500 mb-0.5">
-                    <span>RTMPS Server</span>
-                    <button onClick={() => copy(teamLiveInput.rtmpsUrl, 'url')} className="text-lime-400 font-bold tracking-wider">{copied === 'url' ? 'COPIED ✓' : 'COPY'}</button>
-                  </div>
-                  <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.rtmpsUrl}</code>
-                </div>
-                <div>
-                  <div className="flex items-center justify-between text-stone-500 mb-0.5">
-                    <span>Stream Key</span>
-                    <button onClick={() => copy(teamLiveInput.streamKey, 'key')} className="text-lime-400 font-bold tracking-wider">{copied === 'key' ? 'COPIED ✓' : 'COPY'}</button>
-                  </div>
-                  <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.streamKey}</code>
-                </div>
+
+        {LIVE_MODE === 'youtube' && (
+          <>
+            {!ytVideoId ? (
+              <div className="mb-2 flex gap-2">
+                <input
+                  type="text"
+                  value={ytInput}
+                  onChange={(e) => setYtInput(e.target.value.trim())}
+                  placeholder="YouTube Video ID (optional)"
+                  className="flex-1 bg-stone-950 border-2 border-dashed border-red-700 rounded-xl px-3 py-2.5 text-sm text-red-300 placeholder-stone-600 outline-none focus:border-red-500"
+                />
+                <button
+                  onClick={() => { if (ytInput) setYtVideoId(ytInput); }}
+                  disabled={!ytInput}
+                  className="px-4 rounded-xl bg-red-800 text-white text-sm font-bold active:scale-95 disabled:opacity-40"
+                >
+                  🔴 LIVE
+                </button>
+              </div>
+            ) : (
+              <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 px-3 py-2 flex items-center justify-between">
+                <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  LIVE: {ytVideoId}
+                </span>
+                <button onClick={() => { setYtVideoId(null); setYtInput(''); }} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
               </div>
             )}
-          </div>
+          </>
+        )}
+
+        {LIVE_MODE === 'cloudflare' && (
+          <>
+            {!teamLiveInput ? (
+              <button
+                onClick={onGoLive}
+                disabled={liveBusy}
+                className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
+              >
+                {liveBusy ? '⏳ SETTING UP STREAM…' : '🔴 GO LIVE (one-time setup)'}
+              </button>
+            ) : !attached ? (
+              <button
+                onClick={() => setAttached(true)}
+                className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition"
+              >
+                🔴 GO LIVE (Insta360 should be streaming)
+              </button>
+            ) : (
+              <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 overflow-hidden">
+                <div className="px-3 py-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    LIVE ATTACHED
+                  </span>
+                  <button onClick={() => setAttached(false)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
+                </div>
+                <div className="px-3 pb-2 text-[11px] text-stone-400">
+                  The public page will show 🔴 LIVE the moment you tap START GAME.
+                  Make sure the Insta360 / OBS app is pushing to your saved RTMPS key.
+                </div>
+                <div className="px-3 pb-3 flex items-center gap-3">
+                  <button onClick={() => setShowCreds(s => !s)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">
+                    {showCreds ? 'HIDE' : 'SHOW'} STREAM KEY
+                  </button>
+                  <button onClick={resetTeamKey} className="text-[10px] text-stone-500 tracking-wider active:text-red-400">RESET KEY</button>
+                </div>
+                {showCreds && (
+                  <div className="px-3 pb-3 space-y-2 text-[11px] border-t border-red-800/60 pt-2">
+                    <div>
+                      <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                        <span>RTMPS Server</span>
+                        <button onClick={() => copy(teamLiveInput.rtmpsUrl, 'url')} className="text-lime-400 font-bold tracking-wider">{copied === 'url' ? 'COPIED ✓' : 'COPY'}</button>
+                      </div>
+                      <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.rtmpsUrl}</code>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                        <span>Stream Key</span>
+                        <button onClick={() => copy(teamLiveInput.streamKey, 'key')} className="text-lime-400 font-bold tracking-wider">{copied === 'key' ? 'COPIED ✓' : 'COPY'}</button>
+                      </div>
+                      <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.streamKey}</code>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         <button
-          onClick={() => onStart(Array.from(selected), gkId, attached ? teamLiveInput : null)}
+          onClick={() => {
+            const livePayload = LIVE_MODE === 'cloudflare' && attached ? teamLiveInput : null;
+            const ytId = LIVE_MODE === 'youtube' ? ytVideoId : null;
+            onStart(Array.from(selected), gkId, livePayload, ytId);
+          }}
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
             gkId
@@ -3140,6 +3191,35 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
       >
         SKIP
       </button>
+    </div>
+  );
+}
+
+/* ---------- YOUTUBE EMBED ---------- */
+function YouTubeEmbed({ videoId, live = false }) {
+  if (!videoId) return null;
+  // Sanitize: extract just the ID portion (handles full URLs pasted by mistake)
+  let id = videoId;
+  if (id.includes('youtube.com') || id.includes('youtu.be')) {
+    try {
+      const url = new URL(id.includes('http') ? id : `https://${id}`);
+      id = url.searchParams.get('v') || url.pathname.split('/').pop() || id;
+    } catch (e) {}
+  }
+  id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
+  if (!id) return null;
+  const src = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1${live ? '&live=1' : ''}`;
+  return (
+    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+      <iframe
+        src={src}
+        className="absolute inset-0 w-full h-full"
+        frameBorder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        referrerPolicy="no-referrer"
+        title="Match stream"
+      />
     </div>
   );
 }
@@ -4105,7 +4185,16 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
       </div>
 
       {/* Live Stream Section */}
-      {(game.liveInput || game.status === 'active') && (
+      {game.youtubeVideoId && (
+        <div className="px-4 pt-4">
+          <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-sm font-bold text-red-300">{game.status === 'active' ? '🔴 LIVE' : '▶ REPLAY'}</span>
+          </div>
+          <YouTubeEmbed videoId={game.youtubeVideoId} live={game.status === 'active'} />
+        </div>
+      )}
+      {!game.youtubeVideoId && (game.liveInput || game.status === 'active') && (
         <div className="px-4 pt-4">
           {game.liveInput ? (
             <>
@@ -5990,7 +6079,16 @@ function LiveScorePage({ gameId }) {
         <ChevronLeft className="w-4 h-4" /> ALL MATCHES
       </a>
       <LiveScoreboard game={game} roster={roster} />
-      {game.liveInput?.hlsUrl && (
+      {game.youtubeVideoId && (
+        <div className="px-4 pt-4 max-w-2xl mx-auto">
+          <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-sm font-bold text-red-300">{game.status === 'active' ? 'LIVE NOW' : 'REPLAY'}</span>
+          </div>
+          <YouTubeEmbed videoId={game.youtubeVideoId} live={game.status === 'active'} />
+        </div>
+      )}
+      {!game.youtubeVideoId && game.liveInput?.hlsUrl && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -6003,7 +6101,7 @@ function LiveScorePage({ gameId }) {
           />
         </div>
       )}
-      {!game.liveInput?.hlsUrl && game.videoUrl && (
+      {!game.youtubeVideoId && !game.liveInput?.hlsUrl && game.videoUrl && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <PublicVideoToggle
             url={game.videoUrl}
@@ -6097,12 +6195,17 @@ function PublicHomePage() {
           <a href={`./?live=${featured.id}`} className="block">
             <LiveScoreboard game={featured} roster={roster} />
           </a>
-          {featured.videoUrl && (
+          {featured.videoUrl && !featured.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
               <PublicVideoToggle url={featured.videoUrl} game={featured} label="🎥 WATCH 360° VIDEO" />
             </div>
           )}
-          {featured.liveInput?.hlsUrl && (
+          {featured.youtubeVideoId && (
+            <div className="px-4 pt-4 max-w-2xl mx-auto">
+              <YouTubeEmbed videoId={featured.youtubeVideoId} live={featured.status === 'active'} />
+            </div>
+          )}
+          {!featured.youtubeVideoId && featured.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
               <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
             </div>
