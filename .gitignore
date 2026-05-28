@@ -6,4 +6,6 @@ tracking/samples/*.mp4
 tracking/samples/*.webm
 tracking/samples/*.insv
 tracking/outputs/
+tracking/.venv/
+*.pt
 .DS_Store
