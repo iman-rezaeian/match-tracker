@@ -121,6 +121,7 @@ new_load_effect = (
     "          }\n"
     "          if (data.weights) setWeights(mergeWeights(data.weights));\n"
     "          if (Array.isArray(data.schedule)) setSchedule(data.schedule);\n"
+    "          if (data.teamLiveInput !== undefined) setTeamLiveInput(data.teamLiveInput || null);\n"
     "        } else {\n"
     "          teamDoc().set({ roster: SEED_ROSTER });\n"
     "        }\n"
@@ -199,11 +200,29 @@ new_persist = (
     "  const persistSchedule = async (next) => {\n"
     "    setSchedule(next); // optimistic\n"
     "    try { await teamDoc().set({ schedule: next }, { merge: true }); } catch (e) { console.error('Schedule save error:', e); }\n"
+    "  };\n\n"
+    "  const persistTeamLiveInput = async (next) => {\n"
+    "    setTeamLiveInput(next); // optimistic\n"
+    "    try { await teamDoc().set({ teamLiveInput: next || null }, { merge: true }); } catch (e) { console.error('Team live input save error:', e); }\n"
     "  };"
 )
 if old_persist not in jsx_body:
     raise SystemExit("Could not find original persistRoster/persistGames to replace.")
 jsx_body = jsx_body.replace(old_persist, new_persist, 1)
+
+# 6b. Remove the local-dev persistTeamLiveInput (added after persistSchedule in
+# JSX). The Firestore version above replaces it in production builds.
+old_team_live_persist = (
+    "  const persistTeamLiveInput = async (next) => {\n"
+    "    setTeamLiveInput(next);\n"
+    "    try {\n"
+    "      if (next) await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, JSON.stringify(next));\n"
+    "      else await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, '');\n"
+    "    } catch (e) {}\n"
+    "  };\n"
+)
+if old_team_live_persist in jsx_body:
+    jsx_body = jsx_body.replace(old_team_live_persist, "", 1)
 
 # Splice into HTML between markers.
 begin_marker = "// ===== APP CODE BEGINS ====="

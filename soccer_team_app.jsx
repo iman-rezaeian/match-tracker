@@ -5,7 +5,7 @@ import {
   BarChart3, Flag, Zap, Calendar, MapPin
 } from 'lucide-react';
 
-const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule' };
+const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule', TEAM_LIVE_INPUT: 'team_live_input' };
 
 const EVENT_TYPES = {
   GOAL:      { id: 'GOAL',      label: 'GOAL',      emoji: '⚽', tone: 'big-green',  requiresPlayer: true,  delta: 'us' },
@@ -422,6 +422,11 @@ export default function App() {
   const [games, setGames] = useState([]);
   const [schedule, setSchedule] = useState([]);
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
+  // Team-wide Cloudflare Stream Live Input. Provisioned once, reused every
+  // game so the coach can paste a single RTMPS URL + key into the Insta360
+  // / OBS app and never touch it again. Shape: { uid, rtmpsUrl, streamKey,
+  // hlsUrl, iframeUrl?, customerCode?, createdAt }.
+  const [teamLiveInput, setTeamLiveInput] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('home');
   const [editingPlayer, setEditingPlayer] = useState(null);
@@ -480,6 +485,17 @@ export default function App() {
     })();
   }, []);
 
+  // Team-wide live stream key loader (local-dev path; replaced in production
+  // by the Firestore team-doc listener via _sync_html.py).
+  useEffect(() => {
+    (async () => {
+      try {
+        const tli = await storageGet(STORAGE_KEYS.TEAM_LIVE_INPUT);
+        if (tli?.value) setTeamLiveInput(JSON.parse(tli.value));
+      } catch (e) {}
+    })();
+  }, []);
+
   useEffect(() => {
     if (view !== 'activeGame') return;
     const id = setInterval(() => setTick(t => t + 1), 1000);
@@ -507,6 +523,14 @@ export default function App() {
     try { await storageSet(STORAGE_KEYS.SCHEDULE, JSON.stringify(next)); } catch (e) {}
   };
 
+  const persistTeamLiveInput = async (next) => {
+    setTeamLiveInput(next);
+    try {
+      if (next) await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, JSON.stringify(next));
+      else await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, '');
+    } catch (e) {}
+  };
+
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 1800);
@@ -526,7 +550,7 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
@@ -552,6 +576,7 @@ export default function App() {
       gkPlayerId: gkPlayerId || null,
       gkChanges: [],
       pausePeriods: [],
+      ...(liveInput ? { liveInput } : {}),
     };
     persistGames([game, ...games]);
     setActiveGameId(game.id);
@@ -993,9 +1018,11 @@ export default function App() {
           roster={roster}
           squad={pendingGameSetup.squad}
           setup={pendingGameSetup}
+          teamLiveInput={teamLiveInput}
+          onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
-          onStart={(lineup, gkPlayerId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor);
+          onStart={(lineup, gkPlayerId, liveInput) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput);
             setPendingGameSetup(null);
           }}
         />
@@ -2068,7 +2095,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 }
 
 /* ---------- STARTING LINEUP ---------- */
-function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
+function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
   // Only players in the matchday squad are eligible. Legacy fallback: whole roster.
   const squadSet = squad && squad.length > 0 ? new Set(squad) : null;
   const pool = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
@@ -2079,6 +2106,89 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
     const defaultGK = sorted.find(p => p.position === 'GK');
     return defaultGK ? defaultGK.id : null;
   });
+
+  // Livestream attachment. Cloudflare Stream Live Inputs are persistent: one
+  // input = one fixed RTMPS URL + Stream Key, reusable forever. We provision
+  // a "team live input" ONCE, save it via onSaveTeamLiveInput, and reuse it
+  // for every game so the coach pastes the key into the Insta360 / OBS app
+  // exactly one time. After that, "GO LIVE" is a single tap — it just
+  // attaches the saved team input to this game so the public page shows the
+  // 🔴 LIVE badge and HLS player.
+  const [attached, setAttached] = useState(false); // attach the saved team input to this game
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveErr, setLiveErr] = useState(null);
+  const [showSetup, setShowSetup] = useState(false); // first-time setup modal
+  const [pendingSetup, setPendingSetup] = useState(null); // freshly-created creds awaiting confirm
+  const [showCreds, setShowCreds] = useState(false); // toggle visible creds panel
+  const [copied, setCopied] = useState(null);
+
+  // Tap "GO LIVE". If the team has a saved live input, just attach it to
+  // this game — no copying, no waiting. If not, kick off the one-time setup
+  // flow that creates the persistent input and shows the credentials.
+  const onGoLive = () => {
+    if (teamLiveInput) { setAttached(true); return; }
+    if (liveBusy) return;
+    setLiveBusy(true);
+    setLiveErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/live-input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: R2_WORKER_KEY, name: 'stompers-team-live' }),
+    })
+      .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
+      .then((info) => {
+        setPendingSetup({ ...info, createdAt: Date.now() });
+        setShowSetup(true);
+      })
+      .catch((err) => setLiveErr(String(err)))
+      .finally(() => setLiveBusy(false));
+  };
+
+  const confirmSetup = async () => {
+    if (!pendingSetup) return;
+    await onSaveTeamLiveInput(pendingSetup);
+    setAttached(true);
+    setShowSetup(false);
+    setPendingSetup(null);
+  };
+
+  const cancelSetup = () => {
+    // User backed out before confirming — delete the freshly-created live
+    // input so we don't leave orphans in Cloudflare Stream.
+    if (pendingSetup?.uid) {
+      fetch(`${R2_UPLOAD_WORKER}/live-input/${pendingSetup.uid}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: R2_WORKER_KEY }),
+      }).catch(() => {});
+    }
+    setPendingSetup(null);
+    setShowSetup(false);
+  };
+
+  const resetTeamKey = async () => {
+    const ok = window.confirm('Reset team stream key?\n\nThis deletes the current Cloudflare Stream Live Input. You\'ll need to paste a NEW RTMPS URL + Stream Key into the Insta360 / OBS app. Only do this if the key was compromised or you want a fresh start.');
+    if (!ok) return;
+    if (teamLiveInput?.uid) {
+      try {
+        await fetch(`${R2_UPLOAD_WORKER}/live-input/${teamLiveInput.uid}/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: R2_WORKER_KEY }),
+        });
+      } catch (e) {}
+    }
+    await onSaveTeamLiveInput(null);
+    setAttached(false);
+  };
+
+  const copy = (text, key) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    } catch (e) {}
+  };
 
   const toggle = (id) => {
     const next = new Set(selected);
@@ -2197,8 +2307,71 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
             <span className="text-red-600 font-bold">⚠ No goalie selected — tap the GK button on a player.</span>
           )}
         </div>
+
+        {/* Livestream attach toggle. After one-time setup, this is a single
+            tap — the saved team RTMPS URL + Stream Key are already in the
+            Insta360 / OBS app, so the coach just confirms "yes, I'm
+            streaming this game" and taps START GAME. */}
+        {liveErr && (
+          <div className="text-center text-[11px] text-red-400 mb-2">{liveErr}</div>
+        )}
+        {!teamLiveInput ? (
+          <button
+            onClick={onGoLive}
+            disabled={liveBusy}
+            className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
+          >
+            {liveBusy ? '⏳ SETTING UP STREAM…' : '🔴 GO LIVE (one-time setup)'}
+          </button>
+        ) : !attached ? (
+          <button
+            onClick={() => setAttached(true)}
+            className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition"
+          >
+            🔴 GO LIVE (Insta360 should be streaming)
+          </button>
+        ) : (
+          <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 overflow-hidden">
+            <div className="px-3 py-2 flex items-center justify-between">
+              <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                LIVE ATTACHED
+              </span>
+              <button onClick={() => setAttached(false)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
+            </div>
+            <div className="px-3 pb-2 text-[11px] text-stone-400">
+              The public page will show 🔴 LIVE the moment you tap START GAME.
+              Make sure the Insta360 / OBS app is pushing to your saved RTMPS key.
+            </div>
+            <div className="px-3 pb-3 flex items-center gap-3">
+              <button onClick={() => setShowCreds(s => !s)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">
+                {showCreds ? 'HIDE' : 'SHOW'} STREAM KEY
+              </button>
+              <button onClick={resetTeamKey} className="text-[10px] text-stone-500 tracking-wider active:text-red-400">RESET KEY</button>
+            </div>
+            {showCreds && (
+              <div className="px-3 pb-3 space-y-2 text-[11px] border-t border-red-800/60 pt-2">
+                <div>
+                  <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                    <span>RTMPS Server</span>
+                    <button onClick={() => copy(teamLiveInput.rtmpsUrl, 'url')} className="text-lime-400 font-bold tracking-wider">{copied === 'url' ? 'COPIED ✓' : 'COPY'}</button>
+                  </div>
+                  <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.rtmpsUrl}</code>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                    <span>Stream Key</span>
+                    <button onClick={() => copy(teamLiveInput.streamKey, 'key')} className="text-lime-400 font-bold tracking-wider">{copied === 'key' ? 'COPIED ✓' : 'COPY'}</button>
+                  </div>
+                  <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.streamKey}</code>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <button
-          onClick={() => onStart(Array.from(selected), gkId)}
+          onClick={() => onStart(Array.from(selected), gkId, attached ? teamLiveInput : null)}
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
             gkId
@@ -2209,6 +2382,48 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
           ▶ START GAME
         </button>
       </div>
+
+      {/* First-time stream setup modal — only shown the first time the coach
+          taps GO LIVE. After confirming, the RTMPS key is saved to team
+          storage and never asked for again. */}
+      {showSetup && pendingSetup && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4" onClick={cancelSetup}>
+          <div className="bg-stone-900 rounded-2xl border border-red-800 max-w-md w-full p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-3">
+              <div className="text-xs tracking-[0.2em] text-red-400 mb-1">ONE-TIME SETUP</div>
+              <div className="font-display text-2xl text-stone-100">Team Stream Key</div>
+            </div>
+            <p className="text-sm text-stone-300 mb-3">
+              Paste these into the <b>Insta360</b> app once (Settings → Live → Custom RTMP).
+              After this, you'll never see this screen again — just tap GO LIVE before each match.
+            </p>
+            <div className="space-y-3 text-xs mb-4">
+              <div>
+                <div className="flex items-center justify-between text-stone-500 mb-1">
+                  <span className="font-bold tracking-wider">RTMPS SERVER URL</span>
+                  <button onClick={() => copy(pendingSetup.rtmpsUrl, 'surl')} className="text-lime-400 font-bold tracking-wider">{copied === 'surl' ? 'COPIED ✓' : 'COPY'}</button>
+                </div>
+                <code className="block bg-stone-950 p-2.5 rounded text-lime-400 break-all">{pendingSetup.rtmpsUrl}</code>
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-stone-500 mb-1">
+                  <span className="font-bold tracking-wider">STREAM KEY</span>
+                  <button onClick={() => copy(pendingSetup.streamKey, 'skey')} className="text-lime-400 font-bold tracking-wider">{copied === 'skey' ? 'COPIED ✓' : 'COPY'}</button>
+                </div>
+                <code className="block bg-stone-950 p-2.5 rounded text-lime-400 break-all">{pendingSetup.streamKey}</code>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={cancelSetup} className="flex-1 py-3 rounded-xl bg-stone-800 text-stone-300 font-bold text-sm active:scale-95">
+                CANCEL
+              </button>
+              <button onClick={confirmSetup} className="flex-[2] py-3 rounded-xl bg-lime-500 text-stone-100 font-bold text-sm active:scale-95">
+                ✓ SAVED TO INSTA360
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
