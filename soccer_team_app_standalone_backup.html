@@ -2237,10 +2237,35 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
   const [showCreds, setShowCreds] = useState(false); // toggle visible creds panel
   const [copied, setCopied] = useState(null);
 
-  // YouTube Live mode state — coach pastes the video ID from YouTube's
-  // "Go Live" screen. E.g. URL youtube.com/watch?v=ABC123 → ID is "ABC123".
+  // YouTube Live mode state — 🔴 LIVE button auto-detects the active stream
+  // on the @Stompers2016 channel via YouTube Data API (called through worker).
   const [ytInput, setYtInput] = useState('');
   const [ytVideoId, setYtVideoId] = useState(null);
+  const [ytBusy, setYtBusy] = useState(false);
+  const [ytErr, setYtErr] = useState(null);
+
+  // Auto-detect live stream from YouTube channel
+  const onDetectLive = () => {
+    if (ytBusy) return;
+    setYtBusy(true);
+    setYtErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/youtube-live`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: R2_WORKER_KEY }),
+    })
+      .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'detection failed')))
+      .then((data) => {
+        if (data.live && data.videoId) {
+          setYtVideoId(data.videoId);
+          setYtInput(data.videoId);
+        } else {
+          setYtErr('No live stream detected — start streaming in Insta360 first');
+        }
+      })
+      .catch((err) => setYtErr(String(err)))
+      .finally(() => setYtBusy(false));
+  };
 
   // Tap "GO LIVE". If the team has a saved live input, just attach it to
   // this game — no copying, no waiting. If not, kick off the one-time setup
@@ -2438,21 +2463,31 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
         {LIVE_MODE === 'youtube' && (
           <>
             {!ytVideoId ? (
-              <div className="mb-2 flex gap-2">
-                <input
-                  type="text"
-                  value={ytInput}
-                  onChange={(e) => setYtInput(e.target.value.trim())}
-                  placeholder="YouTube Video ID (optional)"
-                  className="flex-1 bg-stone-950 border-2 border-dashed border-red-700 rounded-xl px-3 py-2.5 text-sm text-red-300 placeholder-stone-600 outline-none focus:border-red-500"
-                />
+              <div className="mb-2 space-y-2">
                 <button
-                  onClick={() => { if (ytInput) setYtVideoId(ytInput); }}
-                  disabled={!ytInput}
-                  className="px-4 rounded-xl bg-red-800 text-white text-sm font-bold active:scale-95 disabled:opacity-40"
+                  onClick={onDetectLive}
+                  disabled={ytBusy}
+                  className="w-full py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
                 >
-                  🔴 LIVE
+                  {ytBusy ? '⏳ DETECTING STREAM…' : '🔴 GO LIVE'}
                 </button>
+                {ytErr && <div className="text-center text-[11px] text-red-400">{ytErr}</div>}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ytInput}
+                    onChange={(e) => setYtInput(e.target.value.trim())}
+                    placeholder="Or paste YouTube URL / Video ID"
+                    className="flex-1 bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-300 placeholder-stone-600 outline-none focus:border-stone-500"
+                  />
+                  <button
+                    onClick={() => { if (ytInput) setYtVideoId(ytInput); }}
+                    disabled={!ytInput}
+                    className="px-3 rounded-xl bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-40"
+                  >
+                    SET
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 px-3 py-2 flex items-center justify-between">
@@ -2460,7 +2495,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
                   <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   LIVE: {ytVideoId}
                 </span>
-                <button onClick={() => { setYtVideoId(null); setYtInput(''); }} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
+                <button onClick={() => { setYtVideoId(null); setYtInput(''); setYtErr(null); }} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
               </div>
             )}
           </>
@@ -6603,6 +6638,12 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
+
+
 
 
 

@@ -305,6 +305,45 @@ for stale in DEPLOY_DIR.iterdir():
 
 (DEPLOY_DIR / "index.html").write_text(deploy_html)
 
+# ─── Pre-compile JSX → JS (removes Babel runtime, huge speedup on old devices) ───
+import subprocess
+
+# Extract JSX from the <script type="text/babel"> block
+babel_script_pattern = re.compile(
+    r'<script type="text/babel" data-presets="react">\s*\n(.*?)\n\s*</script>',
+    re.S,
+)
+babel_match = babel_script_pattern.search(deploy_html)
+if babel_match:
+    jsx_code = babel_match.group(1)
+    try:
+        result = subprocess.run(
+            ['esbuild', '--loader=jsx', '--jsx=transform',
+             '--jsx-factory=React.createElement', '--jsx-fragment=React.Fragment',
+             '--target=es2018'],
+            input=jsx_code, capture_output=True, text=True, check=True,
+        )
+        compiled_js = result.stdout
+        # Replace the babel script tag with a regular script tag containing compiled JS
+        deploy_html = deploy_html.replace(
+            babel_match.group(0),
+            f'<script>\n{compiled_js}\n  </script>',
+        )
+        # Remove the Babel standalone script (no longer needed)
+        deploy_html = deploy_html.replace(
+            '  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>\n',
+            '',
+        )
+        print(f"  Pre-compiled JSX → JS ({len(jsx_code)//1024} KB JSX → {len(compiled_js)//1024} KB JS)")
+    except subprocess.CalledProcessError as e:
+        print(f"  WARNING: esbuild transpile failed, keeping Babel runtime:\n  {e.stderr[:500]}")
+    except FileNotFoundError:
+        print("  WARNING: esbuild not found, keeping Babel runtime (brew install esbuild)")
+    # Rewrite the deploy file with compiled version
+    (DEPLOY_DIR / "index.html").write_text(deploy_html)
+else:
+    print("  WARNING: Could not find <script type=\"text/babel\"> block to pre-compile")
+
 # Copy PWA shell files into the deploy folder.
 copied_pwa = []
 for name in PWA_FILES:
