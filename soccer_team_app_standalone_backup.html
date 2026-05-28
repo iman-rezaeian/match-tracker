@@ -59,11 +59,11 @@
     window.fbAuth = firebase.auth();
     // Offline persistence (so the app survives field wifi)
     window.fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-    // Google sign-in — fbReady resolves once auth state is known
+    // Google sign-in — fbReady resolves once a user is signed in
     window.fbReady = new Promise((resolve) => {
-      window.fbAuth.onAuthStateChanged((user) => {
+      const unsub = window.fbAuth.onAuthStateChanged((user) => {
         window.fbUser = user;
-        resolve(!!user);
+        if (user) { resolve(true); unsub(); }
       });
     });
 
@@ -6284,6 +6284,10 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
 
 
 
