@@ -15,9 +15,9 @@
 
 1. Open `phase0_validation.ipynb` in **Google Colab** (free tier with T4 GPU works)
 2. Runtime → Change runtime type → **T4 GPU**
-3. Upload either:
-   - A 30-60 second clip from your Insta360 X5 (stitched equirectangular .mp4), OR
-   - A sample from [SoccerTrack v2](https://github.com/AtomScott/SportsLabKit) panoramic dataset
+3. Upload a sample clip. Either:
+   - **Use the provided sample**: run `./samples/fetch_sample.sh` locally (requires `yt-dlp` + `ffmpeg`) → uploads `southarmfc_x5_60sec.mp4` (60 sec of a real Insta360 X5 soccer match from 3m mount — exact mirror of our setup). Source: [SouthArm FC on YouTube](https://www.youtube.com/watch?v=-bMV7EumCAU).
+   - **Use your own X5 footage**: Insta360 Studio → export 30-60 sec as equirectangular MP4
 4. Run cells top to bottom
 5. Notebook outputs:
    - `tracks.json` — the JSON your client would read
