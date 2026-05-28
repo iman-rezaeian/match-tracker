@@ -228,7 +228,7 @@ HTML.write_text(new_html)
 print(f"Wrote {HTML} ({len(new_html.splitlines())} lines)")
 
 # Also build a deploy-ready folder (_site/) with every static asset inlined as
-# a base64 data URI. Netlify publishes this folder on push.
+# a base64 data URI. Cloudflare Pages publishes this folder on push.
 #
 # Exception: PWA support files (manifest, service worker, install icons) MUST
 # remain as real files in the deploy folder so the browser can fetch them by
