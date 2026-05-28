@@ -5124,8 +5124,10 @@ function ViewersPanel({ onBack }) {
   }, [timeRange]);
 
   // --- Derived analytics ---
+  const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
   const currentlyWatching = logs.filter(l =>
-    (l.action === 'watch_live' || l.action === 'watch_replay') && !l.endTs
+    (l.action === 'watch_live' || l.action === 'watch_replay') && !l.endTs &&
+    l.ts && (Date.now() - (l.ts.toDate ? l.ts.toDate().getTime() : new Date(l.ts).getTime())) < STALE_MS
   );
   const uniqueEmails = [...new Set(logs.map(l => l.email))];
   const loginEvents = logs.filter(l => l.action === 'login');
