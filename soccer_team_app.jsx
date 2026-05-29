@@ -3319,7 +3319,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [tvMode, setTvMode] = useState(false);
+  const [tvMode] = useState(true);
   const [gyroActive, setGyroActive] = useState(false);
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -3455,17 +3455,14 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return () => clearTimeout(t);
   }, [isFullscreen, isPortrait, rect.width, rect.height]);
 
-  // TV mode: snap FOV and clamp vertical
+  // TV mode is always on for soccer viewing — clamp vertical, narrow FOV.
+  // Set once on mount so the initial scene state matches the controls.
   useEffect(() => {
     const st = stateRef.current;
-    st.tvMode = tvMode;
-    if (tvMode) {
-      st.targetFov = 40;
-      st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
-    } else {
-      st.targetFov = 75;
-    }
-  }, [tvMode]);
+    st.tvMode = true;
+    st.targetFov = 40;
+    st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
+  }, []);
 
   // Load Three.js and set up scene
   useEffect(() => {
@@ -3990,9 +3987,6 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
           </button>
         )}
-        <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
-          📺 TV
-        </button>
         <button onClick={() => {
           const c = containerRef.current;
           if (!c) return;
