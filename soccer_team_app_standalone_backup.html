@@ -3432,6 +3432,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
+  // When entering fullscreen on a portrait device, lock the video frame to
+  // landscape-clockwise via CSS rotation. Stays locked even if the user flips
+  // the phone — only exiting fullscreen returns to portrait layout. Prevents
+  // gyro/baseline jitter from constant orientationchange events.
+  const [fullscreenRotated, setFullscreenRotated] = useState(false);
+  const rotatedRef = useRef(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -3449,13 +3455,21 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     if (next) {
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
-      // Lock to landscape-primary (clockwise 90°) like YouTube — prevents 180° flip
+      // Try the proper API first (Android Chrome, some desktops).
       try { screen.orientation?.lock?.('landscape-primary').catch(() => {}); } catch(e) {}
+      // Touch device + currently portrait → apply CSS-rotation fallback so iOS
+      // Safari (which ignores orientation.lock) still shows landscape video.
+      const isTouch = (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
+      const portraitNow = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+      const shouldRotate = isTouch && portraitNow;
+      setFullscreenRotated(shouldRotate);
+      rotatedRef.current = shouldRotate;
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
-      // Unlock orientation when exiting fullscreen
       try { screen.orientation?.unlock?.(); } catch(e) {}
+      setFullscreenRotated(false);
+      rotatedRef.current = false;
     }
     // Reset gyro baseline so it re-calibrates to the new orientation
     if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
@@ -3518,11 +3532,13 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     };
   }, [isFullscreen]);
 
-  // Track orientation for portrait-fullscreen letterboxing
+  // Track orientation for portrait-fullscreen letterboxing.
+  // SKIPPED while in fullscreen so a 180° phone flip doesn't re-rotate the
+  // video or reset the gyro baseline mid-watch.
   useEffect(() => {
+    if (isFullscreen) return;
     const onOrient = () => {
       setIsPortrait(window.innerHeight > window.innerWidth);
-      // Reset gyro baseline when device rotates so it doesn't jump
       if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
     };
     window.addEventListener('resize', onOrient);
@@ -3531,7 +3547,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       window.removeEventListener('resize', onOrient);
       window.removeEventListener('orientationchange', onOrient);
     };
-  }, []);
+  }, [isFullscreen]);
 
   // Trigger renderer resize when fullscreen toggles or inline rect changes
   useEffect(() => {
@@ -3642,7 +3658,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         const st = stateRef.current;
         if (pointers.size === 1 && dragLast) {
-          const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          let dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          // When the wrapper is CSS-rotated 90° cw, pointer events arrive in
+          // unrotated screen space — remap so drags feel correct on the
+          // rotated content (screen +X → content +Y, screen +Y → content -X).
+          if (rotatedRef.current) {
+            const sx = dx, sy = dy;
+            dx = -sy;
+            dy = sx;
+          }
           const sensitivity = 0.1 * (st.fov / 75);
           const dLon = -dx * sensitivity;
           const dLat = dy * sensitivity;
@@ -3708,8 +3732,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         let dBeta = e.beta - gyroBaseBeta;
         let dGamma = e.gamma - gyroBaseGamma;
 
-        // Map axes based on screen orientation (portrait vs landscape)
-        const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+        // Map axes based on screen orientation (portrait vs landscape).
+        // When the video is CSS-rotated 90° cw (rotatedRef), pin the mapping
+        // to landscape-left regardless of the actual device angle — otherwise
+        // a 180° flip would invert gyro mid-watch.
+        const screenAngle = rotatedRef.current ? 90 : (screen.orientation?.angle ?? window.orientation ?? 0);
         let dLon, dLat;
         if (screenAngle === 0 || screenAngle === 180) {
           // Portrait: alpha→yaw, beta→pitch
@@ -3898,7 +3925,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   }, [events, currentTime]);
 
   const wrapperStyle = isFullscreen
-    ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
+    ? (fullscreenRotated
+        // Rotate 90° clockwise around top-left, then shift right by 100vw so it
+        // fills the screen. Swap width/height so the rotated content matches
+        // viewport dimensions exactly.
+        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw',
+            transform: 'translate(100vw, 0) rotate(90deg)', transformOrigin: 'top left',
+            zIndex: 99999, background: '#000', borderRadius: 0 }
+        : { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+            zIndex: 99999, background: '#000', borderRadius: 0 })
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
 
   const playerNode = (
@@ -3971,13 +4006,16 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           </div>
         );
       })()}
-      {/* Canvas container — single DOM node always, styled by mode */}
+      {/* Canvas container — single DOM node always, styled by mode.
+          In rotated fullscreen the wrapper itself is already rotated and sized
+          to landscape, so the canvas just fills 100%. The old portrait-letterbox
+          path is only used for desktop (non-touch) where we don't rotate. */}
       <div
         ref={containerRef}
         onClick={toggleControls}
         className="bg-black"
         style={
-          isFullscreen && isPortrait
+          isFullscreen && isPortrait && !fullscreenRotated
             ? { position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', width: '100vw', height: 'calc(100vw * 9 / 16)' }
             : { width: '100%', height: '100%' }
         }
@@ -7640,6 +7678,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
