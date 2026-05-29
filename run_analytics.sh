@@ -21,6 +21,24 @@ FIELD_NAME="$2"
 
 cd "$(dirname "$0")"
 
+# Load local secrets (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT,
+# R2_PUBLIC_BASE, GOOGLE_APPLICATION_CREDENTIALS, etc.) from .env if present.
+# Keep .env gitignored — it holds credentials.
+if [ -f .env ]; then
+  echo "→ Loading .env"
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+# Friendly warnings — pipeline will fail later without these, surface it early.
+for v in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT; do
+  if [ -z "${!v:-}" ]; then
+    echo "⚠  $v not set (needed for clip uploads to R2). Add it to .env."
+  fi
+done
+
 VENV_DIR=".venv-post-game"
 
 if [ ! -d "$VENV_DIR" ]; then
