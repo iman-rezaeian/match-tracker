@@ -4193,13 +4193,24 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
   const [saveErr, setSaveErr] = useState(null);
 
   // Push a history entry so iOS swipe-back / Android back closes the modal
-  // instead of leaving the coach app.
+  // instead of leaving the coach app. Also lock body scroll so the page
+  // underneath retains its scroll position when this modal closes.
   useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
     window.history.pushState({ modal: 'calibrate' }, '');
     const onPop = () => onCancel();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
       if (window.history.state && window.history.state.modal === 'calibrate') {
         window.history.back();
       }
@@ -4556,12 +4567,24 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
   const [clips, setClips] = useState([]);
 
   // Push a history entry so swipe-back closes the panel instead of leaving the app.
+  // Also lock body scroll so the page underneath keeps its scroll position
+  // when the modal closes (otherwise iOS resets to top).
   useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
     window.history.pushState({ modal: 'analytics' }, '');
     const onPop = () => onClose();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
       if (window.history.state && window.history.state.modal === 'analytics') {
         window.history.back();
       }
@@ -4803,6 +4826,17 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
   const [showLiveCreds, setShowLiveCreds] = useState(false);
   const [showCalibrate, setShowCalibrate] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  // After saving calibration we usually want to land in Analytics. This flag
+  // tells the calibration onSave handler to open analytics next.
+  const [calibThenAnalytics, setCalibThenAnalytics] = useState(false);
+
+  // Each time the user enters a different game from the DUGOUT list, scroll
+  // back to the top — otherwise the view keeps the previous page's scroll
+  // position and lands mid-page (e.g. on the TIMELINE section).
+  useEffect(() => {
+    try { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }
+    catch { window.scrollTo(0, 0); }
+  }, [game.id]);
 
   const goLive = () => {
     if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
@@ -5135,48 +5169,54 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         )}
       </div>
 
-      {/* Field calibration for post-game analytics */}
-      {game.videoUrl && (
-        <div className="px-4 pt-3">
-          <button
-            onClick={() => setShowCalibrate(true)}
-            className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
-          >
-            <span className="text-sm font-bold">🎯 FIELD CALIBRATION</span>
-            <span className="text-xs text-stone-400">
-              {game.fieldName ? `✓ ${game.fieldName}` : 'NOT SET — TAP TO CALIBRATE'}
-            </span>
-          </button>
-          <p className="text-[10px] text-stone-500 mt-1 text-center">
-            One-time per field. Required for post-game analytics (distance, heatmaps, formation).
-          </p>
-        </div>
-      )}
-
+      {/* Field calibration is gated behind ANALYTICS now — no standalone tile. */}
       {showCalibrate && game.videoUrl && (
         <FieldCalibrationModal
           videoUrl={game.videoUrl}
           initialFieldName={game.fieldName || ''}
           initialLengthM={50}
           initialWidthM={35}
-          onCancel={() => setShowCalibrate(false)}
+          onCancel={() => { setShowCalibrate(false); setCalibThenAnalytics(false); }}
           onSave={(payload) => {
             onUpdateGame({ fieldName: payload.name });
             setShowCalibrate(false);
+            if (calibThenAnalytics) {
+              setCalibThenAnalytics(false);
+              setShowAnalytics(true);
+            }
           }}
         />
       )}
 
       {/* Post-game analytics tab */}
       {game.videoUrl && (
-        <div className="px-4 pt-2">
+        <div className="px-4 pt-3">
           <button
-            onClick={() => setShowAnalytics(true)}
+            onClick={() => {
+              if (!game.fieldName) {
+                setCalibThenAnalytics(true);
+                setShowCalibrate(true);
+              } else {
+                setShowAnalytics(true);
+              }
+            }}
             className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
           >
             <span className="text-sm font-bold">📊 ANALYTICS</span>
             <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
           </button>
+          {game.fieldName ? (
+            <p className="text-[10px] text-stone-500 mt-1 text-center">
+              Field: ✓ {game.fieldName}
+              {' · '}
+              <button
+                onClick={() => { setCalibThenAnalytics(false); setShowCalibrate(true); }}
+                className="underline text-stone-400 active:scale-95"
+              >re-calibrate</button>
+            </p>
+          ) : (
+            <p className="text-[10px] text-stone-500 mt-1 text-center">First time: we'll calibrate the field, then show analytics.</p>
+          )}
         </div>
       )}
 
