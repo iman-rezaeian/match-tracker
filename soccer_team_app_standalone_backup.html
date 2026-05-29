@@ -3999,7 +3999,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
               <div className="flex items-stretch text-[11px]">
                 {/* Home */}
                 <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
-                  <div className="w-[3px] h-5 rounded-full mr-2" style={{ background: homeColor, boxShadow: `0 0 6px ${homeColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm mr-2" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
                 </div>
                 {/* Score */}
@@ -4011,7 +4011,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
                 {/* Away */}
                 <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
-                  <div className="w-[3px] h-5 rounded-full ml-2" style={{ background: awayColor, boxShadow: `0 0 6px ${awayColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
                 </div>
               </div>
               {/* Status row */}
@@ -7691,6 +7691,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
