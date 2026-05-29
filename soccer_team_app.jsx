@@ -1265,7 +1265,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
               className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
             >
               {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-              <span className="text-[10px] text-white/70 font-bold">OUT</span>
+              <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
             </button>
           )}
           {!isStandalone && (
@@ -6247,12 +6247,24 @@ function PublicHomePage() {
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <a
-        href="./?coach"
-        className={`absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 ${isCoachUser ? '' : 'hidden'}`}
-      >
-        🔑 COACH
-      </a>
+      <div className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 flex items-center gap-2">
+        {window.fbUserInfo && (
+          <button
+            onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+            aria-label="Sign out"
+            className="h-9 px-2 rounded-lg bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+          >
+            {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+            <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+          </button>
+        )}
+        <a
+          href="./?coach"
+          className={`bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 ${isCoachUser ? '' : 'hidden'}`}
+        >
+          🔑 COACH
+        </a>
+      </div>
       {featured ? (
         <>
           <a href={`./?live=${featured.id}`} className="block">
