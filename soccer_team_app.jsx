@@ -4251,7 +4251,17 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
       video.playsInline = true;
       video.muted = true;
       video.preload = 'auto';
-      video.src = videoUrl;
+      // Mirror the TV mode 360 viewer: HLS (.m3u8) needs hls.js on non-Safari,
+      // plain MP4 just sets src directly.
+      let hlsCleanup = null;
+      const isHls = /\.m3u8(\?|$)/i.test(videoUrl);
+      if (isHls) {
+        attachHls(video, videoUrl).then(fn => { hlsCleanup = fn; }).catch(() => {
+          setLoadErr('Failed to load HLS stream. Try a different video.');
+        });
+      } else {
+        video.src = videoUrl;
+      }
 
       const texture = new THREE.VideoTexture(video);
       texture.colorSpace = THREE.SRGBColorSpace;
@@ -4396,6 +4406,7 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
       cleanupRef.current = () => {
         cancelAnimationFrame(raf);
         window.removeEventListener('resize', onResize);
+        try { if (hlsCleanup) hlsCleanup(); } catch {}
         try { renderer.dispose(); } catch {}
         try { texture.dispose(); } catch {}
         try { geometry.dispose(); } catch {}
