@@ -2,7 +2,10 @@
 # Post-game analytics runner.
 #
 # Usage:
-#   ./run_analytics.sh <game-id> <field-name>
+#   ./run_analytics.sh <game-id>
+#
+# Calibration is read from the per-game `calibration` field on the game doc
+# (saved via the FIELD CALIBRATION modal in the coach app).
 #
 # Creates a local venv on first run, installs requirements, then runs the
 # Tier-A pipeline. Results are written to Firestore and appear in the
@@ -10,14 +13,13 @@
 
 set -euo pipefail
 
-if [ "$#" -lt 2 ]; then
-  echo "Usage: $0 <game-id> <field-name>"
-  echo "Example: $0 mpo9z0083esgx \"test\""
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <game-id>"
+  echo "Example: $0 mpo9z0083esgx"
   exit 1
 fi
 
 GAME_ID="$1"
-FIELD_NAME="$2"
 
 cd "$(dirname "$0")"
 
@@ -63,9 +65,7 @@ if [ ! -f "$MARKER" ] || [ "post_game/requirements.txt" -nt "$MARKER" ]; then
   touch "$MARKER"
 fi
 
-echo "→ Running analytics for game $GAME_ID on field \"$FIELD_NAME\"…"
-python -m post_game.cli run \
-  --game-id "$GAME_ID" \
-  --field-name "$FIELD_NAME"
+echo "→ Running analytics for game $GAME_ID…"
+python -m post_game.cli run --game-id "$GAME_ID"
 
 echo "✓ Done. Refresh the Analytics panel in the app to see results."
