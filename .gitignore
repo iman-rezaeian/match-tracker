@@ -16,3 +16,4 @@ tracking/.venv/
 post_game/.cache/
 post_game/outputs/
 post_game/models/
+.venv-post-game/
