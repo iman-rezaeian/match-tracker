@@ -3618,8 +3618,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         }
 
         // Compute desired position (anchor + offset)
-        const desiredLon = gyroAnchorLon + dLon;
-        let desiredLat = gyroAnchorLat + dLat;
+        // Sensitivity multiplier: small head turns pan the view further so you
+        // don't have to rotate the phone 180° to see across the field.
+        const GYRO_YAW_GAIN = 2.2;
+        const GYRO_PITCH_GAIN = 1.4;
+        const desiredLon = gyroAnchorLon + dLon * GYRO_YAW_GAIN;
+        let desiredLat = gyroAnchorLat + dLat * GYRO_PITCH_GAIN;
 
         // Clamp lat to TV mode or free limits (no lon clamp)
         const maxLat = st.tvMode ? [45, 10] : [85, 85];
