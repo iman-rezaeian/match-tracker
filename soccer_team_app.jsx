@@ -3885,8 +3885,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         return (
           <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
             <div
-              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
-              style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
+              className="shadow-2xl overflow-hidden backdrop-blur-md"
+              style={{
+                background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)',
+                clipPath: 'polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%, 0 10px)',
+              }}
             >
               <div className="flex items-stretch text-[11px]">
                 {/* Home */}
