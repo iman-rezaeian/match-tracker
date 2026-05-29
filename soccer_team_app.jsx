@@ -3329,13 +3329,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [screenAngle, setScreenAngle] = useState(() => {
     if (typeof window === 'undefined') return 0;
     const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-    return ((a % 360) + 360) % 360;
+    const norm = ((a % 360) + 360) % 360;
+    return norm;
   });
   // When entering fullscreen on a touch device, lock the video frame to
   // landscape-primary via CSS rotation that compensates for the current page
   // angle — so the video stays landscape no matter how iOS rotates the page.
   const [fullscreenRotated, setFullscreenRotated] = useState(false);
   const rotatedRef = useRef(false);
+  // Live page-angle ref so pointer/gyro handlers (inside the long-lived
+  // useEffect closure) can read the current orientation without re-binding.
+  const screenAngleRef = useRef(0);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -3446,7 +3450,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   useEffect(() => {
     const onOrient = () => {
       const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      setScreenAngle(((a % 360) + 360) % 360);
+      const norm = ((a % 360) + 360) % 360;
+      screenAngleRef.current = norm;
+      setScreenAngle(norm);
       setIsPortrait(window.innerHeight > window.innerWidth);
       if (!isFullscreen && containerRef.current?._resetGyroBaseline) {
         containerRef.current._resetGyroBaseline();
@@ -3454,6 +3460,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     };
     window.addEventListener('resize', onOrient);
     window.addEventListener('orientationchange', onOrient);
+    onOrient(); // seed screenAngleRef on mount
     return () => {
       window.removeEventListener('resize', onOrient);
       window.removeEventListener('orientationchange', onOrient);
@@ -3567,13 +3574,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         const st = stateRef.current;
         if (pointers.size === 1 && dragLast) {
           let dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
-          // When the wrapper is CSS-rotated 90° cw, pointer events arrive in
-          // unrotated screen space — remap so drags feel correct on the
-          // rotated content (screen +X → content +Y, screen +Y → content -X).
+          // The wrapper may be CSS-rotated to keep the video locked to
+          // landscape-primary regardless of the page's actual orientation.
+          // Pointer events arrive in unrotated screen space, so we apply the
+          // INVERSE of the wrapper's rotation to get the delta in content space.
+          // Wrapper rotation by screenAngle: 0→+90°, 90→ 0, 180→−90°, 270→180°.
           if (rotatedRef.current) {
             const sx = dx, sy = dy;
-            dx = -sy;
-            dy = sx;
+            const a = screenAngleRef.current;
+            if (a === 0) {           // wrapper rotated +90° CW → inverse 90° CCW
+              dx = sy;  dy = -sx;
+            } else if (a === 180) {  // wrapper rotated −90° (CCW) → inverse 90° CW
+              dx = -sy; dy = sx;
+            } else if (a === 270) {  // wrapper rotated 180° → inverse 180°
+              dx = -sx; dy = -sy;
+            }
+            // a === 90: no rotation → leave dx/dy as-is
           }
           const sensitivity = 0.1 * (st.fov / 75);
           const dLon = -dx * sensitivity;
