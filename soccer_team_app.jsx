@@ -3444,7 +3444,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     const st = stateRef.current;
     st.tvMode = tvMode;
     if (tvMode) {
-      st.targetFov = 50;
+      st.targetFov = 40;
       st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
     } else {
       st.targetFov = 75;
@@ -3536,14 +3536,23 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         if (pointers.size === 1 && dragLast) {
           const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
           const sensitivity = 0.1 * (st.fov / 75);
-          st.targetLon -= dx * sensitivity;
-          st.targetLat += dy * sensitivity;
+          const dLon = -dx * sensitivity;
+          const dLat = dy * sensitivity;
+          st.targetLon += dLon;
+          st.targetLat += dLat;
           const maxLat = st.tvMode ? [45, 10] : [85, 85];
           st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
+          // Shift gyro anchor so drag and gyro compose (don't fight)
+          gyroAnchorLon += dLon;
+          gyroAnchorLat += dLat;
+          gyroSmoothedLon += dLon;
+          gyroSmoothedLat += dLat;
           dragLast = { x: e.clientX, y: e.clientY };
         } else if (pointers.size === 2 && pinchStartDist > 0) {
           const ratio = pinchStartDist / pointerDist();
-          if (!st.tvMode) st.targetFov = Math.max(25, Math.min(110, pinchStartFov * ratio));
+          const minFov = st.tvMode ? 25 : 25;
+          const maxFov = st.tvMode ? 60 : 110;
+          st.targetFov = Math.max(minFov, Math.min(maxFov, pinchStartFov * ratio));
         }
       });
       const endPointer = (e) => {
@@ -3556,7 +3565,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        if (!stateRef.current.tvMode) stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
+        const st = stateRef.current;
+        const maxFov = st.tvMode ? 60 : 110;
+        st.targetFov = Math.max(25, Math.min(maxFov, st.targetFov + e.deltaY * 0.05));
       }, { passive: false });
 
       // Gyroscope support (like YouTube 360°)
