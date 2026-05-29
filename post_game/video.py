@@ -167,9 +167,18 @@ def iter_frames(
     video_path: str,
     sample_rate: int,
     aim_stream: Optional[list[tuple[float, float, float]]] = None,
+    aim: Optional[tuple[float, float, float]] = None,
     crop_w: int = config.CROP_W,
     crop_h: int = config.CROP_H,
 ) -> Iterator[FrameSample]:
+    """Yield perspective crops.
+
+    Aim resolution order, highest priority first:
+      1. `aim_stream[i]` if provided (per-sample pan).
+      2. `aim` if provided (fixed lon/lat/fov for whole video) \u2014 typical
+         use: aim at the field centroid computed from calibration corners.
+      3. Default forward (0\u00b0, 0\u00b0, CROP_FOV_DEG).
+    """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -183,6 +192,8 @@ def iter_frames(
         if idx % sample_rate == 0:
             if aim_stream is not None and sample_i < len(aim_stream):
                 lon, lat, fov = aim_stream[sample_i]
+            elif aim is not None:
+                lon, lat, fov = aim
             else:
                 lon, lat, fov = 0.0, 0.0, config.CROP_FOV_DEG
             crop = render_perspective(frame, lon, lat, fov, crop_w, crop_h)

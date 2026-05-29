@@ -47,18 +47,43 @@ def classify_tracks(
 
     from sklearn.cluster import KMeans
     X = np.stack(list(means.values()))
-    km = KMeans(n_clusters=2, n_init=10, random_state=0).fit(X)
-    labels = km.labels_
-    centers = km.cluster_centers_
+
+    # Try 3 clusters to isolate the referee (typically yellow or black, rare
+    # on the field). If the smallest cluster is plausibly the ref (<15% of
+    # tracks and there are enough samples to support 3 clusters), drop it as
+    # team_id = -1 ("ignore"). Otherwise fall back to k=2.
+    use_three = len(X) >= 6
+    drop_label = None
+    if use_three:
+        km3 = KMeans(n_clusters=3, n_init=10, random_state=0).fit(X)
+        counts3 = np.bincount(km3.labels_, minlength=3)
+        smallest = int(np.argmin(counts3))
+        if counts3[smallest] / counts3.sum() < 0.15 and counts3[smallest] >= 1:
+            # Looks like a ref/coach singleton cluster. Drop it.
+            drop_label = smallest
+            labels = km3.labels_
+            centers = km3.cluster_centers_
+        else:
+            use_three = False
+    if not use_three:
+        km = KMeans(n_clusters=2, n_init=10, random_state=0).fit(X)
+        labels = km.labels_
+        centers = km.cluster_centers_
 
     target = _hex_to_hsv(our_home_color_hex)
-    d0 = np.linalg.norm(centers[0] - target)
-    d1 = np.linalg.norm(centers[1] - target)
-    us_cluster = 0 if d0 <= d1 else 1
+    # Pick which remaining cluster is "us".
+    candidate_centers = [(i, c) for i, c in enumerate(centers) if i != drop_label]
+    us_cluster = min(candidate_centers, key=lambda ic: np.linalg.norm(ic[1] - target))[0]
 
     out = {tid: -1 for tid in track_ids}
     for (tid, _), lbl in zip(means.items(), labels):
-        out[tid] = 0 if lbl == us_cluster else 1
+        if lbl == drop_label:
+            out[tid] = -1
+        else:
+            out[tid] = 0 if lbl == us_cluster else 1
+    if drop_label is not None:
+        n_drop = int((labels == drop_label).sum())
+        log.info("Team classifier: dropped %d track(s) as ref/non-player (3rd cluster)", n_drop)
     return out
 
 
