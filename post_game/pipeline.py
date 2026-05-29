@@ -41,10 +41,16 @@ def run(game_id: str, field_name: str | None = None) -> dict:
     if field_cal is None and field_name:
         field_cal = firestore_io.get_field(field_name)
     if field_cal is None:
-        raise RuntimeError(
-            f"Game {game_id} has no calibration. "
-            "Open it in the coach app, tap ANALYTICS, mark the 4 corners, SAVE."
-        )
+        # Launch the local browser-based calibration tool, wait for the user
+        # to mark the 4 corners and save, then re-read the calibration.
+        from . import calibrate_local
+        log.info("No calibration found. Launching browser calibration UI...")
+        calibrate_local.calibrate_in_browser(game_id)
+        field_cal = firestore_io.get_game_calibration(game_id)
+        if field_cal is None:
+            raise RuntimeError(
+                f"Game {game_id} still has no calibration after the browser tool exited."
+            )
     if not game.video_url:
         raise RuntimeError(f"Game {game_id} has no videoUrl set.")
 

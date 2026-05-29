@@ -4740,17 +4740,17 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 
       {!doc && !err && (
         <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300 space-y-2">
-          <div className="font-bold">No analytics generated yet for this game.</div>
+          <div className="font-bold">Analytics not yet available for this game.</div>
           <div className="text-stone-400">
-            Calibrate the field (if not already), then on your Mac run:
+            On your Mac, run:
           </div>
           <pre className="bg-black/60 p-2 rounded text-xs overflow-x-auto">
 {`cd ~/match-tracker
 ./run_analytics.sh ${game.id}`}
           </pre>
           <div className="text-stone-500 text-xs">
-            First run sets up a venv and installs requirements automatically.
-            Results land here once the run finishes — just reopen this panel.
+            A browser tab will open to mark the 4 field corners (first time only).
+            After SAVE, the pipeline runs and results land here automatically.
           </div>
         </div>
       )}
@@ -4916,11 +4916,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
   const [liveErr, setLiveErr] = useState(null);
   const [showLive, setShowLive] = useState(false);
   const [showLiveCreds, setShowLiveCreds] = useState(false);
-  const [showCalibrate, setShowCalibrate] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  // After saving calibration we usually want to land in Analytics. This flag
-  // tells the calibration onSave handler to open analytics next.
-  const [calibThenAnalytics, setCalibThenAnalytics] = useState(false);
 
   // Each time the user enters a different game from the DUGOUT list, scroll
   // back to the top — otherwise the view keeps the previous page's scroll
@@ -5261,51 +5257,19 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         )}
       </div>
 
-      {/* Field calibration is per-game now — stored on the game doc. */}
-      {showCalibrate && game.videoUrl && (
-        <FieldCalibrationModal
-          videoUrl={game.videoUrl}
-          onCancel={() => { setShowCalibrate(false); setCalibThenAnalytics(false); }}
-          onSave={(calibration) => {
-            onUpdateGame({ calibration });
-            setShowCalibrate(false);
-            if (calibThenAnalytics) {
-              setCalibThenAnalytics(false);
-              setShowAnalytics(true);
-            }
-          }}
-        />
-      )}
+      {/* Field calibration is done on the Mac during analytics. The PWA
+          no longer offers a calibration modal. */}
 
       {/* Post-game analytics tab */}
       {game.videoUrl && (
         <div className="px-4 pt-3">
           <button
-            onClick={() => {
-              if (!game.calibration) {
-                setCalibThenAnalytics(true);
-                setShowCalibrate(true);
-              } else {
-                setShowAnalytics(true);
-              }
-            }}
+            onClick={() => setShowAnalytics(true)}
             className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
           >
             <span className="text-sm font-bold">📊 ANALYTICS</span>
             <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
           </button>
-          {game.calibration ? (
-            <p className="text-[10px] text-stone-500 mt-1 text-center">
-              Calibrated ✓
-              {' · '}
-              <button
-                onClick={() => { setCalibThenAnalytics(false); setShowCalibrate(true); }}
-                className="underline text-stone-400 active:scale-95"
-              >re-calibrate</button>
-            </p>
-          ) : (
-            <p className="text-[10px] text-stone-500 mt-1 text-center">First time: we'll calibrate the field, then show analytics.</p>
-          )}
         </div>
       )}
 
@@ -7623,6 +7587,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
