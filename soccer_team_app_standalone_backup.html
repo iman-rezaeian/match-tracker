@@ -4254,7 +4254,6 @@ const CORNER_HINTS = [
 
 function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, initialWidthM, onCancel, onSave }) {
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
@@ -4266,30 +4265,33 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState(null);
 
-  // Load first frame onto canvas
+  // Push a history entry so iOS swipe-back / Android back closes the modal
+  // instead of leaving the coach app.
+  useEffect(() => {
+    window.history.pushState({ modal: 'calibrate' }, '');
+    const onPop = () => onCancel();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'calibrate') {
+        window.history.back();
+      }
+    };
+  }, [onCancel]);
+
+  // Seek to a frame past any black intro; show the video element directly.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.crossOrigin = 'anonymous';
     const onLoaded = () => {
-      // seek to t=0.5s to skip any black intro frame
       try { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); } catch (e) {}
+      setNaturalSize({ w: v.videoWidth, h: v.videoHeight });
     };
     const onSeeked = () => {
-      const c = canvasRef.current;
-      if (!c) return;
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
       setNaturalSize({ w: v.videoWidth, h: v.videoHeight });
-      const ctx = c.getContext('2d');
-      try {
-        ctx.drawImage(v, 0, 0, c.width, c.height);
-        setReady(true);
-      } catch (e) {
-        setLoadErr('Could not read video frame (CORS?). Try re-uploading the video.');
-      }
+      setReady(true);
     };
-    const onErr = () => setLoadErr('Video failed to load. Check URL.');
+    const onErr = () => setLoadErr('Video failed to load. Check URL or CORS settings on R2 bucket.');
     v.addEventListener('loadedmetadata', onLoaded);
     v.addEventListener('seeked', onSeeked);
     v.addEventListener('error', onErr);
@@ -4302,15 +4304,18 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
 
   const handleClick = (e) => {
     if (!ready || points.length >= 4) return;
-    const c = canvasRef.current;
-    const rect = c.getBoundingClientRect();
+    const v = videoRef.current;
+    if (!v) return;
+    const rect = v.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
-    // Scale display pixels back to natural video pixels.
-    const sx = naturalSize.w / rect.width;
-    const sy = naturalSize.h / rect.height;
-    const x = Math.max(0, Math.min(naturalSize.w, cx * sx));
-    const y = Math.max(0, Math.min(naturalSize.h, cy * sy));
+    const nw = v.videoWidth || naturalSize.w;
+    const nh = v.videoHeight || naturalSize.h;
+    if (!nw || !nh || !rect.width || !rect.height) return;
+    const sx = nw / rect.width;
+    const sy = nh / rect.height;
+    const x = Math.max(0, Math.min(nw, cx * sx));
+    const y = Math.max(0, Math.min(nh, cy * sy));
     setPoints([...points, { x, y }]);
   };
 
@@ -4367,9 +4372,17 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
         className="bg-stone-950 border border-stone-800 w-full sm:max-w-4xl sm:rounded-2xl overflow-hidden flex flex-col max-h-screen"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-stone-800">
-          <h3 className="font-display text-base">🎯 FIELD CALIBRATION</h3>
-          <button onClick={onCancel} className="text-stone-400 text-xs px-3 py-1 rounded-lg bg-stone-900 active:scale-95">CLOSE</button>
+        <div
+          className="flex items-center justify-between px-4 pb-3 stripes-bg text-white border-b border-stone-800"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        >
+          <h3 className="font-display text-base truncate pr-3">🎯 FIELD CALIBRATION</h3>
+          <button
+            onClick={onCancel}
+            className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+          >
+            CLOSE ✕
+          </button>
         </div>
         <div className="px-4 py-3 text-[11px] text-stone-300 border-b border-stone-800">
           {points.length < 4 ? (
@@ -4379,17 +4392,12 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
           )}
         </div>
         <div ref={containerRef} className="relative flex-1 overflow-auto bg-stone-900">
-          {/* hidden source video used to grab the first frame onto the canvas */}
           <video
             ref={videoRef}
             src={videoUrl}
             muted
             playsInline
             preload="auto"
-            style={{ display: 'none' }}
-          />
-          <canvas
-            ref={canvasRef}
             onClick={handleClick}
             className="block w-full h-auto cursor-crosshair select-none"
           />
@@ -4462,6 +4470,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [clips, setClips] = useState([]);
+
+  // Push a history entry so swipe-back closes the panel instead of leaving the app.
+  useEffect(() => {
+    window.history.pushState({ modal: 'analytics' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'analytics') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
 
   useEffect(() => {
     if (!window.fbDb || !game?.id) { setLoading(false); return; }
@@ -7389,6 +7410,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
