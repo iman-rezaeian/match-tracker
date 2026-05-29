@@ -4380,7 +4380,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center text-stone-300">
+      <div className="fixed inset-0 bg-stone-950 z-50 flex items-center justify-center text-stone-300" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
         Loading analytics…
       </div>
     );
@@ -4388,9 +4388,17 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 
   return (
     <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
-      <div className="sticky top-0 bg-stone-950 border-b border-stone-800 px-4 py-3 flex items-center justify-between z-10">
-        <h2 className="font-display text-lg">📊 ANALYTICS — {game.opponent}</h2>
-        <button onClick={onClose} className="text-stone-400 text-sm">CLOSE ✕</button>
+      <div
+        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <h2 className="font-display text-lg truncate pr-3">📊 ANALYTICS — {game.opponent}</h2>
+        <button
+          onClick={onClose}
+          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+        >
+          CLOSE ✕
+        </button>
       </div>
 
       {err && (
