@@ -3938,16 +3938,38 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
 
   const playerNode = (
     <div ref={wrapperRef} style={wrapperStyle} className={`bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
-      {/* Close / Exit fullscreen button */}
-      {isFullscreen ? (
-        <button
-          onClick={toggleFullscreen}
-          className={`absolute right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-          style={{ top: 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' }}
-        >
-          <X className="w-5 h-5" />
-        </button>
-      ) : onClose && (
+      {/* Top-right floating fullscreen toggle (YouTube-style icon).
+          Lives outside the controls bar so it stays reachable in fullscreen
+          even after controls auto-hide. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); toggleFullscreen(); showControls(); }}
+        className={`absolute z-20 ${isFullscreen ? 'w-11 h-11' : 'w-9 h-9'} rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${(!isFullscreen || controlsVisible) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        style={{
+          top: isFullscreen ? 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' : '8px',
+          right: isFullscreen ? '12px' : (onClose ? '44px' : '8px'),
+        }}
+        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+      >
+        {isFullscreen ? (
+          // Exit fullscreen — four arrows pointing inward (YouTube minimize)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 4 9 9 4 9" />
+            <polyline points="15 4 15 9 20 9" />
+            <polyline points="9 20 9 15 4 15" />
+            <polyline points="15 20 15 15 20 15" />
+          </svg>
+        ) : (
+          // Enter fullscreen — four corner brackets pointing outward (YouTube expand)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 9 4 4 9 4" />
+            <polyline points="20 9 20 4 15 4" />
+            <polyline points="4 15 4 20 9 20" />
+            <polyline points="20 15 20 20 15 20" />
+          </svg>
+        )}
+      </button>
+      {/* Close button (only when not fullscreen and onClose provided) */}
+      {!isFullscreen && onClose && (
         <button
           onClick={onClose}
           className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
@@ -4091,9 +4113,6 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           }
         }} className={`text-[10px] font-bold px-2 py-1 rounded ${gyroActive ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
           🔄 GYRO
-        </button>
-        <button onClick={toggleFullscreen} className="text-[10px] font-bold px-2 py-1 rounded bg-stone-800 text-stone-400 active:scale-95">
-          {isFullscreen ? '⊡' : '⛶'}
         </button>
       </div>
     </div>
@@ -7678,6 +7697,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
