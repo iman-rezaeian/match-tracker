@@ -3883,13 +3883,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           statusTone = 'bg-stone-800/90 text-white';
         }
         return (
-          <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+            {/* Row 1 — score (full width) */}
             <div
-              className="shadow-2xl overflow-hidden backdrop-blur-md"
-              style={{
-                background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)',
-                clipPath: 'polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%, 0 10px)',
-              }}
+              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+              style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
             >
               <div className="flex items-stretch text-[11px]">
                 {/* Home */}
@@ -3909,18 +3907,13 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
                   <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
                 </div>
               </div>
-              {/* Status row — chevron-clipped "ticket stub" shape */}
-              <div className="px-1.5 pb-1.5 pt-0.5 flex items-center justify-center">
-                <div
-                  className={`flex items-center gap-1.5 px-3 py-1 ${statusTone}`}
-                  style={{
-                    clipPath: 'polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%)',
-                  }}
-                >
-                  {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  <span className="font-display tabular-nums text-[13px] font-extrabold tracking-[0.15em] leading-none">{statusLabel}</span>
-                </div>
-              </div>
+            </div>
+            {/* Row 2 — status pill, narrower than the score row, slight overlap */}
+            <div
+              className={`mt-[-2px] px-4 py-1 rounded-b-lg border border-t-0 border-white/15 shadow-lg backdrop-blur-md flex items-center gap-1.5 ${statusTone}`}
+            >
+              {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+              <span className="font-display tabular-nums text-[13px] font-extrabold tracking-[0.15em] leading-none">{statusLabel}</span>
             </div>
           </div>
         );
