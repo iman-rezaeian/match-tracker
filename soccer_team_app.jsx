@@ -949,6 +949,7 @@ export default function App() {
           onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
           onViewViewers={() => setView('viewers')}
+          onViewFilmRoom={() => setView('filmRoom')}
         />
       )}
 
@@ -1162,6 +1163,10 @@ export default function App() {
         <ViewersPanel onBack={() => setView('home')} />
       )}
 
+      {view === 'filmRoom' && (
+        <FilmRoomView games={games} roster={roster} onBack={() => setView('home')} />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -1213,7 +1218,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -1371,6 +1376,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
+        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
       </div>
@@ -4723,6 +4729,103 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- FILM ROOM ----------
+ * Coach-only list of finished games sorted newest-first. Each row opens the
+ * AnalyticsPanel for that game. Also the entry point for the (upcoming)
+ * season-wide aggregate analytics view.
+ */
+function FilmRoomView({ games, roster, onBack }) {
+  const [openGameId, setOpenGameId] = useState(null);
+  const finished = useMemo(() => (
+    (games || [])
+      .filter(g => g.status === 'finished')
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0))
+  ), [games]);
+  const openGame = finished.find(g => g.id === openGameId) || null;
+
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
+      <div
+        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <button onClick={onBack} aria-label="Back" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
+          <ChevronRight className="w-5 h-5 rotate-180" />
+        </button>
+        <h2 className="font-display text-lg">🎥 FILM ROOM</h2>
+        <div className="w-9" />
+      </div>
+
+      <div className="px-4 pt-4 max-w-2xl mx-auto space-y-3">
+        <div className="text-xs text-stone-500 uppercase tracking-wider">
+          {finished.length} finished game{finished.length === 1 ? '' : 's'}
+        </div>
+
+        {/* SEASON AGGREGATE tile — placeholder until shipped */}
+        <button
+          disabled
+          className="w-full bg-stone-900 border border-stone-800 rounded-2xl p-4 flex items-center gap-3 opacity-60 cursor-not-allowed"
+        >
+          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">📈</div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-base">SEASON ANALYTICS</div>
+            <div className="text-xs text-stone-400">Aggregate across past games · coming soon</div>
+          </div>
+          <span className="text-[10px] font-bold text-stone-500 border border-stone-700 rounded px-1.5 py-0.5">SOON</span>
+        </button>
+
+        {finished.length === 0 ? (
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+            No finished games yet. Analytics show up here after you end a match.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {finished.map(g => {
+              const result = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+              const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
+                               : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                                                : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => setOpenGameId(g.id)}
+                  className="w-full bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-2xl p-3 flex items-center gap-3 active:scale-[0.99] transition"
+                >
+                  <span className={`shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border font-display text-base ${resultClass}`}>{result}</span>
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {g.tournament && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          {g.tournament.toUpperCase()}
+                        </span>
+                      )}
+                      <span>{formatDate(g.date)}</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
+                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {openGame && (
+        <AnalyticsPanel
+          game={openGame}
+          roster={roster}
+          onClose={() => setOpenGameId(null)}
+          onSeekVideo={() => setOpenGameId(null)}
+        />
+      )}
     </div>
   );
 }
