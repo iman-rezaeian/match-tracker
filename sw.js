@@ -10,10 +10,11 @@
  *
  * Bump CACHE_VERSION whenever the shell or icons change so old caches purge.
  */
-const CACHE_VERSION = 'stompers-v21';
+const CACHE_VERSION = 'stompers-v22';
 const SHELL = [
   './',
   './index.html',
+  './tailwind.css',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',

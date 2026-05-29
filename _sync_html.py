@@ -264,6 +264,7 @@ DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 PWA_FILES = [
     "manifest.webmanifest",
     "sw.js",
+    "tailwind.css",
     "icon-192.png",
     "icon-512.png",
     "icon-maskable-192.png",
@@ -344,11 +345,51 @@ if babel_match:
 else:
     print("  WARNING: Could not find <script type=\"text/babel\"> block to pre-compile")
 
+# ─── Pre-build Tailwind CSS (replaces the cdn.tailwindcss.com runtime) ───
+# The Play CDN re-generates utility classes in the browser on every load —
+# slow on older iPhones. We compile a static minified stylesheet once at
+# build time and ship that instead.
+tailwind_css_path = DEPLOY_DIR / "tailwind.css"
+# Prefer the standalone binary shipped in `.build-tools/` so the build works
+# even when npm is blocked (corp VPN). Fall back to `npx` on Cloudflare Pages CI.
+local_tw = HERE / ".build-tools" / "tailwindcss"
+tw_cmd = [str(local_tw)] if local_tw.is_file() else ['npx', '--yes', 'tailwindcss']
+try:
+    subprocess.run(
+        tw_cmd + ['-c', str(HERE / 'tailwind.config.js'),
+                  '-i', str(HERE / 'tailwind.input.css'),
+                  '-o', str(tailwind_css_path),
+                  '--minify'],
+        check=True, capture_output=True, text=True,
+    )
+    css_kb = tailwind_css_path.stat().st_size // 1024
+    # Swap the CDN <script> tag for a local <link>. Also drop the now-redundant
+    # inline <style> block of custom utilities (moved into tailwind.input.css).
+    deploy_html = deploy_html.replace(
+        '  <script src="https://cdn.tailwindcss.com"></script>\n',
+        '  <link rel="stylesheet" href="./tailwind.css" />\n',
+    )
+    inline_style_re = re.compile(
+        r'  <style>\s*\n\s*html, body \{ background: #0c0a09;.*?\n  </style>\n',
+        re.S,
+    )
+    deploy_html = inline_style_re.sub('', deploy_html, count=1)
+    (DEPLOY_DIR / "index.html").write_text(deploy_html)
+    print(f"  Pre-built Tailwind CSS ({css_kb} KB minified, replaces CDN runtime)")
+except subprocess.CalledProcessError as e:
+    print(f"  WARNING: tailwindcss build failed, keeping CDN runtime:\n  {e.stderr[:500]}")
+except FileNotFoundError:
+    print("  WARNING: tailwindcss not found (no .build-tools/tailwindcss and no npx). Keeping CDN runtime.")
+
 # Copy PWA shell files into the deploy folder.
 copied_pwa = []
 for name in PWA_FILES:
     src = HERE / name
     if not src.is_file():
+        # tailwind.css is generated into _site directly above — not in repo root.
+        if name == "tailwind.css" and (DEPLOY_DIR / name).is_file():
+            copied_pwa.append(name)
+            continue
         print(f"  WARNING: PWA file missing: {name}")
         continue
     shutil.copy2(src, DEPLOY_DIR / name)
