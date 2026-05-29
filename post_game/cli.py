@@ -72,5 +72,48 @@ def ball_gate(
     }))
 
 
+@app.command("list")
+def list_games(
+    limit: int = typer.Option(15, "--limit", "-n", help="How many recent games to show."),
+    only_unprocessed: bool = typer.Option(False, "--unprocessed", help="Only games with video but no analytics yet."),
+) -> None:
+    """List recent games so you can find a game-id to pass to `run`."""
+    logging.basicConfig(level=logging.WARNING, format="%(message)s",
+                        handlers=[RichHandler(console=console, show_path=False)])
+    from rich.table import Table
+    from . import firestore_io
+
+    rows = firestore_io.list_recent_games_snapshots(limit=max(limit, 5))
+    if only_unprocessed:
+        rows = [r for r in rows if r["has_video"] and not r["has_analytics"]]
+    rows = rows[:limit]
+    if not rows:
+        console.print("[yellow]No games found.[/yellow]")
+        return
+    t = Table(show_header=True, header_style="bold")
+    t.add_column("#", justify="right")
+    t.add_column("game-id", style="cyan")
+    t.add_column("date")
+    t.add_column("opponent")
+    t.add_column("score", justify="right")
+    t.add_column("status")
+    t.add_column("video")
+    t.add_column("calib")
+    t.add_column("done")
+    for i, r in enumerate(rows, 1):
+        t.add_row(
+            str(i),
+            r["id"],
+            r["date"] or "—",
+            r["opponent"] or "—",
+            f'{r["our_score"]}-{r["opp_score"]}',
+            r["status"] or "—",
+            "✓" if r["has_video"] else "—",
+            "✓" if r["has_calibration"] else "—",
+            "✓" if r["has_analytics"] else "—",
+        )
+    console.print(t)
+
+
 if __name__ == "__main__":
     app()

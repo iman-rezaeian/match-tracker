@@ -146,6 +146,44 @@ def get_game(game_id: str) -> GameDoc:
     )
 
 
+def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
+    """Return lightweight summaries of recent games, newest first.
+
+    Each dict has: id, date, opponent, our_score, opp_score, status,
+    has_video, has_calibration, has_analytics, started_at.
+    """
+    coll = _team_doc().collection("games")
+    try:
+        from google.cloud.firestore import Query  # type: ignore
+        q = coll.order_by("startedAt", direction=Query.DESCENDING).limit(limit)
+        docs = list(q.stream())
+    except Exception:
+        docs = list(coll.limit(limit).stream())
+    out: list[dict] = []
+    for snap in docs:
+        d = snap.to_dict() or {}
+        has_analytics = False
+        try:
+            asub = list(coll.document(snap.id).collection("analytics").limit(1).stream())
+            has_analytics = len(asub) > 0
+        except Exception:
+            pass
+        out.append({
+            "id": snap.id,
+            "date": d.get("date", ""),
+            "opponent": d.get("opponent", ""),
+            "our_score": int(d.get("ourScore", 0)),
+            "opp_score": int(d.get("oppScore", 0)),
+            "status": d.get("status", ""),
+            "has_video": bool(d.get("videoUrl")),
+            "has_calibration": bool(d.get("calibration")),
+            "has_analytics": has_analytics,
+            "started_at": int(d.get("startedAt", 0)),
+        })
+    out.sort(key=lambda r: r["started_at"], reverse=True)
+    return out
+
+
 def get_roster() -> list[RosterPlayer]:
     snap = _team_doc().get()
     if not snap.exists:
