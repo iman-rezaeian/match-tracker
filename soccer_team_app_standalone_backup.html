@@ -5270,6 +5270,26 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
             <span className="text-sm font-bold">📊 ANALYTICS</span>
             <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
           </button>
+          <button
+            onClick={async () => {
+              try {
+                if (navigator.clipboard && window.isSecureContext) {
+                  await navigator.clipboard.writeText(game.id);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = game.id; document.body.appendChild(ta);
+                  ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                }
+                alert(`Game ID copied:\n${game.id}\n\nOn your Mac, run:\n./run_analytics.sh ${game.id}`);
+              } catch {
+                prompt('Game ID (copy this):', game.id);
+              }
+            }}
+            className="w-full mt-2 text-[10px] text-stone-500 text-center active:text-lime-400 py-1"
+            title="Copy game-id for ./run_analytics.sh on your Mac"
+          >
+            game-id: <span className="font-mono text-stone-400">{game.id}</span> · tap to copy
+          </button>
         </div>
       )}
 
@@ -7587,6 +7607,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
