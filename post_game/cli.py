@@ -18,7 +18,7 @@ console = Console()
 @app.command()
 def run(
     game_id: str = typer.Option(..., "--game-id", help="Firestore game document id."),
-    field_name: str = typer.Option(..., "--field-name", help="Name of a calibrated field."),
+    field_name: str = typer.Option(None, "--field-name", help="(Legacy) Name of a calibrated field. If omitted, uses the per-game calibration stored on the game doc."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""

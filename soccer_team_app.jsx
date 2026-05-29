@@ -4169,7 +4169,7 @@ function makeCalibPinSprite(THREE, idx) {
   return s;
 }
 
-function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, initialWidthM, onCancel, onSave }) {
+function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
   const containerRef = useRef(null);
   const cleanupRef = useRef(null);
   const sceneRef = useRef(null);
@@ -4186,9 +4186,9 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [points, setPoints] = useState([]); // [{x, y}] in NATURAL equirect pixel coords
   const [lensFront, setLensFront] = useState(true);
-  const [fieldName, setFieldName] = useState(initialFieldName || '');
-  const [lengthM, setLengthM] = useState(initialLengthM || 50);
-  const [widthM, setWidthM] = useState(initialWidthM || 35);
+  // Fixed U10 7v7 pitch dimensions — calibration is per-game now.
+  const LENGTH_M = 50;
+  const WIDTH_M = 35;
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState(null);
 
@@ -4433,14 +4433,14 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
     setPoints([]);
   };
 
-  const canSave = points.length === 4 && fieldName.trim().length > 0 && lengthM > 0 && widthM > 0;
+  const canSave = points.length === 4;
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     setSaveErr(null);
     const src = points.map(p => [p.x, p.y]);
-    const dst = [[0, 0], [lengthM, 0], [lengthM, widthM], [0, widthM]];
+    const dst = [[0, 0], [LENGTH_M, 0], [LENGTH_M, WIDTH_M], [0, WIDTH_M]];
     const H = solveHomography4Point(src, dst);
     if (!H) {
       setSaveErr('Could not compute homography — corners may be collinear. Try again.');
@@ -4448,33 +4448,22 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
       return;
     }
     // Firestore does NOT allow nested arrays. Flatten 2D arrays to objects
-    // ({p0:{x,y}…}) and 3×3 homography to a flat 9-element array. Anything
-    // that reads this back should reconstruct.
+    // ({p0:{x,y}…}) and 3×3 homography to a flat 9-element array.
     const srcObj = { p0: { x: src[0][0], y: src[0][1] }, p1: { x: src[1][0], y: src[1][1] }, p2: { x: src[2][0], y: src[2][1] }, p3: { x: src[3][0], y: src[3][1] } };
     const dstObj = { p0: { x: dst[0][0], y: dst[0][1] }, p1: { x: dst[1][0], y: dst[1][1] }, p2: { x: dst[2][0], y: dst[2][1] }, p3: { x: dst[3][0], y: dst[3][1] } };
     const Hflat = [H[0][0], H[0][1], H[0][2], H[1][0], H[1][1], H[1][2], H[2][0], H[2][1], H[2][2]];
-    const payload = {
-      name: fieldName.trim(),
-      length_m: Number(lengthM),
-      width_m: Number(widthM),
-      src_points_px: srcObj,               // pixels in equirectangular frame
+    const calibration = {
+      length_m: LENGTH_M,
+      width_m: WIDTH_M,
+      src_points_px: srcObj,
       dst_points_m: dstObj,
-      homography_flat: Hflat,              // 3x3 row-major, flattened
+      homography_flat: Hflat,
       video_frame_w: Number(naturalSize.w) || 0,
       video_frame_h: Number(naturalSize.h) || 0,
       created_at: Date.now(),
     };
     try {
-      if (window.fbDb) {
-        await window.fbDb
-          .collection('teams').doc('main')
-          .collection('fields').doc(payload.name)
-          .set(payload);
-      } else {
-        // dev fallback
-        try { localStorage.setItem(`field:${payload.name}`, JSON.stringify(payload)); } catch (e) {}
-      }
-      onSave(payload);
+      onSave(calibration);
     } catch (err) {
       setSaveErr(String(err));
       setSaving(false);
@@ -4537,27 +4526,7 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
             <button onClick={undo} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">UNDO</button>
             <button onClick={reset} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">RESET</button>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <label className="col-span-3 text-[10px] text-stone-400">
-              FIELD NAME
-              <input
-                type="text"
-                value={fieldName}
-                onChange={(e) => setFieldName(e.target.value)}
-                placeholder="e.g. Riverside Park 2"
-                className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white"
-              />
-            </label>
-            <label className="text-[10px] text-stone-400">
-              LENGTH (m)
-              <input type="number" min="10" max="120" value={lengthM} onChange={(e) => setLengthM(e.target.value)} className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white" />
-            </label>
-            <label className="text-[10px] text-stone-400">
-              WIDTH (m)
-              <input type="number" min="10" max="80" value={widthM} onChange={(e) => setWidthM(e.target.value)} className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white" />
-            </label>
-            <div className="text-[9px] text-stone-500 self-end pb-2">U10 7v7 ≈ 50×35</div>
-          </div>
+          <p className="text-[10px] text-stone-500 text-center">Pitch: U10 7v7 (50 × 35 m). Calibration saved per game.</p>
           {saveErr && <p className="text-[10px] text-red-400 text-center">{saveErr}</p>}
           <button
             onClick={handleSave}
@@ -4669,7 +4638,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
           </div>
           <pre className="bg-black/60 p-2 rounded text-xs overflow-x-auto">
 {`cd ~/match-tracker
-./run_analytics.sh ${game.id} "${game.fieldName || '<your-field>'}"`}
+./run_analytics.sh ${game.id}`}
           </pre>
           <div className="text-stone-500 text-xs">
             First run sets up a venv and installs requirements automatically.
@@ -5184,16 +5153,13 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         )}
       </div>
 
-      {/* Field calibration is gated behind ANALYTICS now — no standalone tile. */}
+      {/* Field calibration is per-game now — stored on the game doc. */}
       {showCalibrate && game.videoUrl && (
         <FieldCalibrationModal
           videoUrl={game.videoUrl}
-          initialFieldName={game.fieldName || ''}
-          initialLengthM={50}
-          initialWidthM={35}
           onCancel={() => { setShowCalibrate(false); setCalibThenAnalytics(false); }}
-          onSave={(payload) => {
-            onUpdateGame({ fieldName: payload.name });
+          onSave={(calibration) => {
+            onUpdateGame({ calibration });
             setShowCalibrate(false);
             if (calibThenAnalytics) {
               setCalibThenAnalytics(false);
@@ -5208,7 +5174,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
         <div className="px-4 pt-3">
           <button
             onClick={() => {
-              if (!game.fieldName) {
+              if (!game.calibration) {
                 setCalibThenAnalytics(true);
                 setShowCalibrate(true);
               } else {
@@ -5220,9 +5186,9 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
             <span className="text-sm font-bold">📊 ANALYTICS</span>
             <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
           </button>
-          {game.fieldName ? (
+          {game.calibration ? (
             <p className="text-[10px] text-stone-500 mt-1 text-center">
-              Field: ✓ {game.fieldName}
+              Calibrated ✓
               {' · '}
               <button
                 onClick={() => { setCalibThenAnalytics(false); setShowCalibrate(true); }}

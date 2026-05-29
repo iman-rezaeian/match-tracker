@@ -169,14 +169,58 @@ def get_field(field_name: str) -> Optional[FieldCalibration]:
     if not snap.exists:
         return None
     d = snap.to_dict() or {}
+    return _calibration_from_dict(d, default_name=field_name)
+
+
+def get_game_calibration(game_id: str) -> Optional[FieldCalibration]:
+    """Read the per-game calibration written by the FieldCalibrationModal."""
+    snap = _team_doc().collection("games").document(game_id).get()
+    if not snap.exists:
+        return None
+    d = (snap.to_dict() or {}).get("calibration")
+    if not d:
+        return None
+    return _calibration_from_dict(d, default_name=game_id)
+
+
+def _calibration_from_dict(d: dict, default_name: str) -> FieldCalibration:
+    """Accept both legacy (nested-array) and new (flat) schemas."""
+    # Source/destination points: either list-of-lists (legacy) or {p0,p1,p2,p3} objects.
+    def _pts(value):
+        if isinstance(value, dict):
+            out = []
+            for k in ("p0", "p1", "p2", "p3"):
+                p = value.get(k) or {}
+                out.append((float(p.get("x", 0.0)), float(p.get("y", 0.0))))
+            return out
+        return [tuple(p) for p in (value or [])]
+
+    src = _pts(d.get("src_points_px"))
+    dst = _pts(d.get("dst_points_m"))
+
+    # Homography: prefer flat 9-element, fall back to 3x3 list.
+    Hflat = d.get("homography_flat")
+    if Hflat and len(Hflat) == 9:
+        H = [[float(Hflat[0]), float(Hflat[1]), float(Hflat[2])],
+             [float(Hflat[3]), float(Hflat[4]), float(Hflat[5])],
+             [float(Hflat[6]), float(Hflat[7]), float(Hflat[8])]]
+    else:
+        H = [list(row) for row in d.get("homography", [])]
+
+    # Frame size: split fields (new) or 2-tuple (legacy).
+    if "video_frame_w" in d or "video_frame_h" in d:
+        size = (int(d.get("video_frame_w", 0)), int(d.get("video_frame_h", 0)))
+    else:
+        size = tuple(d.get("video_frame_size", (0, 0)))
+
     return FieldCalibration(
-        name=str(d.get("name", field_name)),
+        name=str(d.get("name", default_name)),
         length_m=float(d.get("length_m", 50.0)),
         width_m=float(d.get("width_m", 35.0)),
-        src_points_px=[tuple(p) for p in d.get("src_points_px", [])],
-        dst_points_m=[tuple(p) for p in d.get("dst_points_m", [])],
-        homography=[list(row) for row in d.get("homography", [])],
-        video_frame_size=tuple(d.get("video_frame_size", (0, 0))),
+        src_points_px=src,
+        dst_points_m=dst,
+        homography=H,
+        video_frame_size=size,
     )
 
 

@@ -25,18 +25,25 @@ from .video import crop_bbox_to_equirect, iter_frames, open_video
 log = logging.getLogger(__name__)
 
 
-def run(game_id: str, field_name: str) -> dict:
+def run(game_id: str, field_name: str | None = None) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
-    written to Firestore."""
+    written to Firestore.
+
+    Calibration source: the per-game `calibration` field on the game doc
+    (preferred). If absent and `field_name` is given, falls back to the
+    legacy `teams/main/fields/<name>` collection.
+    """
 
     # 1. Inputs
     game = firestore_io.get_game(game_id)
     roster = firestore_io.get_roster()
-    field_cal = firestore_io.get_field(field_name)
+    field_cal = firestore_io.get_game_calibration(game_id)
+    if field_cal is None and field_name:
+        field_cal = firestore_io.get_field(field_name)
     if field_cal is None:
         raise RuntimeError(
-            f"Field '{field_name}' not yet calibrated. "
-            "Open the game in the coach app and use FIELD CALIBRATION."
+            f"Game {game_id} has no calibration. "
+            "Open it in the coach app, tap ANALYTICS, mark the 4 corners, SAVE."
         )
     if not game.video_url:
         raise RuntimeError(f"Game {game_id} has no videoUrl set.")
