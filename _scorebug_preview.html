@@ -9,6 +9,23 @@
   .label { color:#888; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:8px; }
   .stage { background:url('https://images.unsplash.com/photo-1543326727-cf6c39e8f84c?w=800') center/cover; width:480px; height:270px; border-radius:12px; position:relative; overflow:hidden; }
   .bug-bg { background: linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%); }
+  .fillet-l, .fillet-r {
+    position: absolute;
+    top: 0;
+    width: 8px;
+    height: 8px;
+    background: rgba(22,22,25,0.91);
+  }
+  .fillet-l {
+    left: -8px;
+    -webkit-mask-image: radial-gradient(circle at bottom right, transparent 8px, black 8.5px);
+            mask-image: radial-gradient(circle at bottom right, transparent 8px, black 8.5px);
+  }
+  .fillet-r {
+    right: -8px;
+    -webkit-mask-image: radial-gradient(circle at bottom left, transparent 8px, black 8.5px);
+            mask-image: radial-gradient(circle at bottom left, transparent 8px, black 8.5px);
+  }
 </style>
 </head>
 <body>
@@ -34,15 +51,19 @@
           </div>
         </div>
       </div>
-      <div class="bug-bg -mt-px rounded-2xl border border-white/15 shadow-lg backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
-        <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">1ST · 27'</span>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">1ST · 27'</span>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <div>
-  <div class="label">LIVE — blinking red dot replaces text</div>
+  <div class="label">LIVE — blinking red dot</div>
   <div class="stage">
     <div class="absolute z-10 pointer-events-none flex flex-col items-center top-2 left-2">
       <div class="bug-bg rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md">
@@ -62,12 +83,16 @@
           </div>
         </div>
       </div>
-      <div class="bug-bg -mt-px rounded-2xl border border-white/15 shadow-lg backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
-        <span class="relative flex items-center justify-center mr-0.5">
-          <span class="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping"></span>
-          <span class="relative w-2.5 h-2.5 rounded-full bg-red-500" style="box-shadow:0 0 8px rgba(239,68,68,0.9)"></span>
-        </span>
-        <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">2ND · 63'</span>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
+          <span class="relative flex items-center justify-center mr-0.5">
+            <span class="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping"></span>
+            <span class="relative w-2.5 h-2.5 rounded-full bg-red-500" style="box-shadow:0 0 8px rgba(239,68,68,0.9)"></span>
+          </span>
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">2ND · 63'</span>
+        </div>
       </div>
     </div>
   </div>
@@ -94,8 +119,12 @@
           </div>
         </div>
       </div>
-      <div class="bug-bg -mt-px rounded-2xl border border-white/15 shadow-lg backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
-        <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">FT</span>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center gap-1.5 px-3 py-1">
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">FT</span>
+        </div>
       </div>
     </div>
   </div>
