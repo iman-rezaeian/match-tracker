@@ -4555,14 +4555,21 @@ function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, ini
       setSaving(false);
       return;
     }
+    // Firestore does NOT allow nested arrays. Flatten 2D arrays to objects
+    // ({p0:{x,y}…}) and 3×3 homography to a flat 9-element array. Anything
+    // that reads this back should reconstruct.
+    const srcObj = { p0: { x: src[0][0], y: src[0][1] }, p1: { x: src[1][0], y: src[1][1] }, p2: { x: src[2][0], y: src[2][1] }, p3: { x: src[3][0], y: src[3][1] } };
+    const dstObj = { p0: { x: dst[0][0], y: dst[0][1] }, p1: { x: dst[1][0], y: dst[1][1] }, p2: { x: dst[2][0], y: dst[2][1] }, p3: { x: dst[3][0], y: dst[3][1] } };
+    const Hflat = [H[0][0], H[0][1], H[0][2], H[1][0], H[1][1], H[1][2], H[2][0], H[2][1], H[2][2]];
     const payload = {
       name: fieldName.trim(),
       length_m: Number(lengthM),
       width_m: Number(widthM),
-      src_points_px: src,                  // pixels in equirectangular frame
-      dst_points_m: dst,
-      homography: H,                       // 3x3 row-major
-      video_frame_size: [naturalSize.w, naturalSize.h],
+      src_points_px: srcObj,               // pixels in equirectangular frame
+      dst_points_m: dstObj,
+      homography_flat: Hflat,              // 3x3 row-major, flattened
+      video_frame_w: Number(naturalSize.w) || 0,
+      video_frame_h: Number(naturalSize.h) || 0,
       created_at: Date.now(),
     };
     try {
@@ -7653,6 +7660,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
