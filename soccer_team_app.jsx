@@ -3319,11 +3319,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [tvMode, setTvMode] = useState(false);
+  const [tvMode] = useState(true);
   const [gyroActive, setGyroActive] = useState(false);
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
+  // When entering fullscreen on a portrait device, lock the video frame to
+  // landscape-clockwise via CSS rotation. Stays locked even if the user flips
+  // the phone — only exiting fullscreen returns to portrait layout. Prevents
+  // gyro/baseline jitter from constant orientationchange events.
+  const [fullscreenRotated, setFullscreenRotated] = useState(false);
+  const rotatedRef = useRef(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -3341,13 +3347,21 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     if (next) {
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
-      // Lock to landscape-primary (clockwise 90°) like YouTube — prevents 180° flip
+      // Try the proper API first (Android Chrome, some desktops).
       try { screen.orientation?.lock?.('landscape-primary').catch(() => {}); } catch(e) {}
+      // Touch device + currently portrait → apply CSS-rotation fallback so iOS
+      // Safari (which ignores orientation.lock) still shows landscape video.
+      const isTouch = (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
+      const portraitNow = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+      const shouldRotate = isTouch && portraitNow;
+      setFullscreenRotated(shouldRotate);
+      rotatedRef.current = shouldRotate;
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
-      // Unlock orientation when exiting fullscreen
       try { screen.orientation?.unlock?.(); } catch(e) {}
+      setFullscreenRotated(false);
+      rotatedRef.current = false;
     }
     // Reset gyro baseline so it re-calibrates to the new orientation
     if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
@@ -3410,11 +3424,13 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     };
   }, [isFullscreen]);
 
-  // Track orientation for portrait-fullscreen letterboxing
+  // Track orientation for portrait-fullscreen letterboxing.
+  // SKIPPED while in fullscreen so a 180° phone flip doesn't re-rotate the
+  // video or reset the gyro baseline mid-watch.
   useEffect(() => {
+    if (isFullscreen) return;
     const onOrient = () => {
       setIsPortrait(window.innerHeight > window.innerWidth);
-      // Reset gyro baseline when device rotates so it doesn't jump
       if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
     };
     window.addEventListener('resize', onOrient);
@@ -3423,7 +3439,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       window.removeEventListener('resize', onOrient);
       window.removeEventListener('orientationchange', onOrient);
     };
-  }, []);
+  }, [isFullscreen]);
 
   // Trigger renderer resize when fullscreen toggles or inline rect changes
   useEffect(() => {
@@ -3439,17 +3455,14 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return () => clearTimeout(t);
   }, [isFullscreen, isPortrait, rect.width, rect.height]);
 
-  // TV mode: snap FOV and clamp vertical
+  // TV mode is always on for soccer viewing — clamp vertical, narrow FOV.
+  // Set once on mount so the initial scene state matches the controls.
   useEffect(() => {
     const st = stateRef.current;
-    st.tvMode = tvMode;
-    if (tvMode) {
-      st.targetFov = 40;
-      st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
-    } else {
-      st.targetFov = 75;
-    }
-  }, [tvMode]);
+    st.tvMode = true;
+    st.targetFov = 40;
+    st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
+  }, []);
 
   // Load Three.js and set up scene
   useEffect(() => {
@@ -3534,7 +3547,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         const st = stateRef.current;
         if (pointers.size === 1 && dragLast) {
-          const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          let dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          // When the wrapper is CSS-rotated 90° cw, pointer events arrive in
+          // unrotated screen space — remap so drags feel correct on the
+          // rotated content (screen +X → content +Y, screen +Y → content -X).
+          if (rotatedRef.current) {
+            const sx = dx, sy = dy;
+            dx = -sy;
+            dy = sx;
+          }
           const sensitivity = 0.1 * (st.fov / 75);
           const dLon = -dx * sensitivity;
           const dLat = dy * sensitivity;
@@ -3600,8 +3621,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         let dBeta = e.beta - gyroBaseBeta;
         let dGamma = e.gamma - gyroBaseGamma;
 
-        // Map axes based on screen orientation (portrait vs landscape)
-        const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+        // Map axes based on screen orientation (portrait vs landscape).
+        // When the video is CSS-rotated 90° cw (rotatedRef), pin the mapping
+        // to landscape-left regardless of the actual device angle — otherwise
+        // a 180° flip would invert gyro mid-watch.
+        const screenAngle = rotatedRef.current ? 90 : (screen.orientation?.angle ?? window.orientation ?? 0);
         let dLon, dLat;
         if (screenAngle === 0 || screenAngle === 180) {
           // Portrait: alpha→yaw, beta→pitch
@@ -3790,21 +3814,51 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   }, [events, currentTime]);
 
   const wrapperStyle = isFullscreen
-    ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
+    ? (fullscreenRotated
+        // Rotate 90° clockwise around top-left, then shift right by 100vw so it
+        // fills the screen. Swap width/height so the rotated content matches
+        // viewport dimensions exactly.
+        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw',
+            transform: 'translate(100vw, 0) rotate(90deg)', transformOrigin: 'top left',
+            zIndex: 99999, background: '#000', borderRadius: 0 }
+        : { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+            zIndex: 99999, background: '#000', borderRadius: 0 })
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
 
   const playerNode = (
     <div ref={wrapperRef} style={wrapperStyle} className={`bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
-      {/* Close / Exit fullscreen button */}
-      {isFullscreen ? (
-        <button
-          onClick={toggleFullscreen}
-          className={`absolute right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-          style={{ top: 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' }}
-        >
-          <X className="w-5 h-5" />
-        </button>
-      ) : onClose && (
+      {/* Top-right floating fullscreen toggle (YouTube-style icon).
+          Lives outside the controls bar so it stays reachable in fullscreen
+          even after controls auto-hide. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); toggleFullscreen(); showControls(); }}
+        className={`absolute z-20 ${isFullscreen ? 'w-11 h-11' : 'w-9 h-9'} rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${(!isFullscreen || controlsVisible) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        style={{
+          top: isFullscreen ? 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' : '8px',
+          right: isFullscreen ? '12px' : (onClose ? '44px' : '8px'),
+        }}
+        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+      >
+        {isFullscreen ? (
+          // Exit fullscreen — four arrows pointing inward (YouTube minimize)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 4 9 9 4 9" />
+            <polyline points="15 4 15 9 20 9" />
+            <polyline points="9 20 9 15 4 15" />
+            <polyline points="15 20 15 15 20 15" />
+          </svg>
+        ) : (
+          // Enter fullscreen — four corner brackets pointing outward (YouTube expand)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 9 4 4 9 4" />
+            <polyline points="20 9 20 4 15 4" />
+            <polyline points="4 15 4 20 9 20" />
+            <polyline points="20 15 20 20 15 20" />
+          </svg>
+        )}
+      </button>
+      {/* Close button (only when not fullscreen and onClose provided) */}
+      {!isFullscreen && onClose && (
         <button
           onClick={onClose}
           className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
@@ -3814,62 +3868,90 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       )}
       {/* Score overlay — modern broadcast scorebug */}
       {gameInfo && (() => {
-        // TV-style status pill: derive from playback, not from stored game state.
-        // FT only when video has actually ended.
-        let statusLabel, statusTone, showPulse = false;
+        // Row 2 text: half + minute (LIVE shown as a red blinking dot, not text).
+        let statusLabel;
         if (isFinished && videoEnded) {
           statusLabel = 'FT';
-          statusTone = 'bg-stone-700/90 text-stone-100';
-        } else if (isLive) {
-          statusLabel = `LIVE · ${displayedMinute}'`;
-          statusTone = 'bg-red-600/95 text-white';
-          showPulse = true;
         } else {
           statusLabel = inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`;
-          statusTone = 'bg-stone-800/90 text-white';
         }
+        const showLiveDot = isLive && !(isFinished && videoEnded);
+        // Shared background so both rows + corner fillets read as one piece.
+        const bugBg = 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)';
+        // Approximated solid for the tiny fillet pieces (gradient is subtle, this is invisible at 8px).
+        const filletColor = 'rgba(22,22,25,0.91)';
         return (
-          <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+            {/* Row 1 — score (rounded all corners) */}
             <div
-              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
-              style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
+              className="rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+              style={{ background: bugBg }}
             >
               <div className="flex items-stretch text-[11px]">
-                {/* Home */}
                 <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
-                  <div className="w-[3px] h-5 rounded-full mr-2" style={{ background: homeColor, boxShadow: `0 0 6px ${homeColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm mr-2" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
                 </div>
-                {/* Score */}
                 <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
                   <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.home}</span>
                   <span className="text-white/30 text-xs">–</span>
                   <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.away}</span>
                 </div>
-                {/* Away */}
                 <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
-                  <div className="w-[3px] h-5 rounded-full ml-2" style={{ background: awayColor, boxShadow: `0 0 6px ${awayColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
                 </div>
               </div>
-              {/* Status row */}
-              <div className="px-2 pb-1.5 pt-0.5 flex items-center justify-center">
-                <div className={`flex items-center gap-1 px-1.5 py-px rounded-md ${statusTone}`}>
-                  {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  <span className="text-[9px] font-bold tracking-wider">{statusLabel}</span>
-                </div>
+            </div>
+            {/* Row 2 wrapper — relative for the corner fillets */}
+            <div className="relative -mt-px">
+              {/* Left fillet — concave curve from row 1 down to row 2's top-left */}
+              <span
+                aria-hidden
+                className="absolute left-[-8px] top-0 w-2 h-2"
+                style={{
+                  background: filletColor,
+                  WebkitMaskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)',
+                  maskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)',
+                }}
+              />
+              {/* Right fillet */}
+              <span
+                aria-hidden
+                className="absolute right-[-8px] top-0 w-2 h-2"
+                style={{
+                  background: filletColor,
+                  WebkitMaskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)',
+                  maskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)',
+                }}
+              />
+              {/* Row 2 — fixed width sized for longest content ("2ND · 90+5'" + live dot) */}
+              <div
+                className="rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]"
+                style={{ background: bugBg }}
+              >
+                {showLiveDot && (
+                  <span className="relative flex items-center justify-center mr-0.5">
+                    <span className="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping" />
+                    <span className="relative w-2.5 h-2.5 rounded-full bg-red-500" style={{ boxShadow: '0 0 8px rgba(239,68,68,0.9)' }} />
+                  </span>
+                )}
+                <span className="font-display tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>{statusLabel}</span>
               </div>
             </div>
           </div>
         );
       })()}
-      {/* Canvas container — single DOM node always, styled by mode */}
+      {/* Canvas container — single DOM node always, styled by mode.
+          In rotated fullscreen the wrapper itself is already rotated and sized
+          to landscape, so the canvas just fills 100%. The old portrait-letterbox
+          path is only used for desktop (non-touch) where we don't rotate. */}
       <div
         ref={containerRef}
         onClick={toggleControls}
         className="bg-black"
         style={
-          isFullscreen && isPortrait
+          isFullscreen && isPortrait && !fullscreenRotated
             ? { position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', width: '100vw', height: 'calc(100vw * 9 / 16)' }
             : { width: '100%', height: '100%' }
         }
@@ -3930,9 +4012,6 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
           </button>
         )}
-        <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
-          📺 TV
-        </button>
         <button onClick={() => {
           const c = containerRef.current;
           if (!c) return;
@@ -3945,9 +4024,6 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           }
         }} className={`text-[10px] font-bold px-2 py-1 rounded ${gyroActive ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
           🔄 GYRO
-        </button>
-        <button onClick={toggleFullscreen} className="text-[10px] font-bold px-2 py-1 rounded bg-stone-800 text-stone-400 active:scale-95">
-          {isFullscreen ? '⊡' : '⛶'}
         </button>
       </div>
     </div>
