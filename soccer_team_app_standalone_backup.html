@@ -4186,6 +4186,490 @@ function PillarMini({ label, value }) {
   );
 }
 
+/* ---------- FIELD CALIBRATION (post-game analytics) ----------
+ *
+ * Coach taps the 4 corners of the pitch (TL, TR, BR, BL clockwise) on the
+ * first frame of the uploaded 360° video. We compute a pixel→meters
+ * homography and store it under `teams/main/fields/<name>` so every future
+ * game on the same field re-uses it.
+ *
+ * The post_game/ Python pipeline reads this doc to convert detected player
+ * pixels into real field coordinates (meters). See post_game/calibration.py.
+ */
+
+// Direct Linear Transform — solve 8 unknowns (h11..h32, with h33=1) from 4
+// point correspondences. Returns a flat row-major 3x3 array, or null on
+// degenerate input. No external deps.
+function solveHomography4Point(srcPx, dstM) {
+  if (!Array.isArray(srcPx) || srcPx.length !== 4 || !Array.isArray(dstM) || dstM.length !== 4) return null;
+  // Build 8x9 augmented matrix [A | -b], then solve Ah = b for h (length 8).
+  const A = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = srcPx[i];
+    const [u, v] = dstM[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+  // Gauss-Jordan elimination on 8x9.
+  const n = 8;
+  for (let col = 0; col < n; col++) {
+    // partial pivot
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(A[r][col]) > Math.abs(A[pivot][col])) pivot = r;
+    }
+    if (Math.abs(A[pivot][col]) < 1e-10) return null; // singular
+    if (pivot !== col) { const tmp = A[col]; A[col] = A[pivot]; A[pivot] = tmp; }
+    const div = A[col][col];
+    for (let c = col; c <= n; c++) A[col][c] /= div;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = A[r][col];
+      if (f === 0) continue;
+      for (let c = col; c <= n; c++) A[r][c] -= f * A[col][c];
+    }
+  }
+  const h = A.map(row => row[n]);
+  return [
+    [h[0], h[1], h[2]],
+    [h[3], h[4], h[5]],
+    [h[6], h[7], 1],
+  ];
+}
+
+function applyHomography(H, x, y) {
+  const u = H[0][0] * x + H[0][1] * y + H[0][2];
+  const v = H[1][0] * x + H[1][1] * y + H[1][2];
+  const w = H[2][0] * x + H[2][1] * y + H[2][2];
+  return [u / w, v / w];
+}
+
+const CORNER_LABELS = ['TOP-LEFT', 'TOP-RIGHT', 'BOTTOM-RIGHT', 'BOTTOM-LEFT'];
+const CORNER_HINTS = [
+  'Far-left corner of the pitch (your team\'s left as you face the field).',
+  'Far-right corner of the pitch.',
+  'Near-right corner closest to the camera.',
+  'Near-left corner closest to the camera.',
+];
+
+function FieldCalibrationModal({ videoUrl, initialFieldName, initialLengthM, initialWidthM, onCancel, onSave }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [loadErr, setLoadErr] = useState(null);
+  const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+  const [points, setPoints] = useState([]); // [{x, y}] in NATURAL video pixel coords
+  const [fieldName, setFieldName] = useState(initialFieldName || '');
+  const [lengthM, setLengthM] = useState(initialLengthM || 50);
+  const [widthM, setWidthM] = useState(initialWidthM || 35);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState(null);
+
+  // Load first frame onto canvas
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.crossOrigin = 'anonymous';
+    const onLoaded = () => {
+      // seek to t=0.5s to skip any black intro frame
+      try { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); } catch (e) {}
+    };
+    const onSeeked = () => {
+      const c = canvasRef.current;
+      if (!c) return;
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      setNaturalSize({ w: v.videoWidth, h: v.videoHeight });
+      const ctx = c.getContext('2d');
+      try {
+        ctx.drawImage(v, 0, 0, c.width, c.height);
+        setReady(true);
+      } catch (e) {
+        setLoadErr('Could not read video frame (CORS?). Try re-uploading the video.');
+      }
+    };
+    const onErr = () => setLoadErr('Video failed to load. Check URL.');
+    v.addEventListener('loadedmetadata', onLoaded);
+    v.addEventListener('seeked', onSeeked);
+    v.addEventListener('error', onErr);
+    return () => {
+      v.removeEventListener('loadedmetadata', onLoaded);
+      v.removeEventListener('seeked', onSeeked);
+      v.removeEventListener('error', onErr);
+    };
+  }, [videoUrl]);
+
+  const handleClick = (e) => {
+    if (!ready || points.length >= 4) return;
+    const c = canvasRef.current;
+    const rect = c.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    // Scale display pixels back to natural video pixels.
+    const sx = naturalSize.w / rect.width;
+    const sy = naturalSize.h / rect.height;
+    const x = Math.max(0, Math.min(naturalSize.w, cx * sx));
+    const y = Math.max(0, Math.min(naturalSize.h, cy * sy));
+    setPoints([...points, { x, y }]);
+  };
+
+  const undo = () => setPoints(points.slice(0, -1));
+  const reset = () => setPoints([]);
+
+  const canSave = points.length === 4 && fieldName.trim().length > 0 && lengthM > 0 && widthM > 0;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setSaveErr(null);
+    const src = points.map(p => [p.x, p.y]);
+    const dst = [[0, 0], [lengthM, 0], [lengthM, widthM], [0, widthM]];
+    const H = solveHomography4Point(src, dst);
+    if (!H) {
+      setSaveErr('Could not compute homography — corners may be collinear. Try again.');
+      setSaving(false);
+      return;
+    }
+    const payload = {
+      name: fieldName.trim(),
+      length_m: Number(lengthM),
+      width_m: Number(widthM),
+      src_points_px: src,                  // pixels in equirectangular frame
+      dst_points_m: dst,
+      homography: H,                       // 3x3 row-major
+      video_frame_size: [naturalSize.w, naturalSize.h],
+      created_at: Date.now(),
+    };
+    try {
+      if (window.fbDb) {
+        await window.fbDb
+          .collection('teams').doc('main')
+          .collection('fields').doc(payload.name)
+          .set(payload);
+      } else {
+        // dev fallback
+        try { localStorage.setItem(`field:${payload.name}`, JSON.stringify(payload)); } catch (e) {}
+      }
+      onSave(payload);
+    } catch (err) {
+      setSaveErr(String(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-stretch sm:items-center justify-center p-0 sm:p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-stone-950 border border-stone-800 w-full sm:max-w-4xl sm:rounded-2xl overflow-hidden flex flex-col max-h-screen"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-stone-800">
+          <h3 className="font-display text-base">🎯 FIELD CALIBRATION</h3>
+          <button onClick={onCancel} className="text-stone-400 text-xs px-3 py-1 rounded-lg bg-stone-900 active:scale-95">CLOSE</button>
+        </div>
+        <div className="px-4 py-3 text-[11px] text-stone-300 border-b border-stone-800">
+          {points.length < 4 ? (
+            <>Tap the <strong className="text-lime-400">{CORNER_LABELS[points.length]}</strong> corner of the pitch. <span className="text-stone-500">{CORNER_HINTS[points.length]}</span></>
+          ) : (
+            <span className="text-lime-400">All 4 corners marked. Enter field name + dimensions below and SAVE.</span>
+          )}
+        </div>
+        <div ref={containerRef} className="relative flex-1 overflow-auto bg-stone-900">
+          {/* hidden source video used to grab the first frame onto the canvas */}
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            muted
+            playsInline
+            preload="auto"
+            style={{ display: 'none' }}
+          />
+          <canvas
+            ref={canvasRef}
+            onClick={handleClick}
+            className="block w-full h-auto cursor-crosshair select-none"
+          />
+          {/* Overlay points (positioned in % of natural size) */}
+          {points.map((p, i) => {
+            const left = naturalSize.w ? (p.x / naturalSize.w) * 100 : 0;
+            const top = naturalSize.h ? (p.y / naturalSize.h) * 100 : 0;
+            return (
+              <div key={i} className="absolute pointer-events-none" style={{ left: `${left}%`, top: `${top}%`, transform: 'translate(-50%, -50%)' }}>
+                <div className="w-3 h-3 rounded-full bg-lime-400 ring-2 ring-stone-950 shadow-lg" />
+                <div className="text-[9px] font-bold text-lime-300 mt-0.5 text-center">{i + 1}</div>
+              </div>
+            );
+          })}
+          {!ready && !loadErr && (
+            <div className="absolute inset-0 flex items-center justify-center text-stone-400 text-xs">Loading first frame…</div>
+          )}
+          {loadErr && (
+            <div className="absolute inset-0 flex items-center justify-center text-red-400 text-xs px-6 text-center">{loadErr}</div>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t border-stone-800 space-y-2 bg-stone-950">
+          <div className="flex gap-2">
+            <button onClick={undo} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">UNDO</button>
+            <button onClick={reset} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">RESET</button>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <label className="col-span-3 text-[10px] text-stone-400">
+              FIELD NAME
+              <input
+                type="text"
+                value={fieldName}
+                onChange={(e) => setFieldName(e.target.value)}
+                placeholder="e.g. Riverside Park 2"
+                className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white"
+              />
+            </label>
+            <label className="text-[10px] text-stone-400">
+              LENGTH (m)
+              <input type="number" min="10" max="120" value={lengthM} onChange={(e) => setLengthM(e.target.value)} className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white" />
+            </label>
+            <label className="text-[10px] text-stone-400">
+              WIDTH (m)
+              <input type="number" min="10" max="80" value={widthM} onChange={(e) => setWidthM(e.target.value)} className="mt-1 w-full px-2 py-2 rounded-lg bg-stone-900 border border-stone-700 text-sm text-white" />
+            </label>
+            <div className="text-[9px] text-stone-500 self-end pb-2">U10 7v7 ≈ 50×35</div>
+          </div>
+          {saveErr && <p className="text-[10px] text-red-400 text-center">{saveErr}</p>}
+          <button
+            onClick={handleSave}
+            disabled={!canSave || saving}
+            className="w-full py-3 rounded-lg bg-lime-500 text-stone-950 text-sm font-bold active:scale-95 disabled:opacity-40"
+          >
+            {saving ? 'SAVING…' : `SAVE CALIBRATION${points.length < 4 ? ` (${points.length}/4 corners)` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- POST-GAME ANALYTICS PANEL ----------
+ * Reads `teams/main/games/<gameId>/analytics/v1` written by the Python
+ * pipeline (post_game/pipeline.py). Shows per-player physical stats, team
+ * formation, GK positioning, and links to highlight clips.
+ * Coach-only — purely a read view here.
+ */
+function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
+  const [doc, setDoc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [clips, setClips] = useState([]);
+
+  useEffect(() => {
+    if (!window.fbDb || !game?.id) { setLoading(false); return; }
+    let cancelled = false;
+    const ref = window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(game.id)
+      .collection('analytics').doc('v1');
+    ref.get()
+      .then(snap => { if (!cancelled) { setDoc(snap.exists ? snap.data() : null); setLoading(false); } })
+      .catch(e => { if (!cancelled) { setErr(String(e)); setLoading(false); } });
+    const clipsRef = window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(game.id).collection('clips');
+    clipsRef.get()
+      .then(qs => { if (!cancelled) setClips(qs.docs.map(d => d.data())); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [game?.id]);
+
+  const playerName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return pid || '—';
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center text-stone-300">
+        Loading analytics…
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
+      <div className="sticky top-0 bg-stone-950 border-b border-stone-800 px-4 py-3 flex items-center justify-between z-10">
+        <h2 className="font-display text-lg">📊 ANALYTICS — {game.opponent}</h2>
+        <button onClick={onClose} className="text-stone-400 text-sm">CLOSE ✕</button>
+      </div>
+
+      {err && (
+        <div className="m-4 p-3 bg-red-900/40 border border-red-800 rounded-xl text-sm text-red-200">
+          Error loading analytics: {err}
+        </div>
+      )}
+
+      {!doc && !err && (
+        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300 space-y-2">
+          <div className="font-bold">No analytics generated yet for this game.</div>
+          <div className="text-stone-400">
+            To generate analytics, calibrate the field (if not already), then on your
+            Mac run:
+          </div>
+          <pre className="bg-black/60 p-2 rounded text-xs overflow-x-auto">
+{`cd ~/match-tracker
+pip install -r post_game/requirements.txt
+python -m post_game.cli run \\
+  --game-id ${game.id} \\
+  --field-name "${game.fieldName || '<your-field>'}"`}
+          </pre>
+          <div className="text-stone-500 text-xs">
+            Results land here automatically once the run finishes.
+          </div>
+        </div>
+      )}
+
+      {doc && (
+        <div className="p-4 space-y-5 max-w-3xl mx-auto">
+          {/* Summary */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-2">Summary</div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>Players analyzed: <strong>{(doc.player_stats || []).length}</strong></div>
+              <div>Clips: <strong>{doc.clip_count ?? clips.length}</strong></div>
+              <div>Field: <strong>{doc.field_name || '—'}</strong></div>
+              <div>Generated: <strong>{doc.generated_at_ms ? new Date(doc.generated_at_ms).toLocaleString() : '—'}</strong></div>
+            </div>
+          </section>
+
+          {/* Player physical stats */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-2">Per-Player Physical Stats</div>
+            {(doc.player_stats || []).length === 0 ? (
+              <div className="text-sm text-stone-400">No player stats.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-stone-500 border-b border-stone-800">
+                      <th className="text-left py-1 pr-2">Player</th>
+                      <th className="text-right py-1 px-2">Min</th>
+                      <th className="text-right py-1 px-2">Dist (m)</th>
+                      <th className="text-right py-1 px-2">Top (km/h)</th>
+                      <th className="text-right py-1 px-2">Sprints</th>
+                      <th className="text-right py-1 px-2">Att%</th>
+                      <th className="text-right py-1 px-2">Mid%</th>
+                      <th className="text-right py-1 px-2">Def%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...(doc.player_stats || [])]
+                      .sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0))
+                      .map(s => (
+                        <tr key={s.player_id} className="border-b border-stone-800/50">
+                          <td className="py-1 pr-2 truncate max-w-[140px]">{playerName(s.player_id)}</td>
+                          <td className="text-right px-2">{(s.minutes_played || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.distance_m || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{((s.top_speed_ms || 0) * 3.6).toFixed(1)}</td>
+                          <td className="text-right px-2">{s.sprint_count || 0}</td>
+                          <td className="text-right px-2">{(s.pct_attacking_third || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.pct_middle_third || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.pct_defensive_third || 0).toFixed(0)}</td>
+                        </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Identity confidence */}
+          {(doc.identity_assignments || []).some(a => a.status === 'review') && (
+            <section className="bg-amber-950/40 border border-amber-800 rounded-2xl p-4">
+              <div className="text-xs text-amber-400 uppercase mb-2">Identity Review Needed</div>
+              <div className="text-xs text-amber-200 mb-2">
+                {(doc.identity_assignments || []).filter(a => a.status === 'review').length} track(s) below auto-assign threshold.
+              </div>
+              <ul className="text-xs text-amber-100 space-y-1">
+                {(doc.identity_assignments || [])
+                  .filter(a => a.status === 'review')
+                  .slice(0, 10)
+                  .map(a => (
+                    <li key={a.track_id}>
+                      Track #{a.track_id} → {playerName(a.player_id)} (conf {(a.confidence * 100).toFixed(0)}%)
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
+
+          {/* Formation */}
+          {(doc.formation_snapshots || []).length > 0 && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+              <div className="text-xs text-stone-500 uppercase mb-2">Formation by Period</div>
+              {doc.formation_snapshots.map(f => (
+                <div key={f.period} className="text-sm py-1">
+                  Period {f.period}: <strong>{f.label}</strong>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {/* GK positioning */}
+          {(doc.gk_positions || []).length > 0 && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+              <div className="text-xs text-stone-500 uppercase mb-2">Goalkeeper Positioning</div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-stone-500 border-b border-stone-800">
+                    <th className="text-left py-1 pr-2">Event</th>
+                    <th className="text-left py-1 px-2">GK</th>
+                    <th className="text-right py-1 px-2">Dist line (m)</th>
+                    <th className="text-right py-1 px-2">Lateral (m)</th>
+                    <th className="text-right py-1 px-2">On angle?</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {doc.gk_positions.map(g => (
+                    <tr key={g.event_id} className="border-b border-stone-800/50">
+                      <td className="py-1 pr-2">{g.event_type} P{g.period} {Math.floor(g.elapsed / 60)}'</td>
+                      <td className="px-2 truncate max-w-[120px]">{playerName(g.gk_player_id)}</td>
+                      <td className="text-right px-2">{(g.distance_from_goal_line_m || 0).toFixed(1)}</td>
+                      <td className="text-right px-2">{(g.lateral_offset_from_goal_center_m || 0).toFixed(1)}</td>
+                      <td className="text-right px-2">{g.on_correct_angle == null ? '—' : g.on_correct_angle ? '✓' : '✗'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {/* Clips */}
+          {clips.length > 0 && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+              <div className="text-xs text-stone-500 uppercase mb-2">Highlight Clips</div>
+              <div className="grid grid-cols-1 gap-2">
+                {clips.map(c => (
+                  <a
+                    key={c.eventId}
+                    href={c.r2Url || '#'}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between bg-stone-800/50 rounded-lg px-3 py-2 text-sm hover:bg-stone-800"
+                  >
+                    <span>
+                      <strong>{c.eventType}</strong> · P{c.period} {Math.floor((c.elapsed || 0) / 60)}' · {playerName(c.playerId)}
+                    </span>
+                    <span className="text-xs text-lime-400">{c.r2Url ? 'WATCH ▶' : 'pending'}</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- GAME DETAIL ---------- */
 function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
@@ -4204,6 +4688,8 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
   const [liveErr, setLiveErr] = useState(null);
   const [showLive, setShowLive] = useState(false);
   const [showLiveCreds, setShowLiveCreds] = useState(false);
+  const [showCalibrate, setShowCalibrate] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const goLive = () => {
     if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
@@ -4535,6 +5021,60 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
           </>
         )}
       </div>
+
+      {/* Field calibration for post-game analytics */}
+      {game.videoUrl && (
+        <div className="px-4 pt-3">
+          <button
+            onClick={() => setShowCalibrate(true)}
+            className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+          >
+            <span className="text-sm font-bold">🎯 FIELD CALIBRATION</span>
+            <span className="text-xs text-stone-400">
+              {game.fieldName ? `✓ ${game.fieldName}` : 'NOT SET — TAP TO CALIBRATE'}
+            </span>
+          </button>
+          <p className="text-[10px] text-stone-500 mt-1 text-center">
+            One-time per field. Required for post-game analytics (distance, heatmaps, formation).
+          </p>
+        </div>
+      )}
+
+      {showCalibrate && game.videoUrl && (
+        <FieldCalibrationModal
+          videoUrl={game.videoUrl}
+          initialFieldName={game.fieldName || ''}
+          initialLengthM={50}
+          initialWidthM={35}
+          onCancel={() => setShowCalibrate(false)}
+          onSave={(payload) => {
+            onUpdateGame({ fieldName: payload.name });
+            setShowCalibrate(false);
+          }}
+        />
+      )}
+
+      {/* Post-game analytics tab */}
+      {game.videoUrl && (
+        <div className="px-4 pt-2">
+          <button
+            onClick={() => setShowAnalytics(true)}
+            className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+          >
+            <span className="text-sm font-bold">📊 ANALYTICS</span>
+            <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
+          </button>
+        </div>
+      )}
+
+      {showAnalytics && (
+        <AnalyticsPanel
+          game={game}
+          roster={roster}
+          onClose={() => setShowAnalytics(false)}
+          onSeekVideo={(t) => { setSeekTo(t); setShowVideo(true); setShowAnalytics(false); }}
+        />
+      )}
 
       <div className="px-4 pt-5">
         <h3 className="font-display text-xl mb-2">TIMELINE</h3>
@@ -6203,6 +6743,125 @@ function PublicVideoToggle({ url, game, label }) {
   );
 }
 
+/* ---- PublicAnalyticsCard: anonymized post-game stats for finished matches ----
+ * Reads teams/main/games/<id>/analytics/v1 + clips/*. Names shown as
+ * "First #Number" only (no last names) to match site privacy rules.
+ */
+function PublicAnalyticsCard({ game, roster }) {
+  const [analytics, setAnalytics] = useState(null);
+  const [clips, setClips] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!window.fbDb || !game?.id) { setLoaded(true); return; }
+    let cancelled = false;
+    const gref = window.fbDb.collection('teams').doc('main').collection('games').doc(game.id);
+    Promise.all([
+      gref.collection('analytics').doc('v1').get(),
+      gref.collection('clips').get(),
+    ])
+      .then(([aSnap, cQs]) => {
+        if (cancelled) return;
+        setAnalytics(aSnap.exists ? aSnap.data() : null);
+        setClips(cQs.docs.map(d => d.data()));
+        setLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
+  }, [game?.id]);
+
+  if (!loaded) return null;
+  if (!analytics && clips.length === 0) return null;
+
+  const shortName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return '—';
+    const first = (p.name || '').split(/\s+/)[0] || p.name || 'Player';
+    return `${first} #${p.number || '?'}`;
+  };
+
+  const stats = analytics?.player_stats || [];
+  const topDistance = [...stats].sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0)).slice(0, 5);
+  const topSpeed = [...stats].sort((a, b) => (b.top_speed_ms || 0) - (a.top_speed_ms || 0)).slice(0, 5);
+
+  return (
+    <div className="px-4 pt-4 max-w-2xl mx-auto">
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-lg">📊 MATCH ANALYTICS</h3>
+          <span className="text-[10px] text-stone-500 tracking-wider">POST-GAME</span>
+        </div>
+
+        {topDistance.length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Most Distance Covered</div>
+            <ol className="space-y-1">
+              {topDistance.map((s, i) => (
+                <li key={s.player_id} className="flex items-center justify-between text-sm">
+                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
+                  <span className="font-bold tabular-nums text-lime-400">{(s.distance_m || 0).toFixed(0)} m</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {topSpeed.length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Fastest Sprinters</div>
+            <ol className="space-y-1">
+              {topSpeed.map((s, i) => (
+                <li key={s.player_id} className="flex items-center justify-between text-sm">
+                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
+                  <span className="font-bold tabular-nums text-lime-400">{((s.top_speed_ms || 0) * 3.6).toFixed(1)} km/h</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {(analytics?.formation_snapshots || []).length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Formation</div>
+            <div className="flex gap-3 text-sm">
+              {analytics.formation_snapshots.map(f => (
+                <div key={f.period} className="bg-stone-800/50 rounded-lg px-3 py-1">
+                  P{f.period}: <strong>{f.label}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {clips.length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Highlight Clips</div>
+            <div className="grid grid-cols-1 gap-2">
+              {clips
+                .filter(c => c.r2Url)
+                .sort((a, b) => (a.period - b.period) || (a.elapsed - b.elapsed))
+                .map(c => (
+                  <a
+                    key={c.eventId}
+                    href={c.r2Url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-between bg-stone-800/50 rounded-lg px-3 py-2 text-sm hover:bg-stone-800"
+                  >
+                    <span className="truncate">
+                      <strong>{c.eventType}</strong> · P{c.period} {Math.floor((c.elapsed || 0) / 60)}' · {shortName(c.playerId)}
+                    </span>
+                    <span className="text-xs text-lime-400 shrink-0 ml-2">WATCH ▶</span>
+                  </a>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LiveScorePage({ gameId }) {
   const [game, setGame] = useState(null);
   const [roster, setRoster] = useState([]);
@@ -6280,6 +6939,9 @@ function LiveScorePage({ gameId }) {
             label="🎥 WATCH 360° VIDEO"
           />
         </div>
+      )}
+      {game.status === 'finished' && (
+        <PublicAnalyticsCard game={game} roster={roster} />
       )}
     </div>
   );
@@ -6373,7 +7035,7 @@ function PublicHomePage() {
                 href="./?coach"
                 className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
               >
-                <span>🔑</span><span>COACH</span>
+                <span>🪑</span><span>DUGOUT</span>
               </a>
             </div>
             <div className="flex items-center gap-4 mt-12">
@@ -6407,6 +7069,9 @@ function PublicHomePage() {
               <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
             </div>
           )}
+          {featured.status === 'finished' && (
+            <PublicAnalyticsCard game={featured} roster={roster} />
+          )}
         </>
       ) : (
         <div className="stripes-bg text-white px-5 pt-16 pb-12 relative">
@@ -6425,7 +7090,7 @@ function PublicHomePage() {
               href="./?coach"
               className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
             >
-              <span>🔑</span><span>COACH</span>
+              <span>🪑</span><span>DUGOUT</span>
             </a>
           </div>
           <div className="flex items-center gap-4 mt-12">
@@ -6716,6 +7381,12 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
+
+
 
 
 
