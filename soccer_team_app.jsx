@@ -6265,7 +6265,7 @@ function PublicHomePage() {
                 href="./?coach"
                 className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
               >
-                <span>🔑</span><span>COACH</span>
+                <span>🪑</span><span>DUGOUT</span>
               </a>
             </div>
             <div className="flex items-center gap-4 mt-12">
@@ -6317,7 +6317,7 @@ function PublicHomePage() {
               href="./?coach"
               className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
             >
-              <span>🔑</span><span>COACH</span>
+              <span>🪑</span><span>DUGOUT</span>
             </a>
           </div>
           <div className="flex items-center gap-4 mt-12">
