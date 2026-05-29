@@ -3324,12 +3324,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
-  // When entering fullscreen on a portrait device, lock the video frame to
-  // landscape-clockwise via CSS rotation. Stays locked even if the user flips
-  // the phone — only exiting fullscreen returns to portrait layout. Prevents
-  // gyro/baseline jitter from constant orientationchange events.
+  // Current page orientation angle (0/90/180/270). Used in fullscreen to keep
+  // the video locked to landscape-primary regardless of iOS auto-rotate.
+  const [screenAngle, setScreenAngle] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+    const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+    const norm = ((a % 360) + 360) % 360;
+    return norm;
+  });
+  // When entering fullscreen on a touch device, lock the video frame to
+  // landscape-primary via CSS rotation that compensates for the current page
+  // angle — so the video stays landscape no matter how iOS rotates the page.
   const [fullscreenRotated, setFullscreenRotated] = useState(false);
   const rotatedRef = useRef(false);
+  // Live page-angle ref so pointer/gyro handlers (inside the long-lived
+  // useEffect closure) can read the current orientation without re-binding.
+  const screenAngleRef = useRef(0);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -3347,19 +3357,29 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     if (next) {
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
-      // Try the proper API first (Android Chrome, some desktops).
-      try { screen.orientation?.lock?.('landscape-primary').catch(() => {}); } catch(e) {}
-      // Touch device + currently portrait → apply CSS-rotation fallback so iOS
-      // Safari (which ignores orientation.lock) still shows landscape video.
+      // 1) Try real Fullscreen API on the wrapper. On iPad / Android Chrome /
+      //    iOS 16.4+ Safari this enters TRUE fullscreen (hides PWA status bar).
+      try {
+        const el = wrapperRef.current;
+        const req = el?.requestFullscreen || el?.webkitRequestFullscreen;
+        if (req) { const p = req.call(el); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) {}
+      // 2) Lock orientation. Works on Android, and inside real fullscreen on iOS 16.4+.
+      try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) {}
+      // 3) CSS-rotation fallback for iOS Safari PWA (ignores both APIs above).
+      //    Always apply on touch devices — the wrapperStyle below compensates
+      //    for the current page angle so the result is always landscape-primary.
       const isTouch = (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
-      const portraitNow = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
-      const shouldRotate = isTouch && portraitNow;
-      setFullscreenRotated(shouldRotate);
-      rotatedRef.current = shouldRotate;
+      setFullscreenRotated(isTouch);
+      rotatedRef.current = isTouch;
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
-      try { screen.orientation?.unlock?.(); } catch(e) {}
+      try { screen.orientation?.unlock?.(); } catch (e) {}
+      try {
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } catch (e) {}
       setFullscreenRotated(false);
       rotatedRef.current = false;
     }
@@ -3424,17 +3444,23 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     };
   }, [isFullscreen]);
 
-  // Track orientation for portrait-fullscreen letterboxing.
-  // SKIPPED while in fullscreen so a 180° phone flip doesn't re-rotate the
-  // video or reset the gyro baseline mid-watch.
+  // Track orientation. Always-on so fullscreen wrapperStyle can compensate
+  // for iOS auto-rotate and keep the video locked to landscape-primary.
+  // Gyro baseline only resets when NOT in fullscreen (avoid mid-watch jitter).
   useEffect(() => {
-    if (isFullscreen) return;
     const onOrient = () => {
+      const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      const norm = ((a % 360) + 360) % 360;
+      screenAngleRef.current = norm;
+      setScreenAngle(norm);
       setIsPortrait(window.innerHeight > window.innerWidth);
-      if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
+      if (!isFullscreen && containerRef.current?._resetGyroBaseline) {
+        containerRef.current._resetGyroBaseline();
+      }
     };
     window.addEventListener('resize', onOrient);
     window.addEventListener('orientationchange', onOrient);
+    onOrient(); // seed screenAngleRef on mount
     return () => {
       window.removeEventListener('resize', onOrient);
       window.removeEventListener('orientationchange', onOrient);
@@ -3548,13 +3574,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         const st = stateRef.current;
         if (pointers.size === 1 && dragLast) {
           let dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
-          // When the wrapper is CSS-rotated 90° cw, pointer events arrive in
-          // unrotated screen space — remap so drags feel correct on the
-          // rotated content (screen +X → content +Y, screen +Y → content -X).
+          // The wrapper may be CSS-rotated to keep the video locked to
+          // landscape-primary regardless of the page's actual orientation.
+          // Pointer events arrive in unrotated screen space, so we apply the
+          // INVERSE of the wrapper's rotation to get the delta in content space.
+          // Wrapper rotation by screenAngle: 0→+90°, 90→ 0, 180→−90°, 270→180°.
           if (rotatedRef.current) {
             const sx = dx, sy = dy;
-            dx = -sy;
-            dy = sx;
+            const a = screenAngleRef.current;
+            if (a === 0) {           // wrapper rotated +90° CW → inverse 90° CCW
+              dx = sy;  dy = -sx;
+            } else if (a === 180) {  // wrapper rotated −90° (CCW) → inverse 90° CW
+              dx = -sy; dy = sx;
+            } else if (a === 270) {  // wrapper rotated 180° → inverse 180°
+              dx = -sx; dy = -sy;
+            }
+            // a === 90: no rotation → leave dx/dy as-is
           }
           const sensitivity = 0.1 * (st.fov / 75);
           const dLon = -dx * sensitivity;
@@ -3813,16 +3848,34 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return { home, away };
   }, [events, currentTime]);
 
+  // Wrapper style. In rotated fullscreen we compensate for the current page
+  // orientation so the video is ALWAYS displayed in landscape-primary physical
+  // orientation (camera lens at top of landscape view), regardless of whether
+  // iOS rotation lock is on or off, and regardless of how the user holds the
+  // phone. Uses dvw/dvh so the wrapper extends behind the iOS PWA status bar.
+  const baseFs = { position: 'fixed', top: 0, left: 0, zIndex: 99999, background: '#000', borderRadius: 0 };
   const wrapperStyle = isFullscreen
     ? (fullscreenRotated
-        // Rotate 90° clockwise around top-left, then shift right by 100vw so it
-        // fills the screen. Swap width/height so the rotated content matches
-        // viewport dimensions exactly.
-        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw',
-            transform: 'translate(100vw, 0) rotate(90deg)', transformOrigin: 'top left',
-            zIndex: 99999, background: '#000', borderRadius: 0 }
-        : { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-            zIndex: 99999, background: '#000', borderRadius: 0 })
+        ? (() => {
+            const a = screenAngle;
+            if (a === 0) {
+              // Page is portrait → rotate 90° CW
+              return { ...baseFs, width: '100dvh', height: '100dvw',
+                transform: 'translate(100dvw, 0) rotate(90deg)', transformOrigin: 'top left' };
+            } else if (a === 90) {
+              // Page is landscape-primary → no CSS rotation needed
+              return { ...baseFs, width: '100dvw', height: '100dvh' };
+            } else if (a === 180) {
+              // Page is portrait upside-down → rotate -90° to get landscape-primary
+              return { ...baseFs, width: '100dvh', height: '100dvw',
+                transform: 'translate(0, 100dvh) rotate(-90deg)', transformOrigin: 'top left' };
+            } else {
+              // Page is landscape-secondary (270°) → rotate 180° to flip back to primary
+              return { ...baseFs, width: '100dvw', height: '100dvh',
+                transform: 'translate(100dvw, 100dvh) rotate(180deg)', transformOrigin: 'top left' };
+            }
+          })()
+        : { ...baseFs, width: '100dvw', height: '100dvh' })
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
 
   const playerNode = (
@@ -3834,7 +3887,10 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         onClick={(e) => { e.stopPropagation(); toggleFullscreen(); showControls(); }}
         className={`absolute z-20 ${isFullscreen ? 'w-11 h-11' : 'w-9 h-9'} rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${(!isFullscreen || controlsVisible) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         style={{
-          top: isFullscreen ? 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' : '8px',
+          // In rotated fullscreen the wrapper is already oriented so its top-right
+          // maps to the landscape view's top-right — plain 12px puts the button
+          // flush at landscape top-right (no safe-area-inset gap).
+          top: isFullscreen ? (fullscreenRotated ? '12px' : 'max(env(safe-area-inset-top, 0px) + 8px, 12px)') : '8px',
           right: isFullscreen ? '12px' : (onClose ? '44px' : '8px'),
         }}
         aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
@@ -3881,7 +3937,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         // Approximated solid for the tiny fillet pieces (gradient is subtle, this is invisible at 8px).
         const filletColor = 'rgba(22,22,25,0.91)';
         return (
-          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? (fullscreenRotated ? 'top-[14px] left-3' : 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3') : 'top-2 left-2'}`}>
             {/* Row 1 — score (rounded all corners) */}
             <div
               className="rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
@@ -3967,15 +4023,32 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         preload="auto"
         style={{ display: 'none' }}
       />
-      {/* Controls */}
-      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
-        <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
-          {playing ? '⏸' : '▶'}
+      {/* Controls — slim bar with YouTube-style SVG icons */}
+      <div className={`px-3 py-1.5 flex items-center gap-1.5 bg-black/85 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),6px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
+        {/* Play / Pause */}
+        <button onClick={togglePlay} className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label={playing ? 'Pause' : 'Play'}>
+          {playing ? (
+            <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          )}
         </button>
+        {/* Rewind 10s */}
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10); }}
-          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏪</button>
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Rewind 10 seconds">
+          <svg viewBox="0 0 24 24" className="w-6 h-6">
+            <path d="M11 5V2L6 6l5 4V7a6 6 0 1 1-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <text x="9" y="18" fontSize="7" fontWeight="700" fill="currentColor">10</text>
+          </svg>
+        </button>
+        {/* Forward 10s */}
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10); }}
-          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏩</button>
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Forward 10 seconds">
+          <svg viewBox="0 0 24 24" className="w-6 h-6">
+            <path d="M13 5V2l5 4-5 4V7a6 6 0 1 0 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <text x="6" y="18" fontSize="7" fontWeight="700" fill="currentColor">10</text>
+          </svg>
+        </button>
         <div className="flex-1 relative">
           <input
             type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
@@ -4001,8 +4074,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             );
           })}
         </div>
-        <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
-        <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
+        <span className="text-[11px] text-white/80 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+        {/* Mute / Unmute — YouTube-style speaker icon */}
+        <button onClick={toggleMute} className="w-9 h-9 rounded-full flex items-center justify-center text-white active:scale-95" aria-label={muted ? 'Unmute' : 'Mute'}>
+          {muted ? (
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+              <path d="M3 9v6h4l5 4V5L7 9H3z"/>
+              <path d="M16.5 9l5 6m0-6l-5 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+              <path d="M3 9v6h4l5 4V5L7 9H3z"/>
+              <path d="M15.5 8.5c1.5 1 2.5 2.5 2.5 3.5s-1 2.5-2.5 3.5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+              <path d="M18 6c2.5 1.5 4 4 4 6s-1.5 4.5-4 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+            </svg>
+          )}
+        </button>
         {!lockDots && (
           <button
             onClick={() => setDotsMode(dotsMode === 'all' ? 'goals' : 'all')}
@@ -4012,6 +4099,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
           </button>
         )}
+        {/* Gyro toggle — compass-style SVG */}
         <button onClick={() => {
           const c = containerRef.current;
           if (!c) return;
@@ -4022,8 +4110,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             if (c._enableGyro) c._enableGyro();
             setGyroActive(true);
           }
-        }} className={`text-[10px] font-bold px-2 py-1 rounded ${gyroActive ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
-          🔄 GYRO
+        }}
+          className={`w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${gyroActive ? 'bg-lime-500 text-black' : 'text-white'}`}
+          aria-label={gyroActive ? 'Disable gyro' : 'Enable gyro'}
+          title={gyroActive ? 'Gyro on — tap to disable' : 'Gyro off — tap to enable'}
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <polygon points="12,6 14.5,12 12,18 9.5,12" fill="currentColor" stroke="none"/>
+          </svg>
         </button>
       </div>
     </div>
