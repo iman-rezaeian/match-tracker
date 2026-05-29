@@ -3976,52 +3976,49 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       )}
       {/* Score overlay — modern broadcast scorebug */}
       {gameInfo && (() => {
-        // TV-style status pill: derive from playback, not from stored game state.
-        // FT only when video has actually ended.
-        let statusLabel, statusTone, showPulse = false;
+        // Status text: half + minute (LIVE shown as a red blinking dot, not text).
+        let statusLabel;
         if (isFinished && videoEnded) {
           statusLabel = 'FT';
-          statusTone = 'bg-stone-700/90 text-stone-100';
-        } else if (isLive) {
-          statusLabel = `LIVE · ${displayedMinute}'`;
-          statusTone = 'bg-red-600/95 text-white';
-          showPulse = true;
         } else {
           statusLabel = inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`;
-          statusTone = 'bg-stone-800/90 text-white';
         }
+        const showLiveDot = isLive && !(isFinished && videoEnded);
         return (
-          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
-            {/* Row 1 — score (full width) */}
+          <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
             <div
-              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+              className="rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md flex items-center"
               style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
             >
-              <div className="flex items-stretch text-[11px]">
-                {/* Home */}
-                <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
-                  <div className="w-[6px] h-5 rounded-sm mr-2" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
-                  <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
+              {/* Live indicator — bigger blinking red dot on the left */}
+              {showLiveDot && (
+                <div className="pl-2.5 pr-1 flex items-center">
+                  <span className="relative flex items-center justify-center">
+                    <span className="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping" />
+                    <span className="relative w-2.5 h-2.5 rounded-full bg-red-500" style={{ boxShadow: '0 0 8px rgba(239,68,68,0.9)' }} />
+                  </span>
                 </div>
-                {/* Score */}
-                <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
-                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.home}</span>
-                  <span className="text-white/30 text-xs">–</span>
-                  <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.away}</span>
-                </div>
-                {/* Away */}
-                <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
-                  <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
-                  <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
-                </div>
+              )}
+              {/* Home */}
+              <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
+                <div className="w-[6px] h-5 rounded-sm mr-2" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
+                <span className="font-bold tracking-wider truncate max-w-[5rem] text-white text-[11px]" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
               </div>
-            </div>
-            {/* Row 2 — status pill, narrower than the score row, slight overlap */}
-            <div
-              className={`mt-[-2px] px-4 py-1 rounded-b-lg border border-t-0 border-white/15 shadow-lg backdrop-blur-md flex items-center gap-1.5 ${statusTone}`}
-            >
-              {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-              <span className="font-display tabular-nums text-[13px] font-extrabold tracking-[0.15em] leading-none">{statusLabel}</span>
+              {/* Score */}
+              <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+                <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.home}</span>
+                <span className="text-white/30 text-xs">–</span>
+                <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.away}</span>
+              </div>
+              {/* Away */}
+              <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
+                <span className="font-bold tracking-wider truncate max-w-[5rem] text-white text-[11px]" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
+                <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
+              </div>
+              {/* Status — half + minute (or FT) */}
+              <div className="pl-2 pr-3 py-1.5 flex items-center bg-black/30 border-l border-white/10">
+                <span className="font-display tabular-nums text-white text-[12px] font-extrabold tracking-[0.12em] leading-none" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>{statusLabel}</span>
+              </div>
             </div>
           </div>
         );
@@ -7692,6 +7689,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
