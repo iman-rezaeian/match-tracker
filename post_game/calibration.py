@@ -79,8 +79,7 @@ def calibration_to_doc(
     field_length_m: float,
     field_width_m: float,
     video_frame_size: tuple[int, int],
-) -> FieldCalibration:
-    H = compute_homography(src_points_px, field_length_m, field_width_m)
+) -> FieldCalibration:    H = compute_homography(src_points_px, field_length_m, field_width_m)
     dst = [(0.0, 0.0), (field_length_m, 0.0), (field_length_m, field_width_m), (0.0, field_width_m)]
     return FieldCalibration(
         name=name,
@@ -91,3 +90,49 @@ def calibration_to_doc(
         homography=H.tolist(),
         video_frame_size=(int(video_frame_size[0]), int(video_frame_size[1])),
     )
+
+
+def aim_from_calibration(
+    src_points_px: list[tuple[float, float]],
+    eq_w: int,
+    eq_h: int,
+    fov_margin: float = 1.15,
+    max_fov_deg: float = 110.0,
+    min_fov_deg: float = 60.0,
+) -> tuple[float, float, float]:
+    """Compute (lon_deg, lat_deg, fov_deg) of a virtual camera that just
+    covers the calibration corners with a small margin.
+
+    Each equirectangular pixel maps to a unit sphere direction. We average
+    the four direction vectors (Cartesian) to get the field center, then
+    measure the max angular distance from any corner to that center to set
+    the FOV. Cartesian averaging handles the seam (longitude wrap) naturally.
+    """
+    if eq_w <= 0 or eq_h <= 0 or len(src_points_px) != 4:
+        return (0.0, 0.0, max_fov_deg)
+
+    # equirect pixel -> (lon, lat) radians
+    pts_dir = []
+    for (px, py) in src_points_px:
+        lon = (px / eq_w - 0.5) * 2.0 * np.pi
+        lat = (0.5 - py / eq_h) * np.pi
+        cl, sl = np.cos(lat), np.sin(lat)
+        pts_dir.append(np.array([cl * np.sin(lon), sl, cl * np.cos(lon)]))
+    pts_dir = np.stack(pts_dir)
+
+    center = pts_dir.mean(axis=0)
+    center /= np.linalg.norm(center) + 1e-12
+
+    # back to lon/lat
+    lat_c = np.arcsin(np.clip(center[1], -1.0, 1.0))
+    lon_c = np.arctan2(center[0], center[2])
+
+    # angular radius = max angle from center to any corner
+    cos_angles = np.clip(pts_dir @ center, -1.0, 1.0)
+    max_angle_deg = float(np.degrees(np.arccos(cos_angles.min())))
+
+    # Diagonal half-angle ≈ angular radius. Full FOV needs *2 * margin and
+    # we use horizontal FOV ~= diagonal angle (good enough for our 16:9 crop).
+    fov_deg = max(min_fov_deg, min(max_fov_deg, 2.0 * max_angle_deg * fov_margin))
+
+    return (float(np.degrees(lon_c)), float(np.degrees(lat_c)), float(fov_deg))

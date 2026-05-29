@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config, firestore_io
-from .calibration import pixel_to_field_batch
+from .calibration import aim_from_calibration, pixel_to_field_batch
 from .detection import Detector
 from .formation import compute_formation
 from .gk_positioning import compute_gk_positions
@@ -53,6 +53,15 @@ def run(game_id: str, field_name: str | None = None) -> dict:
     eq_w, eq_h = meta["width"], meta["height"]
     log.info("Video: %dx%d @ %.2f fps (%.0fs)", eq_w, eq_h, meta["fps"], meta["duration_s"])
 
+    # 1b. Aim the virtual camera at OUR field (away from the back-hemisphere
+    # field). Computed from the calibration corners — single aim for the
+    # whole game, no panning. This eliminates the "two fields" problem at
+    # detection time, so the model never sees the other pitch.
+    aim_lon, aim_lat, aim_fov = aim_from_calibration(
+        field_cal.src_points_px, eq_w, eq_h,
+    )
+    log.info("Field aim: lon=%.1f° lat=%.1f° fov=%.1f°", aim_lon, aim_lat, aim_fov)
+
     # 2. Detection + tracking on perspective crops
     detector = Detector()
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
@@ -65,7 +74,11 @@ def run(game_id: str, field_name: str | None = None) -> dict:
     track_jersey_samples: dict[int, list[np.ndarray]] = {}
 
     log.info("Stage 2/6: detection + tracking...")
-    for sample in iter_frames(str(video_path), sample_rate=config.SAMPLE_RATE):
+    for sample in iter_frames(
+        str(video_path),
+        sample_rate=config.SAMPLE_RATE,
+        aim=(aim_lon, aim_lat, aim_fov),
+    ):
         det_lists = detector.detect_persons([sample.crop])
         dets = det_lists[0] if det_lists else []
         for d in dets:
@@ -92,8 +105,41 @@ def run(game_id: str, field_name: str | None = None) -> dict:
     foot_px = tracks_df[["foot_x_eq", "foot_y_eq"]].to_numpy() if not tracks_df.empty else np.zeros((0, 2))
     xy = pixel_to_field_batch(H, foot_px)
     if len(xy):
-        tracks_df["x_m"] = np.clip(xy[:, 0], -2.0, field_cal.length_m + 2.0)
-        tracks_df["y_m"] = np.clip(xy[:, 1], -2.0, field_cal.width_m + 2.0)
+        tracks_df["x_m"] = xy[:, 0]
+        tracks_df["y_m"] = xy[:, 1]
+
+        # 3b. OFF-FIELD FILTER — drop spectators, bench kids, parents,
+        # opposing-team players on the other pitch. 1.5 m buffer outside
+        # touchlines so throw-in run-ups and goal-line saves aren't cut.
+        L, W = field_cal.length_m, field_cal.width_m
+        on_field = (
+            (tracks_df["x_m"] >= -1.5) & (tracks_df["x_m"] <= L + 1.5)
+            & (tracks_df["y_m"] >= -1.5) & (tracks_df["y_m"] <= W + 1.5)
+        )
+        dropped_off = int((~on_field).sum())
+        tracks_df = tracks_df.loc[on_field].reset_index(drop=True)
+
+        # 3c. TOP-N PER FRAME — soccer has ≤ 16 people on the field (7v7 + ref
+        # + occasional coach for injury). Cap at 20 per frame ranked by
+        # (track lifetime × detection confidence) so established tracks beat
+        # one-off background detections that survived the off-field filter.
+        if not tracks_df.empty and "track_id" in tracks_df.columns:
+            lifetime = tracks_df.groupby("track_id").size().rename("track_lifetime")
+            tracks_df = tracks_df.merge(lifetime, on="track_id")
+            conf_col = "confidence" if "confidence" in tracks_df.columns else None
+            score = tracks_df["track_lifetime"].astype(float)
+            if conf_col:
+                score = score * tracks_df[conf_col].astype(float).clip(lower=0.1)
+            tracks_df["_rank_score"] = score
+            ranked = tracks_df.sort_values(["frame_index", "_rank_score"], ascending=[True, False])
+            top_n = ranked.groupby("frame_index", group_keys=False).head(20)
+            dropped_topn = len(tracks_df) - len(top_n)
+            tracks_df = top_n.drop(columns=["_rank_score", "track_lifetime"]).reset_index(drop=True)
+        else:
+            dropped_topn = 0
+
+        log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
+                 dropped_off, dropped_topn, len(tracks_df))
 
     # 4. Team classification
     log.info("Stage 4/6: team classification...")
