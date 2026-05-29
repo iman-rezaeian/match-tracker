@@ -3475,29 +3475,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       const geometry = new THREE.SphereGeometry(500, 64, 40);
       geometry.scale(-1, 1, 1);
 
-      const video = document.createElement('video');
-      // iOS Safari is strict: these MUST be HTML attributes (not just JS properties)
-      // set BEFORE src/HLS attach, or the video stays black inside a WebGL texture.
-      video.setAttribute('playsinline', '');
-      video.setAttribute('webkit-playsinline', '');
-      video.setAttribute('muted', '');
-      video.setAttribute('crossorigin', 'anonymous');
-      video.crossOrigin = 'anonymous';
-      video.playsInline = true;
-      video.loop = false;
-      video.muted = true;
-      video.defaultMuted = true;
-      video.preload = 'auto';
-      // iOS also won't decode frames into a VideoTexture unless the <video>
-      // element is actually attached to the DOM. Hide it behind the canvas.
-      video.style.position = 'absolute';
-      video.style.width = '1px';
-      video.style.height = '1px';
-      video.style.opacity = '0';
-      video.style.pointerEvents = 'none';
-      video.style.left = '-9999px';
-      container.appendChild(video);
-      videoRef.current = video;
+      const video = videoRef.current;
+      if (!video) return;
 
       // HLS (.m3u8) needs hls.js on non-Safari; plain MP4 just sets src directly.
       const isHls = /\.m3u8(\?|$)/i.test(videoUrl);
@@ -3890,6 +3869,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             ? { position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', width: '100vw', height: 'calc(100vw * 9 / 16)' }
             : { width: '100%', height: '100%' }
         }
+      />
+      {/* Hidden <video> element — MUST be in the DOM as JSX (not createElement) or
+          iOS Safari refuses to decode frames into the Three.js VideoTexture. */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        webkit-playsinline="true"
+        crossOrigin="anonymous"
+        preload="auto"
+        style={{ display: 'none' }}
       />
       {/* Controls */}
       <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
