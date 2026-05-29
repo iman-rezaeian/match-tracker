@@ -3341,10 +3341,16 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     if (next) {
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
+      // Lock to landscape-primary (clockwise 90°) like YouTube — prevents 180° flip
+      try { screen.orientation?.lock?.('landscape-primary').catch(() => {}); } catch(e) {}
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
+      // Unlock orientation when exiting fullscreen
+      try { screen.orientation?.unlock?.(); } catch(e) {}
     }
+    // Reset gyro baseline so it re-calibrates to the new orientation
+    if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
     setControlsVisible(true);
     return next;
   });
@@ -3364,6 +3370,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   useEffect(() => () => {
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
+    try { screen.orientation?.unlock?.(); } catch(e) {}
   }, []);
 
   const showControls = () => {
@@ -3405,7 +3412,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
 
   // Track orientation for portrait-fullscreen letterboxing
   useEffect(() => {
-    const onOrient = () => setIsPortrait(window.innerHeight > window.innerWidth);
+    const onOrient = () => {
+      setIsPortrait(window.innerHeight > window.innerWidth);
+      // Reset gyro baseline when device rotates so it doesn't jump
+      if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
+    };
     window.addEventListener('resize', onOrient);
     window.addEventListener('orientationchange', onOrient);
     return () => {
@@ -3584,15 +3595,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         if (screenAngle === 0 || screenAngle === 180) {
           // Portrait: alpha→yaw, beta→pitch
           dLon = -dAlpha;
-          dLat = -dBeta;
+          dLat = dBeta;
         } else if (screenAngle === 90) {
           // Landscape left (home button on right)
           dLon = -dAlpha;
-          dLat = dGamma;
+          dLat = -dGamma;
         } else {
           // Landscape right (home button on left, screenAngle === -90 or 270)
           dLon = -dAlpha;
-          dLat = -dGamma;
+          dLat = dGamma;
         }
 
         // Compute desired position (anchor + offset)
@@ -3637,6 +3648,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         gyroBaseBeta = null;
         gyroBaseGamma = null;
         window.removeEventListener('deviceorientation', onDeviceOrientation);
+      };
+      // Reset gyro baseline on orientation change (prevents jitter during fullscreen rotation)
+      container._resetGyroBaseline = () => {
+        gyroBaseAlpha = null;
+        gyroBaseBeta = null;
+        gyroBaseGamma = null;
       };
 
       // Render loop
