@@ -6247,26 +6247,40 @@ function PublicHomePage() {
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <div className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 flex items-center gap-2">
-        {window.fbUserInfo && (
-          <button
-            onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
-            aria-label="Sign out"
-            className="h-9 px-2 rounded-lg bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
-          >
-            {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-            <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
-          </button>
-        )}
-        <a
-          href="./?coach"
-          className={`bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 ${isCoachUser ? '' : 'hidden'}`}
-        >
-          🔑 COACH
-        </a>
-      </div>
       {featured ? (
         <>
+          <div className="stripes-bg text-white px-5 pt-16 pb-6 relative">
+            <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+              {window.fbUserInfo && (
+                <button
+                  onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                  aria-label="Sign out"
+                  className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+                >
+                  {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                  <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+                </button>
+              )}
+              <a
+                href="./?coach"
+                className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
+              >
+                <span>🔑</span><span>COACH</span>
+              </a>
+            </div>
+            <div className="flex items-center gap-4 mt-12">
+              <img
+                src="./stompers_logo.png"
+                alt=""
+                className="w-24 h-24 shrink-0 drop-shadow"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+              <div className="flex-1 min-w-0">
+                <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+                <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+              </div>
+            </div>
+          </div>
           <a href={`./?live=${featured.id}`} className="block">
             <LiveScoreboard game={featured} roster={roster} />
           </a>
@@ -6287,18 +6301,42 @@ function PublicHomePage() {
           )}
         </>
       ) : (
-        <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+2rem)] pb-12 text-center">
-          <img
-            src="./stompers_logo.png"
-            alt="LaSalle Stompers"
-            className="w-24 h-24 mx-auto mb-4 drop-shadow-lg"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-          <div className="font-display text-4xl text-lime-400">LASALLE STOMPERS</div>
-          <div className="text-white/60 text-sm font-bold tracking-widest mt-1">U10 BOYS · 2016 SQUAD</div>
-          <div className="mt-10 inline-block bg-white/10 rounded-2xl px-6 py-5">
-            <div className="font-display text-2xl">No live match right now</div>
-            <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
+        <div className="stripes-bg text-white px-5 pt-16 pb-12 relative">
+          <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+            {window.fbUserInfo && (
+              <button
+                onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                aria-label="Sign out"
+                className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+              >
+                {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+              </button>
+            )}
+            <a
+              href="./?coach"
+              className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
+            >
+              <span>🔑</span><span>COACH</span>
+            </a>
+          </div>
+          <div className="flex items-center gap-4 mt-12">
+            <img
+              src="./stompers_logo.png"
+              alt="LaSalle Stompers"
+              className="w-24 h-24 shrink-0 drop-shadow-lg"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+            <div className="flex-1 min-w-0">
+              <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+              <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+            </div>
+          </div>
+          <div className="mt-10 text-center">
+            <div className="inline-block bg-white/10 rounded-2xl px-6 py-5">
+              <div className="font-display text-2xl">No live match right now</div>
+              <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
+            </div>
           </div>
         </div>
       )}
