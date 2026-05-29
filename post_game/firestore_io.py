@@ -246,6 +246,14 @@ def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
     ).set(analytics)
 
 
+def write_game_calibration(game_id: str, calibration: dict[str, Any]) -> None:
+    """Merge the per-game calibration onto the game doc. Schema must match
+    what the PWA's FieldCalibrationModal writes — see _calibration_from_dict."""
+    _team_doc().collection("games").document(game_id).set(
+        {"calibration": calibration}, merge=True
+    )
+
+
 def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> None:
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 
