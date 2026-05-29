@@ -4033,9 +4033,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
                   maskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)',
                 }}
               />
-              {/* Row 2 — square top corners (so fillets meet flush), rounded bottom */}
+              {/* Row 2 — fixed width sized for longest content ("2ND · 90+5'" + live dot) */}
               <div
-                className="rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center gap-1.5 px-3 py-1"
+                className="rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]"
                 style={{ background: bugBg }}
               >
                 {showLiveDot && (
@@ -7716,6 +7716,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
