@@ -4665,18 +4665,15 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
         <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300 space-y-2">
           <div className="font-bold">No analytics generated yet for this game.</div>
           <div className="text-stone-400">
-            To generate analytics, calibrate the field (if not already), then on your
-            Mac run:
+            Calibrate the field (if not already), then on your Mac run:
           </div>
           <pre className="bg-black/60 p-2 rounded text-xs overflow-x-auto">
 {`cd ~/match-tracker
-pip install -r post_game/requirements.txt
-python -m post_game.cli run \\
-  --game-id ${game.id} \\
-  --field-name "${game.fieldName || '<your-field>'}"`}
+./run_analytics.sh ${game.id} "${game.fieldName || '<your-field>'}"`}
           </pre>
           <div className="text-stone-500 text-xs">
-            Results land here automatically once the run finishes.
+            First run sets up a venv and installs requirements automatically.
+            Results land here once the run finishes — just reopen this panel.
           </div>
         </div>
       )}
