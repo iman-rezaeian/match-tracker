@@ -3476,11 +3476,27 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       geometry.scale(-1, 1, 1);
 
       const video = document.createElement('video');
+      // iOS Safari is strict: these MUST be HTML attributes (not just JS properties)
+      // set BEFORE src/HLS attach, or the video stays black inside a WebGL texture.
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.setAttribute('muted', '');
+      video.setAttribute('crossorigin', 'anonymous');
       video.crossOrigin = 'anonymous';
       video.playsInline = true;
       video.loop = false;
       video.muted = true;
+      video.defaultMuted = true;
       video.preload = 'auto';
+      // iOS also won't decode frames into a VideoTexture unless the <video>
+      // element is actually attached to the DOM. Hide it behind the canvas.
+      video.style.position = 'absolute';
+      video.style.width = '1px';
+      video.style.height = '1px';
+      video.style.opacity = '0';
+      video.style.pointerEvents = 'none';
+      video.style.left = '-9999px';
+      container.appendChild(video);
       videoRef.current = video;
 
       // HLS (.m3u8) needs hls.js on non-Safari; plain MP4 just sets src directly.
@@ -3504,6 +3520,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         setReady(true);
         video.play().catch(() => {});
       });
+      // iOS sometimes silently rejects autoplay even when muted. Retry play()
+      // on the first user gesture inside the viewer (drag, tap, pinch).
+      const kickPlay = () => { try { video.play().catch(()=>{}); } catch(e) {} };
+      container.addEventListener('pointerdown', kickPlay, { once: true });
+      container.addEventListener('touchstart', kickPlay, { once: true, passive: true });
       video.addEventListener('timeupdate', () => setCurrentTime(video.currentTime));
       video.addEventListener('play', () => setPlaying(true));
       video.addEventListener('pause', () => setPlaying(false));
@@ -4640,6 +4661,24 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 {`cd ~/match-tracker
 ./run_analytics.sh ${game.id}`}
           </pre>
+          <button
+            onClick={async () => {
+              const cmd = `cd ~/match-tracker && ./run_analytics.sh ${game.id}`;
+              try {
+                if (navigator.clipboard && window.isSecureContext) {
+                  await navigator.clipboard.writeText(cmd);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = cmd; document.body.appendChild(ta);
+                  ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                }
+                alert('Command copied. Paste it into Terminal on your Mac.');
+              } catch {
+                prompt('Copy this command:', cmd);
+              }
+            }}
+            className="w-full mt-1 py-2 rounded-lg bg-lime-600 text-stone-950 text-xs font-bold active:scale-95"
+          >✎ COPY COMMAND</button>
           <div className="text-stone-500 text-xs">
             A browser tab will open to mark the 4 field corners (first time only).
             After SAVE, the pipeline runs and results land here automatically.
