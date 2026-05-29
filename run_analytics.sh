@@ -31,12 +31,17 @@ fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
+# Corp VPN blocks pypi.org — must go through Artifactory mirror.
+PIP_INDEX_URL="https://artifactory.foc.zone/artifactory/api/pypi/rdf-pypi-virtual/simple"
+PIP_EXTRA_INDEX_URL="https://artifactory.foc.zone/artifactory/api/pypi/pypi-remote/simple"
+PIP_OPTS=(--index-url "$PIP_INDEX_URL" --extra-index-url "$PIP_EXTRA_INDEX_URL")
+
 # Install requirements if the marker is missing or requirements.txt is newer.
 MARKER="$VENV_DIR/.requirements-installed"
 if [ ! -f "$MARKER" ] || [ "post_game/requirements.txt" -nt "$MARKER" ]; then
-  echo "→ Installing/updating requirements…"
-  pip install --quiet --upgrade pip
-  pip install --quiet -r post_game/requirements.txt
+  echo "→ Installing/updating requirements (via Artifactory mirror)…"
+  pip install --quiet --upgrade "${PIP_OPTS[@]}" pip
+  pip install --quiet "${PIP_OPTS[@]}" -r post_game/requirements.txt
   touch "$MARKER"
 fi
 
