@@ -949,6 +949,7 @@ export default function App() {
           onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
           onViewViewers={() => setView('viewers')}
+          onViewFilmRoom={() => setView('filmRoom')}
         />
       )}
 
@@ -1162,6 +1163,10 @@ export default function App() {
         <ViewersPanel onBack={() => setView('home')} />
       )}
 
+      {view === 'filmRoom' && (
+        <FilmRoomView games={games} roster={roster} onBack={() => setView('home')} />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -1213,7 +1218,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -1371,6 +1376,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
+        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
       </div>
@@ -4722,6 +4728,432 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
             {saving ? 'SAVING…' : `SAVE CALIBRATION${points.length < 4 ? ` (${points.length}/4 corners)` : ''}`}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- FILM ROOM ----------
+ * Coach-only list of finished games sorted newest-first. Each row opens the
+ * AnalyticsPanel for that game. Also the entry point for the (upcoming)
+ * season-wide aggregate analytics view.
+ */
+function FilmRoomView({ games, roster, onBack }) {
+  const [openGameId, setOpenGameId] = useState(null);
+  const [showSeason, setShowSeason] = useState(false);
+  const finished = useMemo(() => (
+    (games || [])
+      .filter(g => g.status === 'finished')
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0))
+  ), [games]);
+  const openGame = finished.find(g => g.id === openGameId) || null;
+
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
+      <div
+        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <button onClick={onBack} aria-label="Back" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
+          <ChevronRight className="w-5 h-5 rotate-180" />
+        </button>
+        <h2 className="font-display text-lg">🎥 FILM ROOM</h2>
+        <div className="w-9" />
+      </div>
+
+      <div className="px-4 pt-4 max-w-2xl mx-auto space-y-3">
+        <div className="text-xs text-stone-500 uppercase tracking-wider">
+          {finished.length} finished game{finished.length === 1 ? '' : 's'}
+        </div>
+
+        {/* SEASON AGGREGATE — opens season-wide rollup */}
+        <button
+          onClick={() => setShowSeason(true)}
+          disabled={finished.length === 0}
+          className={`w-full bg-stone-900 border border-stone-800 rounded-2xl p-4 flex items-center gap-3 transition ${finished.length === 0 ? 'opacity-60 cursor-not-allowed' : 'hover:border-lime-500/40 active:scale-[0.99]'}`}
+        >
+          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">📈</div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-base">SEASON ANALYTICS</div>
+            <div className="text-xs text-stone-400">Aggregate across past games {finished.length > 0 ? `· ${finished.length} game${finished.length === 1 ? '' : 's'}` : '· no data yet'}</div>
+          </div>
+          {finished.length > 0 && <span className="text-[10px] font-bold text-lime-400">OPEN →</span>}
+        </button>
+
+        {finished.length === 0 ? (
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+            No finished games yet. Analytics show up here after you end a match.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {finished.map(g => {
+              const result = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+              const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
+                               : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                                                : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => setOpenGameId(g.id)}
+                  className="w-full bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-2xl p-3 flex items-center gap-3 active:scale-[0.99] transition"
+                >
+                  <span className={`shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border font-display text-base ${resultClass}`}>{result}</span>
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {g.tournament && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          {g.tournament.toUpperCase()}
+                        </span>
+                      )}
+                      <span>{formatDate(g.date)}</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
+                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {openGame && (
+        <AnalyticsPanel
+          game={openGame}
+          roster={roster}
+          onClose={() => setOpenGameId(null)}
+          onSeekVideo={() => setOpenGameId(null)}
+        />
+      )}
+
+      {showSeason && (
+        <SeasonAnalyticsView
+          games={finished}
+          roster={roster}
+          onClose={() => setShowSeason(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- SEASON ANALYTICS ----------
+ * Aggregates per-game analytics/v1 docs into season-to-date and last-N rollups.
+ * Best practice for U10 (15-25 game season): show both SEASON and LAST 5 in a
+ * tab toggle so coaches compare all-time vs. recent form with one tap.
+ * Last 3 is too noisy (one outlier swings 33%); last 10 overlaps season-to-date.
+ */
+const ROLLING_WINDOW = 5;
+
+function SeasonAnalyticsView({ games, roster, onClose }) {
+  const [docs, setDocs] = useState({}); // gameId -> analytics doc
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState('season'); // 'season' | 'rolling'
+  const [sortKey, setSortKey] = useState('distance');
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Push history so swipe-back closes modal
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    window.history.pushState({ modal: 'seasonAnalytics' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+      if (window.history.state && window.history.state.modal === 'seasonAnalytics') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  // Fetch analytics/v1 for every finished game in parallel.
+  useEffect(() => {
+    if (!window.fbDb || !games || games.length === 0) { setLoading(false); return; }
+    let cancelled = false;
+    Promise.all(games.map(g => (
+      window.fbDb.collection('teams').doc('main')
+        .collection('games').doc(g.id)
+        .collection('analytics').doc('v1').get()
+        .then(snap => [g.id, snap.exists ? snap.data() : null])
+        .catch(() => [g.id, null])
+    ))).then(results => {
+      if (cancelled) return;
+      const map = {};
+      results.forEach(([id, d]) => { if (d) map[id] = d; });
+      setDocs(map);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [games]);
+
+  // Games (newest-first) that actually have analytics docs.
+  const gamesWithAnalytics = useMemo(() => (
+    (games || []).filter(g => docs[g.id])
+  ), [games, docs]);
+
+  // Window: SEASON = all, ROLLING = newest-first slice of ROLLING_WINDOW.
+  // Auto-fall-back to SEASON if fewer than ROLLING_WINDOW games available.
+  const windowGames = useMemo(() => {
+    if (mode === 'rolling' && gamesWithAnalytics.length >= ROLLING_WINDOW) {
+      return gamesWithAnalytics.slice(0, ROLLING_WINDOW);
+    }
+    return gamesWithAnalytics;
+  }, [mode, gamesWithAnalytics]);
+
+  const fellBackToSeason = mode === 'rolling' && gamesWithAnalytics.length < ROLLING_WINDOW;
+
+  // Per-player aggregate: avg minutes, total/avg distance, top speed (max),
+  // avg sprints, avg thirds-pct. Also collects per-game series for sparklines.
+  const playerAgg = useMemo(() => {
+    const byPid = new Map();
+    // Iterate oldest-first so series sparkline reads left-to-right chronologically.
+    [...windowGames].reverse().forEach(g => {
+      const stats = docs[g.id]?.player_stats || [];
+      stats.forEach(s => {
+        const pid = s.player_id;
+        if (!pid) return;
+        let row = byPid.get(pid);
+        if (!row) {
+          row = { pid, games: 0, minutes: 0, distance: 0, topSpeed: 0, sprints: 0,
+                  attPct: 0, midPct: 0, defPct: 0,
+                  distSeries: [], speedSeries: [], sprintSeries: [] };
+          byPid.set(pid, row);
+        }
+        row.games += 1;
+        row.minutes += s.minutes_played || 0;
+        row.distance += s.distance_m || 0;
+        row.topSpeed = Math.max(row.topSpeed, s.top_speed_ms || 0);
+        row.sprints += s.sprint_count || 0;
+        row.attPct += s.pct_attacking_third || 0;
+        row.midPct += s.pct_middle_third || 0;
+        row.defPct += s.pct_defensive_third || 0;
+        row.distSeries.push(s.distance_m || 0);
+        row.speedSeries.push((s.top_speed_ms || 0) * 3.6);
+        row.sprintSeries.push(s.sprint_count || 0);
+      });
+    });
+    return [...byPid.values()].map(r => ({
+      ...r,
+      avgMin: r.games ? r.minutes / r.games : 0,
+      avgDist: r.games ? r.distance / r.games : 0,
+      topSpeedKmh: r.topSpeed * 3.6,
+      avgSprints: r.games ? r.sprints / r.games : 0,
+      avgAttPct: r.games ? r.attPct / r.games : 0,
+      avgMidPct: r.games ? r.midPct / r.games : 0,
+      avgDefPct: r.games ? r.defPct / r.games : 0,
+    }));
+  }, [windowGames, docs]);
+
+  // Team rollup
+  const teamAgg = useMemo(() => {
+    let gf = 0, ga = 0, w = 0, d = 0, l = 0, cleanSheets = 0;
+    windowGames.forEach(g => {
+      gf += g.ourScore || 0;
+      ga += g.oppScore || 0;
+      if (g.ourScore > g.oppScore) w++;
+      else if (g.ourScore < g.oppScore) l++;
+      else d++;
+      if ((g.oppScore || 0) === 0) cleanSheets++;
+    });
+    return { games: windowGames.length, gf, ga, gd: gf - ga, w, d, l, cleanSheets };
+  }, [windowGames]);
+
+  const sortedPlayers = useMemo(() => {
+    const key = sortKey;
+    return [...playerAgg].sort((a, b) => {
+      const av = key === 'name' ? '' : (a[key] || 0);
+      const bv = key === 'name' ? '' : (b[key] || 0);
+      if (key === 'name') {
+        const ap = roster.find(r => r.id === a.pid)?.name || '';
+        const bp = roster.find(r => r.id === b.pid)?.name || '';
+        return ap.localeCompare(bp);
+      }
+      return bv - av;
+    });
+  }, [playerAgg, sortKey, roster]);
+
+  const playerName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return pid || '—';
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
+      <div
+        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <h2 className="font-display text-lg truncate pr-3">📈 SEASON ANALYTICS</h2>
+        <button
+          onClick={onClose}
+          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+        >
+          CLOSE ✕
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="p-10 text-center text-stone-400 animate-pulse">Loading season analytics…</div>
+      ) : gamesWithAnalytics.length === 0 ? (
+        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300">
+          No analytics docs found yet for any finished games. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+        </div>
+      ) : (
+        <div className="p-4 space-y-5 max-w-3xl mx-auto">
+          {/* Window toggle */}
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
+            <button
+              onClick={() => setMode('season')}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'season' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              SEASON · {gamesWithAnalytics.length}
+            </button>
+            <button
+              onClick={() => setMode('rolling')}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'rolling' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              LAST {ROLLING_WINDOW}
+            </button>
+          </div>
+          {fellBackToSeason && (
+            <div className="text-xs text-amber-400 -mt-3 text-center">
+              Need {ROLLING_WINDOW - gamesWithAnalytics.length} more game{(ROLLING_WINDOW - gamesWithAnalytics.length) === 1 ? '' : 's'} for rolling window — showing season instead.
+            </div>
+          )}
+
+          {/* Team rollup */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-3">Team — {mode === 'season' ? 'season' : `last ${windowGames.length}`}</div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
+              <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
+              <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
+              <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
+            </div>
+          </section>
+
+          {/* Per-player rollup */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs text-stone-500 uppercase">Players</div>
+              <div className="flex gap-1 text-[10px]">
+                {[
+                  ['avgDist', 'DIST'],
+                  ['topSpeedKmh', 'TOP'],
+                  ['avgSprints', 'SPR'],
+                  ['avgMin', 'MIN'],
+                  ['name', 'A-Z'],
+                ].map(([k, label]) => (
+                  <button
+                    key={k}
+                    onClick={() => setSortKey(k)}
+                    className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-stone-500 border-b border-stone-800">
+                    <th className="text-left py-1 pr-2">Player</th>
+                    <th className="text-right py-1 px-1">GP</th>
+                    <th className="text-right py-1 px-1">Min</th>
+                    <th className="text-right py-1 px-1">Dist/g</th>
+                    <th className="text-right py-1 px-1">Top</th>
+                    <th className="text-right py-1 px-1">Spr/g</th>
+                    <th className="text-right py-1 pl-1">Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPlayers.map(p => {
+                    const expanded = expandedId === p.pid;
+                    return (
+                      <React.Fragment key={p.pid}>
+                        <tr
+                          onClick={() => setExpandedId(expanded ? null : p.pid)}
+                          className="border-b border-stone-800/50 cursor-pointer hover:bg-stone-800/40"
+                        >
+                          <td className="py-1.5 pr-2 truncate max-w-[120px]">{playerName(p.pid)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.games}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgMin.toFixed(0)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgDist.toFixed(0)}m</td>
+                          <td className="text-right px-1 tabular-nums">{p.topSpeedKmh.toFixed(1)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgSprints.toFixed(1)}</td>
+                          <td className="text-right pl-1"><Sparkline values={p.distSeries} color="#a3e635" /></td>
+                        </tr>
+                        {expanded && (
+                          <tr className="bg-stone-800/30">
+                            <td colSpan={7} className="px-2 py-3">
+                              <div className="grid grid-cols-3 gap-3">
+                                <SparkBlock label="Distance (m)" values={p.distSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
+                                <SparkBlock label="Top speed (km/h)" values={p.speedSeries} color="#60a5fa" fmt={v => v.toFixed(1)} />
+                                <SparkBlock label="Sprints" values={p.sprintSeries} color="#fbbf24" fmt={v => v.toFixed(0)} />
+                              </div>
+                              <div className="mt-3 pt-3 border-t border-stone-700 grid grid-cols-3 gap-2 text-center text-[11px]">
+                                <div><div className="text-stone-500 text-[9px] uppercase">Att third</div><div className="tabular-nums">{p.avgAttPct.toFixed(0)}%</div></div>
+                                <div><div className="text-stone-500 text-[9px] uppercase">Mid third</div><div className="tabular-nums">{p.avgMidPct.toFixed(0)}%</div></div>
+                                <div><div className="text-stone-500 text-[9px] uppercase">Def third</div><div className="tabular-nums">{p.avgDefPct.toFixed(0)}%</div></div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[10px] text-stone-500 mt-2">Tap a row to expand sparkline trend across the {mode === 'season' ? 'season' : `last ${windowGames.length} games`}.</div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Sparkline (inline mini-chart) ---------- */
+function Sparkline({ values, color = '#a3e635', w = 56, h = 16 }) {
+  if (!values || values.length === 0) return <span className="text-stone-600">—</span>;
+  if (values.length === 1) return <span className="inline-block w-2 h-2 rounded-full" style={{ background: color }} />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`).join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="inline-block align-middle">
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={pts} />
+    </svg>
+  );
+}
+
+function SparkBlock({ label, values, color, fmt }) {
+  const last = values && values.length > 0 ? values[values.length - 1] : 0;
+  return (
+    <div>
+      <div className="text-[9px] text-stone-500 uppercase">{label}</div>
+      <div className="flex items-end gap-2 mt-0.5">
+        <span className="font-display tabular-nums text-base leading-none" style={{ color }}>{fmt(last)}</span>
+        <Sparkline values={values} color={color} w={70} h={20} />
       </div>
     </div>
   );
