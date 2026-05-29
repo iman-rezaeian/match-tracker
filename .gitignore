@@ -1,3 +1,4 @@
+_site/
 .netlify/
 __pycache__/
 *.pyc
