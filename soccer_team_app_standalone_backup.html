@@ -3454,7 +3454,8 @@ function YouTubeEmbed({ videoId, live = false }) {
   }
   id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
   if (!id) return null;
-  const src = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1${live ? '&live=1' : ''}`;
+  const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+  const src = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1&playsinline=1${live ? '&live=1' : ''}${origin ? `&origin=${encodeURIComponent(origin)}` : ''}`;
   return (
     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
       <iframe
@@ -3463,7 +3464,7 @@ function YouTubeEmbed({ videoId, live = false }) {
         frameBorder="0"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
         allowFullScreen
-        referrerPolicy="no-referrer"
+        referrerPolicy="strict-origin-when-cross-origin"
         title="Match stream"
       />
     </div>
@@ -8340,6 +8341,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
