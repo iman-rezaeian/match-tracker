@@ -256,7 +256,20 @@ export default {
         }
         const videoId = searchData.items[0].id.videoId;
         const title = searchData.items[0].snippet.title;
-        return json({ live: true, videoId, title, channelId });
+        // Step 3: extract HLS manifest URL from watch page for chromeless playback
+        let hlsUrl = null;
+        try {
+          const watchRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+          });
+          const html = await watchRes.text();
+          const m = html.match(/"hlsManifestUrl":"([^"]+)"/);
+          if (m) hlsUrl = m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+        } catch (e) { /* hlsUrl stays null */ }
+        return json({ live: true, videoId, title, channelId, hlsUrl });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
       }
