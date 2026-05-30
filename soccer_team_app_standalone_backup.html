@@ -3455,7 +3455,19 @@ function YouTubeEmbed({ videoId, live = false }) {
   id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
   if (!id) return null;
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
-  const src = `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1&playsinline=1${live ? '&live=1' : ''}${origin ? `&origin=${encodeURIComponent(origin)}` : ''}`;
+  const params = [
+    'autoplay=1',
+    'rel=0',
+    'modestbranding=1',
+    'playsinline=1',
+    'controls=0',
+    'disablekb=1',
+    'iv_load_policy=3',
+    'fs=0',
+    live ? 'live=1' : '',
+    origin ? `origin=${encodeURIComponent(origin)}` : '',
+  ].filter(Boolean).join('&');
+  const src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
   return (
     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
       <iframe
@@ -8341,6 +8353,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
