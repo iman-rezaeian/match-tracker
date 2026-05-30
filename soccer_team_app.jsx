@@ -3433,7 +3433,16 @@ async function attachHls(video, url) {
       super.load(context, config, callbacks);
     }
   }
-  const hls = new Hls({ lowLatencyMode: true, pLoader: VideoOnlyPLoader });
+  const hls = new Hls({
+    // CF Stream's LL-HLS is off by default — keep lowLatencyMode false to
+    // avoid hls.js spuriously rebuffering / stalling on standard live HLS.
+    lowLatencyMode: false,
+    // Treat live streams as infinite so the player keeps polling the manifest
+    // for new segments instead of stopping at the current seekable end.
+    liveDurationInfinity: true,
+    backBufferLength: 30,
+    pLoader: VideoOnlyPLoader,
+  });
   hls.loadSource(url);
   hls.attachMedia(video);
   return () => { try { hls.destroy(); } catch {} };
