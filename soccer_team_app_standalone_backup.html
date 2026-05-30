@@ -3627,12 +3627,15 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       } catch (e) {}
       // 2) Lock orientation. Works on Android, and inside real fullscreen on iOS 16.4+.
       try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) {}
-      // 3) CSS-rotation fallback for iOS Safari PWA (ignores both APIs above).
-      //    Always apply on touch devices — the wrapperStyle below compensates
-      //    for the current page angle so the result is always landscape-primary.
-      const isTouch = (typeof window !== 'undefined') && (('ontouchstart' in window) || (navigator.maxTouchPoints > 0));
-      setFullscreenRotated(isTouch);
-      rotatedRef.current = isTouch;
+      // 3) No CSS-rotation fallback. On iOS PWA standalone (which honors
+      //    neither Fullscreen API nor orientation.lock) we just fill the
+      //    viewport with 100dvw/100dvh. If the user holds the phone portrait,
+      //    the video letterboxes 16:9 and we show a "rotate phone" hint.
+      //    When they rotate physically, dvw/dvh swap and the video fills
+      //    landscape naturally. The iOS status bar stays visible — Apple
+      //    limitation that no software workaround can fix in standalone mode.
+      setFullscreenRotated(false);
+      rotatedRef.current = false;
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
@@ -4298,6 +4301,22 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             : { width: '100%', height: '100%' }
         }
       />
+      {/* Portrait fullscreen hint — appears when user is in fullscreen but
+          still holding the phone portrait (typically iOS PWA, where neither
+          Fullscreen API nor orientation.lock work). Auto-vanishes when they
+          rotate to landscape. */}
+      {isFullscreen && isPortrait && (
+        <div className="absolute left-0 right-0 z-20 pointer-events-none flex justify-center"
+             style={{ bottom: 'calc(50% - 100vw * 9 / 32 - 44px)' }}>
+          <div className="bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="2"/>
+              <path d="M9 18h6"/>
+            </svg>
+            Rotate phone for landscape
+          </div>
+        </div>
+      )}
       {/* Hidden <video> element — MUST be in the DOM as JSX (not createElement) or
           iOS Safari refuses to decode frames into the Three.js VideoTexture. */}
       <video
@@ -8448,6 +8467,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
