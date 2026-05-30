@@ -178,7 +178,7 @@ const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 // 'youtube'    — free: coach pastes YouTube video ID, app embeds the iframe
 // 'cloudflare' — paid ($5/mo): one-tap GO LIVE via Cloudflare Stream Live Input
 // Switch to 'cloudflare' when you subscribe to Cloudflare Stream Starter Bundle.
-const LIVE_MODE = 'youtube';
+const LIVE_MODE = 'cloudflare';
 
 // Viewer tracking — logs to Firestore when users watch video/live
 function trackViewer(action, gameId) {
@@ -8351,6 +8351,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
