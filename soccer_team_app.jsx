@@ -3445,6 +3445,15 @@ async function attachHls(video, url) {
   });
   hls.loadSource(url);
   hls.attachMedia(video);
+  // Auto-recover from buffer stalls common on live streams when the player
+  // catches up to the live edge faster than new segments arrive.
+  hls.on(Hls.Events.ERROR, (_evt, data) => {
+    if (!data || !data.fatal) return;
+    try {
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+    } catch (e) {}
+  });
   return () => { try { hls.destroy(); } catch {} };
 }
 
@@ -4177,7 +4186,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           )}
         </button>
-        {/* Rewind 10s */}
+        {/* Rewind 10s — hidden for live, no seekable history */}
+        {!isLive && (
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10); }}
           className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Rewind 10 seconds">
           <svg viewBox="0 0 24 24" className="w-6 h-6">
@@ -4185,7 +4195,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             <text x="9" y="18" fontSize="7" fontWeight="700" fill="currentColor">10</text>
           </svg>
         </button>
-        {/* Forward 10s */}
+        )}
+        {/* Forward 10s — hidden for live */}
+        {!isLive && (
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10); }}
           className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Forward 10 seconds">
           <svg viewBox="0 0 24 24" className="w-6 h-6">
@@ -4193,12 +4205,34 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             <text x="6" y="18" fontSize="7" fontWeight="700" fill="currentColor">10</text>
           </svg>
         </button>
+        )}
+        {/* Jump-to-live button — live only */}
+        {isLive && (
+          <button
+            onClick={() => {
+              const v = videoRef.current;
+              if (!v) return;
+              try {
+                const end = v.seekable.length ? v.seekable.end(v.seekable.length - 1) : 0;
+                if (end > 0) v.currentTime = Math.max(0, end - 1);
+                if (v.paused) v.play().catch(() => {});
+              } catch (e) {}
+            }}
+            className="flex items-center gap-1 px-2 h-7 rounded-full bg-red-600 active:scale-95"
+            aria-label="Jump to live"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            <span className="text-[10px] font-bold tracking-widest text-white">LIVE</span>
+          </button>
+        )}
         <div className="flex-1 relative">
+          {!isLive && (
           <input
             type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
             onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
             className="w-full h-1 accent-lime-400 block"
           />
+          )}
           {duration > 0 && events.filter(e => {
             if (e.elapsed <= 0 || e.elapsed > duration) return false;
             if (dotsMode === 'goals') return e.type === 'GOAL' || e.type === 'OPP_GOAL';
@@ -4218,7 +4252,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             );
           })}
         </div>
-        <span className="text-[11px] text-white/80 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+        {!isLive && (
+          <span className="text-[11px] text-white/80 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+        )}
         {/* Mute / Unmute — YouTube-style speaker icon */}
         <button onClick={toggleMute} className="w-9 h-9 rounded-full flex items-center justify-center text-white active:scale-95" aria-label={muted ? 'Unmute' : 'Mute'}>
           {muted ? (
