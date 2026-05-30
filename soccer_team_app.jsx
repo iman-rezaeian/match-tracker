@@ -3257,7 +3257,6 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
  */
 function LiveStreamTester({ onClose }) {
   const [videoId, setVideoId] = useState(null);
-  const [hlsUrl, setHlsUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [ranOnce, setRanOnce] = useState(false);
@@ -3275,10 +3274,8 @@ function LiveStreamTester({ onClose }) {
       .then((data) => {
         if (data.live && data.videoId) {
           setVideoId(data.videoId);
-          setHlsUrl(data.hlsUrl || null);
         } else {
           setVideoId(null);
-          setHlsUrl(null);
           setErr('No live stream detected. Start streaming from Insta360 first, then tap DETECT again.');
         }
       })
@@ -3305,8 +3302,8 @@ function LiveStreamTester({ onClose }) {
 
         {videoId ? (
           <>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}{hlsUrl ? ' · HLS' : ''}</div>
-            <YouTubeEmbed videoId={videoId} live={true} hlsUrl={hlsUrl} />
+            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}</div>
+            <YouTubeEmbed videoId={videoId} live={true} />
           </>
         ) : (
           <div className="bg-stone-800/60 rounded-xl p-4 text-sm text-stone-300">
@@ -3337,7 +3334,7 @@ function LiveStreamTester({ onClose }) {
 }
 
 /* ---------- YOUTUBE EMBED ---------- */
-function YouTubeEmbed({ videoId, live = false, hlsUrl = null, overlay = null }) {
+function YouTubeEmbed({ videoId, live = false }) {
   // Sanitize videoId
   let id = videoId || '';
   if (id.includes('youtube.com') || id.includes('youtu.be')) {
@@ -3370,12 +3367,8 @@ function YouTubeEmbed({ videoId, live = false, hlsUrl = null, overlay = null }) 
         referrerPolicy="strict-origin-when-cross-origin"
         title="Match stream"
       />
-      {/* Click-blocking overlay — prevents YT pause/share/title interactions */}
-      <div className="absolute inset-0" style={{ pointerEvents: 'auto' }} aria-hidden="true" />
-      {/* Custom overlay (scorebug, etc) goes on top */}
-      {overlay && (
-        <div className="absolute inset-0 pointer-events-none">{overlay}</div>
-      )}
+      {/* Click-blocking overlay — prevents accidental taps on YT pause/share/title */}
+      <div className="absolute inset-0" aria-hidden="true" />
     </div>
   );
 }
