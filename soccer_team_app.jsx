@@ -3964,14 +3964,39 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const isLive = gameInfo && gameInfo.status === 'active';
   const isFinished = gameInfo && gameInfo.status === 'finished';
   const videoEnded = duration > 0 && currentTime >= duration - 0.5;
-  const inSecondHalf = isFinite(half2StartElapsed)
-    ? currentTime >= half2StartElapsed
-    : (gameInfo && gameInfo.period >= 2);
-  const displayedMinute = inSecondHalf
-    ? (isFinite(half2StartElapsed)
-        ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
-        : Math.floor(currentTime / 60) + halfLen)
-    : Math.floor(currentTime / 60);
+  // 1-second ticker so the live scorebug minute advances even when the video
+  // element doesn't fire timeupdate (e.g. while buffering at the live edge).
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    if (!isLive || !gameInfo?.clockRunning) return;
+    const id = setInterval(() => setLiveTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isLive, gameInfo?.clockRunning]);
+  // For LIVE matches, mirror the coach-app match clock (wall-clock based) so
+  // the scorebug stays in sync with the page header. For replays, derive from
+  // video currentTime as before.
+  const liveElapsedSec = (() => {
+    if (!isLive || !gameInfo) return 0;
+    if (gameInfo.elapsedAtPause === undefined) {
+      return gameInfo.startedAt ? Math.floor((Date.now() - gameInfo.startedAt) / 1000) : 0;
+    }
+    if (gameInfo.clockRunning && gameInfo.segmentStartedAt) {
+      return gameInfo.elapsedAtPause + Math.floor((Date.now() - gameInfo.segmentStartedAt) / 1000);
+    }
+    return gameInfo.elapsedAtPause || 0;
+  })();
+  const inSecondHalf = isLive
+    ? (gameInfo && gameInfo.period >= 2)
+    : (isFinite(half2StartElapsed)
+        ? currentTime >= half2StartElapsed
+        : (gameInfo && gameInfo.period >= 2));
+  const displayedMinute = isLive
+    ? Math.floor(liveElapsedSec / 60)
+    : (inSecondHalf
+        ? (isFinite(half2StartElapsed)
+            ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
+            : Math.floor(currentTime / 60) + halfLen)
+        : Math.floor(currentTime / 60));
 
   // Auto-pick readable text color for a jersey background (WCAG luminance)
   const textOnColor = (hex) => {
@@ -7665,6 +7690,12 @@ function PublicVideoToggle({ url, game, label }) {
           awayColor: game.awayColor,
           status: game.status,
           gameId: game.id,
+          // Live clock fields — mirror coach-app match clock so the scorebug
+          // shows the same minute/half as the page header (vs. video time).
+          clockRunning: game.clockRunning,
+          startedAt: game.startedAt,
+          segmentStartedAt: game.segmentStartedAt,
+          elapsedAtPause: game.elapsedAtPause,
         }}
       />
     </div>
