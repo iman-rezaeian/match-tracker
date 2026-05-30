@@ -3337,39 +3337,8 @@ function LiveStreamTester({ onClose }) {
 }
 
 /* ---------- YOUTUBE EMBED ---------- */
-function YouTubeEmbed({ videoId, live = false, hlsUrl = null }) {
-  const videoRef = useRef(null);
-  const [hlsErr, setHlsErr] = useState(false);
-
-  useEffect(() => {
-    if (!hlsUrl || !videoRef.current) return;
-    let cleanup = null;
-    let cancelled = false;
-    attachHls(videoRef.current, hlsUrl)
-      .then((c) => { if (cancelled) { try { c && c(); } catch {} } else { cleanup = c; } })
-      .catch(() => { if (!cancelled) setHlsErr(true); });
-    return () => { cancelled = true; try { cleanup && cleanup(); } catch {} };
-  }, [hlsUrl]);
-
-  if (!videoId && !hlsUrl) return null;
-
-  // Preferred path: chromeless HLS playback (zero YouTube branding, ready for overlays)
-  if (hlsUrl && !hlsErr) {
-    return (
-      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
-        <video
-          ref={videoRef}
-          className="absolute inset-0 w-full h-full object-cover"
-          autoPlay
-          muted
-          playsInline
-          // no controls = chromeless; overlays go on top
-        />
-      </div>
-    );
-  }
-
-  // Fallback: standard YouTube iframe (kept for safety if HLS extraction fails)
+function YouTubeEmbed({ videoId, live = false, hlsUrl = null, overlay = null }) {
+  // Sanitize videoId
   let id = videoId || '';
   if (id.includes('youtube.com') || id.includes('youtu.be')) {
     try {
@@ -3379,14 +3348,17 @@ function YouTubeEmbed({ videoId, live = false, hlsUrl = null }) {
   }
   id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
   if (!id) return null;
+
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
   const params = [
-    'autoplay=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
+    'autoplay=1', 'mute=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
     'controls=0', 'disablekb=1', 'iv_load_policy=3', 'fs=0',
+    'showinfo=0', 'cc_load_policy=0',
     live ? 'live=1' : '',
     origin ? `origin=${encodeURIComponent(origin)}` : '',
   ].filter(Boolean).join('&');
   const src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
+
   return (
     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
       <iframe
@@ -3398,6 +3370,12 @@ function YouTubeEmbed({ videoId, live = false, hlsUrl = null }) {
         referrerPolicy="strict-origin-when-cross-origin"
         title="Match stream"
       />
+      {/* Click-blocking overlay — prevents YT pause/share/title interactions */}
+      <div className="absolute inset-0" style={{ pointerEvents: 'auto' }} aria-hidden="true" />
+      {/* Custom overlay (scorebug, etc) goes on top */}
+      {overlay && (
+        <div className="absolute inset-0 pointer-events-none">{overlay}</div>
+      )}
     </div>
   );
 }
