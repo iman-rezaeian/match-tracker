@@ -3257,6 +3257,7 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
  */
 function LiveStreamTester({ onClose }) {
   const [videoId, setVideoId] = useState(null);
+  const [hlsUrl, setHlsUrl] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [ranOnce, setRanOnce] = useState(false);
@@ -3274,8 +3275,10 @@ function LiveStreamTester({ onClose }) {
       .then((data) => {
         if (data.live && data.videoId) {
           setVideoId(data.videoId);
+          setHlsUrl(data.hlsUrl || null);
         } else {
           setVideoId(null);
+          setHlsUrl(null);
           setErr('No live stream detected. Start streaming from Insta360 first, then tap DETECT again.');
         }
       })
@@ -3302,8 +3305,8 @@ function LiveStreamTester({ onClose }) {
 
         {videoId ? (
           <>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}</div>
-            <YouTubeEmbed videoId={videoId} live={true} />
+            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}{hlsUrl ? ' · HLS' : ''}</div>
+            <YouTubeEmbed videoId={videoId} live={true} hlsUrl={hlsUrl} />
           </>
         ) : (
           <div className="bg-stone-800/60 rounded-xl p-4 text-sm text-stone-300">
@@ -3334,28 +3337,52 @@ function LiveStreamTester({ onClose }) {
 }
 
 /* ---------- YOUTUBE EMBED ---------- */
-function YouTubeEmbed({ videoId, live = false }) {
-  if (!videoId) return null;
-  // Sanitize: extract just the ID portion (handles full URLs pasted by mistake)
-  let id = videoId;
+function YouTubeEmbed({ videoId, live = false, hlsUrl = null }) {
+  const videoRef = useRef(null);
+  const [hlsErr, setHlsErr] = useState(false);
+
+  useEffect(() => {
+    if (!hlsUrl || !videoRef.current) return;
+    let cleanup = null;
+    let cancelled = false;
+    attachHls(videoRef.current, hlsUrl)
+      .then((c) => { if (cancelled) { try { c && c(); } catch {} } else { cleanup = c; } })
+      .catch(() => { if (!cancelled) setHlsErr(true); });
+    return () => { cancelled = true; try { cleanup && cleanup(); } catch {} };
+  }, [hlsUrl]);
+
+  if (!videoId && !hlsUrl) return null;
+
+  // Preferred path: chromeless HLS playback (zero YouTube branding, ready for overlays)
+  if (hlsUrl && !hlsErr) {
+    return (
+      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+        <video
+          ref={videoRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          autoPlay
+          muted
+          playsInline
+          // no controls = chromeless; overlays go on top
+        />
+      </div>
+    );
+  }
+
+  // Fallback: standard YouTube iframe (kept for safety if HLS extraction fails)
+  let id = videoId || '';
   if (id.includes('youtube.com') || id.includes('youtu.be')) {
     try {
-      const url = new URL(id.includes('http') ? id : `https://${id}`);
-      id = url.searchParams.get('v') || url.pathname.split('/').pop() || id;
+      const u = new URL(id.includes('http') ? id : `https://${id}`);
+      id = u.searchParams.get('v') || u.pathname.split('/').pop() || id;
     } catch (e) {}
   }
   id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
   if (!id) return null;
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
   const params = [
-    'autoplay=1',
-    'rel=0',
-    'modestbranding=1',
-    'playsinline=1',
-    'controls=0',
-    'disablekb=1',
-    'iv_load_policy=3',
-    'fs=0',
+    'autoplay=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
+    'controls=0', 'disablekb=1', 'iv_load_policy=3', 'fs=0',
     live ? 'live=1' : '',
     origin ? `origin=${encodeURIComponent(origin)}` : '',
   ].filter(Boolean).join('&');
