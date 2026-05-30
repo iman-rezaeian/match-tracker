@@ -3402,6 +3402,13 @@ function loadHlsJS() {
 
 // Attach an HLS source (.m3u8) to a <video> element. Uses native HLS on Safari,
 // falls back to hls.js on Chrome/Firefox. Returns a cleanup function.
+//
+// NOTE: The Insta360 X5 (and other 360 cameras) ships multi-channel spatial /
+// ambisonic audio inside an AAC container. Chrome's AAC decoder rejects the
+// channel layout with PipelineStatus::DECODER_ERROR_NOT_SUPPORTED, which
+// breaks the whole pipeline. To stay robust, we use a custom playlist loader
+// that strips audio tracks from the master manifest — playing video-only.
+// (Match audio doesn't matter for parents 30ft from the field anyway.)
 async function attachHls(video, url) {
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = url;
@@ -3412,7 +3419,21 @@ async function attachHls(video, url) {
     video.src = url; // last-ditch fallback
     return () => {};
   }
-  const hls = new Hls({ lowLatencyMode: true });
+  class VideoOnlyPLoader extends Hls.DefaultConfig.loader {
+    load(context, config, callbacks) {
+      const origSuccess = callbacks.onSuccess;
+      callbacks.onSuccess = (response, stats, ctx, networkDetails) => {
+        if (typeof response.data === 'string' && response.data.indexOf('#EXTM3U') >= 0) {
+          response.data = response.data
+            .replace(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*\n/g, '')
+            .replace(/,AUDIO="[^"]*"/g, '');
+        }
+        origSuccess(response, stats, ctx, networkDetails);
+      };
+      super.load(context, config, callbacks);
+    }
+  }
+  const hls = new Hls({ lowLatencyMode: true, pLoader: VideoOnlyPLoader });
   hls.loadSource(url);
   hls.attachMedia(video);
   return () => { try { hls.destroy(); } catch {} };
