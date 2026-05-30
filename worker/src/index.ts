@@ -269,7 +269,9 @@ export default {
           const m = html.match(/"hlsManifestUrl":"([^"]+)"/);
           if (m) hlsUrl = m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
         } catch (e) { /* hlsUrl stays null */ }
-        return json({ live: true, videoId, title, channelId, hlsUrl });
+        // Wrap with CORS proxy so chromeless <video>+hls.js works in browsers
+        const hlsProxied = hlsUrl ? `${url.origin}/hls-proxy?u=${encodeURIComponent(hlsUrl)}` : null;
+        return json({ live: true, videoId, title, channelId, hlsUrl: hlsProxied });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
       }
@@ -288,6 +290,62 @@ export default {
       try {
         await deleteLiveInput(env, delMatch[1]);
         return json({ ok: true });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    // ---- GET /hls-proxy?u=<urlencoded m3u8 or ts> — CORS proxy for YouTube HLS ----
+    if (request.method === 'GET' && url.pathname === '/hls-proxy') {
+      const target = url.searchParams.get('u');
+      if (!target) return json({ error: 'missing u' }, 400);
+      let decoded;
+      try { decoded = decodeURIComponent(target); } catch { return json({ error: 'bad u' }, 400); }
+      // Only allow googlevideo / youtube hosts
+      try {
+        const t = new URL(decoded);
+        if (!/(^|\.)googlevideo\.com$|(^|\.)youtube\.com$/.test(t.hostname)) {
+          return json({ error: 'host not allowed' }, 403);
+        }
+      } catch { return json({ error: 'bad url' }, 400); }
+      try {
+        const upstream = await fetch(decoded, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0 Safari/537.36' },
+        });
+        const ct = upstream.headers.get('content-type') || '';
+        // For .m3u8 rewrite absolute segment URLs to go through this proxy
+        if (ct.includes('mpegurl') || decoded.includes('.m3u8')) {
+          let text = await upstream.text();
+          const base = new URL(decoded);
+          text = text.split('\n').map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) {
+              // Rewrite URI="..." inside tags like #EXT-X-KEY / #EXT-X-MAP / #EXT-X-MEDIA
+              return line.replace(/URI="([^"]+)"/g, (_m, u) => {
+                let abs;
+                try { abs = new URL(u, base).toString(); } catch { return _m; }
+                return `URI="${url.origin}/hls-proxy?u=${encodeURIComponent(abs)}"`;
+              });
+            }
+            // Segment / variant URI line
+            let abs;
+            try { abs = new URL(trimmed, base).toString(); } catch { return line; }
+            return `${url.origin}/hls-proxy?u=${encodeURIComponent(abs)}`;
+          }).join('\n');
+          return new Response(text, {
+            status: upstream.status,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/vnd.apple.mpegurl',
+              'Cache-Control': 'no-store',
+            },
+          });
+        }
+        // Binary segment — stream through with CORS
+        const headers = new Headers(corsHeaders);
+        if (ct) headers.set('Content-Type', ct);
+        headers.set('Cache-Control', 'no-store');
+        return new Response(upstream.body, { status: upstream.status, headers });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
       }
