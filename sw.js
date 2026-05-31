@@ -10,7 +10,7 @@
  *
  * Bump CACHE_VERSION whenever the shell or icons change so old caches purge.
  */
-const CACHE_VERSION = 'stompers-v64';
+const CACHE_VERSION = 'stompers-v65';
 const SHELL = [
   './',
   './index.html',
