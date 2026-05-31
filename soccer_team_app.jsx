@@ -406,6 +406,22 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
+// Colored pill for the game type. Scrimmage = gray (low-stakes), Festival =
+// blue (informal multi-game), anything else (e.g. "Canton Cup Tournament") =
+// amber (competitive trophy event).
+function TournamentChip({ value }) {
+  if (!value) return null;
+  const t = String(value).toLowerCase();
+  const cls = t === 'scrimmage' ? 'bg-stone-500/15 text-stone-300 border-stone-500/40'
+            : t === 'festival'  ? 'bg-blue-500/15 text-blue-300 border-blue-500/40'
+            : 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+  return (
+    <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
+      {String(value).toUpperCase()}
+    </span>
+  );
+}
+
 const R2_WORKER_KEY = 'ManUtd2016'; // API key for R2 upload worker auth
 
 export default function App() {
@@ -413,7 +429,7 @@ export default function App() {
   // a full reload so this is safe to do before hooks.
   //   ?live=<gameId>  -> single-game public scoreboard (Share button URL)
   //   ?coach          -> coach app (password-gated)
-  //   (default)       -> public home: current/latest scoreboard + past matches
+  //   (default)       -> public home: current/latest scoreboard + past games
   const params = (typeof window !== 'undefined')
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams('');
@@ -1156,6 +1172,7 @@ export default function App() {
           onSave={persistSchedule}
           onBack={() => setView('home')}
           askConfirm={askConfirm}
+          showToast={showToast}
         />
       )}
 
@@ -1402,7 +1419,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         if (upcoming.length === 0) return null;
         return (
           <div className="px-4 pt-6">
-            <h2 className="font-display text-2xl mb-3">UPCOMING</h2>
+            <h2 className="font-display text-2xl mb-3">UPCOMING GAMES</h2>
             <div className="space-y-2">
               {upcoming.slice(0, 5).map(item => (
                 <div key={item.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
@@ -1418,11 +1435,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -5026,11 +5039,7 @@ function FilmRoomView({ games, roster, onBack }) {
                   <div className="flex-1 min-w-0 text-left">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {g.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {g.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {g.tournament && <TournamentChip value={g.tournament} />}
                       <span>{formatDate(g.date)}</span>
                     </div>
                   </div>
@@ -6728,7 +6737,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
+function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -6815,6 +6824,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
       location: p.location,
     }));
     onSave([...schedule, ...newItems]);
+    showToast?.(`✅ Added ${newItems.length} game${newItems.length === 1 ? '' : 's'}`);
     setPasteText('');
     setParsed(null);
   };
@@ -6830,6 +6840,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
         tournament: tournament.trim(),
         location: location.trim(),
       } : s));
+      showToast?.(`✏️ Updated vs ${opponent.trim()}`);
       resetForm();
       return;
     }
@@ -6842,6 +6853,8 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
       location: location.trim(),
     };
     onSave([...schedule, item]);
+    const dateLabel = new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    showToast?.(`✅ Added vs ${item.opponent} · ${dateLabel}`);
     resetForm();
   };
 
@@ -6861,7 +6874,9 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
   };
 
   const handleToggleCancel = (item) => {
+    const wasCancelled = !!item.cancelled;
     onSave(schedule.map(s => s.id === item.id ? { ...s, cancelled: !s.cancelled } : s));
+    showToast?.(wasCancelled ? `↩ Restored vs ${item.opponent}` : `⛔ Cancelled vs ${item.opponent}`);
   };
 
   const handleDelete = (id) => {
@@ -6870,6 +6885,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
     askConfirm(`Delete ${label} from the schedule?`, () => {
       if (editingId === id) resetForm();
       onSave(schedule.filter(s => s.id !== id));
+      showToast?.(`🗑 Deleted ${label}`);
     }, { danger: true, yesLabel: 'DELETE' });
   };
 
@@ -7040,11 +7056,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -7634,7 +7646,7 @@ function HelpView({ onBack }) {
           <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mt-2 text-sm space-y-2">
             <div>
               <div className="font-display text-sm text-stone-200">👩‍👦 Parents — public scoreboard</div>
-              <div className="text-xs text-stone-300">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past matches. First name + jersey number only — no full names.</div>
+              <div className="text-xs text-stone-300">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past games. First name + jersey number only — no full names.</div>
             </div>
             <div>
               <div className="font-display text-sm text-stone-200">📎 Share a specific game</div>
@@ -7675,7 +7687,7 @@ function Header({ title, onBack, right }) {
          Subscribes to ONE game doc by id.
      - <PublicHomePage>       — used by the bare root URL (no params).
          Subscribes to ALL games, auto-picks active or most-recent finished,
-         and renders a "Past matches" list under the main scoreboard.
+         and renders a "Past games" list under the main scoreboard.
    Privacy: scoreboard shows first name + jersey number only — never last names,
    never pillar events, rosters, or weights.
    Auth: existing anonymous Firebase auth covers public viewers transparently.
@@ -8121,11 +8133,7 @@ function PublicHomePage() {
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -8150,7 +8158,7 @@ function PublicHomePage() {
       })()}
       {past.length > 0 && (
         <div className="px-4 pt-6 max-w-md mx-auto">
-          <h3 className="font-display text-xl text-stone-200 mb-2">PAST MATCHES</h3>
+          <h3 className="font-display text-xl text-stone-200 mb-2">PAST GAMES</h3>
           <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
             {past.map((g) => {
               const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
