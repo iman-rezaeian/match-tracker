@@ -406,14 +406,14 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
-// Colored pill for the game type. Scrimmage = gray (low-stakes), Festival =
-// blue (informal multi-game), anything else (e.g. "Canton Cup Tournament") =
-// amber (competitive trophy event).
+// Colored pill for the game type. Three clearly distinct hues at a glance:
+// Scrimmage = teal (casual/practice), Festival = indigo (multi-game event),
+// anything else (e.g. "Canton Cup Tournament") = amber (competitive trophy).
 function TournamentChip({ value }) {
   if (!value) return null;
   const t = String(value).toLowerCase();
-  const cls = t === 'scrimmage' ? 'bg-stone-500/15 text-stone-300 border-stone-500/40'
-            : t === 'festival'  ? 'bg-blue-500/15 text-blue-300 border-blue-500/40'
+  const cls = t === 'scrimmage' ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
+            : t === 'festival'  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40'
             : 'bg-amber-500/15 text-amber-300 border-amber-500/40';
   return (
     <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
