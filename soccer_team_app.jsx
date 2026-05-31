@@ -407,13 +407,13 @@ function formatTime12(time24) {
 }
 
 // Colored pill for the game type. Visibility escalates with stakes:
-// Scrimmage = quiet teal (just labeled), Festival = medium-pop violet,
+// Scrimmage = quiet violet (just labeled), Festival = medium-pop teal,
 // anything else (e.g. "Canton Cup Tournament") = loudest amber.
 function TournamentChip({ value }) {
   if (!value) return null;
   const t = String(value).toLowerCase();
-  const cls = t === 'scrimmage' ? 'bg-teal-500/10 text-teal-400 border-teal-500/30'
-            : t === 'festival'  ? 'bg-violet-500/20 text-violet-200 border-violet-400/50'
+  const cls = t === 'scrimmage' ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
+            : t === 'festival'  ? 'bg-teal-500/20 text-teal-200 border-teal-400/50'
             : 'bg-amber-400/25 text-amber-100 border-amber-300/60';
   return (
     <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
