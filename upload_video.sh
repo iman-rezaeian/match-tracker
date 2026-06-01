@@ -8,11 +8,22 @@
 
 set -euo pipefail
 
-R2_ENDPOINT="https://c0ce0a0153cdf8665278ec19a0aa455a.r2.cloudflarestorage.com"
-R2_BUCKET="stompers-videos"
-R2_PUBLIC="https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev"
-R2_ACCESS_KEY="31b570f8a7c65b2ff627d6a380985609"
-R2_SECRET_KEY="23add30efb15b4f7ea8d696567b45e087a7838fd14238c9fb788ca9dae8184f3"
+# Load credentials from .env (gitignored). Variable names match the rest
+# of the project: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT,
+# R2_BUCKET, R2_PUBLIC_BASE.
+cd "$(dirname "$0")"
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+: "${R2_ENDPOINT:?Set R2_ENDPOINT in .env}"
+: "${R2_BUCKET:?Set R2_BUCKET in .env}"
+: "${R2_ACCESS_KEY_ID:?Set R2_ACCESS_KEY_ID in .env}"
+: "${R2_SECRET_ACCESS_KEY:?Set R2_SECRET_ACCESS_KEY in .env}"
+R2_PUBLIC="${R2_PUBLIC_BASE:?Set R2_PUBLIC_BASE in .env}"
 
 FILE="${1:?Usage: ./upload_video.sh <file> [filename]}"
 if [[ ! -f "$FILE" ]]; then
@@ -30,7 +41,7 @@ echo ""
 HTTP_CODE=$(curl -X PUT "${R2_ENDPOINT}/${R2_BUCKET}/${KEY}" \
   --header "Content-Type: ${CONTENT_TYPE}" \
   --aws-sigv4 "aws:amz:auto:s3" \
-  --user "${R2_ACCESS_KEY}:${R2_SECRET_KEY}" \
+  --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
   --upload-file "$FILE" \
   --progress-bar -o /dev/null -w "%{http_code}")
 

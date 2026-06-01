@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom utilities previously embedded in the inline <style> block.
+   Kept here so the prebuilt stylesheet is self-contained. */
+@layer base {
+  html, body { background: #0c0a09; color: #e7e5e4; overscroll-behavior-y: none; }
+  body { font-family: 'Outfit', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+  input, textarea, select { background-color: #1c1917; color: #e7e5e4; color-scheme: dark; }
+  input::placeholder, textarea::placeholder { color: #78716c; }
+}
+
+@layer utilities {
+  .font-display { font-family: 'Outfit', system-ui, sans-serif; font-weight: 800; letter-spacing: 0.03em; }
+  .font-sans-pro { font-family: 'Outfit', system-ui, sans-serif; }
+  .stripes-bg {
+    background-color: #0d2818;
+    background-image:
+      repeating-linear-gradient(135deg, rgba(132,204,22,0.10) 0px, rgba(132,204,22,0.10) 2px, transparent 2px, transparent 14px),
+      linear-gradient(135deg, #0d2818 0%, #11331d 50%, #0d2818 100%);
+  }
+}

@@ -5,7 +5,7 @@ import {
   BarChart3, Flag, Zap, Calendar, MapPin
 } from 'lucide-react';
 
-const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule' };
+const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule', TEAM_LIVE_INPUT: 'team_live_input' };
 
 const EVENT_TYPES = {
   GOAL:      { id: 'GOAL',      label: 'GOAL',      emoji: '⚽', tone: 'big-green',  requiresPlayer: true,  delta: 'us' },
@@ -66,6 +66,12 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 // and only show the LINK flow. After deploying r2-upload-worker.js, paste the
 // Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
 const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
+
+// Live-streaming provider toggle.
+// 'youtube'    — free: coach pastes YouTube video ID, app embeds the iframe
+// 'cloudflare' — paid ($5/mo): one-tap GO LIVE via Cloudflare Stream Live Input
+// Switch to 'cloudflare' when you subscribe to Cloudflare Stream Starter Bundle.
+const LIVE_MODE = 'cloudflare';
 
 // Viewer tracking — logs to Firestore when users watch video/live
 function trackViewer(action, gameId) {
@@ -400,6 +406,22 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
+// Colored pill for the game type. Visibility escalates with stakes:
+// Scrimmage = quiet violet (just labeled), Festival = medium-pop teal,
+// anything else (e.g. "Canton Cup Tournament") = loudest amber.
+function TournamentChip({ value }) {
+  if (!value) return null;
+  const t = String(value).toLowerCase();
+  const cls = t === 'scrimmage' ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
+            : t === 'festival'  ? 'bg-teal-500/20 text-teal-200 border-teal-400/50'
+            : 'bg-amber-400/25 text-amber-100 border-amber-300/60';
+  return (
+    <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
+      {String(value).toUpperCase()}
+    </span>
+  );
+}
+
 const R2_WORKER_KEY = 'ManUtd2016'; // API key for R2 upload worker auth
 
 export default function App() {
@@ -407,7 +429,7 @@ export default function App() {
   // a full reload so this is safe to do before hooks.
   //   ?live=<gameId>  -> single-game public scoreboard (Share button URL)
   //   ?coach          -> coach app (password-gated)
-  //   (default)       -> public home: current/latest scoreboard + past matches
+  //   (default)       -> public home: current/latest scoreboard + past games
   const params = (typeof window !== 'undefined')
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams('');
@@ -422,6 +444,11 @@ export default function App() {
   const [games, setGames] = useState([]);
   const [schedule, setSchedule] = useState([]);
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
+  // Team-wide Cloudflare Stream Live Input. Provisioned once, reused every
+  // game so the coach can paste a single RTMPS URL + key into the Insta360
+  // / OBS app and never touch it again. Shape: { uid, rtmpsUrl, streamKey,
+  // hlsUrl, iframeUrl?, customerCode?, createdAt }.
+  const [teamLiveInput, setTeamLiveInput] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState('home');
   const [editingPlayer, setEditingPlayer] = useState(null);
@@ -480,6 +507,17 @@ export default function App() {
     })();
   }, []);
 
+  // Team-wide live stream key loader (local-dev path; replaced in production
+  // by the Firestore team-doc listener via _sync_html.py).
+  useEffect(() => {
+    (async () => {
+      try {
+        const tli = await storageGet(STORAGE_KEYS.TEAM_LIVE_INPUT);
+        if (tli?.value) setTeamLiveInput(JSON.parse(tli.value));
+      } catch (e) {}
+    })();
+  }, []);
+
   useEffect(() => {
     if (view !== 'activeGame') return;
     const id = setInterval(() => setTick(t => t + 1), 1000);
@@ -507,6 +545,14 @@ export default function App() {
     try { await storageSet(STORAGE_KEYS.SCHEDULE, JSON.stringify(next)); } catch (e) {}
   };
 
+  const persistTeamLiveInput = async (next) => {
+    setTeamLiveInput(next);
+    try {
+      if (next) await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, JSON.stringify(next));
+      else await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, '');
+    } catch (e) {}
+  };
+
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 1800);
@@ -526,7 +572,7 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     const game = {
@@ -552,6 +598,8 @@ export default function App() {
       gkPlayerId: gkPlayerId || null,
       gkChanges: [],
       pausePeriods: [],
+      ...(liveInput ? { liveInput } : {}),
+      ...(youtubeVideoId ? { youtubeVideoId } : {}),
     };
     persistGames([game, ...games]);
     setActiveGameId(game.id);
@@ -917,6 +965,7 @@ export default function App() {
           onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
           onViewViewers={() => setView('viewers')}
+          onViewFilmRoom={() => setView('filmRoom')}
         />
       )}
 
@@ -993,9 +1042,11 @@ export default function App() {
           roster={roster}
           squad={pendingGameSetup.squad}
           setup={pendingGameSetup}
+          teamLiveInput={teamLiveInput}
+          onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
-          onStart={(lineup, gkPlayerId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor);
+          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId);
             setPendingGameSetup(null);
           }}
         />
@@ -1121,11 +1172,16 @@ export default function App() {
           onSave={persistSchedule}
           onBack={() => setView('home')}
           askConfirm={askConfirm}
+          showToast={showToast}
         />
       )}
 
       {view === 'viewers' && (
         <ViewersPanel onBack={() => setView('home')} />
+      )}
+
+      {view === 'filmRoom' && (
+        <FilmRoomView games={games} roster={roster} onBack={() => setView('home')} />
       )}
 
       {confirmDialog && (
@@ -1179,11 +1235,12 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
   const draws = finishedGames.filter(g => g.ourScore === g.oppScore).length;
+  const [showLiveTest, setShowLiveTest] = useState(false);
   const [showWelcome, setShowWelcome] = useState(() => {
     try { return localStorage.getItem('stompers_welcome_dismissed') !== 'true'; } catch(e) { return true; }
   });
@@ -1231,7 +1288,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
               className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
             >
               {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-              <span className="text-[10px] text-white/70 font-bold">OUT</span>
+              <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
             </button>
           )}
           {!isStandalone && (
@@ -1337,9 +1394,22 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
+        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
       </div>
+
+      {/* Test live stream — dry-run helper, no game created */}
+      <div className="px-4 pt-3">
+        <button
+          onClick={() => setShowLiveTest(true)}
+          className="w-full py-2.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 text-sm font-bold hover:bg-stone-800 active:scale-[0.99] flex items-center justify-center gap-2"
+        >
+          <span>🧪</span><span>TEST LIVE STREAM</span>
+        </button>
+      </div>
+
+      {showLiveTest && <LiveStreamTester onClose={() => setShowLiveTest(false)} />}
 
       {/* Upcoming games */}
       {(() => {
@@ -1349,7 +1419,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         if (upcoming.length === 0) return null;
         return (
           <div className="px-4 pt-6">
-            <h2 className="font-display text-2xl mb-3">UPCOMING</h2>
+            <h2 className="font-display text-2xl mb-3">UPCOMING GAMES</h2>
             <div className="space-y-2">
               {upcoming.slice(0, 5).map(item => (
                 <div key={item.id} className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex items-center gap-3">
@@ -1365,11 +1435,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -2068,7 +2134,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 }
 
 /* ---------- STARTING LINEUP ---------- */
-function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
+function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
   // Only players in the matchday squad are eligible. Legacy fallback: whole roster.
   const squadSet = squad && squad.length > 0 ? new Set(squad) : null;
   const pool = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
@@ -2079,6 +2145,119 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
     const defaultGK = sorted.find(p => p.position === 'GK');
     return defaultGK ? defaultGK.id : null;
   });
+
+  // Livestream attachment. Cloudflare Stream Live Inputs are persistent: one
+  // input = one fixed RTMPS URL + Stream Key, reusable forever. We provision
+  // a "team live input" ONCE, save it via onSaveTeamLiveInput, and reuse it
+  // for every game so the coach pastes the key into the Insta360 / OBS app
+  // exactly one time. After that, "GO LIVE" is a single tap — it just
+  // attaches the saved team input to this game so the public page shows the
+  // 🔴 LIVE badge and HLS player.
+  const [attached, setAttached] = useState(false); // attach the saved team input to this game
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveErr, setLiveErr] = useState(null);
+  const [showSetup, setShowSetup] = useState(false); // first-time setup modal
+  const [pendingSetup, setPendingSetup] = useState(null); // freshly-created creds awaiting confirm
+  const [showCreds, setShowCreds] = useState(false); // toggle visible creds panel
+  const [copied, setCopied] = useState(null);
+
+  // YouTube Live mode state — 🔴 LIVE button auto-detects the active stream
+  // on the @Stompers2016 channel via YouTube Data API (called through worker).
+  const [ytInput, setYtInput] = useState('');
+  const [ytVideoId, setYtVideoId] = useState(null);
+  const [ytBusy, setYtBusy] = useState(false);
+  const [ytErr, setYtErr] = useState(null);
+
+  // Auto-detect live stream from YouTube channel
+  const onDetectLive = () => {
+    if (ytBusy) return;
+    setYtBusy(true);
+    setYtErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/youtube-live`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: R2_WORKER_KEY }),
+    })
+      .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'detection failed')))
+      .then((data) => {
+        if (data.live && data.videoId) {
+          setYtVideoId(data.videoId);
+          setYtInput(data.videoId);
+        } else {
+          setYtErr('No live stream detected — start streaming in Insta360 first');
+        }
+      })
+      .catch((err) => setYtErr(String(err)))
+      .finally(() => setYtBusy(false));
+  };
+
+  // Tap "GO LIVE". If the team has a saved live input, just attach it to
+  // this game — no copying, no waiting. If not, kick off the one-time setup
+  // flow that creates the persistent input and shows the credentials.
+  const onGoLive = () => {
+    if (teamLiveInput) { setAttached(true); return; }
+    if (liveBusy) return;
+    setLiveBusy(true);
+    setLiveErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/live-input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: R2_WORKER_KEY, name: 'stompers-team-live' }),
+    })
+      .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
+      .then((info) => {
+        setPendingSetup({ ...info, createdAt: Date.now() });
+        setShowSetup(true);
+      })
+      .catch((err) => setLiveErr(String(err)))
+      .finally(() => setLiveBusy(false));
+  };
+
+  const confirmSetup = async () => {
+    if (!pendingSetup) return;
+    await onSaveTeamLiveInput(pendingSetup);
+    setAttached(true);
+    setShowSetup(false);
+    setPendingSetup(null);
+  };
+
+  const cancelSetup = () => {
+    // User backed out before confirming — delete the freshly-created live
+    // input so we don't leave orphans in Cloudflare Stream.
+    if (pendingSetup?.uid) {
+      fetch(`${R2_UPLOAD_WORKER}/live-input/${pendingSetup.uid}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: R2_WORKER_KEY }),
+      }).catch(() => {});
+    }
+    setPendingSetup(null);
+    setShowSetup(false);
+  };
+
+  const resetTeamKey = async () => {
+    const ok = window.confirm('Reset team stream key?\n\nThis deletes the current Cloudflare Stream Live Input. You\'ll need to paste a NEW RTMPS URL + Stream Key into the Insta360 / OBS app. Only do this if the key was compromised or you want a fresh start.');
+    if (!ok) return;
+    if (teamLiveInput?.uid) {
+      try {
+        await fetch(`${R2_UPLOAD_WORKER}/live-input/${teamLiveInput.uid}/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: R2_WORKER_KEY }),
+        });
+      } catch (e) {}
+    }
+    await onSaveTeamLiveInput(null);
+    setAttached(false);
+  };
+
+  const copy = (text, key) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1500);
+    } catch (e) {}
+  };
 
   const toggle = (id) => {
     const next = new Set(selected);
@@ -2197,8 +2376,120 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
             <span className="text-red-600 font-bold">⚠ No goalie selected — tap the GK button on a player.</span>
           )}
         </div>
+
+        {/* Livestream section — gated by LIVE_MODE.
+            'youtube':    simple video ID input (free, paste once per game)
+            'cloudflare': one-tap attach via persistent team Cloudflare Stream Live Input ($5/mo) */}
+        {liveErr && (
+          <div className="text-center text-[11px] text-red-400 mb-2">{liveErr}</div>
+        )}
+
+        {LIVE_MODE === 'youtube' && (
+          <>
+            {!ytVideoId ? (
+              <div className="mb-2 space-y-2">
+                <button
+                  onClick={onDetectLive}
+                  disabled={ytBusy}
+                  className="w-full py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
+                >
+                  {ytBusy ? '⏳ DETECTING STREAM…' : '🔴 GO LIVE'}
+                </button>
+                {ytErr && <div className="text-center text-[11px] text-red-400">{ytErr}</div>}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ytInput}
+                    onChange={(e) => setYtInput(e.target.value.trim())}
+                    placeholder="Or paste YouTube URL / Video ID"
+                    className="flex-1 bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-stone-300 placeholder-stone-600 outline-none focus:border-stone-500"
+                  />
+                  <button
+                    onClick={() => { if (ytInput) setYtVideoId(ytInput); }}
+                    disabled={!ytInput}
+                    className="px-3 rounded-xl bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-40"
+                  >
+                    SET
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 px-3 py-2 flex items-center justify-between">
+                <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  LIVE: {ytVideoId}
+                </span>
+                <button onClick={() => { setYtVideoId(null); setYtInput(''); setYtErr(null); }} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
+              </div>
+            )}
+          </>
+        )}
+
+        {LIVE_MODE === 'cloudflare' && (
+          <>
+            {!teamLiveInput ? (
+              <button
+                onClick={onGoLive}
+                disabled={liveBusy}
+                className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition disabled:opacity-50"
+              >
+                {liveBusy ? '⏳ SETTING UP STREAM…' : '🔴 GO LIVE (one-time setup)'}
+              </button>
+            ) : !attached ? (
+              <button
+                onClick={() => setAttached(true)}
+                className="w-full mb-2 py-2.5 rounded-xl bg-stone-950 border-2 border-dashed border-red-700 text-sm font-bold text-red-300 active:scale-[0.99] transition"
+              >
+                🔴 GO LIVE (Insta360 should be streaming)
+              </button>
+            ) : (
+              <div className="mb-2 rounded-xl bg-red-950/40 border border-red-700 overflow-hidden">
+                <div className="px-3 py-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-red-300 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    LIVE ATTACHED
+                  </span>
+                  <button onClick={() => setAttached(false)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">REMOVE</button>
+                </div>
+                <div className="px-3 pb-2 text-[11px] text-stone-400">
+                  The public page will show 🔴 LIVE the moment you tap START GAME.
+                  Make sure the Insta360 / OBS app is pushing to your saved RTMPS key.
+                </div>
+                <div className="px-3 pb-3 flex items-center gap-3">
+                  <button onClick={() => setShowCreds(s => !s)} className="text-[10px] text-stone-400 tracking-wider active:text-stone-200">
+                    {showCreds ? 'HIDE' : 'SHOW'} STREAM KEY
+                  </button>
+                  <button onClick={resetTeamKey} className="text-[10px] text-stone-500 tracking-wider active:text-red-400">RESET KEY</button>
+                </div>
+                {showCreds && (
+                  <div className="px-3 pb-3 space-y-2 text-[11px] border-t border-red-800/60 pt-2">
+                    <div>
+                      <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                        <span>RTMPS Server</span>
+                        <button onClick={() => copy(teamLiveInput.rtmpsUrl, 'url')} className="text-lime-400 font-bold tracking-wider">{copied === 'url' ? 'COPIED ✓' : 'COPY'}</button>
+                      </div>
+                      <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.rtmpsUrl}</code>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between text-stone-500 mb-0.5">
+                        <span>Stream Key</span>
+                        <button onClick={() => copy(teamLiveInput.streamKey, 'key')} className="text-lime-400 font-bold tracking-wider">{copied === 'key' ? 'COPIED ✓' : 'COPY'}</button>
+                      </div>
+                      <code className="block bg-stone-950 p-2 rounded text-lime-400 break-all">{teamLiveInput.streamKey}</code>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
         <button
-          onClick={() => onStart(Array.from(selected), gkId)}
+          onClick={() => {
+            const livePayload = LIVE_MODE === 'cloudflare' && attached ? teamLiveInput : null;
+            const ytId = LIVE_MODE === 'youtube' ? ytVideoId : null;
+            onStart(Array.from(selected), gkId, livePayload, ytId);
+          }}
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
             gkId
@@ -2209,6 +2500,48 @@ function StartingLineupView({ roster, squad, setup, onBack, onStart }) {
           ▶ START GAME
         </button>
       </div>
+
+      {/* First-time stream setup modal — only shown the first time the coach
+          taps GO LIVE. After confirming, the RTMPS key is saved to team
+          storage and never asked for again. */}
+      {showSetup && pendingSetup && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4" onClick={cancelSetup}>
+          <div className="bg-stone-900 rounded-2xl border border-red-800 max-w-md w-full p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-3">
+              <div className="text-xs tracking-[0.2em] text-red-400 mb-1">ONE-TIME SETUP</div>
+              <div className="font-display text-2xl text-stone-100">Team Stream Key</div>
+            </div>
+            <p className="text-sm text-stone-300 mb-3">
+              Paste these into the <b>Insta360</b> app once (Settings → Live → Custom RTMP).
+              After this, you'll never see this screen again — just tap GO LIVE before each match.
+            </p>
+            <div className="space-y-3 text-xs mb-4">
+              <div>
+                <div className="flex items-center justify-between text-stone-500 mb-1">
+                  <span className="font-bold tracking-wider">RTMPS SERVER URL</span>
+                  <button onClick={() => copy(pendingSetup.rtmpsUrl, 'surl')} className="text-lime-400 font-bold tracking-wider">{copied === 'surl' ? 'COPIED ✓' : 'COPY'}</button>
+                </div>
+                <code className="block bg-stone-950 p-2.5 rounded text-lime-400 break-all">{pendingSetup.rtmpsUrl}</code>
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-stone-500 mb-1">
+                  <span className="font-bold tracking-wider">STREAM KEY</span>
+                  <button onClick={() => copy(pendingSetup.streamKey, 'skey')} className="text-lime-400 font-bold tracking-wider">{copied === 'skey' ? 'COPIED ✓' : 'COPY'}</button>
+                </div>
+                <code className="block bg-stone-950 p-2.5 rounded text-lime-400 break-all">{pendingSetup.streamKey}</code>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={cancelSetup} className="flex-1 py-3 rounded-xl bg-stone-800 text-stone-300 font-bold text-sm active:scale-95">
+                CANCEL
+              </button>
+              <button onClick={confirmSetup} className="flex-[2] py-3 rounded-xl bg-lime-500 text-stone-100 font-bold text-sm active:scale-95">
+                ✓ SAVED TO INSTA360
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2929,6 +3262,130 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
   );
 }
 
+/* ---------- LIVE STREAM TESTER ----------
+ * Dry-run helper for coaches: detects the active YouTube live stream on
+ * @Stompers2016 via the worker and embeds it inline — no game doc, no
+ * Firestore writes. Lets you verify Insta360 → YouTube → detection works
+ * before kickoff.
+ */
+function LiveStreamTester({ onClose }) {
+  const [videoId, setVideoId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [ranOnce, setRanOnce] = useState(false);
+
+  const detect = () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    fetch(`${R2_UPLOAD_WORKER}/youtube-live`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: R2_WORKER_KEY }),
+    })
+      .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'detection failed')))
+      .then((data) => {
+        if (data.live && data.videoId) {
+          setVideoId(data.videoId);
+        } else {
+          setVideoId(null);
+          setErr('No live stream detected. Start streaming from Insta360 first, then tap DETECT again.');
+        }
+      })
+      .catch((e) => { setVideoId(null); setErr(String(e)); })
+      .finally(() => { setBusy(false); setRanOnce(true); });
+  };
+
+  useEffect(() => { detect(); /* auto-detect on open */ }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-3" onClick={onClose}>
+      <div
+        className="w-full max-w-lg bg-stone-900 border border-stone-800 rounded-2xl p-4 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 16px)' }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display text-lg">🧪 TEST LIVE STREAM</h3>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-stone-800 hover:bg-stone-700 flex items-center justify-center active:scale-95"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="text-xs text-stone-400 mb-3">
+          Dry-run check for the @Stompers2016 YouTube live stream. No game is created. Use this to confirm Insta360 → YouTube → detection works before kickoff.
+        </div>
+
+        {videoId ? (
+          <>
+            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}</div>
+            <YouTubeEmbed videoId={videoId} live={true} />
+          </>
+        ) : (
+          <div className="bg-stone-800/60 rounded-xl p-4 text-sm text-stone-300">
+            {busy ? 'Detecting…' : (err || 'Ready to detect.')}
+          </div>
+        )}
+
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={detect}
+            disabled={busy}
+            className="flex-1 py-2 rounded-xl bg-lime-500 text-stone-950 font-display text-sm active:scale-95 disabled:opacity-50"
+          >
+            {busy ? 'DETECTING…' : (ranOnce ? '↻ DETECT AGAIN' : 'DETECT')}
+          </button>
+          {videoId && (
+            <a
+              href={`https://www.youtube.com/watch?v=${videoId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="py-2 px-3 rounded-xl bg-stone-800 text-stone-200 text-sm flex items-center active:scale-95"
+            >Open on YouTube ↗</a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- YOUTUBE EMBED ---------- */
+function YouTubeEmbed({ videoId, live = false }) {
+  // Sanitize videoId
+  let id = videoId || '';
+  if (id.includes('youtube.com') || id.includes('youtu.be')) {
+    try {
+      const u = new URL(id.includes('http') ? id : `https://${id}`);
+      id = u.searchParams.get('v') || u.pathname.split('/').pop() || id;
+    } catch (e) {}
+  }
+  id = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20);
+  if (!id) return null;
+
+  const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+  const params = [
+    'autoplay=1', 'mute=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
+    'controls=0', 'disablekb=1', 'iv_load_policy=3', 'fs=0',
+    'showinfo=0', 'cc_load_policy=0',
+    live ? 'live=1' : '',
+    origin ? `origin=${encodeURIComponent(origin)}` : '',
+  ].filter(Boolean).join('&');
+  const src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
+
+  return (
+    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+      <iframe
+        src={src}
+        className="absolute inset-0 w-full h-full"
+        frameBorder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        referrerPolicy="strict-origin-when-cross-origin"
+        title="Match stream"
+      />
+      {/* Click-blocking overlay — prevents accidental taps on YT pause/share/title */}
+      <div className="absolute inset-0" aria-hidden="true" />
+    </div>
+  );
+}
+
 /* ---------- 360° VIDEO PLAYER ---------- */
 function loadThreeJS() {
   if (window.THREE) return Promise.resolve(window.THREE);
@@ -2958,6 +3415,13 @@ function loadHlsJS() {
 
 // Attach an HLS source (.m3u8) to a <video> element. Uses native HLS on Safari,
 // falls back to hls.js on Chrome/Firefox. Returns a cleanup function.
+//
+// NOTE: The Insta360 X5 (and other 360 cameras) ships multi-channel spatial /
+// ambisonic audio inside an AAC container. Chrome's AAC decoder rejects the
+// channel layout with PipelineStatus::DECODER_ERROR_NOT_SUPPORTED, which
+// breaks the whole pipeline. To stay robust, we use a custom playlist loader
+// that strips audio tracks from the master manifest — playing video-only.
+// (Match audio doesn't matter for parents 30ft from the field anyway.)
 async function attachHls(video, url) {
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = url;
@@ -2968,13 +3432,45 @@ async function attachHls(video, url) {
     video.src = url; // last-ditch fallback
     return () => {};
   }
-  const hls = new Hls({ lowLatencyMode: true });
+  class VideoOnlyPLoader extends Hls.DefaultConfig.loader {
+    load(context, config, callbacks) {
+      const origSuccess = callbacks.onSuccess;
+      callbacks.onSuccess = (response, stats, ctx, networkDetails) => {
+        if (typeof response.data === 'string' && response.data.indexOf('#EXTM3U') >= 0) {
+          response.data = response.data
+            .replace(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*\n/g, '')
+            .replace(/,AUDIO="[^"]*"/g, '');
+        }
+        origSuccess(response, stats, ctx, networkDetails);
+      };
+      super.load(context, config, callbacks);
+    }
+  }
+  const hls = new Hls({
+    // CF Stream's LL-HLS is off by default — keep lowLatencyMode false to
+    // avoid hls.js spuriously rebuffering / stalling on standard live HLS.
+    lowLatencyMode: false,
+    // Treat live streams as infinite so the player keeps polling the manifest
+    // for new segments instead of stopping at the current seekable end.
+    liveDurationInfinity: true,
+    backBufferLength: 30,
+    pLoader: VideoOnlyPLoader,
+  });
   hls.loadSource(url);
   hls.attachMedia(video);
+  // Auto-recover from buffer stalls common on live streams when the player
+  // catches up to the live edge faster than new segments arrive.
+  hls.on(Hls.Events.ERROR, (_evt, data) => {
+    if (!data || !data.fatal) return;
+    try {
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+    } catch (e) {}
+  });
   return () => { try { hls.destroy(); } catch {} };
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode: initialDotsMode = 'all', lockDots = false }) {
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode: initialDotsMode = 'all', lockDots = false, initialTvMode = true }) {
   const wrapperRef = useRef(null);
   const placeholderRef = useRef(null);
   const containerRef = useRef(null);
@@ -2989,11 +3485,27 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [tvMode, setTvMode] = useState(false);
+  const [tvMode, setTvMode] = useState(initialTvMode);
   const [gyroActive, setGyroActive] = useState(false);
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPortrait, setIsPortrait] = useState(typeof window !== 'undefined' ? window.innerHeight > window.innerWidth : true);
+  // Current page orientation angle (0/90/180/270). Used in fullscreen to keep
+  // the video locked to landscape-primary regardless of iOS auto-rotate.
+  const [screenAngle, setScreenAngle] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+    const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+    const norm = ((a % 360) + 360) % 360;
+    return norm;
+  });
+  // When entering fullscreen on a touch device, lock the video frame to
+  // landscape-primary via CSS rotation that compensates for the current page
+  // angle — so the video stays landscape no matter how iOS rotates the page.
+  const [fullscreenRotated, setFullscreenRotated] = useState(false);
+  const rotatedRef = useRef(false);
+  // Live page-angle ref so pointer/gyro handlers (inside the long-lived
+  // useEffect closure) can read the current orientation without re-binding.
+  const screenAngleRef = useRef(0);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [rect, setRect] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const hideTimerRef = useRef(null);
@@ -3011,10 +3523,37 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     if (next) {
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
+      // 1) Try real Fullscreen API on the wrapper. On iPad / Android Chrome /
+      //    iOS 16.4+ Safari this enters TRUE fullscreen (hides PWA status bar).
+      try {
+        const el = wrapperRef.current;
+        const req = el?.requestFullscreen || el?.webkitRequestFullscreen;
+        if (req) { const p = req.call(el); if (p && p.catch) p.catch(() => {}); }
+      } catch (e) {}
+      // 2) Lock orientation. Works on Android, and inside real fullscreen on iOS 16.4+.
+      try { screen.orientation?.lock?.('landscape').catch(() => {}); } catch (e) {}
+      // 3) No CSS-rotation fallback. On iOS PWA standalone (which honors
+      //    neither Fullscreen API nor orientation.lock) we just fill the
+      //    viewport with 100dvw/100dvh. If the user holds the phone portrait,
+      //    the video letterboxes 16:9 and we show a "rotate phone" hint.
+      //    When they rotate physically, dvw/dvh swap and the video fills
+      //    landscape naturally. The iOS status bar stays visible — Apple
+      //    limitation that no software workaround can fix in standalone mode.
+      setFullscreenRotated(false);
+      rotatedRef.current = false;
     } else {
       document.body.style.overflow = '';
       document.documentElement.style.overflow = '';
+      try { screen.orientation?.unlock?.(); } catch (e) {}
+      try {
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } catch (e) {}
+      setFullscreenRotated(false);
+      rotatedRef.current = false;
     }
+    // Reset gyro baseline so it re-calibrates to the new orientation
+    if (containerRef.current?._resetGyroBaseline) containerRef.current._resetGyroBaseline();
     setControlsVisible(true);
     return next;
   });
@@ -3034,6 +3573,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   useEffect(() => () => {
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
+    try { screen.orientation?.unlock?.(); } catch(e) {}
   }, []);
 
   const showControls = () => {
@@ -3073,16 +3613,28 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     };
   }, [isFullscreen]);
 
-  // Track orientation for portrait-fullscreen letterboxing
+  // Track orientation. Always-on so fullscreen wrapperStyle can compensate
+  // for iOS auto-rotate and keep the video locked to landscape-primary.
+  // Gyro baseline only resets when NOT in fullscreen (avoid mid-watch jitter).
   useEffect(() => {
-    const onOrient = () => setIsPortrait(window.innerHeight > window.innerWidth);
+    const onOrient = () => {
+      const a = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      const norm = ((a % 360) + 360) % 360;
+      screenAngleRef.current = norm;
+      setScreenAngle(norm);
+      setIsPortrait(window.innerHeight > window.innerWidth);
+      if (!isFullscreen && containerRef.current?._resetGyroBaseline) {
+        containerRef.current._resetGyroBaseline();
+      }
+    };
     window.addEventListener('resize', onOrient);
     window.addEventListener('orientationchange', onOrient);
+    onOrient(); // seed screenAngleRef on mount
     return () => {
       window.removeEventListener('resize', onOrient);
       window.removeEventListener('orientationchange', onOrient);
     };
-  }, []);
+  }, [isFullscreen]);
 
   // Trigger renderer resize when fullscreen toggles or inline rect changes
   useEffect(() => {
@@ -3098,15 +3650,18 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return () => clearTimeout(t);
   }, [isFullscreen, isPortrait, rect.width, rect.height]);
 
-  // TV mode: snap FOV and clamp vertical
+  // TV mode constrains vertical look + narrows FOV (cinematic). 3D gyro mode
+  // unlocks the full 360° sphere so parents can look anywhere via gyro/touch.
+  // Toggleable via the 📺 / 🌐 button.
   useEffect(() => {
     const st = stateRef.current;
     st.tvMode = tvMode;
     if (tvMode) {
-      st.targetFov = 50;
+      st.targetFov = 40;
       st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
     } else {
-      st.targetFov = 75;
+      // Snap to a comfortable wide-angle when opening 3D mode
+      st.targetFov = Math.max(st.targetFov, 75);
     }
   }, [tvMode]);
 
@@ -3134,13 +3689,8 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       const geometry = new THREE.SphereGeometry(500, 64, 40);
       geometry.scale(-1, 1, 1);
 
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.playsInline = true;
-      video.loop = false;
-      video.muted = true;
-      video.preload = 'auto';
-      videoRef.current = video;
+      const video = videoRef.current;
+      if (!video) return;
 
       // HLS (.m3u8) needs hls.js on non-Safari; plain MP4 just sets src directly.
       const isHls = /\.m3u8(\?|$)/i.test(videoUrl);
@@ -3163,6 +3713,11 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         setReady(true);
         video.play().catch(() => {});
       });
+      // iOS sometimes silently rejects autoplay even when muted. Retry play()
+      // on the first user gesture inside the viewer (drag, tap, pinch).
+      const kickPlay = () => { try { video.play().catch(()=>{}); } catch(e) {} };
+      container.addEventListener('pointerdown', kickPlay, { once: true });
+      container.addEventListener('touchstart', kickPlay, { once: true, passive: true });
       video.addEventListener('timeupdate', () => setCurrentTime(video.currentTime));
       video.addEventListener('play', () => setPlaying(true));
       video.addEventListener('pause', () => setPlaying(false));
@@ -3193,16 +3748,46 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         const st = stateRef.current;
         if (pointers.size === 1 && dragLast) {
-          const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          let dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          // The wrapper may be CSS-rotated to keep the video locked to
+          // landscape-primary regardless of the page's actual orientation.
+          // Pointer events arrive in unrotated screen space, so we apply the
+          // INVERSE of the wrapper's rotation to get the delta in content space.
+          // Wrapper rotation by screenAngle: 0→+90°, 90→ 0, 180→−90°, 270→180°.
+          if (rotatedRef.current) {
+            const sx = dx, sy = dy;
+            const a = screenAngleRef.current;
+            if (a === 0) {           // wrapper rotated +90° CW → inverse 90° CCW
+              dx = sy;  dy = -sx;
+            } else if (a === 180) {  // wrapper rotated −90° (CCW) → inverse 90° CW
+              dx = -sy; dy = sx;
+            } else if (a === 270) {  // wrapper rotated 180° → inverse 180°
+              dx = -sx; dy = -sy;
+            }
+            // a === 90: no rotation → leave dx/dy as-is
+          }
+          // Pan gain — similar boost to gyro so a small finger swipe moves
+          // the view a useful amount. Yaw is more sensitive than pitch.
+          const PAN_YAW_GAIN = 2.5;
+          const PAN_PITCH_GAIN = 1.6;
           const sensitivity = 0.1 * (st.fov / 75);
-          st.targetLon -= dx * sensitivity;
-          st.targetLat += dy * sensitivity;
+          const dLon = -dx * sensitivity * PAN_YAW_GAIN;
+          const dLat = dy * sensitivity * PAN_PITCH_GAIN;
+          st.targetLon += dLon;
+          st.targetLat += dLat;
           const maxLat = st.tvMode ? [45, 10] : [85, 85];
           st.targetLat = Math.max(-maxLat[0], Math.min(maxLat[1], st.targetLat));
+          // Shift gyro anchor so drag and gyro compose (don't fight)
+          gyroAnchorLon += dLon;
+          gyroAnchorLat += dLat;
+          gyroSmoothedLon += dLon;
+          gyroSmoothedLat += dLat;
           dragLast = { x: e.clientX, y: e.clientY };
         } else if (pointers.size === 2 && pinchStartDist > 0) {
           const ratio = pinchStartDist / pointerDist();
-          if (!st.tvMode) st.targetFov = Math.max(25, Math.min(110, pinchStartFov * ratio));
+          const minFov = st.tvMode ? 25 : 25;
+          const maxFov = st.tvMode ? 60 : 110;
+          st.targetFov = Math.max(minFov, Math.min(maxFov, pinchStartFov * ratio));
         }
       });
       const endPointer = (e) => {
@@ -3215,7 +3800,9 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        if (!stateRef.current.tvMode) stateRef.current.targetFov = Math.max(25, Math.min(110, stateRef.current.targetFov + e.deltaY * 0.05));
+        const st = stateRef.current;
+        const maxFov = st.tvMode ? 60 : 110;
+        st.targetFov = Math.max(25, Math.min(maxFov, st.targetFov + e.deltaY * 0.05));
       }, { passive: false });
 
       // Gyroscope support (like YouTube 360°)
@@ -3248,26 +3835,33 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         let dBeta = e.beta - gyroBaseBeta;
         let dGamma = e.gamma - gyroBaseGamma;
 
-        // Map axes based on screen orientation (portrait vs landscape)
-        const screenAngle = screen.orientation?.angle ?? window.orientation ?? 0;
+        // Map axes based on screen orientation (portrait vs landscape).
+        // When the video is CSS-rotated 90° cw (rotatedRef), pin the mapping
+        // to landscape-left regardless of the actual device angle — otherwise
+        // a 180° flip would invert gyro mid-watch.
+        const screenAngle = rotatedRef.current ? 90 : (screen.orientation?.angle ?? window.orientation ?? 0);
         let dLon, dLat;
         if (screenAngle === 0 || screenAngle === 180) {
           // Portrait: alpha→yaw, beta→pitch
           dLon = -dAlpha;
-          dLat = -dBeta;
+          dLat = dBeta;
         } else if (screenAngle === 90) {
           // Landscape left (home button on right)
           dLon = -dAlpha;
-          dLat = dGamma;
+          dLat = -dGamma;
         } else {
           // Landscape right (home button on left, screenAngle === -90 or 270)
           dLon = -dAlpha;
-          dLat = -dGamma;
+          dLat = dGamma;
         }
 
         // Compute desired position (anchor + offset)
-        const desiredLon = gyroAnchorLon + dLon;
-        let desiredLat = gyroAnchorLat + dLat;
+        // Sensitivity multiplier: small head turns pan the view further so you
+        // don't have to rotate the phone 180° to see across the field.
+        const GYRO_YAW_GAIN = 2.2;
+        const GYRO_PITCH_GAIN = 1.4;
+        const desiredLon = gyroAnchorLon + dLon * GYRO_YAW_GAIN;
+        let desiredLat = gyroAnchorLat + dLat * GYRO_PITCH_GAIN;
 
         // Clamp lat to TV mode or free limits (no lon clamp)
         const maxLat = st.tvMode ? [45, 10] : [85, 85];
@@ -3307,6 +3901,12 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         gyroBaseBeta = null;
         gyroBaseGamma = null;
         window.removeEventListener('deviceorientation', onDeviceOrientation);
+      };
+      // Reset gyro baseline on orientation change (prevents jitter during fullscreen rotation)
+      container._resetGyroBaseline = () => {
+        gyroBaseAlpha = null;
+        gyroBaseBeta = null;
+        gyroBaseGamma = null;
       };
 
       // Render loop
@@ -3390,14 +3990,39 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const isLive = gameInfo && gameInfo.status === 'active';
   const isFinished = gameInfo && gameInfo.status === 'finished';
   const videoEnded = duration > 0 && currentTime >= duration - 0.5;
-  const inSecondHalf = isFinite(half2StartElapsed)
-    ? currentTime >= half2StartElapsed
-    : (gameInfo && gameInfo.period >= 2);
-  const displayedMinute = inSecondHalf
-    ? (isFinite(half2StartElapsed)
-        ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
-        : Math.floor(currentTime / 60) + halfLen)
-    : Math.floor(currentTime / 60);
+  // 1-second ticker so the live scorebug minute advances even when the video
+  // element doesn't fire timeupdate (e.g. while buffering at the live edge).
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    if (!isLive || !gameInfo?.clockRunning) return;
+    const id = setInterval(() => setLiveTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isLive, gameInfo?.clockRunning]);
+  // For LIVE matches, mirror the coach-app match clock (wall-clock based) so
+  // the scorebug stays in sync with the page header. For replays, derive from
+  // video currentTime as before.
+  const liveElapsedSec = (() => {
+    if (!isLive || !gameInfo) return 0;
+    if (gameInfo.elapsedAtPause === undefined) {
+      return gameInfo.startedAt ? Math.floor((Date.now() - gameInfo.startedAt) / 1000) : 0;
+    }
+    if (gameInfo.clockRunning && gameInfo.segmentStartedAt) {
+      return gameInfo.elapsedAtPause + Math.floor((Date.now() - gameInfo.segmentStartedAt) / 1000);
+    }
+    return gameInfo.elapsedAtPause || 0;
+  })();
+  const inSecondHalf = isLive
+    ? (gameInfo && gameInfo.period >= 2)
+    : (isFinite(half2StartElapsed)
+        ? currentTime >= half2StartElapsed
+        : (gameInfo && gameInfo.period >= 2));
+  const displayedMinute = isLive
+    ? Math.floor(liveElapsedSec / 60)
+    : (inSecondHalf
+        ? (isFinite(half2StartElapsed)
+            ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
+            : Math.floor(currentTime / 60) + halfLen)
+        : Math.floor(currentTime / 60));
 
   // Auto-pick readable text color for a jersey background (WCAG luminance)
   const textOnColor = (hex) => {
@@ -3427,22 +4052,73 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return { home, away };
   }, [events, currentTime]);
 
+  // Wrapper style. In rotated fullscreen we compensate for the current page
+  // orientation so the video is ALWAYS displayed in landscape-primary physical
+  // orientation (camera lens at top of landscape view), regardless of whether
+  // iOS rotation lock is on or off, and regardless of how the user holds the
+  // phone. Uses dvw/dvh so the wrapper extends behind the iOS PWA status bar.
+  const baseFs = { position: 'fixed', top: 0, left: 0, zIndex: 99999, background: '#000', borderRadius: 0 };
   const wrapperStyle = isFullscreen
-    ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 99999, background: '#000', borderRadius: 0 }
+    ? (fullscreenRotated
+        ? (() => {
+            const a = screenAngle;
+            if (a === 0) {
+              // Page is portrait → rotate 90° CW
+              return { ...baseFs, width: '100dvh', height: '100dvw',
+                transform: 'translate(100dvw, 0) rotate(90deg)', transformOrigin: 'top left' };
+            } else if (a === 90) {
+              // Page is landscape-primary → no CSS rotation needed
+              return { ...baseFs, width: '100dvw', height: '100dvh' };
+            } else if (a === 180) {
+              // Page is portrait upside-down → rotate -90° to get landscape-primary
+              return { ...baseFs, width: '100dvh', height: '100dvw',
+                transform: 'translate(0, 100dvh) rotate(-90deg)', transformOrigin: 'top left' };
+            } else {
+              // Page is landscape-secondary (270°) → rotate 180° to flip back to primary
+              return { ...baseFs, width: '100dvw', height: '100dvh',
+                transform: 'translate(100dvw, 100dvh) rotate(180deg)', transformOrigin: 'top left' };
+            }
+          })()
+        : { ...baseFs, width: '100dvw', height: '100dvh' })
     : { position: 'fixed', top: rect.top, left: rect.left, width: rect.width, height: rect.height, zIndex: 10 };
 
   const playerNode = (
     <div ref={wrapperRef} style={wrapperStyle} className={`bg-black overflow-hidden ${isFullscreen ? '' : 'rounded-2xl border border-stone-800'}`}>
-      {/* Close / Exit fullscreen button */}
-      {isFullscreen ? (
-        <button
-          onClick={toggleFullscreen}
-          className={`absolute right-3 z-20 w-9 h-9 rounded-full bg-black/70 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-          style={{ top: 'max(env(safe-area-inset-top, 0px) + 8px, 12px)' }}
-        >
-          <X className="w-5 h-5" />
-        </button>
-      ) : onClose && (
+      {/* Top-right floating fullscreen toggle (YouTube-style icon).
+          Lives outside the controls bar so it stays reachable in fullscreen
+          even after controls auto-hide. */}
+      <button
+        onClick={(e) => { e.stopPropagation(); toggleFullscreen(); showControls(); }}
+        className={`absolute z-20 ${isFullscreen ? 'w-11 h-11' : 'w-9 h-9'} rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95 transition-opacity duration-300 ${(!isFullscreen || controlsVisible) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+        style={{
+          // In rotated fullscreen the wrapper is already oriented so its top-right
+          // maps to the landscape view's top-right — plain 12px puts the button
+          // flush at landscape top-right (no safe-area-inset gap).
+          top: isFullscreen ? (fullscreenRotated ? '12px' : 'max(env(safe-area-inset-top, 0px) + 8px, 12px)') : '8px',
+          right: isFullscreen ? '12px' : (onClose ? '44px' : '8px'),
+        }}
+        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+      >
+        {isFullscreen ? (
+          // Exit fullscreen — four arrows pointing inward (YouTube minimize)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 4 9 9 4 9" />
+            <polyline points="15 4 15 9 20 9" />
+            <polyline points="9 20 9 15 4 15" />
+            <polyline points="15 20 15 15 20 15" />
+          </svg>
+        ) : (
+          // Enter fullscreen — four corner brackets pointing outward (YouTube expand)
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 9 4 4 9 4" />
+            <polyline points="20 9 20 4 15 4" />
+            <polyline points="4 15 4 20 9 20" />
+            <polyline points="20 15 20 20 15 20" />
+          </svg>
+        )}
+      </button>
+      {/* Close button (only when not fullscreen and onClose provided) */}
+      {!isFullscreen && onClose && (
         <button
           onClick={onClose}
           className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-black/60 flex items-center justify-center text-white active:scale-95"
@@ -3452,81 +4128,178 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
       )}
       {/* Score overlay — modern broadcast scorebug */}
       {gameInfo && (() => {
-        // TV-style status pill: derive from playback, not from stored game state.
-        // FT only when video has actually ended.
-        let statusLabel, statusTone, showPulse = false;
+        // Row 2 text: half + minute (LIVE shown as a red blinking dot, not text).
+        let statusLabel;
         if (isFinished && videoEnded) {
           statusLabel = 'FT';
-          statusTone = 'bg-stone-700/90 text-stone-100';
-        } else if (isLive) {
-          statusLabel = `LIVE · ${displayedMinute}'`;
-          statusTone = 'bg-red-600/95 text-white';
-          showPulse = true;
         } else {
           statusLabel = inSecondHalf ? `2ND · ${displayedMinute}'` : `1ST · ${displayedMinute}'`;
-          statusTone = 'bg-stone-800/90 text-white';
         }
+        const showLiveDot = isLive && !(isFinished && videoEnded);
+        // Shared background so both rows + corner fillets read as one piece.
+        const bugBg = 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)';
+        // Approximated solid for the tiny fillet pieces (gradient is subtle, this is invisible at 8px).
+        const filletColor = 'rgba(22,22,25,0.91)';
         return (
-          <div className={`absolute z-10 pointer-events-none ${isFullscreen ? 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3' : 'top-2 left-2'}`}>
+          <div className={`absolute z-10 pointer-events-none flex flex-col items-center ${isFullscreen ? (fullscreenRotated ? 'top-[14px] left-3' : 'top-[max(env(safe-area-inset-top,0px)+10px,14px)] left-3') : 'top-2 left-2'}`}>
+            {/* Row 1 — score (rounded all corners) */}
             <div
-              className="rounded-xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
-              style={{ background: 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)' }}
+              className="rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+              style={{ background: bugBg }}
             >
               <div className="flex items-stretch text-[11px]">
-                {/* Home */}
                 <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
-                  <div className="w-[3px] h-5 rounded-full mr-2" style={{ background: homeColor, boxShadow: `0 0 6px ${homeColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm mr-2" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.home || 'STM').toUpperCase()}</span>
                 </div>
-                {/* Score */}
                 <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
                   <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.home}</span>
                   <span className="text-white/30 text-xs">–</span>
                   <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{runningScore.away}</span>
                 </div>
-                {/* Away */}
                 <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
                   <span className="font-bold tracking-wider truncate max-w-[5rem] text-white" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{(gameInfo.away || 'OPP').toUpperCase()}</span>
-                  <div className="w-[3px] h-5 rounded-full ml-2" style={{ background: awayColor, boxShadow: `0 0 6px ${awayColor}80` }} />
+                  <div className="w-[6px] h-5 rounded-sm ml-2" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
                 </div>
               </div>
-              {/* Status row */}
-              <div className="px-2 pb-1.5 pt-0.5 flex items-center justify-center">
-                <div className={`flex items-center gap-1 px-1.5 py-px rounded-md ${statusTone}`}>
-                  {showPulse && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  <span className="text-[9px] font-bold tracking-wider">{statusLabel}</span>
-                </div>
+            </div>
+            {/* Row 2 wrapper — relative for the corner fillets */}
+            <div className="relative -mt-px">
+              {/* Left fillet — concave curve from row 1 down to row 2's top-left */}
+              <span
+                aria-hidden
+                className="absolute left-[-8px] top-0 w-2 h-2"
+                style={{
+                  background: filletColor,
+                  WebkitMaskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)',
+                  maskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)',
+                }}
+              />
+              {/* Right fillet */}
+              <span
+                aria-hidden
+                className="absolute right-[-8px] top-0 w-2 h-2"
+                style={{
+                  background: filletColor,
+                  WebkitMaskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)',
+                  maskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)',
+                }}
+              />
+              {/* Row 2 — fixed width sized for longest content ("2ND · 90+5'" + live dot) */}
+              <div
+                className="rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]"
+                style={{ background: bugBg }}
+              >
+                {showLiveDot && (
+                  <span className="relative flex items-center justify-center mr-0.5">
+                    <span className="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping" />
+                    <span className="relative w-2.5 h-2.5 rounded-full bg-red-500" style={{ boxShadow: '0 0 8px rgba(239,68,68,0.9)' }} />
+                  </span>
+                )}
+                <span className="font-display tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>{statusLabel}</span>
               </div>
             </div>
           </div>
         );
       })()}
-      {/* Canvas container — single DOM node always, styled by mode */}
+      {/* Canvas container — single DOM node always, styled by mode.
+          In rotated fullscreen the wrapper itself is already rotated and sized
+          to landscape, so the canvas just fills 100%. The old portrait-letterbox
+          path is only used for desktop (non-touch) where we don't rotate. */}
       <div
         ref={containerRef}
         onClick={toggleControls}
         className="bg-black"
         style={
-          isFullscreen && isPortrait
+          isFullscreen && isPortrait && !fullscreenRotated
             ? { position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', width: '100vw', height: 'calc(100vw * 9 / 16)' }
             : { width: '100%', height: '100%' }
         }
       />
-      {/* Controls */}
-      <div className={`px-3 py-2 flex items-center gap-2 bg-stone-900 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),8px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
-        <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-sm active:scale-95">
-          {playing ? '⏸' : '▶'}
+      {/* Portrait fullscreen hint — appears when user is in fullscreen but
+          still holding the phone portrait (typically iOS PWA, where neither
+          Fullscreen API nor orientation.lock work). Auto-vanishes when they
+          rotate to landscape. */}
+      {isFullscreen && isPortrait && (
+        <div className="absolute left-0 right-0 z-20 pointer-events-none flex justify-center"
+             style={{ bottom: 'calc(50% - 100vw * 9 / 32 - 44px)' }}>
+          <div className="bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5">
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="2" width="14" height="20" rx="2"/>
+              <path d="M9 18h6"/>
+            </svg>
+            Rotate phone for landscape
+          </div>
+        </div>
+      )}
+      {/* Hidden <video> element — MUST be in the DOM as JSX (not createElement) or
+          iOS Safari refuses to decode frames into the Three.js VideoTexture. */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        webkit-playsinline="true"
+        crossOrigin="anonymous"
+        preload="auto"
+        style={{ display: 'none' }}
+      />
+      {/* Controls — slim bar with YouTube-style SVG icons */}
+      <div className={`px-3 py-1.5 flex items-center gap-1.5 bg-black/85 absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${isFullscreen ? 'pb-[max(env(safe-area-inset-bottom,0px),6px)]' : ''} ${isFullscreen && !controlsVisible ? 'opacity-0 pointer-events-none' : 'opacity-100'}`} onClick={(e) => { e.stopPropagation(); showControls(); }}>
+        {/* Play / Pause */}
+        <button onClick={togglePlay} className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label={playing ? 'Pause' : 'Play'}>
+          {playing ? (
+            <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          )}
         </button>
+        {/* Rewind 10s — hidden for live, no seekable history */}
+        {!isLive && (
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10); }}
-          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏪</button>
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Rewind 10 seconds">
+          <svg viewBox="0 0 24 24" className="w-7 h-7">
+            <path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            <text x="12" y="17" textAnchor="middle" fontSize="8" fontWeight="800" fill="currentColor" fontFamily="system-ui, -apple-system, sans-serif">10</text>
+          </svg>
+        </button>
+        )}
+        {/* Forward 10s — hidden for live */}
+        {!isLive && (
         <button onClick={() => { if (videoRef.current) videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10); }}
-          className="w-8 h-8 rounded-full bg-stone-800 flex items-center justify-center text-white text-xs active:scale-95">⏩</button>
+          className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-95" aria-label="Forward 10 seconds">
+          <svg viewBox="0 0 24 24" className="w-7 h-7">
+            <path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            <text x="12" y="17" textAnchor="middle" fontSize="8" fontWeight="800" fill="currentColor" fontFamily="system-ui, -apple-system, sans-serif">10</text>
+          </svg>
+        </button>
+        )}
+        {/* Jump-to-live button — live only */}
+        {isLive && (
+          <button
+            onClick={() => {
+              const v = videoRef.current;
+              if (!v) return;
+              try {
+                const end = v.seekable.length ? v.seekable.end(v.seekable.length - 1) : 0;
+                if (end > 0) v.currentTime = Math.max(0, end - 1);
+                if (v.paused) v.play().catch(() => {});
+              } catch (e) {}
+            }}
+            className="flex items-center gap-1 px-2 h-7 rounded-full bg-red-600 active:scale-95"
+            aria-label="Jump to live"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            <span className="text-[10px] font-bold tracking-widest text-white">LIVE</span>
+          </button>
+        )}
         <div className="flex-1 relative">
+          {!isLive && (
           <input
             type="range" min="0" max={Math.floor(duration) || 1} value={Math.floor(currentTime)}
             onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
-            className="w-full h-1 accent-lime-400 block"
+            className="w-full h-0.5 accent-lime-400 block"
           />
+          )}
           {duration > 0 && events.filter(e => {
             if (e.elapsed <= 0 || e.elapsed > duration) return false;
             if (dotsMode === 'goals') return e.type === 'GOAL' || e.type === 'OPP_GOAL';
@@ -3546,8 +4319,24 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             );
           })}
         </div>
-        <span className="text-[10px] text-stone-400 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
-        <button onClick={toggleMute} className="text-[10px] font-bold text-stone-400 active:scale-95">{muted ? '🔇' : '🔊'}</button>
+        {!isLive && (
+          <span className="text-[11px] text-white/80 tabular-nums whitespace-nowrap">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
+        )}
+        {/* Mute / Unmute — YouTube-style speaker icon */}
+        <button onClick={toggleMute} className="w-9 h-9 rounded-full flex items-center justify-center text-white active:scale-95" aria-label={muted ? 'Unmute' : 'Mute'}>
+          {muted ? (
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+              <path d="M3 9v6h4l5 4V5L7 9H3z"/>
+              <path d="M16.5 9l5 6m0-6l-5 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+              <path d="M3 9v6h4l5 4V5L7 9H3z"/>
+              <path d="M15.5 8.5c1.5 1 2.5 2.5 2.5 3.5s-1 2.5-2.5 3.5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+              <path d="M18 6c2.5 1.5 4 4 4 6s-1.5 4.5-4 6" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round"/>
+            </svg>
+          )}
+        </button>
         {!lockDots && (
           <button
             onClick={() => setDotsMode(dotsMode === 'all' ? 'goals' : 'all')}
@@ -3557,9 +4346,17 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
           </button>
         )}
-        <button onClick={() => setTvMode(!tvMode)} className={`text-[10px] font-bold px-2 py-1 rounded ${tvMode ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
-          📺 TV
+        {/* TV / 3D mode toggle — lets parents switch between cinematic
+            broadcast view (TV) and free 360° look-anywhere (3D, pairs nicely
+            with the gyro toggle below). */}
+        <button onClick={() => setTvMode((v) => !v)}
+          className={`w-9 h-9 rounded-full flex items-center justify-center active:scale-95 text-sm ${tvMode ? 'bg-lime-500 text-black' : 'text-white'}`}
+          aria-label={tvMode ? 'Switch to 3D mode' : 'Switch to TV mode'}
+          title={tvMode ? 'TV mode — tap for 3D 360°' : '3D 360° — tap for TV mode'}
+        >
+          {tvMode ? '📺' : '🌐'}
         </button>
+        {/* Gyro toggle — compass-style SVG */}
         <button onClick={() => {
           const c = containerRef.current;
           if (!c) return;
@@ -3570,11 +4367,18 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             if (c._enableGyro) c._enableGyro();
             setGyroActive(true);
           }
-        }} className={`text-[10px] font-bold px-2 py-1 rounded ${gyroActive ? 'bg-lime-500 text-black' : 'bg-stone-800 text-stone-400'} active:scale-95`}>
-          🔄 GYRO
-        </button>
-        <button onClick={toggleFullscreen} className="text-[10px] font-bold px-2 py-1 rounded bg-stone-800 text-stone-400 active:scale-95">
-          {isFullscreen ? '⊡' : '⛶'}
+        }}
+          className={`w-9 h-9 rounded-full flex items-center justify-center active:scale-95 ${gyroActive ? 'bg-lime-500 text-black' : 'text-white'}`}
+          aria-label={gyroActive ? 'Disable gyro' : 'Enable gyro'}
+          title={gyroActive ? 'Gyro on — tap to disable' : 'Gyro off — tap to enable'}
+        >
+          {/* Phone-with-motion-arcs — universal "tilt to control" icon */}
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="8" y="3" width="8" height="14" rx="1.5" transform="rotate(20 12 10)"/>
+            <path d="M4 18c1.5 1.5 4 2.5 8 2.5s6.5-1 8-2.5"/>
+            <path d="M3 15.5l1 2.5 2.5-1"/>
+            <path d="M21 15.5l-1 2.5-2.5-1"/>
+          </svg>
         </button>
       </div>
     </div>
@@ -3720,6 +4524,1524 @@ function PillarMini({ label, value }) {
   );
 }
 
+/* ---------- FIELD CALIBRATION (post-game analytics) ----------
+ *
+ * Coach taps the 4 corners of the pitch (TL, TR, BR, BL clockwise) on the
+ * first frame of the uploaded 360° video. We compute a pixel→meters
+ * homography and store it under `teams/main/fields/<name>` so every future
+ * game on the same field re-uses it.
+ *
+ * The post_game/ Python pipeline reads this doc to convert detected player
+ * pixels into real field coordinates (meters). See post_game/calibration.py.
+ */
+
+// Direct Linear Transform — solve 8 unknowns (h11..h32, with h33=1) from 4
+// point correspondences. Returns a flat row-major 3x3 array, or null on
+// degenerate input. No external deps.
+function solveHomography4Point(srcPx, dstM) {
+  if (!Array.isArray(srcPx) || srcPx.length !== 4 || !Array.isArray(dstM) || dstM.length !== 4) return null;
+  // Build 8x9 augmented matrix [A | -b], then solve Ah = b for h (length 8).
+  const A = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = srcPx[i];
+    const [u, v] = dstM[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+  // Gauss-Jordan elimination on 8x9.
+  const n = 8;
+  for (let col = 0; col < n; col++) {
+    // partial pivot
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(A[r][col]) > Math.abs(A[pivot][col])) pivot = r;
+    }
+    if (Math.abs(A[pivot][col]) < 1e-10) return null; // singular
+    if (pivot !== col) { const tmp = A[col]; A[col] = A[pivot]; A[pivot] = tmp; }
+    const div = A[col][col];
+    for (let c = col; c <= n; c++) A[col][c] /= div;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = A[r][col];
+      if (f === 0) continue;
+      for (let c = col; c <= n; c++) A[r][c] -= f * A[col][c];
+    }
+  }
+  const h = A.map(row => row[n]);
+  return [
+    [h[0], h[1], h[2]],
+    [h[3], h[4], h[5]],
+    [h[6], h[7], 1],
+  ];
+}
+
+function applyHomography(H, x, y) {
+  const u = H[0][0] * x + H[0][1] * y + H[0][2];
+  const v = H[1][0] * x + H[1][1] * y + H[1][2];
+  const w = H[2][0] * x + H[2][1] * y + H[2][2];
+  return [u / w, v / w];
+}
+
+const CORNER_LABELS = ['TOP-LEFT', 'TOP-RIGHT', 'BOTTOM-RIGHT', 'BOTTOM-LEFT'];
+const CORNER_HINTS = [
+  'Far-left corner of the pitch (your team\'s left as you face the field).',
+  'Far-right corner of the pitch.',
+  'Near-right corner closest to the camera.',
+  'Near-left corner closest to the camera.',
+];
+
+// Build a small lime-green numbered pin sprite for the 3D scene.
+function makeCalibPinSprite(THREE, idx) {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#84cc16';
+  ctx.strokeStyle = '#0c0a09';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(32, 32, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#0c0a09';
+  ctx.font = 'bold 30px Outfit, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(idx), 32, 35);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true });
+  const s = new THREE.Sprite(mat);
+  s.scale.set(28, 28, 1);
+  s.renderOrder = 999;
+  return s;
+}
+
+function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
+  const containerRef = useRef(null);
+  const cleanupRef = useRef(null);
+  const sceneRef = useRef(null);
+  const pinsRef = useRef([]); // [{ sprite, px, py }]
+  const stateRef = useRef({
+    yaw: 0, pitch: -0.25, fov: 90,
+    targetYaw: 0, targetPitch: -0.25, targetFov: 90,
+  });
+  const lensFrontRef = useRef(true);
+  const naturalSizeRef = useRef({ w: 0, h: 0 });
+
+  const [ready, setReady] = useState(false);
+  const [loadErr, setLoadErr] = useState(null);
+  const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+  const [points, setPoints] = useState([]); // [{x, y}] in NATURAL equirect pixel coords
+  const [lensFront, setLensFront] = useState(true);
+  // Fixed U10 7v7 pitch dimensions — calibration is per-game now.
+  const LENGTH_M = 50;
+  const WIDTH_M = 35;
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState(null);
+
+  // Push a history entry so iOS swipe-back / Android back closes the modal
+  // instead of leaving the coach app. Also lock body scroll so the page
+  // underneath retains its scroll position when this modal closes.
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    window.history.pushState({ modal: 'calibrate' }, '');
+    const onPop = () => onCancel();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+      if (window.history.state && window.history.state.modal === 'calibrate') {
+        window.history.back();
+      }
+    };
+  }, [onCancel]);
+
+  // Front/Back lens toggle snaps camera yaw to that hemisphere.
+  useEffect(() => {
+    lensFrontRef.current = lensFront;
+    stateRef.current.targetYaw = 0;
+  }, [lensFront]);
+
+  // Three.js scene: equirectangular sphere viewer with drag/pinch/tap.
+  useEffect(() => {
+    let cancelled = false;
+    let raf = 0;
+    loadThreeJS().then((THREE) => {
+      if (cancelled || !containerRef.current) return;
+      const container = containerRef.current;
+      const W = container.clientWidth || 640;
+      const H = container.clientHeight || 360;
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(W, H);
+      container.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      sceneRef.current = scene;
+      const camera = new THREE.PerspectiveCamera(stateRef.current.fov, W / H, 0.1, 1100);
+      camera.position.set(0, 0, 0.01);
+
+      const geometry = new THREE.SphereGeometry(500, 64, 40);
+      geometry.scale(-1, 1, 1);
+
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.playsInline = true;
+      video.muted = true;
+      video.preload = 'auto';
+      // Mirror the TV mode 360 viewer: HLS (.m3u8) needs hls.js on non-Safari,
+      // plain MP4 just sets src directly.
+      let hlsCleanup = null;
+      const isHls = /\.m3u8(\?|$)/i.test(videoUrl);
+      if (isHls) {
+        attachHls(video, videoUrl).then(fn => { hlsCleanup = fn; }).catch(() => {
+          setLoadErr('Failed to load HLS stream. Try a different video.');
+        });
+      } else {
+        video.src = videoUrl;
+      }
+
+      const texture = new THREE.VideoTexture(video);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = THREE.LinearFilter;
+      texture.magFilter = THREE.LinearFilter;
+      const sphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture }));
+      scene.add(sphere);
+
+      video.addEventListener('loadedmetadata', () => {
+        const ns = { w: video.videoWidth, h: video.videoHeight };
+        naturalSizeRef.current = ns;
+        setNaturalSize(ns);
+        try { video.currentTime = Math.min(0.5, (video.duration || 1) / 2); } catch (e) {}
+      });
+      video.addEventListener('seeked', () => setReady(true));
+      video.addEventListener('error', () => setLoadErr('Video failed to load (CORS on R2 bucket?).'));
+
+      // ---- Pointer: drag = rotate, pinch = zoom (FOV), tap = place pin ----
+      const canvas = renderer.domElement;
+      canvas.style.touchAction = 'none';
+      canvas.style.cursor = 'crosshair';
+      const pointers = new Map();
+      let dragLast = null;
+      let downAt = 0;
+      let downPos = null;
+      let movedFar = false;
+      let pinchStartDist = 0;
+      let pinchStartFov = 90;
+      const dist = () => {
+        const pts = [...pointers.values()];
+        return pts.length < 2 ? 0 : Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      };
+      canvas.addEventListener('pointerdown', (e) => {
+        try { canvas.setPointerCapture(e.pointerId); } catch {}
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          dragLast = { x: e.clientX, y: e.clientY };
+          downAt = performance.now();
+          downPos = { x: e.clientX, y: e.clientY };
+          movedFar = false;
+        } else if (pointers.size === 2) {
+          dragLast = null;
+          pinchStartDist = dist();
+          pinchStartFov = stateRef.current.fov;
+          movedFar = true;
+        }
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const st = stateRef.current;
+        if (pointers.size === 1 && dragLast) {
+          const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
+          if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 8) movedFar = true;
+          const s = 0.1 * (st.fov / 75) * Math.PI / 180;
+          st.targetYaw -= dx * s;
+          st.targetPitch += dy * s;
+          st.targetPitch = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, st.targetPitch));
+          dragLast = { x: e.clientX, y: e.clientY };
+        } else if (pointers.size === 2 && pinchStartDist > 0) {
+          const ratio = pinchStartDist / dist();
+          st.targetFov = Math.max(20, Math.min(110, pinchStartFov * ratio));
+        }
+      });
+      const raycaster = new THREE.Raycaster();
+      const placePin = (clientX, clientY) => {
+        if (pinsRef.current.length >= 4) return;
+        const ns = naturalSizeRef.current;
+        if (!ns.w || !ns.h) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((clientX - rect.left) / rect.width) * 2 - 1,
+          -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        raycaster.setFromCamera(ndc, camera);
+        const hits = raycaster.intersectObject(sphere, false);
+        if (!hits.length) return;
+        const p = hits[0].point.clone();
+        const r = p.length();
+        const lat = Math.asin(p.y / r);
+        const lon = Math.atan2(p.x, -p.z);
+        // Standard equirect mapping: lon=0 → image x = W/2, lat=+π/2 → y=0.
+        const px = ((lon + Math.PI) / (2 * Math.PI)) * ns.w;
+        const py = ((Math.PI / 2 - lat) / Math.PI) * ns.h;
+        const idx = pinsRef.current.length + 1;
+        const sprite = makeCalibPinSprite(THREE, idx);
+        // Park sprite a bit inside the sphere so it never z-fights.
+        sprite.position.copy(p).multiplyScalar(0.85);
+        scene.add(sprite);
+        pinsRef.current.push({ sprite, px, py });
+        setPoints(pinsRef.current.map(pp => ({ x: pp.px, y: pp.py })));
+      };
+      const endPointer = (e) => {
+        const wasTap = pointers.size === 1 && !movedFar && (performance.now() - downAt) < 350;
+        const tapPos = downPos;
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinchStartDist = 0;
+        if (pointers.size === 0) {
+          dragLast = null;
+          if (wasTap && tapPos) placePin(tapPos.x, tapPos.y);
+        } else if (pointers.size === 1) {
+          const p = [...pointers.values()][0];
+          dragLast = { x: p.x, y: p.y };
+        }
+      };
+      canvas.addEventListener('pointerup', endPointer);
+      canvas.addEventListener('pointercancel', endPointer);
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const st = stateRef.current;
+        st.targetFov = Math.max(20, Math.min(110, st.targetFov + e.deltaY * 0.05));
+      }, { passive: false });
+
+      const onResize = () => {
+        const w2 = container.clientWidth, h2 = container.clientHeight;
+        if (!w2 || !h2) return;
+        renderer.setSize(w2, h2);
+        camera.aspect = w2 / h2;
+        camera.updateProjectionMatrix();
+      };
+      window.addEventListener('resize', onResize);
+
+      const tick = () => {
+        const st = stateRef.current;
+        st.yaw += (st.targetYaw - st.yaw) * 0.25;
+        st.pitch += (st.targetPitch - st.pitch) * 0.25;
+        st.fov += (st.targetFov - st.fov) * 0.25;
+        camera.fov = st.fov;
+        camera.updateProjectionMatrix();
+        const baseYaw = lensFrontRef.current ? 0 : Math.PI;
+        const Y = st.yaw + baseYaw;
+        camera.lookAt(
+          Math.sin(Y) * Math.cos(st.pitch),
+          Math.sin(st.pitch),
+          -Math.cos(Y) * Math.cos(st.pitch),
+        );
+        renderer.render(scene, camera);
+        raf = requestAnimationFrame(tick);
+      };
+      tick();
+
+      cleanupRef.current = () => {
+        cancelAnimationFrame(raf);
+        window.removeEventListener('resize', onResize);
+        try { if (hlsCleanup) hlsCleanup(); } catch {}
+        try { renderer.dispose(); } catch {}
+        try { texture.dispose(); } catch {}
+        try { geometry.dispose(); } catch {}
+        try { container.removeChild(renderer.domElement); } catch {}
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch {}
+        sceneRef.current = null;
+        pinsRef.current = [];
+      };
+    });
+    return () => {
+      cancelled = true;
+      if (cleanupRef.current) cleanupRef.current();
+    };
+  }, [videoUrl]);
+
+  const undo = () => {
+    const last = pinsRef.current.pop();
+    if (last && sceneRef.current) sceneRef.current.remove(last.sprite);
+    setPoints(pinsRef.current.map(pp => ({ x: pp.px, y: pp.py })));
+  };
+  const reset = () => {
+    if (sceneRef.current) pinsRef.current.forEach(p => sceneRef.current.remove(p.sprite));
+    pinsRef.current = [];
+    setPoints([]);
+  };
+
+  const canSave = points.length === 4;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setSaveErr(null);
+    const src = points.map(p => [p.x, p.y]);
+    const dst = [[0, 0], [LENGTH_M, 0], [LENGTH_M, WIDTH_M], [0, WIDTH_M]];
+    const H = solveHomography4Point(src, dst);
+    if (!H) {
+      setSaveErr('Could not compute homography — corners may be collinear. Try again.');
+      setSaving(false);
+      return;
+    }
+    // Firestore does NOT allow nested arrays. Flatten 2D arrays to objects
+    // ({p0:{x,y}…}) and 3×3 homography to a flat 9-element array.
+    const srcObj = { p0: { x: src[0][0], y: src[0][1] }, p1: { x: src[1][0], y: src[1][1] }, p2: { x: src[2][0], y: src[2][1] }, p3: { x: src[3][0], y: src[3][1] } };
+    const dstObj = { p0: { x: dst[0][0], y: dst[0][1] }, p1: { x: dst[1][0], y: dst[1][1] }, p2: { x: dst[2][0], y: dst[2][1] }, p3: { x: dst[3][0], y: dst[3][1] } };
+    const Hflat = [H[0][0], H[0][1], H[0][2], H[1][0], H[1][1], H[1][2], H[2][0], H[2][1], H[2][2]];
+    const calibration = {
+      length_m: LENGTH_M,
+      width_m: WIDTH_M,
+      src_points_px: srcObj,
+      dst_points_m: dstObj,
+      homography_flat: Hflat,
+      video_frame_w: Number(naturalSize.w) || 0,
+      video_frame_h: Number(naturalSize.h) || 0,
+      created_at: Date.now(),
+    };
+    try {
+      onSave(calibration);
+    } catch (err) {
+      setSaveErr(String(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-stretch sm:items-center justify-center p-0 sm:p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-stone-950 border border-stone-800 w-full sm:max-w-4xl sm:rounded-2xl overflow-hidden flex flex-col max-h-screen"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-4 pb-3 stripes-bg text-white border-b border-stone-800"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        >
+          <h3 className="font-display text-base truncate pr-3">🎯 FIELD CALIBRATION</h3>
+          <button
+            onClick={onCancel}
+            className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+          >
+            CLOSE ✕
+          </button>
+        </div>
+        <div className="px-4 py-2 text-[11px] text-stone-300 border-b border-stone-800 flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            {points.length < 4 ? (
+              <>Tap the <strong className="text-lime-400">{CORNER_LABELS[points.length]}</strong> corner. <span className="text-stone-500 hidden sm:inline">{CORNER_HINTS[points.length]}</span></>
+            ) : (
+              <span className="text-lime-400">All 4 corners marked. SAVE below.</span>
+            )}
+          </div>
+          <div className="shrink-0 flex rounded-full bg-stone-900 border border-stone-700 p-0.5 text-[10px] font-display">
+            <button
+              onClick={() => setLensFront(true)}
+              className={`px-2.5 py-1 rounded-full ${lensFront ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >FRONT</button>
+            <button
+              onClick={() => setLensFront(false)}
+              className={`px-2.5 py-1 rounded-full ${!lensFront ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >BACK</button>
+          </div>
+        </div>
+        <p className="px-4 pb-2 text-[10px] text-stone-500 border-b border-stone-800">
+          Drag to rotate · pinch to zoom · tap to place a pin. Use FRONT/BACK if the field is behind you.
+        </p>
+        <div ref={containerRef} className="relative flex-1 bg-stone-900 min-h-[50vh] touch-none select-none">
+          {!ready && !loadErr && (
+            <div className="absolute inset-0 flex items-center justify-center text-stone-400 text-xs pointer-events-none">Loading 360° view…</div>
+          )}
+          {loadErr && (
+            <div className="absolute inset-0 flex items-center justify-center text-red-400 text-xs px-6 text-center pointer-events-none">{loadErr}</div>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t border-stone-800 space-y-2 bg-stone-950">
+          <div className="flex gap-2">
+            <button onClick={undo} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">UNDO</button>
+            <button onClick={reset} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">RESET</button>
+          </div>
+          <p className="text-[10px] text-stone-500 text-center">Pitch: U10 7v7 (50 × 35 m). Calibration saved per game.</p>
+          {saveErr && <p className="text-[10px] text-red-400 text-center">{saveErr}</p>}
+          <button
+            onClick={handleSave}
+            disabled={!canSave || saving}
+            className="w-full py-3 rounded-lg bg-lime-500 text-stone-950 text-sm font-bold active:scale-95 disabled:opacity-40"
+          >
+            {saving ? 'SAVING…' : `SAVE CALIBRATION${points.length < 4 ? ` (${points.length}/4 corners)` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- FILM ROOM ----------
+ * Coach-only list of finished games sorted newest-first. Each row opens the
+ * AnalyticsPanel for that game. Also the entry point for the (upcoming)
+ * season-wide aggregate analytics view.
+ */
+function FilmRoomView({ games, roster, onBack }) {
+  const [openGameId, setOpenGameId] = useState(null);
+  const [showSeason, setShowSeason] = useState(false);
+  const finished = useMemo(() => (
+    (games || [])
+      .filter(g => g.status === 'finished')
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0))
+  ), [games]);
+  const openGame = finished.find(g => g.id === openGameId) || null;
+
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
+      <div
+        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <button onClick={onBack} aria-label="Back" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
+          <ChevronRight className="w-5 h-5 rotate-180" />
+        </button>
+        <h2 className="font-display text-lg">🎥 FILM ROOM</h2>
+        <div className="w-9" />
+      </div>
+
+      <div className="px-4 pt-4 max-w-2xl mx-auto space-y-3">
+        <div className="text-xs text-stone-500 uppercase tracking-wider">
+          {finished.length} finished game{finished.length === 1 ? '' : 's'}
+        </div>
+
+        {/* SEASON AGGREGATE — opens season-wide rollup */}
+        <button
+          onClick={() => setShowSeason(true)}
+          disabled={finished.length === 0}
+          className={`w-full bg-stone-900 border border-stone-800 rounded-2xl p-4 flex items-center gap-3 transition ${finished.length === 0 ? 'opacity-60 cursor-not-allowed' : 'hover:border-lime-500/40 active:scale-[0.99]'}`}
+        >
+          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">📈</div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-base">SEASON ANALYTICS</div>
+            <div className="text-xs text-stone-400">Aggregate across past games {finished.length > 0 ? `· ${finished.length} game${finished.length === 1 ? '' : 's'}` : '· no data yet'}</div>
+          </div>
+          {finished.length > 0 && <span className="text-[10px] font-bold text-lime-400">OPEN →</span>}
+        </button>
+
+        {finished.length === 0 ? (
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+            No finished games yet. Analytics show up here after you end a match.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {finished.map(g => {
+              const result = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+              const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
+                               : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                                                : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => setOpenGameId(g.id)}
+                  className="w-full bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-2xl p-3 flex items-center gap-3 active:scale-[0.99] transition"
+                >
+                  <span className={`shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border font-display text-base ${resultClass}`}>{result}</span>
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {g.tournament && <TournamentChip value={g.tournament} />}
+                      <span>{formatDate(g.date)}</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
+                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {openGame && (
+        <AnalyticsPanel
+          game={openGame}
+          roster={roster}
+          onClose={() => setOpenGameId(null)}
+          onSeekVideo={() => setOpenGameId(null)}
+        />
+      )}
+
+      {showSeason && (
+        <SeasonAnalyticsView
+          games={finished}
+          roster={roster}
+          onClose={() => setShowSeason(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- SEASON ANALYTICS ----------
+ * Aggregates per-game analytics/v1 docs into season-to-date and last-N rollups.
+ * Best practice for U10 (15-25 game season): show both SEASON and LAST 5 in a
+ * tab toggle so coaches compare all-time vs. recent form with one tap.
+ * Last 3 is too noisy (one outlier swings 33%); last 10 overlaps season-to-date.
+ */
+const ROLLING_WINDOW = 5;
+
+function SeasonAnalyticsView({ games, roster, onClose }) {
+  const [docs, setDocs] = useState({}); // gameId -> analytics doc
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState('season'); // 'season' | 'rolling'
+  const [sortKey, setSortKey] = useState('distance');
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Push history so swipe-back closes modal
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    window.history.pushState({ modal: 'seasonAnalytics' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+      if (window.history.state && window.history.state.modal === 'seasonAnalytics') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  // Fetch analytics/v1 for every finished game in parallel.
+  useEffect(() => {
+    if (!window.fbDb || !games || games.length === 0) { setLoading(false); return; }
+    let cancelled = false;
+    Promise.all(games.map(g => (
+      window.fbDb.collection('teams').doc('main')
+        .collection('games').doc(g.id)
+        .collection('analytics').doc('v1').get()
+        .then(snap => [g.id, snap.exists ? snap.data() : null])
+        .catch(() => [g.id, null])
+    ))).then(results => {
+      if (cancelled) return;
+      const map = {};
+      results.forEach(([id, d]) => { if (d) map[id] = d; });
+      setDocs(map);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [games]);
+
+  // Games (newest-first) that actually have analytics docs.
+  const gamesWithAnalytics = useMemo(() => (
+    (games || []).filter(g => docs[g.id])
+  ), [games, docs]);
+
+  // Window: SEASON = all, ROLLING = newest-first slice of ROLLING_WINDOW.
+  // Auto-fall-back to SEASON if fewer than ROLLING_WINDOW games available.
+  const windowGames = useMemo(() => {
+    if (mode === 'rolling' && gamesWithAnalytics.length >= ROLLING_WINDOW) {
+      return gamesWithAnalytics.slice(0, ROLLING_WINDOW);
+    }
+    return gamesWithAnalytics;
+  }, [mode, gamesWithAnalytics]);
+
+  const fellBackToSeason = mode === 'rolling' && gamesWithAnalytics.length < ROLLING_WINDOW;
+
+  // Per-player aggregate: avg minutes, total/avg distance, top speed (max),
+  // avg sprints, avg thirds-pct. Also collects per-game series for sparklines.
+  const playerAgg = useMemo(() => {
+    const byPid = new Map();
+    // Iterate oldest-first so series sparkline reads left-to-right chronologically.
+    [...windowGames].reverse().forEach(g => {
+      const stats = docs[g.id]?.player_stats || [];
+      stats.forEach(s => {
+        const pid = s.player_id;
+        if (!pid) return;
+        let row = byPid.get(pid);
+        if (!row) {
+          row = { pid, games: 0, minutes: 0, distance: 0, topSpeed: 0, sprints: 0,
+                  attPct: 0, midPct: 0, defPct: 0,
+                  distSeries: [], speedSeries: [], sprintSeries: [] };
+          byPid.set(pid, row);
+        }
+        row.games += 1;
+        row.minutes += s.minutes_played || 0;
+        row.distance += s.distance_m || 0;
+        row.topSpeed = Math.max(row.topSpeed, s.top_speed_ms || 0);
+        row.sprints += s.sprint_count || 0;
+        row.attPct += s.pct_attacking_third || 0;
+        row.midPct += s.pct_middle_third || 0;
+        row.defPct += s.pct_defensive_third || 0;
+        row.distSeries.push(s.distance_m || 0);
+        row.speedSeries.push((s.top_speed_ms || 0) * 3.6);
+        row.sprintSeries.push(s.sprint_count || 0);
+      });
+    });
+    return [...byPid.values()].map(r => ({
+      ...r,
+      avgMin: r.games ? r.minutes / r.games : 0,
+      avgDist: r.games ? r.distance / r.games : 0,
+      topSpeedKmh: r.topSpeed * 3.6,
+      avgSprints: r.games ? r.sprints / r.games : 0,
+      avgAttPct: r.games ? r.attPct / r.games : 0,
+      avgMidPct: r.games ? r.midPct / r.games : 0,
+      avgDefPct: r.games ? r.defPct / r.games : 0,
+    }));
+  }, [windowGames, docs]);
+
+  // Team rollup
+  const teamAgg = useMemo(() => {
+    let gf = 0, ga = 0, w = 0, d = 0, l = 0, cleanSheets = 0;
+    windowGames.forEach(g => {
+      gf += g.ourScore || 0;
+      ga += g.oppScore || 0;
+      if (g.ourScore > g.oppScore) w++;
+      else if (g.ourScore < g.oppScore) l++;
+      else d++;
+      if ((g.oppScore || 0) === 0) cleanSheets++;
+    });
+    return { games: windowGames.length, gf, ga, gd: gf - ga, w, d, l, cleanSheets };
+  }, [windowGames]);
+
+  const sortedPlayers = useMemo(() => {
+    const key = sortKey;
+    return [...playerAgg].sort((a, b) => {
+      const av = key === 'name' ? '' : (a[key] || 0);
+      const bv = key === 'name' ? '' : (b[key] || 0);
+      if (key === 'name') {
+        const ap = roster.find(r => r.id === a.pid)?.name || '';
+        const bp = roster.find(r => r.id === b.pid)?.name || '';
+        return ap.localeCompare(bp);
+      }
+      return bv - av;
+    });
+  }, [playerAgg, sortKey, roster]);
+
+  const playerName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return pid || '—';
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
+      <div
+        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <h2 className="font-display text-lg truncate pr-3">📈 SEASON ANALYTICS</h2>
+        <button
+          onClick={onClose}
+          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+        >
+          CLOSE ✕
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="p-10 text-center text-stone-400 animate-pulse">Loading season analytics…</div>
+      ) : gamesWithAnalytics.length === 0 ? (
+        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300">
+          No analytics docs found yet for any finished games. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+        </div>
+      ) : (
+        <div className="p-4 space-y-5 max-w-3xl mx-auto">
+          {/* Window toggle */}
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
+            <button
+              onClick={() => setMode('season')}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'season' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              SEASON · {gamesWithAnalytics.length}
+            </button>
+            <button
+              onClick={() => setMode('rolling')}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'rolling' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              LAST {ROLLING_WINDOW}
+            </button>
+          </div>
+          {fellBackToSeason && (
+            <div className="text-xs text-amber-400 -mt-3 text-center">
+              Need {ROLLING_WINDOW - gamesWithAnalytics.length} more game{(ROLLING_WINDOW - gamesWithAnalytics.length) === 1 ? '' : 's'} for rolling window — showing season instead.
+            </div>
+          )}
+
+          {/* Team rollup */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-3">Team — {mode === 'season' ? 'season' : `last ${windowGames.length}`}</div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
+              <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
+              <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
+              <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
+              <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
+            </div>
+          </section>
+
+          {/* Per-player rollup */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs text-stone-500 uppercase">Players</div>
+              <div className="flex gap-1 text-[10px]">
+                {[
+                  ['avgDist', 'DIST'],
+                  ['topSpeedKmh', 'TOP'],
+                  ['avgSprints', 'SPR'],
+                  ['avgMin', 'MIN'],
+                  ['name', 'A-Z'],
+                ].map(([k, label]) => (
+                  <button
+                    key={k}
+                    onClick={() => setSortKey(k)}
+                    className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+                  >{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-stone-500 border-b border-stone-800">
+                    <th className="text-left py-1 pr-2">Player</th>
+                    <th className="text-right py-1 px-1">GP</th>
+                    <th className="text-right py-1 px-1">Min</th>
+                    <th className="text-right py-1 px-1">Dist/g</th>
+                    <th className="text-right py-1 px-1">Top</th>
+                    <th className="text-right py-1 px-1">Spr/g</th>
+                    <th className="text-right py-1 pl-1">Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedPlayers.map(p => {
+                    const expanded = expandedId === p.pid;
+                    return (
+                      <React.Fragment key={p.pid}>
+                        <tr
+                          onClick={() => setExpandedId(expanded ? null : p.pid)}
+                          className="border-b border-stone-800/50 cursor-pointer hover:bg-stone-800/40"
+                        >
+                          <td className="py-1.5 pr-2 truncate max-w-[120px]">{playerName(p.pid)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.games}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgMin.toFixed(0)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgDist.toFixed(0)}m</td>
+                          <td className="text-right px-1 tabular-nums">{p.topSpeedKmh.toFixed(1)}</td>
+                          <td className="text-right px-1 tabular-nums">{p.avgSprints.toFixed(1)}</td>
+                          <td className="text-right pl-1"><Sparkline values={p.distSeries} color="#a3e635" /></td>
+                        </tr>
+                        {expanded && (
+                          <tr className="bg-stone-800/30">
+                            <td colSpan={7} className="px-2 py-3">
+                              <div className="grid grid-cols-3 gap-3">
+                                <SparkBlock label="Distance (m)" values={p.distSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
+                                <SparkBlock label="Top speed (km/h)" values={p.speedSeries} color="#60a5fa" fmt={v => v.toFixed(1)} />
+                                <SparkBlock label="Sprints" values={p.sprintSeries} color="#fbbf24" fmt={v => v.toFixed(0)} />
+                              </div>
+                              <div className="mt-3 pt-3 border-t border-stone-700 grid grid-cols-3 gap-2 text-center text-[11px]">
+                                <div><div className="text-stone-500 text-[9px] uppercase">Att third</div><div className="tabular-nums">{p.avgAttPct.toFixed(0)}%</div></div>
+                                <div><div className="text-stone-500 text-[9px] uppercase">Mid third</div><div className="tabular-nums">{p.avgMidPct.toFixed(0)}%</div></div>
+                                <div><div className="text-stone-500 text-[9px] uppercase">Def third</div><div className="tabular-nums">{p.avgDefPct.toFixed(0)}%</div></div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-[10px] text-stone-500 mt-2">Tap a row to expand sparkline trend across the {mode === 'season' ? 'season' : `last ${windowGames.length} games`}.</div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Sparkline (inline mini-chart) ---------- */
+function Sparkline({ values, color = '#a3e635', w = 56, h = 16 }) {
+  if (!values || values.length === 0) return <span className="text-stone-600">—</span>;
+  if (values.length === 1) return <span className="inline-block w-2 h-2 rounded-full" style={{ background: color }} />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * h).toFixed(1)}`).join(' ');
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="inline-block align-middle">
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={pts} />
+    </svg>
+  );
+}
+
+function SparkBlock({ label, values, color, fmt }) {
+  const last = values && values.length > 0 ? values[values.length - 1] : 0;
+  return (
+    <div>
+      <div className="text-[9px] text-stone-500 uppercase">{label}</div>
+      <div className="flex items-end gap-2 mt-0.5">
+        <span className="font-display tabular-nums text-base leading-none" style={{ color }}>{fmt(last)}</span>
+        <Sparkline values={values} color={color} w={70} h={20} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------- BROADCAST VIDEO PLAYER + OVERLAY ----------
+ * Flat <video> player for the post-game tv_reel + auto_highlights mp4s.
+ * On top, draws a live scorebug + goal/sub/card popups synced to the
+ * video clock, using the `broadcast_events` index written by the Python
+ * pipeline (post_game/pipeline.py → _build_broadcast_events_index).
+ *
+ * `timeKey` selects which reel timeline each event maps onto:
+ *   'tvReelTimeS'         — full TV reel
+ *   'autoHighlightsTimeS' — condensed auto-highlights reel
+ */
+function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
+  const videoRef = useRef(null);
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return undefined;
+    let raf = 0;
+    const tick = () => {
+      setNow(v.currentTime || 0);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [url]);
+
+  // Push history entry so swipe-back closes the modal.
+  useEffect(() => {
+    window.history.pushState({ modal: 'broadcast' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'broadcast') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  // Index events on the chosen timeline and drop any without a valid time
+  // (those events sit outside the rendered reel windows).
+  const allEvents = (doc?.broadcast_events || [])
+    .map(e => ({ ...e, t: e[timeKey] }))
+    .filter(e => e.t != null && Number.isFinite(e.t))
+    .sort((a, b) => a.t - b.t);
+
+  // Running score AT current playhead (based on the latest event with t <= now).
+  let ourScore = 0;
+  let oppScore = 0;
+  let currentPeriod = 1;
+  for (const e of allEvents) {
+    if (e.t <= now + 0.01) {
+      if (e.ourScoreAfter != null) ourScore = e.ourScoreAfter;
+      if (e.oppScoreAfter != null) oppScore = e.oppScoreAfter;
+      if (e.period) currentPeriod = e.period;
+    } else break;
+  }
+
+  // --- Active popup selection ---------------------------------------
+  // Only GOAL and SUB events show popups. Sub events that fire within
+  // SUB_GROUP_S of each other (back-to-back tags by the coach) are merged
+  // into a single popup whose anchor time = the LAST sub in the group.
+  const GOAL_POPUP_S = 7.5;     // big TV-style scorers graphic stays ~7s
+  const SUB_POPUP_S = 5;        // smaller sub bug
+  const SUB_GROUP_S = 30;       // back-to-back subs grouped if within 30s
+
+  // Pre-build sub groups (each group is contiguous SUB events within SUB_GROUP_S).
+  const subGroups = (() => {
+    const subs = allEvents.filter(e => e.type === 'SUB' || e.type === 'SUBSTITUTION');
+    const groups = [];
+    for (const s of subs) {
+      const last = groups[groups.length - 1];
+      if (last && s.t - last[last.length - 1].t <= SUB_GROUP_S) {
+        last.push(s);
+      } else {
+        groups.push([s]);
+      }
+    }
+    return groups;
+  })();
+
+  // Find the active popup AT current playhead.
+  // Priority: goal popup wins over sub popup if both are within their window.
+  const activePopup = (() => {
+    // 1. Most recent goal in last GOAL_POPUP_S seconds
+    for (let i = allEvents.length - 1; i >= 0; i--) {
+      const e = allEvents[i];
+      if (e.t > now + 0.01) continue;
+      if (now - e.t > GOAL_POPUP_S) break;
+      const isGoal = e.type === 'GOAL' || e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
+      if (isGoal) return { kind: 'goal', ev: e, elapsed: now - e.t, holdEnd: GOAL_POPUP_S - 0.6 };
+    }
+    // 2. Otherwise most recent sub group anchored on its LAST sub
+    for (let i = subGroups.length - 1; i >= 0; i--) {
+      const g = subGroups[i];
+      const anchor = g[g.length - 1].t;
+      if (anchor > now + 0.01) continue;
+      if (now - anchor > SUB_POPUP_S) break;
+      return { kind: 'sub', group: g, elapsed: now - anchor, holdEnd: SUB_POPUP_S - 0.5 };
+    }
+    return null;
+  })();
+
+  // For the goal popup: collect all GOAL scorers per side UP TO (and including)
+  // the popup event. Each entry: { num, first, minutes: ['12', '41'] }.
+  const goalScorers = (() => {
+    if (!activePopup || activePopup.kind !== 'goal') return { us: [], them: [] };
+    const cutT = activePopup.ev.t + 0.01;
+    const us = new Map();
+    const them = new Map();
+    for (const e of allEvents) {
+      if (e.t > cutT) break;
+      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1)}'`;
+      const isOurGoal = e.type === 'GOAL';
+      const isOppGoal = e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
+      if (isOurGoal) {
+        const key = e.playerId || `?${e.jerseyNumber || ''}`;
+        const entry = us.get(key) || { num: e.jerseyNumber, first: e.playerFirstName || 'Goal', minutes: [] };
+        entry.minutes.push(minStr);
+        us.set(key, entry);
+      } else if (isOppGoal) {
+        // Opponent: we don't know scorer name — just collect minutes under "OPP".
+        const entry = them.get('opp') || { num: null, first: null, minutes: [] };
+        entry.minutes.push(minStr);
+        them.set('opp', entry);
+      }
+    }
+    return { us: [...us.values()], them: [...them.values()] };
+  })();
+
+  const homeName = (doc?.home_name || 'STO').slice(0, 4).toUpperCase();
+  const awayName = (doc?.away_name || 'OPP').slice(0, 4).toUpperCase();
+  const homeColor = doc?.home_color || '#A3E635';
+  const awayColor = doc?.away_color || '#F87171';
+
+  return (
+    <div className="fixed inset-0 bg-black z-[60] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+      <div className="flex items-center justify-between px-3 py-2 bg-stone-950 border-b border-stone-800 shrink-0">
+        <div className="text-white font-display text-sm truncate pr-3">{label}</div>
+        <button
+          onClick={onClose}
+          className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
+        >CLOSE ✕</button>
+      </div>
+
+      <div className="relative flex-1 bg-black flex items-center justify-center min-h-0">
+        {url ? (
+          <video
+            ref={videoRef}
+            src={url}
+            controls
+            playsInline
+            autoPlay
+            className="max-h-full max-w-full"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        ) : (
+          <div className="text-stone-400 text-sm p-6">Video not available yet.</div>
+        )}
+
+        {/* SCOREBUG — persistent, bottom-left */}
+        <div
+          className="absolute pointer-events-none select-none"
+          style={{ left: 'max(env(safe-area-inset-left, 0px), 12px)', bottom: 56 }}
+        >
+          <div className="flex items-stretch rounded-md overflow-hidden shadow-lg border border-black/40 text-white font-display text-sm" style={{ backdropFilter: 'blur(6px)' }}>
+            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(0,0,0,0.72)' }}>
+              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: homeColor }} />
+              <span className="tracking-wider">{homeName}</span>
+              <span className="ml-2 tabular-nums font-bold">{ourScore}</span>
+            </div>
+            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(20,20,20,0.72)' }}>
+              <span className="tabular-nums font-bold">{oppScore}</span>
+              <span className="ml-1 tracking-wider">{awayName}</span>
+              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: awayColor }} />
+            </div>
+            <div className="px-2 py-1 text-[10px] tracking-wider flex items-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
+              P{currentPeriod}
+            </div>
+          </div>
+        </div>
+
+        {/* EVENT POPUP — TV-style big scorers card for goals, small bug for subs */}
+        {activePopup && activePopup.kind === 'goal' && (
+          <BroadcastGoalCard
+            elapsed={activePopup.elapsed}
+            holdEnd={activePopup.holdEnd}
+            homeName={homeName}
+            awayName={awayName}
+            homeColor={homeColor}
+            awayColor={awayColor}
+            ourScore={ourScore}
+            oppScore={oppScore}
+            scorers={goalScorers}
+            scoringSide={activePopup.ev.team === 'them' ? 'them' : 'us'}
+          />
+        )}
+        {activePopup && activePopup.kind === 'sub' && (
+          <BroadcastSubBug
+            elapsed={activePopup.elapsed}
+            holdEnd={activePopup.holdEnd}
+            subs={activePopup.group}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Big TV-style "GOAL" scorers card --------------------------------
+ * Pops up after every goal. Shows current score big, then both teams'
+ * goalscorer list with the minute each goal was scored.
+ *
+ *     STOMPERS    2  —  1    OPPONENT
+ *     #7 ARIA       12', 41'
+ *     #11 SAMI      28'                           35'
+ *
+ * Holds ~7s, fades out.
+ */
+function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide }) {
+  let opacity = 1;
+  let scale = 1;
+  if (elapsed < 0.4) {
+    opacity = elapsed / 0.4;
+    scale = 0.92 + 0.08 * opacity;
+  } else if (elapsed > holdEnd) {
+    const t = Math.min(1, (elapsed - holdEnd) / 0.6);
+    opacity = 1 - t;
+  }
+
+  const renderLine = (s, side) => {
+    const label = s.first ? `#${s.num ?? '?'} ${s.first.toUpperCase()}` : 'OPPONENT';
+    return (
+      <div key={`${side}-${label}`} className={`flex ${side === 'us' ? 'justify-start' : 'justify-end'} items-baseline gap-3 text-sm`}>
+        {side === 'us' && <span className="font-display tracking-wide text-white">{label}</span>}
+        <span className="tabular-nums text-stone-300">{s.minutes.join(", ")}</span>
+        {side === 'them' && <span className="font-display tracking-wide text-white">{label}</span>}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none select-none flex items-center justify-center"
+      style={{ opacity, transition: 'opacity 80ms linear' }}
+    >
+      <div
+        className="rounded-xl border border-black/60 shadow-2xl overflow-hidden"
+        style={{
+          background: 'rgba(0,0,0,0.82)',
+          backdropFilter: 'blur(8px)',
+          width: 'min(92vw, 720px)',
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+          transition: 'transform 80ms linear',
+        }}
+      >
+        {/* Top banner */}
+        <div className="px-4 py-2 text-center text-[11px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: '#0c0a09' }}>
+          ⚽ GOAL
+        </div>
+
+        {/* Score line */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-4 text-white">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: homeColor }} />
+            <span className="font-display text-lg sm:text-2xl tracking-wider truncate">{homeName}</span>
+          </div>
+          <div className="font-display text-3xl sm:text-5xl tabular-nums text-center px-2">
+            <span className={scoringSide === 'us' ? 'text-lime-300' : ''}>{ourScore}</span>
+            <span className="mx-2 text-stone-500">—</span>
+            <span className={scoringSide === 'them' ? 'text-red-300' : ''}>{oppScore}</span>
+          </div>
+          <div className="flex items-center gap-2 min-w-0 justify-end">
+            <span className="font-display text-lg sm:text-2xl tracking-wider truncate text-right">{awayName}</span>
+            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: awayColor }} />
+          </div>
+        </div>
+
+        {/* Scorers lists */}
+        {(scorers.us.length > 0 || scorers.them.length > 0) && (
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-5 pb-4 border-t border-white/10 pt-3">
+            <div className="space-y-1">
+              {scorers.us.map(s => renderLine(s, 'us'))}
+            </div>
+            <div className="space-y-1">
+              {scorers.them.map(s => renderLine(s, 'them'))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Small "SUB" lower-third bug, supports grouped subs ------------- */
+function BroadcastSubBug({ elapsed, holdEnd, subs }) {
+  let opacity = 1;
+  let translate = 0;
+  if (elapsed < 0.4) {
+    opacity = elapsed / 0.4;
+    translate = (1 - opacity) * 40;
+  } else if (elapsed > holdEnd) {
+    const t = Math.min(1, (elapsed - holdEnd) / 0.5);
+    opacity = 1 - t;
+  }
+  const renderPlayer = (first, num) =>
+    first ? `#${num ?? '?'} ${first}` : (num != null ? `#${num}` : '—');
+
+  return (
+    <div
+      className="absolute pointer-events-none select-none text-white"
+      style={{
+        right: 'max(env(safe-area-inset-right, 0px), 12px)',
+        bottom: 56,
+        opacity,
+        transform: `translateX(${translate}px)`,
+        transition: 'opacity 80ms linear, transform 80ms linear',
+      }}
+    >
+      <div
+        className="rounded-md px-3 py-2 border border-black/40 shadow-lg min-w-[200px] max-w-[320px]"
+        style={{ background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(6px)' }}
+      >
+        <div className="text-[10px] tracking-[0.25em] text-sky-300 mb-1">
+          ⇄ {subs.length > 1 ? `${subs.length} SUBSTITUTIONS` : 'SUBSTITUTION'}
+        </div>
+        <div className="space-y-1">
+          {subs.map((s, i) => (
+            <div key={s.id || i} className="text-xs leading-tight grid grid-cols-[auto_1fr] gap-x-2">
+              <span className="text-lime-300 font-bold">IN</span>
+              <span className="font-display">{renderPlayer(s.inFirstName, s.inJerseyNumber)}</span>
+              <span className="text-stone-500 font-bold">OUT</span>
+              <span className="font-display text-stone-300">{renderPlayer(s.outFirstName, s.outJerseyNumber)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- POST-GAME ANALYTICS PANEL ----------
+ * Reads `teams/main/games/<gameId>/analytics/v1` written by the Python
+ * pipeline (post_game/pipeline.py). Shows per-player physical stats, team
+ * formation, GK positioning, and links to highlight clips.
+ * Coach-only — purely a read view here.
+ */
+function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
+  const [doc, setDoc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [clips, setClips] = useState([]);
+  const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
+
+  // Push a history entry so swipe-back closes the panel instead of leaving the app.
+  // Also lock body scroll so the page underneath keeps its scroll position
+  // when the modal closes (otherwise iOS resets to top).
+  useEffect(() => {
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    window.history.pushState({ modal: 'analytics' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      body.style.position = prev.position;
+      body.style.top = prev.top;
+      body.style.width = prev.width;
+      window.scrollTo(0, scrollY);
+      if (window.history.state && window.history.state.modal === 'analytics') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!window.fbDb || !game?.id) { setLoading(false); return; }
+    let cancelled = false;
+    const ref = window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(game.id)
+      .collection('analytics').doc('v1');
+    ref.get()
+      .then(snap => { if (!cancelled) { setDoc(snap.exists ? snap.data() : null); setLoading(false); } })
+      .catch(e => { if (!cancelled) { setErr(String(e)); setLoading(false); } });
+    const clipsRef = window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(game.id).collection('clips');
+    clipsRef.get()
+      .then(qs => { if (!cancelled) setClips(qs.docs.map(d => d.data())); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [game?.id]);
+
+  const playerName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return pid || '—';
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-stone-950 z-50 flex items-center justify-center text-stone-300" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+        Loading analytics…
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
+      <div
+        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <h2 className="font-display text-lg truncate pr-3">📊 ANALYTICS — {game.opponent}</h2>
+        <button
+          onClick={onClose}
+          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+        >
+          CLOSE ✕
+        </button>
+      </div>
+
+      {err && (
+        <div className="m-4 p-3 bg-red-900/40 border border-red-800 rounded-xl text-sm text-red-200">
+          Error loading analytics: {err}
+        </div>
+      )}
+
+      {!doc && !err && (
+        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300 space-y-2">
+          <div className="font-bold">Analytics not yet available for this game.</div>
+          <div className="text-stone-400">
+            On your Mac, run:
+          </div>
+          <pre className="bg-black/60 p-2 rounded text-xs overflow-x-auto">
+{`cd ~/match-tracker
+./run_analytics.sh ${game.id}`}
+          </pre>
+          <button
+            onClick={async () => {
+              const cmd = `cd ~/match-tracker && ./run_analytics.sh ${game.id}`;
+              try {
+                if (navigator.clipboard && window.isSecureContext) {
+                  await navigator.clipboard.writeText(cmd);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = cmd; document.body.appendChild(ta);
+                  ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                }
+                alert('Command copied. Paste it into Terminal on your Mac.');
+              } catch {
+                prompt('Copy this command:', cmd);
+              }
+            }}
+            className="w-full mt-1 py-2 rounded-lg bg-lime-600 text-stone-950 text-xs font-bold active:scale-95"
+          >✎ COPY COMMAND</button>
+          <div className="text-stone-500 text-xs">
+            A browser tab will open to mark the 4 field corners (first time only).
+            After SAVE, the pipeline runs and results land here automatically.
+          </div>
+        </div>
+      )}
+
+      {doc && (
+        <div className="p-4 space-y-5 max-w-3xl mx-auto">
+          {/* Broadcast videos — prominent at top */}
+          {(doc.auto_highlights_url || doc.tv_reel_url) && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-2">
+              <div className="text-xs text-stone-500 uppercase mb-1">Match Video</div>
+              {doc.auto_highlights_url && (
+                <button
+                  onClick={() => setBroadcastOpen('auto_highlights')}
+                  className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-2">▶ WATCH HIGHLIGHTS</span>
+                  <span className="text-xs tabular-nums opacity-80">
+                    {doc.auto_highlights_duration_s
+                      ? `${Math.floor(doc.auto_highlights_duration_s / 60)}:${String(Math.floor(doc.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+                      : ''}
+                  </span>
+                </button>
+              )}
+              {doc.tv_reel_url && (
+                <button
+                  onClick={() => setBroadcastOpen('tv_reel')}
+                  className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-2">▶ WATCH FULL GAME</span>
+                  <span className="text-xs tabular-nums text-stone-400">
+                    {doc.tv_reel_duration_s
+                      ? `${Math.floor(doc.tv_reel_duration_s / 60)}:${String(Math.floor(doc.tv_reel_duration_s % 60)).padStart(2, '0')}`
+                      : ''}
+                  </span>
+                </button>
+              )}
+            </section>
+          )}
+
+          {/* Summary */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-2">Summary</div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>Players analyzed: <strong>{(doc.player_stats || []).length}</strong></div>
+              <div>Clips: <strong>{doc.clip_count ?? clips.length}</strong></div>
+              <div>Field: <strong>{doc.field_name || '—'}</strong></div>
+              <div>Generated: <strong>{doc.generated_at_ms ? new Date(doc.generated_at_ms).toLocaleString() : '—'}</strong></div>
+            </div>
+          </section>
+
+          {/* Player physical stats */}
+          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+            <div className="text-xs text-stone-500 uppercase mb-2">Per-Player Physical Stats</div>
+            {(doc.player_stats || []).length === 0 ? (
+              <div className="text-sm text-stone-400">No player stats.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-stone-500 border-b border-stone-800">
+                      <th className="text-left py-1 pr-2">Player</th>
+                      <th className="text-right py-1 px-2">Min</th>
+                      <th className="text-right py-1 px-2">Dist (m)</th>
+                      <th className="text-right py-1 px-2">Top (km/h)</th>
+                      <th className="text-right py-1 px-2">Sprints</th>
+                      <th className="text-right py-1 px-2">Att%</th>
+                      <th className="text-right py-1 px-2">Mid%</th>
+                      <th className="text-right py-1 px-2">Def%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...(doc.player_stats || [])]
+                      .sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0))
+                      .map(s => (
+                        <tr key={s.player_id} className="border-b border-stone-800/50">
+                          <td className="py-1 pr-2 truncate max-w-[140px]">{playerName(s.player_id)}</td>
+                          <td className="text-right px-2">{(s.minutes_played || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.distance_m || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{((s.top_speed_ms || 0) * 3.6).toFixed(1)}</td>
+                          <td className="text-right px-2">{s.sprint_count || 0}</td>
+                          <td className="text-right px-2">{(s.pct_attacking_third || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.pct_middle_third || 0).toFixed(0)}</td>
+                          <td className="text-right px-2">{(s.pct_defensive_third || 0).toFixed(0)}</td>
+                        </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {/* Identity confidence */}
+          {(doc.identity_assignments || []).some(a => a.status === 'review') && (
+            <section className="bg-amber-950/40 border border-amber-800 rounded-2xl p-4">
+              <div className="text-xs text-amber-400 uppercase mb-2">Identity Review Needed</div>
+              <div className="text-xs text-amber-200 mb-2">
+                {(doc.identity_assignments || []).filter(a => a.status === 'review').length} track(s) below auto-assign threshold.
+              </div>
+              <ul className="text-xs text-amber-100 space-y-1">
+                {(doc.identity_assignments || [])
+                  .filter(a => a.status === 'review')
+                  .slice(0, 10)
+                  .map(a => (
+                    <li key={a.track_id}>
+                      Track #{a.track_id} → {playerName(a.player_id)} (conf {(a.confidence * 100).toFixed(0)}%)
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
+
+          {/* Formation */}
+          {(doc.formation_snapshots || []).length > 0 && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+              <div className="text-xs text-stone-500 uppercase mb-2">Formation by Period</div>
+              {doc.formation_snapshots.map(f => (
+                <div key={f.period} className="text-sm py-1">
+                  Period {f.period}: <strong>{f.label}</strong>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {/* GK positioning */}
+          {(doc.gk_positions || []).length > 0 && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+              <div className="text-xs text-stone-500 uppercase mb-2">Goalkeeper Positioning</div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-stone-500 border-b border-stone-800">
+                    <th className="text-left py-1 pr-2">Event</th>
+                    <th className="text-left py-1 px-2">GK</th>
+                    <th className="text-right py-1 px-2">Dist line (m)</th>
+                    <th className="text-right py-1 px-2">Lateral (m)</th>
+                    <th className="text-right py-1 px-2">On angle?</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {doc.gk_positions.map(g => (
+                    <tr key={g.event_id} className="border-b border-stone-800/50">
+                      <td className="py-1 pr-2">{g.event_type} P{g.period} {Math.floor(g.elapsed / 60)}'</td>
+                      <td className="px-2 truncate max-w-[120px]">{playerName(g.gk_player_id)}</td>
+                      <td className="text-right px-2">{(g.distance_from_goal_line_m || 0).toFixed(1)}</td>
+                      <td className="text-right px-2">{(g.lateral_offset_from_goal_center_m || 0).toFixed(1)}</td>
+                      <td className="text-right px-2">{g.on_correct_angle == null ? '—' : g.on_correct_angle ? '✓' : '✗'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {/* Per-event highlight clips intentionally removed — replaced
+              by the broadcast-style auto-highlights + full TV reel videos
+              (rendered with on-screen score / goal / sub overlays). */}
+        </div>
+      )}
+      {broadcastOpen && (
+        <BroadcastVideoPlayer
+          url={broadcastOpen === 'tv_reel' ? doc?.tv_reel_url : doc?.auto_highlights_url}
+          doc={doc}
+          label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
+          timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          onClose={() => setBroadcastOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ---------- GAME DETAIL ---------- */
 function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
@@ -3738,6 +6060,15 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
   const [liveErr, setLiveErr] = useState(null);
   const [showLive, setShowLive] = useState(false);
   const [showLiveCreds, setShowLiveCreds] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // Each time the user enters a different game from the DUGOUT list, scroll
+  // back to the top — otherwise the view keeps the previous page's scroll
+  // position and lands mid-page (e.g. on the TIMELINE section).
+  useEffect(() => {
+    try { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }
+    catch { window.scrollTo(0, 0); }
+  }, [game.id]);
 
   const goLive = () => {
     if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
@@ -3890,7 +6221,16 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
       </div>
 
       {/* Live Stream Section */}
-      {(game.liveInput || game.status === 'active') && (
+      {game.youtubeVideoId && (
+        <div className="px-4 pt-4">
+          <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-sm font-bold text-red-300">{game.status === 'active' ? '🔴 LIVE' : '▶ REPLAY'}</span>
+          </div>
+          <YouTubeEmbed videoId={game.youtubeVideoId} live={game.status === 'active'} />
+        </div>
+      )}
+      {!game.youtubeVideoId && (game.liveInput || game.status === 'active') && (
         <div className="px-4 pt-4">
           {game.liveInput ? (
             <>
@@ -4060,6 +6400,51 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
           </>
         )}
       </div>
+
+      {/* Field calibration is done on the Mac during analytics. The PWA
+          no longer offers a calibration modal. */}
+
+      {/* Post-game analytics tab */}
+      {game.videoUrl && (
+        <div className="px-4 pt-3">
+          <button
+            onClick={() => setShowAnalytics(true)}
+            className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
+          >
+            <span className="text-sm font-bold">📊 ANALYTICS</span>
+            <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                if (navigator.clipboard && window.isSecureContext) {
+                  await navigator.clipboard.writeText(game.id);
+                } else {
+                  const ta = document.createElement('textarea');
+                  ta.value = game.id; document.body.appendChild(ta);
+                  ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                }
+                alert(`Game ID copied:\n${game.id}\n\nOn your Mac, run:\n./run_analytics.sh ${game.id}`);
+              } catch {
+                prompt('Game ID (copy this):', game.id);
+              }
+            }}
+            className="w-full mt-2 text-[10px] text-stone-500 text-center active:text-lime-400 py-1"
+            title="Copy game-id for ./run_analytics.sh on your Mac"
+          >
+            game-id: <span className="font-mono text-stone-400">{game.id}</span> · tap to copy
+          </button>
+        </div>
+      )}
+
+      {showAnalytics && (
+        <AnalyticsPanel
+          game={game}
+          roster={roster}
+          onClose={() => setShowAnalytics(false)}
+          onSeekVideo={(t) => { setSeekTo(t); setShowVideo(true); setShowAnalytics(false); }}
+        />
+      )}
 
       <div className="px-4 pt-5">
         <h3 className="font-display text-xl mb-2">TIMELINE</h3>
@@ -4734,7 +7119,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
+function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -4821,6 +7206,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
       location: p.location,
     }));
     onSave([...schedule, ...newItems]);
+    showToast?.(`✅ Added ${newItems.length} game${newItems.length === 1 ? '' : 's'}`);
     setPasteText('');
     setParsed(null);
   };
@@ -4836,6 +7222,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
         tournament: tournament.trim(),
         location: location.trim(),
       } : s));
+      showToast?.(`✏️ Updated vs ${opponent.trim()}`);
       resetForm();
       return;
     }
@@ -4848,6 +7235,8 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
       location: location.trim(),
     };
     onSave([...schedule, item]);
+    const dateLabel = new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    showToast?.(`✅ Added vs ${item.opponent} · ${dateLabel}`);
     resetForm();
   };
 
@@ -4867,7 +7256,9 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
   };
 
   const handleToggleCancel = (item) => {
+    const wasCancelled = !!item.cancelled;
     onSave(schedule.map(s => s.id === item.id ? { ...s, cancelled: !s.cancelled } : s));
+    showToast?.(wasCancelled ? `↩ Restored vs ${item.opponent}` : `⛔ Cancelled vs ${item.opponent}`);
   };
 
   const handleDelete = (id) => {
@@ -4876,6 +7267,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
     askConfirm(`Delete ${label} from the schedule?`, () => {
       if (editingId === id) resetForm();
       onSave(schedule.filter(s => s.id !== id));
+      showToast?.(`🗑 Deleted ${label}`);
     }, { danger: true, yesLabel: 'DELETE' });
   };
 
@@ -5046,11 +7438,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm }) {
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -5640,7 +8028,7 @@ function HelpView({ onBack }) {
           <div className="bg-stone-950 border border-stone-800 rounded-xl p-3 mt-2 text-sm space-y-2">
             <div>
               <div className="font-display text-sm text-stone-200">👩‍👦 Parents — public scoreboard</div>
-              <div className="text-xs text-stone-300">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past matches. First name + jersey number only — no full names.</div>
+              <div className="text-xs text-stone-300">The bare URL (e.g. <code>stompers2016.com</code>) shows the live or most recent game scoreboard plus a list of all past games. First name + jersey number only — no full names.</div>
             </div>
             <div>
               <div className="font-display text-sm text-stone-200">📎 Share a specific game</div>
@@ -5681,7 +8069,7 @@ function Header({ title, onBack, right }) {
          Subscribes to ONE game doc by id.
      - <PublicHomePage>       — used by the bare root URL (no params).
          Subscribes to ALL games, auto-picks active or most-recent finished,
-         and renders a "Past matches" list under the main scoreboard.
+         and renders a "Past games" list under the main scoreboard.
    Privacy: scoreboard shows first name + jersey number only — never last names,
    never pillar events, rosters, or weights.
    Auth: existing anonymous Firebase auth covers public viewers transparently.
@@ -5722,8 +8110,153 @@ function PublicVideoToggle({ url, game, label }) {
           awayColor: game.awayColor,
           status: game.status,
           gameId: game.id,
+          // Live clock fields — mirror coach-app match clock so the scorebug
+          // shows the same minute/half as the page header (vs. video time).
+          clockRunning: game.clockRunning,
+          startedAt: game.startedAt,
+          segmentStartedAt: game.segmentStartedAt,
+          elapsedAtPause: game.elapsedAtPause,
         }}
       />
+    </div>
+  );
+}
+
+/* ---- PublicAnalyticsCard: anonymized post-game stats for finished matches ----
+ * Reads teams/main/games/<id>/analytics/v1 + clips/*. Names shown as
+ * "First #Number" only (no last names) to match site privacy rules.
+ */
+function PublicAnalyticsCard({ game, roster }) {
+  const [analytics, setAnalytics] = useState(null);
+  const [clips, setClips] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
+
+  useEffect(() => {
+    if (!window.fbDb || !game?.id) { setLoaded(true); return; }
+    let cancelled = false;
+    const gref = window.fbDb.collection('teams').doc('main').collection('games').doc(game.id);
+    Promise.all([
+      gref.collection('analytics').doc('v1').get(),
+      gref.collection('clips').get(),
+    ])
+      .then(([aSnap, cQs]) => {
+        if (cancelled) return;
+        setAnalytics(aSnap.exists ? aSnap.data() : null);
+        setClips(cQs.docs.map(d => d.data()));
+        setLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
+  }, [game?.id]);
+
+  if (!loaded) return null;
+  if (!analytics && clips.length === 0) return null;
+
+  const shortName = (pid) => {
+    const p = roster.find(r => r.id === pid);
+    if (!p) return '—';
+    const first = (p.name || '').split(/\s+/)[0] || p.name || 'Player';
+    return `${first} #${p.number || '?'}`;
+  };
+
+  const stats = analytics?.player_stats || [];
+  const topDistance = [...stats].sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0)).slice(0, 5);
+  const topSpeed = [...stats].sort((a, b) => (b.top_speed_ms || 0) - (a.top_speed_ms || 0)).slice(0, 5);
+
+  return (
+    <div className="px-4 pt-4 max-w-2xl mx-auto">
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-lg">📊 MATCH ANALYTICS</h3>
+          <span className="text-[10px] text-stone-500 tracking-wider">POST-GAME</span>
+        </div>
+
+        {(analytics?.auto_highlights_url || analytics?.tv_reel_url) && (
+          <div className="space-y-2">
+            {analytics?.auto_highlights_url && (
+              <button
+                onClick={() => setBroadcastOpen('auto_highlights')}
+                className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
+              >
+                <span>▶ WATCH HIGHLIGHTS</span>
+                <span className="text-xs tabular-nums opacity-80">
+                  {analytics.auto_highlights_duration_s
+                    ? `${Math.floor(analytics.auto_highlights_duration_s / 60)}:${String(Math.floor(analytics.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+                    : ''}
+                </span>
+              </button>
+            )}
+            {analytics?.tv_reel_url && (
+              <button
+                onClick={() => setBroadcastOpen('tv_reel')}
+                className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
+              >
+                <span>▶ WATCH FULL GAME</span>
+                <span className="text-xs tabular-nums text-stone-400">
+                  {analytics.tv_reel_duration_s
+                    ? `${Math.floor(analytics.tv_reel_duration_s / 60)}:${String(Math.floor(analytics.tv_reel_duration_s % 60)).padStart(2, '0')}`
+                    : ''}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {topDistance.length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Most Distance Covered</div>
+            <ol className="space-y-1">
+              {topDistance.map((s, i) => (
+                <li key={s.player_id} className="flex items-center justify-between text-sm">
+                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
+                  <span className="font-bold tabular-nums text-lime-400">{(s.distance_m || 0).toFixed(0)} m</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {topSpeed.length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Fastest Sprinters</div>
+            <ol className="space-y-1">
+              {topSpeed.map((s, i) => (
+                <li key={s.player_id} className="flex items-center justify-between text-sm">
+                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
+                  <span className="font-bold tabular-nums text-lime-400">{((s.top_speed_ms || 0) * 3.6).toFixed(1)} km/h</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {(analytics?.formation_snapshots || []).length > 0 && (
+          <div>
+            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Formation</div>
+            <div className="flex gap-3 text-sm">
+              {analytics.formation_snapshots.map(f => (
+                <div key={f.period} className="bg-stone-800/50 rounded-lg px-3 py-1">
+                  P{f.period}: <strong>{f.label}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Per-event highlight clips intentionally removed in favor of the
+            broadcast-style auto-highlights reel + full TV reel. Those will
+            surface as their own "WATCH HIGHLIGHTS" / "WATCH FULL GAME" cards. */}
+      </div>
+      {broadcastOpen && (
+        <BroadcastVideoPlayer
+          url={broadcastOpen === 'tv_reel' ? analytics?.tv_reel_url : analytics?.auto_highlights_url}
+          doc={analytics}
+          label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
+          timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          onClose={() => setBroadcastOpen(null)}
+        />
+      )}
     </div>
   );
 }
@@ -5775,7 +8308,16 @@ function LiveScorePage({ gameId }) {
         <ChevronLeft className="w-4 h-4" /> ALL MATCHES
       </a>
       <LiveScoreboard game={game} roster={roster} />
-      {game.liveInput?.hlsUrl && (
+      {game.youtubeVideoId && (
+        <div className="px-4 pt-4 max-w-2xl mx-auto">
+          <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-sm font-bold text-red-300">{game.status === 'active' ? 'LIVE NOW' : 'REPLAY'}</span>
+          </div>
+          <YouTubeEmbed videoId={game.youtubeVideoId} live={game.status === 'active'} />
+        </div>
+      )}
+      {!game.youtubeVideoId && game.liveInput?.hlsUrl && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
             <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -5788,7 +8330,7 @@ function LiveScorePage({ gameId }) {
           />
         </div>
       )}
-      {!game.liveInput?.hlsUrl && game.videoUrl && (
+      {!game.youtubeVideoId && !game.liveInput?.hlsUrl && game.videoUrl && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <PublicVideoToggle
             url={game.videoUrl}
@@ -5796,6 +8338,9 @@ function LiveScorePage({ gameId }) {
             label="🎥 WATCH 360° VIDEO"
           />
         </div>
+      )}
+      {game.status === 'finished' && (
+        <PublicAnalyticsCard game={game} roster={roster} />
       )}
     </div>
   );
@@ -5871,41 +8416,99 @@ function PublicHomePage() {
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <a
-        href="./?coach"
-        className={`absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 ${isCoachUser ? '' : 'hidden'}`}
-      >
-        🔑 COACH
-      </a>
       {featured ? (
         <>
+          <div className="stripes-bg text-white px-5 pt-16 pb-6 relative">
+            <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+              {window.fbUserInfo && (
+                <button
+                  onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                  aria-label="Sign out"
+                  className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+                >
+                  {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                  <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+                </button>
+              )}
+              <a
+                href="./?coach"
+                className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
+              >
+                <span>🪑</span><span>DUGOUT</span>
+              </a>
+            </div>
+            <div className="flex items-center gap-4 mt-12">
+              <img
+                src="./stompers_logo.png"
+                alt=""
+                className="w-24 h-24 shrink-0 drop-shadow"
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+              <div className="flex-1 min-w-0">
+                <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+                <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+              </div>
+            </div>
+          </div>
           <a href={`./?live=${featured.id}`} className="block">
             <LiveScoreboard game={featured} roster={roster} />
           </a>
-          {featured.videoUrl && (
+          {featured.videoUrl && !featured.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
               <PublicVideoToggle url={featured.videoUrl} game={featured} label="🎥 WATCH 360° VIDEO" />
             </div>
           )}
-          {featured.liveInput?.hlsUrl && (
+          {featured.youtubeVideoId && (
+            <div className="px-4 pt-4 max-w-2xl mx-auto">
+              <YouTubeEmbed videoId={featured.youtubeVideoId} live={featured.status === 'active'} />
+            </div>
+          )}
+          {!featured.youtubeVideoId && featured.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
               <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
             </div>
           )}
+          {featured.status === 'finished' && (
+            <PublicAnalyticsCard game={featured} roster={roster} />
+          )}
         </>
       ) : (
-        <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+2rem)] pb-12 text-center">
-          <img
-            src="./stompers_logo.png"
-            alt="LaSalle Stompers"
-            className="w-24 h-24 mx-auto mb-4 drop-shadow-lg"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-          <div className="font-display text-4xl text-lime-400">LASALLE STOMPERS</div>
-          <div className="text-white/60 text-sm font-bold tracking-widest mt-1">U10 BOYS · 2016 SQUAD</div>
-          <div className="mt-10 inline-block bg-white/10 rounded-2xl px-6 py-5">
-            <div className="font-display text-2xl">No live match right now</div>
-            <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
+        <div className="stripes-bg text-white px-5 pt-16 pb-12 relative">
+          <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+            {window.fbUserInfo && (
+              <button
+                onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                aria-label="Sign out"
+                className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+              >
+                {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+              </button>
+            )}
+            <a
+              href="./?coach"
+              className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
+            >
+              <span>🪑</span><span>DUGOUT</span>
+            </a>
+          </div>
+          <div className="flex items-center gap-4 mt-12">
+            <img
+              src="./stompers_logo.png"
+              alt="LaSalle Stompers"
+              className="w-24 h-24 shrink-0 drop-shadow-lg"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+            <div className="flex-1 min-w-0">
+              <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+              <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+            </div>
+          </div>
+          <div className="mt-10 text-center">
+            <div className="inline-block bg-white/10 rounded-2xl px-6 py-5">
+              <div className="font-display text-2xl">No live match right now</div>
+              <div className="text-white/60 text-sm mt-1">Check back on game day.</div>
+            </div>
           </div>
         </div>
       )}
@@ -5932,11 +8535,7 @@ function PublicHomePage() {
                           CANCELLED
                         </span>
                       )}
-                      {item.tournament && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          {item.tournament.toUpperCase()}
-                        </span>
-                      )}
+                      {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
                     </div>
                     {item.location && (
@@ -5961,7 +8560,7 @@ function PublicHomePage() {
       })()}
       {past.length > 0 && (
         <div className="px-4 pt-6 max-w-md mx-auto">
-          <h3 className="font-display text-xl text-stone-200 mb-2">PAST MATCHES</h3>
+          <h3 className="font-display text-xl text-stone-200 mb-2">PAST GAMES</h3>
           <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
             {past.map((g) => {
               const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';

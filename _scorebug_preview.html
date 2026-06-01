@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Scorebug preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#1a1a1a; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:32px; font-family: ui-sans-serif, system-ui; padding:40px; }
+  .label { color:#888; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:8px; }
+  .stage { background:url('https://images.unsplash.com/photo-1543326727-cf6c39e8f84c?w=800') center/cover; width:480px; height:270px; border-radius:12px; position:relative; overflow:hidden; }
+  .bug-bg { background: linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%); }
+  .fillet-l, .fillet-r {
+    position: absolute;
+    top: 0;
+    width: 8px;
+    height: 8px;
+    background: rgba(22,22,25,0.91);
+  }
+  .fillet-l {
+    left: -8px;
+    -webkit-mask-image: radial-gradient(circle at bottom right, transparent 8px, black 8.5px);
+            mask-image: radial-gradient(circle at bottom right, transparent 8px, black 8.5px);
+  }
+  .fillet-r {
+    right: -8px;
+    -webkit-mask-image: radial-gradient(circle at bottom left, transparent 8px, black 8.5px);
+            mask-image: radial-gradient(circle at bottom left, transparent 8px, black 8.5px);
+  }
+</style>
+</head>
+<body>
+
+<div>
+  <div class="label">1st half · home jersey BLACK</div>
+  <div class="stage">
+    <div class="absolute z-10 pointer-events-none flex flex-col items-center top-2 left-2">
+      <div class="bug-bg rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md">
+        <div class="flex items-stretch text-[11px]">
+          <div class="flex items-center pl-1.5 pr-2.5 py-1.5">
+            <div class="w-[6px] h-5 rounded-sm mr-2" style="background:#000; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #00000080"></div>
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">STM</span>
+          </div>
+          <div class="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">2</span>
+            <span class="text-white/30 text-xs">–</span>
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">1</span>
+          </div>
+          <div class="flex items-center pl-2.5 pr-1.5 py-1.5">
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">OPP</span>
+            <div class="w-[6px] h-5 rounded-sm ml-2" style="background:#dc2626; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #dc262680"></div>
+          </div>
+        </div>
+      </div>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]">
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">1ST · 27'</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="label">LIVE — blinking red dot</div>
+  <div class="stage">
+    <div class="absolute z-10 pointer-events-none flex flex-col items-center top-2 left-2">
+      <div class="bug-bg rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md">
+        <div class="flex items-stretch text-[11px]">
+          <div class="flex items-center pl-1.5 pr-2.5 py-1.5">
+            <div class="w-[6px] h-5 rounded-sm mr-2" style="background:#84cc16; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #84cc1680"></div>
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">STOMPERS</span>
+          </div>
+          <div class="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">3</span>
+            <span class="text-white/30 text-xs">–</span>
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">2</span>
+          </div>
+          <div class="flex items-center pl-2.5 pr-1.5 py-1.5">
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">EAGLES</span>
+            <div class="w-[6px] h-5 rounded-sm ml-2" style="background:#dc2626; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #dc262680"></div>
+          </div>
+        </div>
+      </div>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]">
+          <span class="relative flex items-center justify-center mr-0.5">
+            <span class="absolute w-3.5 h-3.5 rounded-full bg-red-500/60 animate-ping"></span>
+            <span class="relative w-2.5 h-2.5 rounded-full bg-red-500" style="box-shadow:0 0 8px rgba(239,68,68,0.9)"></span>
+          </span>
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">2ND · 63'</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="label">Full time</div>
+  <div class="stage">
+    <div class="absolute z-10 pointer-events-none flex flex-col items-center top-2 left-2">
+      <div class="bug-bg rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md">
+        <div class="flex items-stretch text-[11px]">
+          <div class="flex items-center pl-1.5 pr-2.5 py-1.5">
+            <div class="w-[6px] h-5 rounded-sm mr-2" style="background:#1e40af; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #1e40af80"></div>
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">STM</span>
+          </div>
+          <div class="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">4</span>
+            <span class="text-white/30 text-xs">–</span>
+            <span class="tabular-nums text-white text-base leading-none" style="text-shadow:0 1px 3px rgba(0,0,0,0.7)">2</span>
+          </div>
+          <div class="flex items-center pl-2.5 pr-1.5 py-1.5">
+            <span class="font-bold tracking-wider truncate max-w-[5rem] text-white" style="text-shadow:0 1px 2px rgba(0,0,0,0.6)">FCB</span>
+            <div class="w-[6px] h-5 rounded-sm ml-2" style="background:#fbbf24; border:1px solid rgba(255,255,255,0.9); box-shadow:0 0 6px #fbbf2480"></div>
+          </div>
+        </div>
+      </div>
+      <div class="relative -mt-px">
+        <span class="fillet-l"></span>
+        <span class="fillet-r"></span>
+        <div class="bug-bg rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]">
+          <span class="tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style="text-shadow:0 1px 2px rgba(0,0,0,0.7)">FT</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

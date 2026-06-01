@@ -121,6 +121,7 @@ new_load_effect = (
     "          }\n"
     "          if (data.weights) setWeights(mergeWeights(data.weights));\n"
     "          if (Array.isArray(data.schedule)) setSchedule(data.schedule);\n"
+    "          if (data.teamLiveInput !== undefined) setTeamLiveInput(data.teamLiveInput || null);\n"
     "        } else {\n"
     "          teamDoc().set({ roster: SEED_ROSTER });\n"
     "        }\n"
@@ -199,11 +200,29 @@ new_persist = (
     "  const persistSchedule = async (next) => {\n"
     "    setSchedule(next); // optimistic\n"
     "    try { await teamDoc().set({ schedule: next }, { merge: true }); } catch (e) { console.error('Schedule save error:', e); }\n"
+    "  };\n\n"
+    "  const persistTeamLiveInput = async (next) => {\n"
+    "    setTeamLiveInput(next); // optimistic\n"
+    "    try { await teamDoc().set({ teamLiveInput: next || null }, { merge: true }); } catch (e) { console.error('Team live input save error:', e); }\n"
     "  };"
 )
 if old_persist not in jsx_body:
     raise SystemExit("Could not find original persistRoster/persistGames to replace.")
 jsx_body = jsx_body.replace(old_persist, new_persist, 1)
+
+# 6b. Remove the local-dev persistTeamLiveInput (added after persistSchedule in
+# JSX). The Firestore version above replaces it in production builds.
+old_team_live_persist = (
+    "  const persistTeamLiveInput = async (next) => {\n"
+    "    setTeamLiveInput(next);\n"
+    "    try {\n"
+    "      if (next) await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, JSON.stringify(next));\n"
+    "      else await storageSet(STORAGE_KEYS.TEAM_LIVE_INPUT, '');\n"
+    "    } catch (e) {}\n"
+    "  };\n"
+)
+if old_team_live_persist in jsx_body:
+    jsx_body = jsx_body.replace(old_team_live_persist, "", 1)
 
 # Splice into HTML between markers.
 begin_marker = "// ===== APP CODE BEGINS ====="
@@ -245,6 +264,7 @@ DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 PWA_FILES = [
     "manifest.webmanifest",
     "sw.js",
+    "tailwind.css",
     "icon-192.png",
     "icon-512.png",
     "icon-maskable-192.png",
@@ -286,11 +306,90 @@ for stale in DEPLOY_DIR.iterdir():
 
 (DEPLOY_DIR / "index.html").write_text(deploy_html)
 
+# ─── Pre-compile JSX → JS (removes Babel runtime, huge speedup on old devices) ───
+import subprocess
+
+# Extract JSX from the <script type="text/babel"> block
+babel_script_pattern = re.compile(
+    r'<script type="text/babel" data-presets="react">\s*\n(.*?)\n\s*</script>',
+    re.S,
+)
+babel_match = babel_script_pattern.search(deploy_html)
+if babel_match:
+    jsx_code = babel_match.group(1)
+    try:
+        result = subprocess.run(
+            ['esbuild', '--loader=jsx', '--jsx=transform',
+             '--jsx-factory=React.createElement', '--jsx-fragment=React.Fragment',
+             '--target=es2018'],
+            input=jsx_code, capture_output=True, text=True, check=True,
+        )
+        compiled_js = result.stdout
+        # Replace the babel script tag with a regular script tag containing compiled JS
+        deploy_html = deploy_html.replace(
+            babel_match.group(0),
+            f'<script>\n{compiled_js}\n  </script>',
+        )
+        # Remove the Babel standalone script (no longer needed)
+        deploy_html = deploy_html.replace(
+            '  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>\n',
+            '',
+        )
+        print(f"  Pre-compiled JSX → JS ({len(jsx_code)//1024} KB JSX → {len(compiled_js)//1024} KB JS)")
+    except subprocess.CalledProcessError as e:
+        print(f"  WARNING: esbuild transpile failed, keeping Babel runtime:\n  {e.stderr[:500]}")
+    except FileNotFoundError:
+        print("  WARNING: esbuild not found, keeping Babel runtime (brew install esbuild)")
+    # Rewrite the deploy file with compiled version
+    (DEPLOY_DIR / "index.html").write_text(deploy_html)
+else:
+    print("  WARNING: Could not find <script type=\"text/babel\"> block to pre-compile")
+
+# ─── Pre-build Tailwind CSS (replaces the cdn.tailwindcss.com runtime) ───
+# The Play CDN re-generates utility classes in the browser on every load —
+# slow on older iPhones. We compile a static minified stylesheet once at
+# build time and ship that instead.
+tailwind_css_path = DEPLOY_DIR / "tailwind.css"
+# Prefer the standalone binary shipped in `.build-tools/` so the build works
+# even when npm is blocked (corp VPN). Fall back to `npx` on Cloudflare Pages CI.
+local_tw = HERE / ".build-tools" / "tailwindcss"
+tw_cmd = [str(local_tw)] if local_tw.is_file() else ['npx', '--yes', 'tailwindcss']
+try:
+    subprocess.run(
+        tw_cmd + ['-c', str(HERE / 'tailwind.config.js'),
+                  '-i', str(HERE / 'tailwind.input.css'),
+                  '-o', str(tailwind_css_path),
+                  '--minify'],
+        check=True, capture_output=True, text=True,
+    )
+    css_kb = tailwind_css_path.stat().st_size // 1024
+    # Swap the CDN <script> tag for a local <link>. Also drop the now-redundant
+    # inline <style> block of custom utilities (moved into tailwind.input.css).
+    deploy_html = deploy_html.replace(
+        '  <script src="https://cdn.tailwindcss.com"></script>\n',
+        '  <link rel="stylesheet" href="./tailwind.css" />\n',
+    )
+    inline_style_re = re.compile(
+        r'  <style>\s*\n\s*html, body \{ background: #0c0a09;.*?\n  </style>\n',
+        re.S,
+    )
+    deploy_html = inline_style_re.sub('', deploy_html, count=1)
+    (DEPLOY_DIR / "index.html").write_text(deploy_html)
+    print(f"  Pre-built Tailwind CSS ({css_kb} KB minified, replaces CDN runtime)")
+except subprocess.CalledProcessError as e:
+    print(f"  WARNING: tailwindcss build failed, keeping CDN runtime:\n  {e.stderr[:500]}")
+except FileNotFoundError:
+    print("  WARNING: tailwindcss not found (no .build-tools/tailwindcss and no npx). Keeping CDN runtime.")
+
 # Copy PWA shell files into the deploy folder.
 copied_pwa = []
 for name in PWA_FILES:
     src = HERE / name
     if not src.is_file():
+        # tailwind.css is generated into _site directly above — not in repo root.
+        if name == "tailwind.css" and (DEPLOY_DIR / name).is_file():
+            copied_pwa.append(name)
+            continue
         print(f"  WARNING: PWA file missing: {name}")
         continue
     shutil.copy2(src, DEPLOY_DIR / name)

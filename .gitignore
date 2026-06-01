@@ -2,3 +2,23 @@ _site/
 .netlify/
 __pycache__/
 *.pyc
+node_modules/
+.build-tools/
+tracking/samples/*.mp4
+tracking/samples/*.webm
+tracking/samples/*.insv
+tracking/outputs/
+tracking/.venv/
+*.pt
+.DS_Store
+
+# post_game runtime artifacts
+post_game/.cache/
+post_game/outputs/
+post_game/models/
+.venv-post-game/
+
+# local secrets for run_analytics.sh (R2 keys, etc.)
+.env
+.env.local
+dist/

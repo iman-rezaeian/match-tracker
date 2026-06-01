@@ -223,6 +223,45 @@ export default {
       }
     }
 
+    // ---- GET /youtube-live — auto-detect the currently-live stream on the team channel ----
+    if (request.method === 'POST' && url.pathname === '/youtube-live') {
+      let body;
+      try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400); }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      if (!env.YOUTUBE_API_KEY) {
+        return json({ error: 'YOUTUBE_API_KEY not configured on worker' }, 500);
+      }
+      const handle = env.YOUTUBE_CHANNEL_HANDLE || 'Stompers2016';
+      try {
+        // Step 1: resolve channel ID from handle
+        let channelId = env.YOUTUBE_CHANNEL_ID || null;
+        if (!channelId) {
+          const chRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${encodeURIComponent(handle)}&key=${env.YOUTUBE_API_KEY}`
+          );
+          const chData = await chRes.json();
+          if (!chData.items || chData.items.length === 0) {
+            return json({ error: `Channel @${handle} not found` }, 404);
+          }
+          channelId = chData.items[0].id;
+        }
+        // Step 2: search for currently-live videos on this channel
+        const searchRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${channelId}&type=video&eventType=live&key=${env.YOUTUBE_API_KEY}`
+        );
+        const searchData = await searchRes.json();
+        if (!searchData.items || searchData.items.length === 0) {
+          return json({ live: false, videoId: null, channelId });
+        }
+        const videoId = searchData.items[0].id.videoId;
+        const title = searchData.items[0].snippet.title;
+        return json({ live: true, videoId, title, channelId });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
     // ---- POST /live-input/:uid/delete ----
     const delMatch = url.pathname.match(/^\/live-input\/([a-zA-Z0-9_-]+)\/delete$/);
     if (request.method === 'POST' && delMatch) {
