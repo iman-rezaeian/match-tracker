@@ -14,13 +14,97 @@ are critical:
 from __future__ import annotations
 
 import math
+import shutil
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator, Optional
 
 import cv2
 import numpy as np
 
 from . import config
+
+
+# --- H.264 encoder pipe --------------------------------------------------
+#
+# OpenCV's bundled VideoWriter ships with `mp4v` (MPEG-4 Part 2) as the only
+# reliable cross-platform codec. That codec is ~25 years old, ~2-3x larger
+# than H.264 at equal quality, and not playable in some mobile browsers
+# (older iOS Safari in particular). All reels/clips render through this
+# helper instead: pipe raw BGR frames into ffmpeg → libx264 (yuv420p,
+# +faststart) so the output streams instantly in any HTML5 <video> tag.
+
+
+class H264PipeWriter:
+    """ffmpeg-backed replacement for cv2.VideoWriter.
+
+    Usage mirrors cv2.VideoWriter — `.write(bgr_frame)` per frame, `.close()`
+    at the end. Frames must be uint8 BGR of shape (height, width, 3) and must
+    match the (width, height) passed at construction.
+    """
+
+    def __init__(self, path: str | Path, fps: float, width: int, height: int,
+                 crf: int = 23, preset: str = "veryfast") -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg not on PATH — required for H.264 encoding.")
+        self._path = str(path)
+        self._w = int(width)
+        self._h = int(height)
+        cmd = [
+            ffmpeg, "-y",
+            "-loglevel", "error",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self._w}x{self._h}",
+            "-r", f"{fps}",
+            "-i", "-",
+            "-an",
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-crf", str(crf),
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            self._path,
+        ]
+        self._proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+    def isOpened(self) -> bool:  # noqa: N802 — mirror cv2 API
+        return self._proc is not None and self._proc.poll() is None
+
+    def write(self, frame: np.ndarray) -> None:
+        if frame.shape[0] != self._h or frame.shape[1] != self._w:
+            frame = cv2.resize(frame, (self._w, self._h))
+        if not frame.flags["C_CONTIGUOUS"]:
+            frame = np.ascontiguousarray(frame)
+        try:
+            self._proc.stdin.write(frame.tobytes())
+        except BrokenPipeError:
+            err = self._proc.stderr.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"ffmpeg encoder died mid-stream: {err}")
+
+    def release(self) -> None:  # cv2-style alias
+        self.close()
+
+    def close(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            if self._proc.stdin:
+                self._proc.stdin.close()
+        except BrokenPipeError:
+            pass
+        rc = self._proc.wait()
+        if rc != 0:
+            err = self._proc.stderr.read().decode("utf-8", errors="replace")
+            self._proc = None
+            raise RuntimeError(f"ffmpeg encode failed (rc={rc}): {err}")
+        self._proc = None
 
 
 @dataclass
