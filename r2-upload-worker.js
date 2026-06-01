@@ -24,13 +24,14 @@
  *   PUT  /put/:filename?auth=<pass>  (raw file body) → { ok, publicUrl }
  *   POST /live-input       { password, name }     → { uid, rtmpsUrl, streamKey, hlsUrl, dashUrl }
  *   POST /live-input/:uid/delete  { password }    → { ok }
+ *   POST /game/:id/videos/delete  { password }    → { ok, deleted } (wipes R2 tv_view/<id>/* + clips/<id>/*)
  */
 
 const PUBLIC_BASE = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400',
 };
@@ -156,6 +157,40 @@ export default {
         return json({ ok: true });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    // ---- POST /game/:id/videos/delete ----
+    // Wipes everything in R2 under tv_view/<id>/* and clips/<id>/*. Used by
+    // the coach "Delete game" + "Delete videos only" actions in the app. The
+    // app handles Firestore cleanup separately (subcollections + game doc).
+    const wipeMatch = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/videos\/delete$/);
+    if (request.method === 'POST' && wipeMatch) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+
+      const gameId = wipeMatch[1];
+      const prefixes = [`tv_view/${gameId}/`, `clips/${gameId}/`];
+      let deleted = 0;
+      try {
+        for (const prefix of prefixes) {
+          let cursor = undefined;
+          // R2 list is paginated at 1000; loop until truncated=false.
+          do {
+            const listed = await env.BUCKET.list({ prefix, cursor, limit: 1000 });
+            const keys = (listed.objects || []).map(o => o.key);
+            if (keys.length) {
+              await env.BUCKET.delete(keys);
+              deleted += keys.length;
+            }
+            cursor = listed.truncated ? listed.cursor : undefined;
+          } while (cursor);
+        }
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
       }
     }
 
