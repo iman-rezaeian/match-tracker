@@ -3064,8 +3064,8 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           <div className="flex flex-col items-center text-center pt-6">
             <div className="text-6xl mb-3">⏸️</div>
             <div className="font-display text-4xl mb-2">HALF TIME</div>
-            <div className="text-stone-400 text-sm mb-8 max-w-xs">
-              Clock is paused. Tap below when the 2nd half kicks off.
+            <div className="text-stone-400 text-sm mb-6 max-w-xs">
+              Clock is paused. Make any halftime subs or GK swap, then tap to kick off the 2nd half.
             </div>
             <button
               onClick={onStartSecondHalf}
@@ -3080,6 +3080,24 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             >
               ← Back to 1st half
             </button>
+
+            {/* Halftime substitutions — same SUB / SWAP GK flow as live play. */}
+            <div className="mt-6 w-full max-w-sm grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onSelectEvent('SUB')}
+                className={`${TONE_CLASSES['purple']} border-2 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
+              >
+                <span className="text-2xl">🔄</span>
+                <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SUBSTITUTION</span>
+              </button>
+              <button
+                onClick={onSwapGK}
+                className="bg-amber-900/50 text-amber-200 border-2 border-amber-600/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+              >
+                <span className="text-2xl">🧤</span>
+                <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SWAP GK</span>
+              </button>
+            </div>
 
             <div className="mt-8 w-full">
               <h3 className="font-display text-lg mb-2 text-left">RECENT</h3>
@@ -8826,6 +8844,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
