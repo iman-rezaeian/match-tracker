@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// Firestore security rules for the Stompers match tracker.
+//
+// PRIVACY MODEL
+// ─────────────
+// Public (parents/spectators, unauthenticated or anonymous):
+//   - can READ the team doc (name, roster summary, schedule)
+//     and the games collection (scoreboard, events, goals)
+//   - CAN read the new public broadcast fields on each game doc
+//     (videoHighlightsUrl, videoFullGameUrl, broadcastEvents, …)
+//   - CANNOT read the analytics/ subcollection or the clips/ subcollection
+//     under games (which contain per-player stats, GK positioning,
+//     identity confidence, sample-rate-level tracks, etc.)
+//   - CANNOT write anything.
+//
+// Coach (authenticated user whose email appears in /allowedUsers
+// with role == "coach"):
+//   - can READ everything under teams/main
+//   - can WRITE everything under teams/main
+//
+// Pipeline service account (Firebase Admin SDK / google-cloud-firestore
+// with default service-account credentials) bypasses these rules entirely.
+// No rule needs to allow it explicitly.
+//
+// Note: the public "broadcast events" index on each game doc only contains
+// first name + jersey number for goal scorers / subs — see
+// _build_broadcast_events_index in post_game/pipeline.py.
+//
+// Deploy from the Firebase console: Firestore → Rules → paste this file.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- helpers -----------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isCoach() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/allowedUsers/$(request.auth.token.email.lower()))
+        && get(/databases/$(database)/documents/allowedUsers/$(request.auth.token.email.lower())).data.role == 'coach';
+    }
+
+    // --- coach allow-list (read-only to clients; managed in console) -
+    match /allowedUsers/{email} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // --- viewerLog: public can append/update their own session row ---
+    // The PWA writes anonymous viewer presence here for the live page.
+    // Keep it open (writes only, no sensitive data).
+    match /viewerLog/{doc} {
+      allow read: if isCoach();
+      allow create, update: if true;
+      allow delete: if isCoach();
+    }
+
+    // --- teams/main ---------------------------------------------------
+    match /teams/main {
+      allow read: if true;          // public can read team doc + roster
+      allow write: if isCoach();
+
+      // --- fields/<name>: calibration presets (coach-only) -----------
+      match /fields/{fieldName} {
+        allow read, write: if isCoach();
+      }
+
+      // --- games/<id> ------------------------------------------------
+      // Public reads the live scoreboard, events, goals, broadcast video
+      // URLs + first-name-only overlay index. NO subcollections public.
+      match /games/{gameId} {
+        allow read: if true;
+        allow write: if isCoach();
+
+        // analytics/: full per-player + GK + identity stats. COACH-ONLY.
+        match /analytics/{docId} {
+          allow read, write: if isCoach();
+        }
+
+        // clips/: per-event highlight clip metadata. COACH-ONLY (the
+        // public surface now uses the broadcast video URLs on the parent
+        // game doc instead).
+        match /clips/{clipId} {
+          allow read, write: if isCoach();
+        }
+
+        // any other future subcollection defaults to coach-only.
+        match /{subcoll}/{subdoc} {
+          allow read, write: if isCoach();
+        }
+      }
+    }
+
+    // --- default deny ------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
