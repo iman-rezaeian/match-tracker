@@ -7,6 +7,7 @@ import math
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -268,6 +269,19 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         except Exception as e:
             log.warning("Auto-highlights failed: %s", e)
 
+    # 7c. Build per-event broadcast index. Used by the PWA overlay layer
+    # to draw a live scorebug + goal/sub popups while the user watches the
+    # tv_reel or auto_highlights mp4. Done here (post-pipeline) because we
+    # need clock_to_video + the reel segment list before we can map each
+    # source-video event time into reel-relative time.
+    events_index = _build_broadcast_events_index(
+        game=game,
+        roster=roster,
+        period_clock_to_video_time=clock_to_video,
+        tv_reel_segments=(tv_reel_meta.segments if tv_reel_meta else play_windows),
+        auto_highlights_segments=(auto_hl_meta.segments if auto_hl_meta else []),
+    )
+
     analytics = {
         "version": config.ANALYTICS_DOC_VERSION,
         "field_name": field_name,
@@ -283,15 +297,148 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         "clip_count": len(clips),
         "tv_reel": asdict(tv_reel_meta) if tv_reel_meta else None,
         "auto_highlights": asdict(auto_hl_meta) if auto_hl_meta else None,
+        # Convenience top-level URLs the PWA can read without diving into
+        # the nested meta dicts above.
+        "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
+        "auto_highlights_url": (auto_hl_meta.r2_url if auto_hl_meta else None),
+        "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
+        "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
+        # Per-event timeline for the on-screen scorebug / goal-popup overlay.
+        "broadcast_events": events_index,
+        "home_name": ("Stompers" if game.is_home else (game.opponent or "OPP")),
+        "away_name": ((game.opponent or "OPP") if game.is_home else "Stompers"),
+        "home_color": game.home_color,
+        "away_color": game.away_color,
         "generated_at_ms": int(time.time() * 1000),
     }
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
+    # Clean up legacy clip docs from older pipeline runs that wrote the
+    # tv_reel / auto_highlights records into the per-event clips/ collection.
+    # They render as broken "· P 0' · —" rows in the PWA highlight list.
+    _purge_legacy_reel_clip_docs(game_id)
     log.info("Wrote analytics for game %s - %d players, %d GK events",
              game_id, len(player_stats), len(gk_positions))
     return analytics
 
 
 # --- helpers -------------------------------------------------------------
+
+def _build_broadcast_events_index(
+    game,
+    roster,
+    period_clock_to_video_time,
+    tv_reel_segments: list[tuple[float, float]],
+    auto_highlights_segments: list[tuple[float, float]],
+) -> list[dict]:
+    """Per-event timeline used by the PWA on-screen overlay layer.
+
+    For each game event in time order, emit:
+      - id, type, period, elapsed (clock seconds in the period)
+      - playerId, playerName, jerseyNumber
+      - assistPlayerId, assistPlayerName, assistJerseyNumber (when present)
+      - videoTimeS:       seconds into the original source video
+      - tvReelTimeS:      seconds into the rendered tv_reel mp4 (or None)
+      - autoHighlightsTimeS: seconds into the auto_highlights mp4 (or None)
+      - ourScoreAfter / oppScoreAfter: running team scores AFTER this event
+      - team: 'us' | 'them' (for GOAL only)
+    """
+    roster_by_id = {p.id: p for p in roster}
+
+    def _name_pair(pid):
+        if not pid:
+            return (None, None)
+        p = roster_by_id.get(pid)
+        if not p:
+            return (None, None)
+        first = (p.name or "").split()[0] if p.name else None
+        return (first, p.jersey_number)
+
+    def _segments_to_reel_time(t: float, segs: list[tuple[float, float]]) -> Optional[float]:
+        if not segs:
+            return None
+        acc = 0.0
+        for (a, b) in segs:
+            if a <= t <= b:
+                return acc + (t - a)
+            acc += max(0.0, b - a)
+        return None
+
+    ordered = sorted(game.events, key=lambda e: (e.period, e.elapsed, e.at))
+    our_score = 0
+    opp_score = 0
+    out: list[dict] = []
+    for ev in ordered:
+        # Running score: GOAL increments us; OPP_GOAL increments them. Stay
+        # tolerant to the few historical naming variants.
+        et = (ev.type or "").upper()
+        team = None
+        if et in ("GOAL",):
+            our_score += 1
+            team = "us"
+        elif et in ("OPP_GOAL", "OPPONENT_GOAL", "GOAL_AGAINST"):
+            opp_score += 1
+            team = "them"
+
+        try:
+            video_t = float(period_clock_to_video_time(ev.period, ev.elapsed))
+        except Exception:
+            video_t = -1.0
+        if video_t < 0:
+            video_t = 0.0
+
+        first, num = _name_pair(ev.player_id)
+        assist_pid = (
+            ev.extras.get("assistPlayerId")
+            or ev.extras.get("assistId")
+            or ev.extras.get("assist")
+        )
+        a_first, a_num = _name_pair(assist_pid)
+        sub_in_pid = ev.extras.get("inPlayerId") or ev.extras.get("subInId")
+        sub_out_pid = ev.extras.get("outPlayerId") or ev.extras.get("subOutId")
+        in_first, in_num = _name_pair(sub_in_pid)
+        out_first, out_num = _name_pair(sub_out_pid)
+
+        out.append({
+            "id": ev.id,
+            "type": et,
+            "period": ev.period,
+            "elapsed": ev.elapsed,
+            "playerId": ev.player_id,
+            "playerFirstName": first,
+            "jerseyNumber": num,
+            "assistPlayerId": assist_pid,
+            "assistFirstName": a_first,
+            "assistJerseyNumber": a_num,
+            "inPlayerId": sub_in_pid,
+            "inFirstName": in_first,
+            "inJerseyNumber": in_num,
+            "outPlayerId": sub_out_pid,
+            "outFirstName": out_first,
+            "outJerseyNumber": out_num,
+            "videoTimeS": video_t,
+            "tvReelTimeS": _segments_to_reel_time(video_t, tv_reel_segments),
+            "autoHighlightsTimeS": _segments_to_reel_time(video_t, auto_highlights_segments),
+            "ourScoreAfter": our_score,
+            "oppScoreAfter": opp_score,
+            "team": team,
+        })
+    return out
+
+
+def _purge_legacy_reel_clip_docs(game_id: str) -> None:
+    """Older pipeline runs wrote tv_reel + auto_highlights records into the
+    per-event `clips/` subcollection. They show up as broken rows in the
+    PWA. Delete them defensively on every run."""
+    try:
+        coll = firestore_io._team_doc().collection("games").document(game_id).collection("clips")
+        for legacy_id in ("tv_reel", "auto_highlights"):
+            try:
+                coll.document(legacy_id).delete()
+            except Exception:
+                pass
+    except Exception as e:
+        log.debug("Legacy reel clip purge skipped: %s", e)
+
 
 def _ensure_local_video(url: str, game_id: str) -> Path:
     if url.startswith("file://"):
