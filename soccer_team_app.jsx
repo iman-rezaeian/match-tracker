@@ -1036,8 +1036,11 @@ export default function App() {
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
           onStartScheduled={(item) => {
-            setPendingGameSetup({ opponent: item.opponent, isHome: true, tournament: item.tournament });
-            setView('squad');
+            // Route through GameSetup so the coach can confirm/adjust jersey
+            // colors (and half length) before squad picking. Pre-fill from
+            // the schedule entry.
+            setPendingGameSetup({ opponent: item.opponent, isHome: true, tournament: item.tournament, fromSchedule: true });
+            setView('gameSetup');
           }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
@@ -1096,7 +1099,8 @@ export default function App() {
       {view === 'gameSetup' && (
         <GameSetup
           rosterCount={roster.length}
-          onCancel={() => setView('home')}
+          initial={pendingGameSetup}
+          onCancel={() => { setPendingGameSetup(null); setView('home'); }}
           onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
             setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
             setView('squad');
@@ -1955,12 +1959,12 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 }
 
 /* ---------- GAME SETUP ---------- */
-function GameSetup({ rosterCount, onCancel, onStart, onGoRoster }) {
-  const [opponent, setOpponent] = useState('');
-  const [tournament, setTournament] = useState('Festival');
-  const [halfLengthMin, setHalfLengthMin] = useState(25);
-  const [homeColor, setHomeColor] = useState('#0a0a0a');
-  const [awayColor, setAwayColor] = useState('#dc2626');
+function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
+  const [opponent, setOpponent] = useState(initial?.opponent || '');
+  const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
+  const [halfLengthMin, setHalfLengthMin] = useState(initial?.halfLengthMin ?? 25);
+  const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
+  const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
   const isLightColor = (hex) => {
     try {
       const h = (hex || '').replace('#', '');
