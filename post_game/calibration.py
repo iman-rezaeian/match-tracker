@@ -79,7 +79,8 @@ def calibration_to_doc(
     field_length_m: float,
     field_width_m: float,
     video_frame_size: tuple[int, int],
-) -> FieldCalibration:    H = compute_homography(src_points_px, field_length_m, field_width_m)
+) -> FieldCalibration:
+    H = compute_homography(src_points_px, field_length_m, field_width_m)
     dst = [(0.0, 0.0), (field_length_m, 0.0), (field_length_m, field_width_m), (0.0, field_width_m)]
     return FieldCalibration(
         name=name,

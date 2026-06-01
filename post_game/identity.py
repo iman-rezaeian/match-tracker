@@ -34,22 +34,74 @@ class IdentityAssignment:
     minutes_on_field: float
 
 
+def _halftime_seconds(game: GameDoc) -> float:
+    """Duration of the (longest) pause period — assumed to be halftime."""
+    gap = 0.0
+    for p in game.pause_periods:
+        if p.ended_at and p.started_at:
+            gap = max(gap, (p.ended_at - p.started_at) / 1000.0)
+    return gap
+
+
+def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, float]]:
+    """Return [(t1_start, t1_end), (t2_start, t2_end)] in video seconds.
+
+    Boundaries are derived from `video_offset_h1_kickoff_s` (set in the UI)
+    plus wallclock deltas from Firestore (`started_at`, `pause_periods`,
+    `ended_at`). Falls back to half-length when wallclock data is missing.
+    """
+    offset = max(0.0, float(game.video_offset_h1_kickoff_s))
+    half_len_s = game.half_length_min * 60
+
+    halftime_gap_s = _halftime_seconds(game)
+
+    # 1st half end (video s) — prefer wallclock when halftime whistle present
+    pp = game.pause_periods[0] if game.pause_periods else None
+    if pp and pp.started_at and game.started_at:
+        h1_play_s = (pp.started_at - game.started_at) / 1000.0
+    else:
+        h1_play_s = float(half_len_s)
+    h1_end = offset + max(0.0, h1_play_s)
+
+    h2_start = h1_end + halftime_gap_s
+
+    # 2nd half end — prefer wallclock final whistle if present
+    if game.ended_at and game.started_at:
+        total_wall_s = (game.ended_at - game.started_at) / 1000.0
+        h2_play_s = max(0.0, total_wall_s - h1_play_s - halftime_gap_s)
+    else:
+        h2_play_s = float(half_len_s)
+    h2_end = h2_start + h2_play_s
+
+    # Clamp to actual video length
+    h1_end = min(h1_end, video_duration_s)
+    h2_start = min(h2_start, video_duration_s)
+    h2_end = min(h2_end, video_duration_s)
+
+    return [(offset, h1_end), (h2_start, h2_end)]
+
+
 def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], float]:
     """Returns f(period, elapsed_s) -> seconds into the source video.
 
-    Assumes the video began rolling at `game.started_at` (i.e. coach uploaded
-    a video that starts at kickoff). Halftime gap inferred from pausePeriods.
+    Uses `video_offset_h1_kickoff_s` (1st-half kickoff position in video) plus
+    the wallclock-derived halftime gap from `pause_periods`. If no offset was
+    set, assumes the video starts at kickoff (legacy behaviour).
     """
+    offset = max(0.0, float(game.video_offset_h1_kickoff_s))
     half_len_s = game.half_length_min * 60
-    halftime_gap_s = 0.0
-    for p in game.pause_periods:
-        if p.ended_at and p.started_at:
-            halftime_gap_s = max(halftime_gap_s, (p.ended_at - p.started_at) / 1000.0)
+    halftime_gap_s = _halftime_seconds(game)
+    # End of 1st half in video (wallclock-derived if present, else half_len)
+    pp = game.pause_periods[0] if game.pause_periods else None
+    if pp and pp.started_at and game.started_at:
+        h1_play_s = (pp.started_at - game.started_at) / 1000.0
+    else:
+        h1_play_s = float(half_len_s)
 
     def f(period: int, elapsed_s: int) -> float:
         if period == 1:
-            return float(elapsed_s)
-        return float(half_len_s + halftime_gap_s + elapsed_s)
+            return offset + float(elapsed_s)
+        return offset + h1_play_s + halftime_gap_s + float(elapsed_s)
 
     return f
 

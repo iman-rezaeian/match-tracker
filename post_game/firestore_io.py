@@ -9,6 +9,7 @@ Writes back to `teams/main/games/<gameId>/analytics/<version>` and
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -63,6 +64,12 @@ class GameDoc:
     home_color: Optional[str]
     away_color: Optional[str]
     field_name: Optional[str]
+    # Seconds from the start of the source video to the 1st-half kickoff
+    # whistle. Used to trim out pre-game warmup, halftime, and post-game tail.
+    # Halftime + 2nd-half kickoff + final-whistle positions in video are
+    # derived from this offset + wallclock deltas in `pause_periods` /
+    # `ended_at`.
+    video_offset_h1_kickoff_s: float = 0.0
 
 
 @dataclass
@@ -143,6 +150,7 @@ def get_game(game_id: str) -> GameDoc:
         home_color=d.get("homeColor"),
         away_color=d.get("awayColor"),
         field_name=d.get("fieldName"),
+        video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
     )
 
 
@@ -177,6 +185,8 @@ def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
             "status": d.get("status", ""),
             "has_video": bool(d.get("videoUrl")),
             "has_calibration": bool(d.get("calibration")),
+            "has_video_offset": d.get("videoOffsetH1KickoffS") is not None,
+            "video_offset_h1_kickoff_s": float(d.get("videoOffsetH1KickoffS") or 0.0),
             "has_analytics": has_analytics,
             "started_at": int(d.get("startedAt", 0)),
         })
@@ -296,6 +306,23 @@ def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> No
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 
 
+def set_video_url(game_id: str, url: str) -> None:
+    """Set `videoUrl` on the game doc. Accepts file:// for local Mac files,
+    https:// for R2 / hosted videos, or a bare path (will be normalized to file://)."""
+    if not url.startswith(("file://", "http://", "https://")):
+        url = "file://" + str(Path(url).expanduser().resolve())
+    _team_doc().collection("games").document(game_id).set(
+        {"videoUrl": url}, merge=True
+    )
+
+
+def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float) -> None:
+    """Persist the seconds-into-source-video of the 1st-half kickoff whistle."""
+    _team_doc().collection("games").document(game_id).set(
+        {"videoOffsetH1KickoffS": float(offset_s)}, merge=True
+    )
+
+
 # --- R2 ------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
@@ -319,10 +346,20 @@ def upload_clip(local_path: str, key: str) -> str:
 
 def download_video(url: str, dest: Path) -> Path:
     """Download an https URL (R2 public) to local disk if not already cached."""
+    import ssl
     import urllib.request
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     log.info("Downloading video %s -> %s", url, dest)
-    urllib.request.urlretrieve(url, dest)
+    # Honour corp CA bundles (REQUESTS_CA_BUNDLE / SSL_CERT_FILE) when set —
+    # corp VPNs MITM TLS with a self-signed root.
+    ca = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    ctx = ssl.create_default_context(cafile=ca) if ca else None
+    with urllib.request.urlopen(url, context=ctx) as resp, open(dest, "wb") as f:
+        while True:
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
     return dest

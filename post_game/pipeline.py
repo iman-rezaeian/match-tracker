@@ -16,7 +16,8 @@ from .detection import Detector
 from .formation import compute_formation
 from .gk_positioning import compute_gk_positions
 from .highlights import extract_clips
-from .identity import assign_identities, period_clock_to_video_time_factory
+from .identity import assign_identities, half_windows, period_clock_to_video_time_factory
+from .tv_view import extract_auto_highlights, render_tv_reel
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
 from .tracking import Tracker, TrackedDetection, to_dataframe
@@ -25,13 +26,16 @@ from .video import crop_bbox_to_equirect, iter_frames, open_video
 log = logging.getLogger(__name__)
 
 
-def run(game_id: str, field_name: str | None = None) -> dict:
+def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
 
     Calibration source: the per-game `calibration` field on the game doc
     (preferred). If absent and `field_name` is given, falls back to the
     legacy `teams/main/fields/<name>` collection.
+
+    `tv_view=True` also renders a full-game broadcast view + auto-highlight
+    reel after analytics complete.
     """
 
     # 1. Inputs
@@ -69,12 +73,24 @@ def run(game_id: str, field_name: str | None = None) -> dict:
     log.info("Field aim: lon=%.1f° lat=%.1f° fov=%.1f°", aim_lon, aim_lat, aim_fov)
 
     # 2. Detection + tracking on perspective crops
+    # Compute play windows (1st half, 2nd half) so we skip warmup/halftime/post.
+    play_windows = half_windows(game, meta["duration_s"])
+    log.info("Play windows: 1H=[%.1fs - %.1fs] 2H=[%.1fs - %.1fs] (halftime + dead time skipped)",
+             play_windows[0][0], play_windows[0][1],
+             play_windows[1][0], play_windows[1][1])
+    h1_end_s = play_windows[0][1]
+
     detector = Detector()
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
-    tracker = Tracker(
-        frame_rate=max(1, int(round(fps_sampled))),
-        track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
-    )
+
+    def _new_tracker() -> Tracker:
+        return Tracker(
+            frame_rate=max(1, int(round(fps_sampled))),
+            track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
+        )
+
+    tracker = _new_tracker()
+    current_half = 1
 
     all_tracks: list[TrackedDetection] = []
     track_jersey_samples: dict[int, list[np.ndarray]] = {}
@@ -84,7 +100,13 @@ def run(game_id: str, field_name: str | None = None) -> dict:
         str(video_path),
         sample_rate=config.SAMPLE_RATE,
         aim=(aim_lon, aim_lat, aim_fov),
+        windows=play_windows,
     ):
+        # Reset tracker at halftime — track IDs must not bridge halves
+        # (players swap ends, teams swap sides, anyone could be off the field).
+        if current_half == 1 and sample.time_s >= h1_end_s:
+            tracker = _new_tracker()
+            current_half = 2
         det_lists = detector.detect_persons([sample.crop])
         dets = det_lists[0] if det_lists else []
         for d in dets:
@@ -217,6 +239,35 @@ def run(game_id: str, field_name: str | None = None) -> dict:
         log.warning("Highlight extraction failed: %s", e)
         clips = []
 
+    # 7b. Optional TV-view + auto-highlight reel
+    tv_reel_meta = None
+    auto_hl_meta = None
+    if tv_view:
+        log.info("Stage 7b: TV reel + auto-highlights...")
+        try:
+            tv_reel_meta = render_tv_reel(
+                video_path=str(video_path),
+                tracks_field_df=tracks_df,
+                H=H,
+                game_id=game_id,
+                upload=True,
+                play_windows=play_windows,
+            )
+        except Exception as e:
+            log.warning("TV reel failed: %s", e)
+        try:
+            auto_hl_meta = extract_auto_highlights(
+                video_path=str(video_path),
+                events=game.events,
+                tracks_field_df=tracks_df,
+                H=H,
+                period_clock_to_video_time=clock_to_video,
+                game_id=game_id,
+                upload=True,
+            )
+        except Exception as e:
+            log.warning("Auto-highlights failed: %s", e)
+
     analytics = {
         "version": config.ANALYTICS_DOC_VERSION,
         "field_name": field_name,
@@ -230,6 +281,8 @@ def run(game_id: str, field_name: str | None = None) -> dict:
         "team_time_series": asdict(team_ts),
         "gk_positions": [_gk_to_dict(g) for g in gk_positions],
         "clip_count": len(clips),
+        "tv_reel": asdict(tv_reel_meta) if tv_reel_meta else None,
+        "auto_highlights": asdict(auto_hl_meta) if auto_hl_meta else None,
         "generated_at_ms": int(time.time() * 1000),
     }
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
@@ -263,12 +316,8 @@ def _flip_team_map(team_of_track, identity_by_track):
 
 
 def _periods_seconds(game, video_duration_s, clock_to_video) -> list[tuple[float, float]]:
-    half_s = game.half_length_min * 60
-    end_p1 = clock_to_video(1, half_s)
-    start_p2 = clock_to_video(2, 0)
-    end_p2 = clock_to_video(2, half_s)
-    end_p2 = min(end_p2, video_duration_s)
-    return [(0.0, min(end_p1, video_duration_s)), (start_p2, end_p2)]
+    # Now identical to half_windows() — kept as a thin wrapper for back-compat.
+    return half_windows(game, video_duration_s)
 
 
 def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dict[int, bool]:

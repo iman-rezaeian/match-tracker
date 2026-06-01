@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import torch
-
 # --- Paths ---------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -20,12 +18,43 @@ for _d in (CACHE_DIR, OUTPUTS_DIR, MODELS_DIR):
 
 # --- Device --------------------------------------------------------------
 
-if torch.backends.mps.is_available():
-    DEVICE = "mps"
-elif torch.cuda.is_available():
-    DEVICE = "cuda"
-else:
-    DEVICE = "cpu"
+# Lazy import so the lightweight UI (which only imports firestore_io -> config)
+# doesn't require torch in its venv.
+def _detect_device() -> str:
+    try:
+        import torch  # noqa: WPS433
+    except ImportError:
+        return "cpu"
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+class _LazyDevice(str):
+    """Behaves like a str, but only probes torch on first access."""
+    _resolved: str | None = None
+
+    def _resolve(self) -> str:
+        if _LazyDevice._resolved is None:
+            _LazyDevice._resolved = _detect_device()
+        return _LazyDevice._resolved
+
+    def __str__(self) -> str:        # noqa: D401
+        return self._resolve()
+
+    def __repr__(self) -> str:
+        return repr(self._resolve())
+
+    def __eq__(self, other) -> bool:
+        return self._resolve() == other
+
+    def __hash__(self) -> int:
+        return hash(self._resolve())
+
+
+DEVICE = _LazyDevice()
 
 # --- Video ---------------------------------------------------------------
 
