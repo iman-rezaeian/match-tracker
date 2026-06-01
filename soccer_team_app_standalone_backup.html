@@ -8232,34 +8232,36 @@ function PublicVideoToggle({ url, game, label }) {
 
 /* ---- PublicAnalyticsCard: PUBLIC = videos only --------------------------
  * Parents/spectators see ONLY the broadcast videos (highlights + full game).
- * All stats (distance, top speed, formation, GK positioning, identity, per-
- * event clips) are locked to coaches and live in the coach-side AnalyticsPanel.
  *
- * The on-screen overlay inside the videos already follows the same privacy
- * rule (first name + jersey number only — see _build_broadcast_events_index
- * in post_game/pipeline.py).
+ * IMPORTANT — privacy boundary:
+ *   This component reads broadcast fields directly from the GAME DOC
+ *   (videoHighlightsUrl, videoFullGameUrl, broadcastEvents, ...). It does
+ *   NOT read the analytics/v1 subcollection. The analytics subcollection
+ *   is locked to coaches by Firestore rules (see firestore.rules) and
+ *   contains per-player stats, GK positioning, identity confidences, etc.
+ *
+ *   The on-screen overlay inside the videos also follows this rule:
+ *   broadcastEvents only stores first name + jersey number (built by
+ *   _build_broadcast_events_index in post_game/pipeline.py).
  */
 function PublicAnalyticsCard({ game, roster: _roster }) {
-  const [analytics, setAnalytics] = useState(null);
-  const [loaded, setLoaded] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
 
-  useEffect(() => {
-    if (!window.fbDb || !game?.id) { setLoaded(true); return; }
-    let cancelled = false;
-    const gref = window.fbDb.collection('teams').doc('main').collection('games').doc(game.id);
-    gref.collection('analytics').doc('v1').get()
-      .then((aSnap) => {
-        if (cancelled) return;
-        setAnalytics(aSnap.exists ? aSnap.data() : null);
-        setLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setLoaded(true); });
-    return () => { cancelled = true; };
-  }, [game?.id]);
+  const highlightsUrl = game?.videoHighlightsUrl;
+  const fullGameUrl = game?.videoFullGameUrl;
+  const highlightsDur = game?.videoHighlightsDurationS;
+  const fullGameDur = game?.videoFullGameDurationS;
+  if (!highlightsUrl && !fullGameUrl) return null;
 
-  if (!loaded) return null;
-  if (!analytics?.auto_highlights_url && !analytics?.tv_reel_url) return null;
+  // The broadcast player expects an analytics-shaped "doc" for the overlay.
+  // We synthesize a minimal one from the public game-doc fields.
+  const broadcastDoc = {
+    broadcast_events: game?.broadcastEvents || [],
+    home_name: game?.broadcastHomeName || (game?.isHome ? 'Stompers' : (game?.opponent || 'OPP')),
+    away_name: game?.broadcastAwayName || (game?.isHome ? (game?.opponent || 'OPP') : 'Stompers'),
+    home_color: game?.broadcastHomeColor || game?.homeColor,
+    away_color: game?.broadcastAwayColor || game?.awayColor,
+  };
 
   return (
     <div className="px-4 pt-4 max-w-2xl mx-auto">
@@ -8268,28 +8270,28 @@ function PublicAnalyticsCard({ game, roster: _roster }) {
           <h3 className="font-display text-lg">🎬 MATCH VIDEO</h3>
           <span className="text-[10px] text-stone-500 tracking-wider">POST-GAME</span>
         </div>
-        {analytics?.auto_highlights_url && (
+        {highlightsUrl && (
           <button
             onClick={() => setBroadcastOpen('auto_highlights')}
             className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
           >
             <span>▶ WATCH HIGHLIGHTS</span>
             <span className="text-xs tabular-nums opacity-80">
-              {analytics.auto_highlights_duration_s
-                ? `${Math.floor(analytics.auto_highlights_duration_s / 60)}:${String(Math.floor(analytics.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+              {highlightsDur
+                ? `${Math.floor(highlightsDur / 60)}:${String(Math.floor(highlightsDur % 60)).padStart(2, '0')}`
                 : ''}
             </span>
           </button>
         )}
-        {analytics?.tv_reel_url && (
+        {fullGameUrl && (
           <button
             onClick={() => setBroadcastOpen('tv_reel')}
             className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
           >
             <span>▶ WATCH FULL GAME</span>
             <span className="text-xs tabular-nums text-stone-400">
-              {analytics.tv_reel_duration_s
-                ? `${Math.floor(analytics.tv_reel_duration_s / 60)}:${String(Math.floor(analytics.tv_reel_duration_s % 60)).padStart(2, '0')}`
+              {fullGameDur
+                ? `${Math.floor(fullGameDur / 60)}:${String(Math.floor(fullGameDur % 60)).padStart(2, '0')}`
                 : ''}
             </span>
           </button>
@@ -8297,8 +8299,8 @@ function PublicAnalyticsCard({ game, roster: _roster }) {
       </div>
       {broadcastOpen && (
         <BroadcastVideoPlayer
-          url={broadcastOpen === 'tv_reel' ? analytics?.tv_reel_url : analytics?.auto_highlights_url}
-          doc={analytics}
+          url={broadcastOpen === 'tv_reel' ? fullGameUrl : highlightsUrl}
+          doc={broadcastDoc}
           label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
           timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
           onClose={() => setBroadcastOpen(null)}
@@ -8823,6 +8825,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
