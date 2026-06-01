@@ -25,7 +25,7 @@ import pandas as pd
 
 from . import config, firestore_io
 from .firestore_io import CoachEvent
-from .video import render_perspective
+from .video import H264PipeWriter, render_perspective
 
 log = logging.getLogger(__name__)
 
@@ -155,12 +155,8 @@ def _render_clip(
     aim_lats = np.array([a[1] for a in aims])
 
     out_w, out_h = config.CLIP_RESOLUTION
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(out_path), fourcc, fps, (out_w, out_h))
-    if not writer.isOpened():
-        cap.release()
-        raise RuntimeError(f"Cannot open VideoWriter for {out_path}")
+    writer = H264PipeWriter(out_path, fps, out_w, out_h)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     for f in range(start_f, end_f):
@@ -174,7 +170,7 @@ def _render_clip(
         crop = render_perspective(frame, lon, lat, config.CLIP_FOV_DEG, out_w, out_h)
         writer.write(crop)
 
-    writer.release()
+    writer.close()
     cap.release()
     duration_s = (end_f - start_f) / fps
     return duration_s, out_w, out_h

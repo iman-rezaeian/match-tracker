@@ -36,7 +36,7 @@ import pandas as pd
 from . import config, firestore_io
 from .firestore_io import CoachEvent
 from .highlights import _equirect_pixel_to_lonlat, _field_to_equirect_pixel, _smooth_aim_stream
-from .video import render_perspective
+from .video import H264PipeWriter, render_perspective
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ def _build_aim_stream(
 
 def _render_segment(
     cap: cv2.VideoCapture,
-    writer: cv2.VideoWriter,
+    writer: "H264PipeWriter | cv2.VideoWriter",
     fps: float,
     start_s: float,
     end_s: float,
@@ -224,17 +224,13 @@ def render_tv_reel(
                 tracks_field_df, H_inv, eq_w, eq_h, a, b,
             )
             part_path = tmp_dir / f"half_{i + 1}.mp4"
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            writer = cv2.VideoWriter(str(part_path), fourcc, fps, (out_w, out_h))
-            if not writer.isOpened():
-                log.warning("TV reel: cannot open writer for half %d, skipping", i + 1)
-                continue
+            writer = H264PipeWriter(part_path, fps, out_w, out_h)
             log.info("TV reel half %d: [%.1fs - %.1fs] (%.0fs)", i + 1, a, b, b - a)
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h,
             )
-            writer.release()
+            writer.close()
             part_paths.append(part_path)
         cap.release()
 
@@ -339,16 +335,12 @@ def extract_auto_highlights(
                 tracks_field_df, H_inv, eq_w, eq_h, a, b,
             )
             part_path = tmp_dir / f"part_{i:03d}.mp4"
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            writer = cv2.VideoWriter(str(part_path), fourcc, fps, (out_w, out_h))
-            if not writer.isOpened():
-                log.warning("Auto-highlights: cannot write part %d, skipping", i)
-                continue
+            writer = H264PipeWriter(part_path, fps, out_w, out_h)
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h,
             )
-            writer.release()
+            writer.close()
             part_paths.append(part_path)
             log.info("  segment %d/%d: [%.1fs - %.1fs]", i + 1, len(windows), a, b)
         cap.release()
