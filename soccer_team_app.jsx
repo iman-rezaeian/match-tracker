@@ -723,9 +723,87 @@ export default function App() {
     showToast('Game saved');
   };
 
-  const deleteGame = (gameId) => {
+  const deleteGame = async (gameId) => {
+    // Coach "Delete game permanently" — nukes everything we know about:
+    //   1. R2 objects under tv_view/<id>/ + clips/<id>/   (via worker)
+    //   2. Firestore subcollections analytics/ + clips/   (paged batch delete)
+    //   3. Firestore game doc teams/main/games/<id>
+    //   4. Local games array
+    // Each step is best-effort: if R2 wipe fails we still continue so the
+    // game disappears from the public list; orphan R2 files can be cleaned
+    // up by re-running this action or the audit script.
+    try {
+      await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/videos/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: R2_WORKER_KEY }),
+      });
+    } catch (e) { console.warn('R2 wipe failed (continuing):', e); }
+
+    try {
+      if (window.fbDb) {
+        const gameRef = window.fbDb.collection('teams').doc('main')
+          .collection('games').doc(gameId);
+        for (const sub of ['analytics', 'clips']) {
+          const qs = await gameRef.collection(sub).get();
+          await Promise.all(qs.docs.map(d => d.ref.delete()));
+        }
+        await gameRef.delete();
+      }
+    } catch (e) {
+      console.error('Firestore delete failed:', e);
+      showToast('⚠️ Cloud delete failed — see console');
+    }
+
     persistGames(games.filter(g => g.id !== gameId));
     setView('home');
+    showToast('🗑 Game deleted');
+  };
+
+  const deleteGameVideos = async (gameId) => {
+    // Coach "Delete videos only" — wipes R2 reels + clips and clears the
+    // public-facing video URL fields on the game doc, but KEEPS the
+    // analytics subcollection (per-player stats, GK positioning, etc.) so
+    // you can re-render the videos later by re-running the pipeline.
+    try {
+      const r = await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/videos/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: R2_WORKER_KEY }),
+      });
+      if (!r.ok) throw new Error(`worker returned ${r.status}`);
+    } catch (e) {
+      console.error('R2 wipe failed:', e);
+      showToast('⚠️ R2 wipe failed — see console');
+      return;
+    }
+
+    try {
+      if (window.fbDb && window.firebase) {
+        const FieldValue = window.firebase.firestore.FieldValue;
+        const gameRef = window.fbDb.collection('teams').doc('main')
+          .collection('games').doc(gameId);
+        // Clear the public-facing broadcast slice on the game doc itself.
+        await gameRef.set({
+          videoHighlightsUrl: FieldValue.delete(),
+          videoHighlightsDurationS: FieldValue.delete(),
+          videoFullGameUrl: FieldValue.delete(),
+          videoFullGameDurationS: FieldValue.delete(),
+          broadcastEvents: FieldValue.delete(),
+        }, { merge: true });
+        // Also clear the coach-facing fields on analytics/v1 so the
+        // AnalyticsPanel's WATCH buttons disappear too.
+        await gameRef.collection('analytics').doc('v1').set({
+          tv_reel_url: FieldValue.delete(),
+          tv_reel_duration_s: FieldValue.delete(),
+          auto_highlights_url: FieldValue.delete(),
+          auto_highlights_duration_s: FieldValue.delete(),
+        }, { merge: true });
+      }
+    } catch (e) {
+      console.warn('Firestore URL clear failed (R2 already wiped):', e);
+    }
+    showToast('🗑 Videos deleted (stats kept)');
   };
 
   const pauseHalfTime = (gameId) => {
@@ -1146,7 +1224,10 @@ export default function App() {
             if (isProd) {
               if (!window.confirm('Are you sure? This is a production game.')) return;
             }
-            askConfirm('Delete this game permanently?', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' });
+            askConfirm('Delete this game permanently? Wipes the videos from R2, the stats from Firestore, and the game from this device.', () => deleteGame(viewingGame.id), { danger: true, yesLabel: 'DELETE' });
+          }}
+          onDeleteVideos={() => {
+            askConfirm('Delete only the full-game + highlights videos from R2? Stats and game metadata are kept; you can re-run the pipeline later to regenerate the videos.', () => deleteGameVideos(viewingGame.id), { danger: true, yesLabel: 'DELETE VIDEOS' });
           }}
           onDeleteEvent={(eid) => deleteEvent(viewingGame.id, eid)}
           onUpdateEvent={(eid, patch) => updateEvent(viewingGame.id, eid, patch)}
@@ -5757,7 +5838,7 @@ function BroadcastSubBug({ elapsed, holdEnd, subs }) {
  * formation, GK positioning, and links to highlight clips.
  * Coach-only — purely a read view here.
  */
-function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
+function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) {
   const [doc, setDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -5908,6 +5989,15 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
                   </span>
                 </button>
               )}
+              {onDeleteVideos && (doc.auto_highlights_url || doc.tv_reel_url) && (
+                <button
+                  onClick={() => { onClose?.(); onDeleteVideos(); }}
+                  className="w-full mt-1 text-[11px] text-red-400 hover:text-red-300 tracking-wider py-2 active:scale-95"
+                  title="Wipe the videos from R2 but keep player stats"
+                >
+                  🗑 DELETE VIDEOS ONLY (keep stats)
+                </button>
+              )}
             </section>
           )}
 
@@ -6043,7 +6133,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
+function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
@@ -6443,6 +6533,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteEvent, on
           roster={roster}
           onClose={() => setShowAnalytics(false)}
           onSeekVideo={(t) => { setSeekTo(t); setShowVideo(true); setShowAnalytics(false); }}
+          onDeleteVideos={onDeleteVideos}
         />
       )}
 
@@ -7980,7 +8071,7 @@ function HelpView({ onBack }) {
         <Section id="history" emoji="📜" title="8 · Past games & season stats" summary="Where to find recorded matches">
           <p><strong>PAST GAMES</strong> list on Home shows every finished match with the result. Tap any game to see the timeline of every event, per-player scores, and minutes.</p>
           <p>Tap <Pill>STATS</Pill> for season-aggregate per-player numbers — total minutes, goals, season performance score, etc.</p>
-          <p>To delete a game tap into it and use the trash button (top-right). To remove a single mis-logged event, tap the trash next to it in the event list.</p>
+          <p>To delete a game tap into it and use the trash button (top-right) — that wipes the videos from R2, the analytics from Firestore, and removes the game from the public list. To delete <em>just</em> the videos (and keep the stats so you can re-run the pipeline later), open <strong>Analytics</strong> and tap "🗑 DELETE VIDEOS ONLY". To remove a single mis-logged event, tap the trash next to it in the event list.</p>
         </Section>
 
         <Section id="tips" emoji="💡" title="9 · Tips for coaches" summary="Get the most out of the app">
