@@ -5409,6 +5409,348 @@ function SparkBlock({ label, values, color, fmt }) {
   );
 }
 
+/* ---------- BROADCAST VIDEO PLAYER + OVERLAY ----------
+ * Flat <video> player for the post-game tv_reel + auto_highlights mp4s.
+ * On top, draws a live scorebug + goal/sub/card popups synced to the
+ * video clock, using the `broadcast_events` index written by the Python
+ * pipeline (post_game/pipeline.py → _build_broadcast_events_index).
+ *
+ * `timeKey` selects which reel timeline each event maps onto:
+ *   'tvReelTimeS'         — full TV reel
+ *   'autoHighlightsTimeS' — condensed auto-highlights reel
+ */
+function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
+  const videoRef = useRef(null);
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return undefined;
+    let raf = 0;
+    const tick = () => {
+      setNow(v.currentTime || 0);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [url]);
+
+  // Push history entry so swipe-back closes the modal.
+  useEffect(() => {
+    window.history.pushState({ modal: 'broadcast' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'broadcast') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  // Index events on the chosen timeline and drop any without a valid time
+  // (those events sit outside the rendered reel windows).
+  const allEvents = (doc?.broadcast_events || [])
+    .map(e => ({ ...e, t: e[timeKey] }))
+    .filter(e => e.t != null && Number.isFinite(e.t))
+    .sort((a, b) => a.t - b.t);
+
+  // Running score AT current playhead (based on the latest event with t <= now).
+  let ourScore = 0;
+  let oppScore = 0;
+  let currentPeriod = 1;
+  for (const e of allEvents) {
+    if (e.t <= now + 0.01) {
+      if (e.ourScoreAfter != null) ourScore = e.ourScoreAfter;
+      if (e.oppScoreAfter != null) oppScore = e.oppScoreAfter;
+      if (e.period) currentPeriod = e.period;
+    } else break;
+  }
+
+  // --- Active popup selection ---------------------------------------
+  // Only GOAL and SUB events show popups. Sub events that fire within
+  // SUB_GROUP_S of each other (back-to-back tags by the coach) are merged
+  // into a single popup whose anchor time = the LAST sub in the group.
+  const GOAL_POPUP_S = 7.5;     // big TV-style scorers graphic stays ~7s
+  const SUB_POPUP_S = 5;        // smaller sub bug
+  const SUB_GROUP_S = 30;       // back-to-back subs grouped if within 30s
+
+  // Pre-build sub groups (each group is contiguous SUB events within SUB_GROUP_S).
+  const subGroups = (() => {
+    const subs = allEvents.filter(e => e.type === 'SUB' || e.type === 'SUBSTITUTION');
+    const groups = [];
+    for (const s of subs) {
+      const last = groups[groups.length - 1];
+      if (last && s.t - last[last.length - 1].t <= SUB_GROUP_S) {
+        last.push(s);
+      } else {
+        groups.push([s]);
+      }
+    }
+    return groups;
+  })();
+
+  // Find the active popup AT current playhead.
+  // Priority: goal popup wins over sub popup if both are within their window.
+  const activePopup = (() => {
+    // 1. Most recent goal in last GOAL_POPUP_S seconds
+    for (let i = allEvents.length - 1; i >= 0; i--) {
+      const e = allEvents[i];
+      if (e.t > now + 0.01) continue;
+      if (now - e.t > GOAL_POPUP_S) break;
+      const isGoal = e.type === 'GOAL' || e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
+      if (isGoal) return { kind: 'goal', ev: e, elapsed: now - e.t, holdEnd: GOAL_POPUP_S - 0.6 };
+    }
+    // 2. Otherwise most recent sub group anchored on its LAST sub
+    for (let i = subGroups.length - 1; i >= 0; i--) {
+      const g = subGroups[i];
+      const anchor = g[g.length - 1].t;
+      if (anchor > now + 0.01) continue;
+      if (now - anchor > SUB_POPUP_S) break;
+      return { kind: 'sub', group: g, elapsed: now - anchor, holdEnd: SUB_POPUP_S - 0.5 };
+    }
+    return null;
+  })();
+
+  // For the goal popup: collect all GOAL scorers per side UP TO (and including)
+  // the popup event. Each entry: { num, first, minutes: ['12', '41'] }.
+  const goalScorers = (() => {
+    if (!activePopup || activePopup.kind !== 'goal') return { us: [], them: [] };
+    const cutT = activePopup.ev.t + 0.01;
+    const us = new Map();
+    const them = new Map();
+    for (const e of allEvents) {
+      if (e.t > cutT) break;
+      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1)}'`;
+      const isOurGoal = e.type === 'GOAL';
+      const isOppGoal = e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
+      if (isOurGoal) {
+        const key = e.playerId || `?${e.jerseyNumber || ''}`;
+        const entry = us.get(key) || { num: e.jerseyNumber, first: e.playerFirstName || 'Goal', minutes: [] };
+        entry.minutes.push(minStr);
+        us.set(key, entry);
+      } else if (isOppGoal) {
+        // Opponent: we don't know scorer name — just collect minutes under "OPP".
+        const entry = them.get('opp') || { num: null, first: null, minutes: [] };
+        entry.minutes.push(minStr);
+        them.set('opp', entry);
+      }
+    }
+    return { us: [...us.values()], them: [...them.values()] };
+  })();
+
+  const homeName = (doc?.home_name || 'STO').slice(0, 4).toUpperCase();
+  const awayName = (doc?.away_name || 'OPP').slice(0, 4).toUpperCase();
+  const homeColor = doc?.home_color || '#A3E635';
+  const awayColor = doc?.away_color || '#F87171';
+
+  return (
+    <div className="fixed inset-0 bg-black z-[60] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+      <div className="flex items-center justify-between px-3 py-2 bg-stone-950 border-b border-stone-800 shrink-0">
+        <div className="text-white font-display text-sm truncate pr-3">{label}</div>
+        <button
+          onClick={onClose}
+          className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
+        >CLOSE ✕</button>
+      </div>
+
+      <div className="relative flex-1 bg-black flex items-center justify-center min-h-0">
+        {url ? (
+          <video
+            ref={videoRef}
+            src={url}
+            controls
+            playsInline
+            autoPlay
+            className="max-h-full max-w-full"
+            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          />
+        ) : (
+          <div className="text-stone-400 text-sm p-6">Video not available yet.</div>
+        )}
+
+        {/* SCOREBUG — persistent, bottom-left */}
+        <div
+          className="absolute pointer-events-none select-none"
+          style={{ left: 'max(env(safe-area-inset-left, 0px), 12px)', bottom: 56 }}
+        >
+          <div className="flex items-stretch rounded-md overflow-hidden shadow-lg border border-black/40 text-white font-display text-sm" style={{ backdropFilter: 'blur(6px)' }}>
+            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(0,0,0,0.72)' }}>
+              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: homeColor }} />
+              <span className="tracking-wider">{homeName}</span>
+              <span className="ml-2 tabular-nums font-bold">{ourScore}</span>
+            </div>
+            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(20,20,20,0.72)' }}>
+              <span className="tabular-nums font-bold">{oppScore}</span>
+              <span className="ml-1 tracking-wider">{awayName}</span>
+              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: awayColor }} />
+            </div>
+            <div className="px-2 py-1 text-[10px] tracking-wider flex items-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
+              P{currentPeriod}
+            </div>
+          </div>
+        </div>
+
+        {/* EVENT POPUP — TV-style big scorers card for goals, small bug for subs */}
+        {activePopup && activePopup.kind === 'goal' && (
+          <BroadcastGoalCard
+            elapsed={activePopup.elapsed}
+            holdEnd={activePopup.holdEnd}
+            homeName={homeName}
+            awayName={awayName}
+            homeColor={homeColor}
+            awayColor={awayColor}
+            ourScore={ourScore}
+            oppScore={oppScore}
+            scorers={goalScorers}
+            scoringSide={activePopup.ev.team === 'them' ? 'them' : 'us'}
+          />
+        )}
+        {activePopup && activePopup.kind === 'sub' && (
+          <BroadcastSubBug
+            elapsed={activePopup.elapsed}
+            holdEnd={activePopup.holdEnd}
+            subs={activePopup.group}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Big TV-style "GOAL" scorers card --------------------------------
+ * Pops up after every goal. Shows current score big, then both teams'
+ * goalscorer list with the minute each goal was scored.
+ *
+ *     STOMPERS    2  —  1    OPPONENT
+ *     #7 ARIA       12', 41'
+ *     #11 SAMI      28'                           35'
+ *
+ * Holds ~7s, fades out.
+ */
+function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide }) {
+  let opacity = 1;
+  let scale = 1;
+  if (elapsed < 0.4) {
+    opacity = elapsed / 0.4;
+    scale = 0.92 + 0.08 * opacity;
+  } else if (elapsed > holdEnd) {
+    const t = Math.min(1, (elapsed - holdEnd) / 0.6);
+    opacity = 1 - t;
+  }
+
+  const renderLine = (s, side) => {
+    const label = s.first ? `#${s.num ?? '?'} ${s.first.toUpperCase()}` : 'OPPONENT';
+    return (
+      <div key={`${side}-${label}`} className={`flex ${side === 'us' ? 'justify-start' : 'justify-end'} items-baseline gap-3 text-sm`}>
+        {side === 'us' && <span className="font-display tracking-wide text-white">{label}</span>}
+        <span className="tabular-nums text-stone-300">{s.minutes.join(", ")}</span>
+        {side === 'them' && <span className="font-display tracking-wide text-white">{label}</span>}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none select-none flex items-center justify-center"
+      style={{ opacity, transition: 'opacity 80ms linear' }}
+    >
+      <div
+        className="rounded-xl border border-black/60 shadow-2xl overflow-hidden"
+        style={{
+          background: 'rgba(0,0,0,0.82)',
+          backdropFilter: 'blur(8px)',
+          width: 'min(92vw, 720px)',
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+          transition: 'transform 80ms linear',
+        }}
+      >
+        {/* Top banner */}
+        <div className="px-4 py-2 text-center text-[11px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: '#0c0a09' }}>
+          ⚽ GOAL
+        </div>
+
+        {/* Score line */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-4 text-white">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: homeColor }} />
+            <span className="font-display text-lg sm:text-2xl tracking-wider truncate">{homeName}</span>
+          </div>
+          <div className="font-display text-3xl sm:text-5xl tabular-nums text-center px-2">
+            <span className={scoringSide === 'us' ? 'text-lime-300' : ''}>{ourScore}</span>
+            <span className="mx-2 text-stone-500">—</span>
+            <span className={scoringSide === 'them' ? 'text-red-300' : ''}>{oppScore}</span>
+          </div>
+          <div className="flex items-center gap-2 min-w-0 justify-end">
+            <span className="font-display text-lg sm:text-2xl tracking-wider truncate text-right">{awayName}</span>
+            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: awayColor }} />
+          </div>
+        </div>
+
+        {/* Scorers lists */}
+        {(scorers.us.length > 0 || scorers.them.length > 0) && (
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-5 pb-4 border-t border-white/10 pt-3">
+            <div className="space-y-1">
+              {scorers.us.map(s => renderLine(s, 'us'))}
+            </div>
+            <div className="space-y-1">
+              {scorers.them.map(s => renderLine(s, 'them'))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- Small "SUB" lower-third bug, supports grouped subs ------------- */
+function BroadcastSubBug({ elapsed, holdEnd, subs }) {
+  let opacity = 1;
+  let translate = 0;
+  if (elapsed < 0.4) {
+    opacity = elapsed / 0.4;
+    translate = (1 - opacity) * 40;
+  } else if (elapsed > holdEnd) {
+    const t = Math.min(1, (elapsed - holdEnd) / 0.5);
+    opacity = 1 - t;
+  }
+  const renderPlayer = (first, num) =>
+    first ? `#${num ?? '?'} ${first}` : (num != null ? `#${num}` : '—');
+
+  return (
+    <div
+      className="absolute pointer-events-none select-none text-white"
+      style={{
+        right: 'max(env(safe-area-inset-right, 0px), 12px)',
+        bottom: 56,
+        opacity,
+        transform: `translateX(${translate}px)`,
+        transition: 'opacity 80ms linear, transform 80ms linear',
+      }}
+    >
+      <div
+        className="rounded-md px-3 py-2 border border-black/40 shadow-lg min-w-[200px] max-w-[320px]"
+        style={{ background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(6px)' }}
+      >
+        <div className="text-[10px] tracking-[0.25em] text-sky-300 mb-1">
+          ⇄ {subs.length > 1 ? `${subs.length} SUBSTITUTIONS` : 'SUBSTITUTION'}
+        </div>
+        <div className="space-y-1">
+          {subs.map((s, i) => (
+            <div key={s.id || i} className="text-xs leading-tight grid grid-cols-[auto_1fr] gap-x-2">
+              <span className="text-lime-300 font-bold">IN</span>
+              <span className="font-display">{renderPlayer(s.inFirstName, s.inJerseyNumber)}</span>
+              <span className="text-stone-500 font-bold">OUT</span>
+              <span className="font-display text-stone-300">{renderPlayer(s.outFirstName, s.outJerseyNumber)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- POST-GAME ANALYTICS PANEL ----------
  * Reads `teams/main/games/<gameId>/analytics/v1` written by the Python
  * pipeline (post_game/pipeline.py). Shows per-player physical stats, team
@@ -5420,6 +5762,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [clips, setClips] = useState([]);
+  const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
 
   // Push a history entry so swipe-back closes the panel instead of leaving the app.
   // Also lock body scroll so the page underneath keeps its scroll position
@@ -5535,6 +5878,39 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
 
       {doc && (
         <div className="p-4 space-y-5 max-w-3xl mx-auto">
+          {/* Broadcast videos — prominent at top */}
+          {(doc.auto_highlights_url || doc.tv_reel_url) && (
+            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-2">
+              <div className="text-xs text-stone-500 uppercase mb-1">Match Video</div>
+              {doc.auto_highlights_url && (
+                <button
+                  onClick={() => setBroadcastOpen('auto_highlights')}
+                  className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-2">▶ WATCH HIGHLIGHTS</span>
+                  <span className="text-xs tabular-nums opacity-80">
+                    {doc.auto_highlights_duration_s
+                      ? `${Math.floor(doc.auto_highlights_duration_s / 60)}:${String(Math.floor(doc.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+                      : ''}
+                  </span>
+                </button>
+              )}
+              {doc.tv_reel_url && (
+                <button
+                  onClick={() => setBroadcastOpen('tv_reel')}
+                  className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
+                >
+                  <span className="flex items-center gap-2">▶ WATCH FULL GAME</span>
+                  <span className="text-xs tabular-nums text-stone-400">
+                    {doc.tv_reel_duration_s
+                      ? `${Math.floor(doc.tv_reel_duration_s / 60)}:${String(Math.floor(doc.tv_reel_duration_s % 60)).padStart(2, '0')}`
+                      : ''}
+                  </span>
+                </button>
+              )}
+            </section>
+          )}
+
           {/* Summary */}
           <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
             <div className="text-xs text-stone-500 uppercase mb-2">Summary</div>
@@ -5648,29 +6024,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo }) {
             </section>
           )}
 
-          {/* Clips */}
-          {clips.length > 0 && (
-            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-              <div className="text-xs text-stone-500 uppercase mb-2">Highlight Clips</div>
-              <div className="grid grid-cols-1 gap-2">
-                {clips.map(c => (
-                  <a
-                    key={c.eventId}
-                    href={c.r2Url || '#'}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-between bg-stone-800/50 rounded-lg px-3 py-2 text-sm hover:bg-stone-800"
-                  >
-                    <span>
-                      <strong>{c.eventType}</strong> · P{c.period} {Math.floor((c.elapsed || 0) / 60)}' · {playerName(c.playerId)}
-                    </span>
-                    <span className="text-xs text-lime-400">{c.r2Url ? 'WATCH ▶' : 'pending'}</span>
-                  </a>
-                ))}
-              </div>
-            </section>
-          )}
+          {/* Per-event highlight clips intentionally removed — replaced
+              by the broadcast-style auto-highlights + full TV reel videos
+              (rendered with on-screen score / goal / sub overlays). */}
         </div>
+      )}
+      {broadcastOpen && (
+        <BroadcastVideoPlayer
+          url={broadcastOpen === 'tv_reel' ? doc?.tv_reel_url : doc?.auto_highlights_url}
+          doc={doc}
+          label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
+          timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          onClose={() => setBroadcastOpen(null)}
+        />
       )}
     </div>
   );
@@ -7764,6 +8130,7 @@ function PublicAnalyticsCard({ game, roster }) {
   const [analytics, setAnalytics] = useState(null);
   const [clips, setClips] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
 
   useEffect(() => {
     if (!window.fbDb || !game?.id) { setLoaded(true); return; }
@@ -7804,6 +8171,37 @@ function PublicAnalyticsCard({ game, roster }) {
           <h3 className="font-display text-lg">📊 MATCH ANALYTICS</h3>
           <span className="text-[10px] text-stone-500 tracking-wider">POST-GAME</span>
         </div>
+
+        {(analytics?.auto_highlights_url || analytics?.tv_reel_url) && (
+          <div className="space-y-2">
+            {analytics?.auto_highlights_url && (
+              <button
+                onClick={() => setBroadcastOpen('auto_highlights')}
+                className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
+              >
+                <span>▶ WATCH HIGHLIGHTS</span>
+                <span className="text-xs tabular-nums opacity-80">
+                  {analytics.auto_highlights_duration_s
+                    ? `${Math.floor(analytics.auto_highlights_duration_s / 60)}:${String(Math.floor(analytics.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+                    : ''}
+                </span>
+              </button>
+            )}
+            {analytics?.tv_reel_url && (
+              <button
+                onClick={() => setBroadcastOpen('tv_reel')}
+                className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
+              >
+                <span>▶ WATCH FULL GAME</span>
+                <span className="text-xs tabular-nums text-stone-400">
+                  {analytics.tv_reel_duration_s
+                    ? `${Math.floor(analytics.tv_reel_duration_s / 60)}:${String(Math.floor(analytics.tv_reel_duration_s % 60)).padStart(2, '0')}`
+                    : ''}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
 
         {topDistance.length > 0 && (
           <div>
@@ -7846,31 +8244,19 @@ function PublicAnalyticsCard({ game, roster }) {
           </div>
         )}
 
-        {clips.length > 0 && (
-          <div>
-            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Highlight Clips</div>
-            <div className="grid grid-cols-1 gap-2">
-              {clips
-                .filter(c => c.r2Url)
-                .sort((a, b) => (a.period - b.period) || (a.elapsed - b.elapsed))
-                .map(c => (
-                  <a
-                    key={c.eventId}
-                    href={c.r2Url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center justify-between bg-stone-800/50 rounded-lg px-3 py-2 text-sm hover:bg-stone-800"
-                  >
-                    <span className="truncate">
-                      <strong>{c.eventType}</strong> · P{c.period} {Math.floor((c.elapsed || 0) / 60)}' · {shortName(c.playerId)}
-                    </span>
-                    <span className="text-xs text-lime-400 shrink-0 ml-2">WATCH ▶</span>
-                  </a>
-                ))}
-            </div>
-          </div>
-        )}
+        {/* Per-event highlight clips intentionally removed in favor of the
+            broadcast-style auto-highlights reel + full TV reel. Those will
+            surface as their own "WATCH HIGHLIGHTS" / "WATCH FULL GAME" cards. */}
       </div>
+      {broadcastOpen && (
+        <BroadcastVideoPlayer
+          url={broadcastOpen === 'tv_reel' ? analytics?.tv_reel_url : analytics?.auto_highlights_url}
+          doc={analytics}
+          label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
+          timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          onClose={() => setBroadcastOpen(null)}
+        />
+      )}
     </div>
   );
 }

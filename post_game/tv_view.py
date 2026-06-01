@@ -25,7 +25,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -59,6 +59,12 @@ class TvViewMeta:
     height: int
     r2_url: str
     segment_count: int      # 1 for tv_reel; N events kept for auto_highlights
+    # Source-video [start_s, end_s] windows that were rendered, IN ORDER.
+    # For tv_reel: the play_windows (typically the two halves).
+    # For auto_highlights: the merged event windows.
+    # The pipeline uses this to map each source-video timestamp into
+    # reel-relative time for the on-screen overlay layer.
+    segments: list[tuple[float, float]] = field(default_factory=list)
 
 
 # --- aim stream ----------------------------------------------------------
@@ -269,6 +275,10 @@ def render_tv_reel(
         except Exception as e:
             log.warning("TV reel upload failed: %s", e)
 
+    # IMPORTANT: do NOT write to the per-event clips/ subcollection here —
+    # the PWA per-event clip list reads from there and would render a broken
+    # row for the full-game reel. The pipeline persists tv_reel_url +
+    # auto_highlights_url on the analytics doc instead.
     meta = TvViewMeta(
         kind="tv_reel",
         duration_s=final_duration,
@@ -276,18 +286,8 @@ def render_tv_reel(
         height=out_h,
         r2_url=r2_url,
         segment_count=len(part_paths),
+        segments=[(float(a), float(b)) for (a, b) in windows[:len(part_paths)]],
     )
-    try:
-        firestore_io.write_clip_metadata(game_id, "tv_reel", {
-            "kind": meta.kind,
-            "durationS": meta.duration_s,
-            "width": meta.width,
-            "height": meta.height,
-            "r2Url": meta.r2_url,
-            "segmentCount": meta.segment_count,
-        })
-    except Exception as e:
-        log.warning("Firestore tv-reel metadata write failed: %s", e)
     log.info("TV reel done: %d halves, %.1fs -> %s",
              len(part_paths), final_duration, r2_url or final_path)
     return meta
@@ -388,6 +388,7 @@ def extract_auto_highlights(
         except Exception as e:
             log.warning("Auto-highlights upload failed: %s", e)
 
+    # See note in render_tv_reel: do NOT write to clips/ here either.
     meta = TvViewMeta(
         kind="auto_highlights",
         duration_s=final_duration,
@@ -395,19 +396,8 @@ def extract_auto_highlights(
         height=out_h,
         r2_url=r2_url,
         segment_count=len(windows),
+        segments=[(float(a), float(b)) for (a, b) in windows],
     )
-    try:
-        firestore_io.write_clip_metadata(game_id, "auto_highlights", {
-            "kind": meta.kind,
-            "durationS": meta.duration_s,
-            "width": meta.width,
-            "height": meta.height,
-            "r2Url": meta.r2_url,
-            "segmentCount": meta.segment_count,
-            "windowSeconds": window_s,
-        })
-    except Exception as e:
-        log.warning("Firestore auto-highlights metadata write failed: %s", e)
     log.info("Auto-highlights done: %d segments, %.1fs -> %s",
              len(windows), final_duration, r2_url or final_path)
     return meta
