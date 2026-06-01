@@ -23,6 +23,10 @@ const EVENT_TYPES = {
   TURNOVER:  { id: 'TURNOVER',  label: 'TURNOVER',  emoji: '💨', tone: 'soft-red',   requiresPlayer: true },
   HOLDS_BALL:{ id: 'HOLDS_BALL',label: 'HOLDS BALL',emoji: '⏳', tone: 'yellow',     requiresPlayer: true },
   OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
+  // POSITION is a silent event written by the tactical board on drag-end.
+  // Carries { playerId, x, y } where x,y ∈ [0,1] over a half-field portrait
+  // (own goal bottom, halfway line top). Filtered out of RECENT and stats.
+  POSITION:  { id: 'POSITION',  label: 'POSITION',  emoji: '📍', tone: 'neutral',    requiresPlayer: true,  silent: true },
 };
 
 // Events that get an optional zone tag (where on the field it happened).
@@ -656,11 +660,18 @@ export default function App() {
   const undoLastEvent = (gameId) => {
     const game = games.find(g => g.id === gameId);
     if (!game || game.events.length === 0) return;
-    const last = game.events[game.events.length - 1];
+    // Skip silent POSITION events — undo should target the coach's last
+    // visible action (GOAL, SUB, etc.), not their last tactical drag.
+    let lastIdx = -1;
+    for (let i = game.events.length - 1; i >= 0; i--) {
+      if (game.events[i].type !== 'POSITION') { lastIdx = i; break; }
+    }
+    if (lastIdx === -1) return;
+    const last = game.events[lastIdx];
     const ev = EVENT_TYPES[last.type];
     const updated = {
       ...game,
-      events: game.events.slice(0, -1),
+      events: game.events.filter((_, i) => i !== lastIdx),
       ourScore: game.ourScore - (ev?.delta === 'us' ? 1 : 0),
       oppScore: game.oppScore - (ev?.delta === 'opp' ? 1 : 0),
     };
@@ -932,7 +943,26 @@ export default function App() {
       elapsed,
       at: subAt,
     };
-    const updated = { ...game, events: [...game.events, event] };
+    // Tactical-board continuity: if the player coming off has a known
+    // position on the board, inherit it for the player coming on so the
+    // formation stays intact across subs.
+    const lastOffPos = [...game.events].reverse().find(
+      e => e.type === 'POSITION' && e.playerId === offPlayerId
+    );
+    const inheritedEvents = [event];
+    if (lastOffPos && typeof lastOffPos.x === 'number' && typeof lastOffPos.y === 'number') {
+      inheritedEvents.push({
+        id: uid(),
+        type: 'POSITION',
+        playerId: onPlayerId,
+        period: game.period,
+        elapsed,
+        at: subAt,
+        x: lastOffPos.x,
+        y: lastOffPos.y,
+      });
+    }
+    const updated = { ...game, events: [...game.events, ...inheritedEvents] };
     persistGames(games.map(g => g.id === gameId ? updated : g));
     const off = roster.find(p => p.id === offPlayerId);
     const on = roster.find(p => p.id === onPlayerId);
@@ -944,6 +974,34 @@ export default function App() {
     } else {
       setPendingEvent(null);
     }
+  };
+
+  // Silent: writes a POSITION event from the tactical board. No toast, no
+  // score change, no RECENT feed pollution. Skips if the new spot is within
+  // 3% of the last logged spot for this player (drag jitter / accidental).
+  const addPositionEvent = (gameId, playerId, x, y) => {
+    if (!gameId || !playerId) return;
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const cx = Math.max(0.04, Math.min(0.96, x));
+    const cy = Math.max(0.04, Math.min(0.96, y));
+    const last = [...game.events].reverse().find(
+      e => e.type === 'POSITION' && e.playerId === playerId
+    );
+    if (last && Math.hypot((last.x ?? 0) - cx, (last.y ?? 0) - cy) < 0.03) return;
+    const event = {
+      id: uid(),
+      type: 'POSITION',
+      playerId,
+      period: game.period,
+      elapsed: computeElapsed(game),
+      at: Date.now(),
+      x: cx,
+      y: cy,
+    };
+    persistGames(games.map(g => g.id === gameId
+      ? { ...g, events: [...g.events, event] }
+      : g));
   };
 
   const setGameGK = (gameId, newGKPlayerId, atTs) => {
@@ -1168,6 +1226,7 @@ export default function App() {
           }}
           onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
           onSwapGK={() => setPendingEvent({ type: 'NEW_GK', defaultGK: currentGKAt(activeGame) })}
+          onMovePosition={(playerId, x, y) => addPositionEvent(activeGame.id, playerId, x, y)}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
               // Re-validate against the LIVE lineup at click time, not the
@@ -2621,10 +2680,200 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
   );
 }
 
+/* ---------- TACTICAL BOARD ---------- */
+// Half-field portrait pitch (our goal at bottom, halfway line at top).
+// Coordinates: x,y ∈ [0,1]. Drag-end writes a POSITION event so the formation
+// snapshot survives reloads and feeds post-game analytics.
+function computeDefaultFormation(outfield, totalOnField) {
+  // Pick a sensible default row split by total on-field count. Includes GK
+  // count so common 7v7/9v9/5v5 line up cleanly.
+  const n = outfield.length;
+  let rows;
+  if (totalOnField <= 5)      rows = [2, n - 2];                    // 5v5 → 2-2
+  else if (totalOnField === 7) rows = [2, 3, 1];                    // 7v7 → 2-3-1
+  else if (totalOnField === 8) rows = [3, 3, 1];                    // 8v8 → 3-3-1
+  else if (totalOnField === 9) rows = [3, 3, 2];                    // 9v9 → 3-3-2
+  else if (totalOnField >= 11) rows = [4, 3, 3];                    // 11v11 → 4-3-3
+  else {
+    // Fallback: split into ~3 rows.
+    const r = Math.max(1, Math.round(n / 3));
+    rows = [r, r, Math.max(1, n - 2 * r)];
+  }
+  // Make rows sum to n by trimming/padding the front line.
+  let sum = rows.reduce((a, b) => a + b, 0);
+  while (sum > n) { rows[rows.length - 1]--; sum--; }
+  while (sum < n) { rows[rows.length - 1]++; sum++; }
+  rows = rows.filter(c => c > 0);
+  const ys = rows.length === 3 ? [0.80, 0.55, 0.28]
+            : rows.length === 2 ? [0.72, 0.32]
+            : [0.50];
+  const out = {};
+  let idx = 0;
+  rows.forEach((cnt, rowIdx) => {
+    for (let i = 0; i < cnt; i++) {
+      const x = (i + 1) / (cnt + 1);
+      const p = outfield[idx++];
+      if (p) out[p.id] = { x, y: ys[rowIdx] };
+    }
+  });
+  return out;
+}
+
+function TacticalBoard({ game, roster, gameGKId, onMove }) {
+  const onField = useMemo(() => onFieldAt(game), [game.events]);
+  const players = useMemo(
+    () => roster.filter(p => onField.has(p.id))
+      .sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0)),
+    [roster, onField]
+  );
+  const totalOnField = players.length;
+  const outfield = players.filter(p => p.id !== gameGKId);
+
+  // Last persisted position per player.
+  const latest = useMemo(() => {
+    const m = {};
+    for (const e of game.events) {
+      if (e.type === 'POSITION') m[e.playerId] = { x: e.x, y: e.y };
+    }
+    return m;
+  }, [game.events]);
+
+  const defaults = useMemo(
+    () => computeDefaultFormation(outfield, totalOnField),
+    [outfield.map(p => p.id).join(','), totalOnField]
+  );
+  const gkDefault = { x: 0.5, y: 0.94 };
+
+  const positions = {};
+  for (const p of players) {
+    if (latest[p.id]) positions[p.id] = latest[p.id];
+    else if (p.id === gameGKId) positions[p.id] = gkDefault;
+    else positions[p.id] = defaults[p.id] || { x: 0.5, y: 0.5 };
+  }
+
+  const [collapsed, setCollapsed] = useState(false);
+  const [drag, setDrag] = useState(null); // { playerId, x, y }
+  const fieldRef = useRef(null);
+
+  const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+
+  const handlePointerDown = (playerId) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    const pos = positions[playerId];
+    setDrag({ playerId, pointerId: e.pointerId, x: pos.x, y: pos.y });
+  };
+  const handlePointerMove = (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const rect = fieldRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = clamp01((e.clientX - rect.left) / rect.width);
+    const y = clamp01((e.clientY - rect.top) / rect.height);
+    setDrag(d => d ? { ...d, x, y } : d);
+  };
+  const handlePointerUp = (e) => {
+    if (!drag) return;
+    const { playerId, x, y } = drag;
+    setDrag(null);
+    if (onMove) onMove(playerId, x, y);
+  };
+
+  if (players.length === 0) return null;
+
+  return (
+    <div className="mt-5 mb-2 bg-stone-900/80 border border-stone-800 rounded-2xl p-3">
+      <button
+        type="button"
+        onClick={() => setCollapsed(c => !c)}
+        className="w-full flex items-center justify-between mb-2 active:scale-[0.99]"
+      >
+        <h3 className="font-display text-lg flex items-center gap-2">
+          <span>🧭</span><span>TACTICAL BOARD</span>
+        </h3>
+        <span className="text-[10px] text-stone-400 tracking-widest">
+          {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
+        </span>
+      </button>
+      {!collapsed && (
+        <>
+          <div
+            ref={fieldRef}
+            className="relative w-full mx-auto select-none touch-none overflow-hidden rounded-xl"
+            style={{ aspectRatio: '3 / 4', maxWidth: '420px' }}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          >
+            <svg
+              viewBox="0 0 100 130"
+              className="absolute inset-0 w-full h-full"
+              preserveAspectRatio="none"
+            >
+              {/* Pitch fill with subtle horizontal stripes */}
+              <rect x="0" y="0" width="100" height="130" fill="#0e3a22" />
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <rect key={i} x="0" y={i * 21.7} width="100" height="10.8" fill="#0a3320" />
+              ))}
+              {/* Touchlines */}
+              <rect x="2" y="2" width="96" height="126" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              {/* Halfway arc (we render top edge as halfway line) */}
+              <line x1="2" y1="2" x2="98" y2="2" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 2 A 8 8 0 0 0 58 2" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              {/* Penalty area (own goal at bottom) */}
+              <rect x="20" y="103" width="60" height="25" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="35" y="117" width="30" height="11" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              {/* Penalty arc */}
+              <path d="M 42 103 A 8 8 0 0 1 58 103" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              {/* Goal */}
+              <line x1="42" y1="128" x2="58" y2="128" stroke="#ffffff" strokeWidth="1.2" />
+            </svg>
+            {players.map(p => {
+              const isDragging = drag?.playerId === p.id;
+              const pos = isDragging ? { x: drag.x, y: drag.y } : positions[p.id];
+              const isGK = p.id === gameGKId;
+              const label = p.number || (p.name ? p.name[0] : '?');
+              const first = (p.name || '').split(' ')[0];
+              return (
+                <div
+                  key={p.id}
+                  onPointerDown={handlePointerDown(p.id)}
+                  className={`absolute flex flex-col items-center pointer-events-auto touch-none ${isDragging ? 'z-20' : 'z-10'}`}
+                  style={{
+                    left: `${pos.x * 100}%`,
+                    top: `${pos.y * 100}%`,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <div
+                    className={`rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg border-2 ${isGK
+                      ? 'bg-amber-500 border-amber-200 text-stone-900'
+                      : 'bg-lime-600 border-lime-300'
+                      } ${isDragging ? 'scale-110 ring-2 ring-white/70' : ''}`}
+                    style={{ width: '34px', height: '34px' }}
+                  >
+                    {label}
+                  </div>
+                  <div className="mt-0.5 text-[9px] leading-none font-bold text-white/85 bg-stone-950/60 px-1 rounded">
+                    {first}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-[10px] text-stone-500 text-center">
+            Drag any player to reposition. Subs inherit the position of the player they replace.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
-  const recent = [...game.events].reverse().slice(0, 6);
+  const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
   // a `squad` field fall back to the whole roster.
   const squadSet = game.squad && game.squad.length > 0 ? new Set(game.squad) : null;
@@ -2645,6 +2894,15 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
 
   const statusLabel = inHalfTimeBreak ? 'HALF TIME' : inSecondHalf ? '2ND HALF' : '1ST HALF';
   const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-100' : 'bg-stone-900 text-lime-400';
+
+  const tacticalBoard = (
+    <TacticalBoard
+      game={game}
+      roster={squadRoster}
+      gameGKId={gameGKId}
+      onMove={onMovePosition}
+    />
+  );
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -3000,6 +3258,10 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 {recent.map(e => <EventRow key={e.id} event={e} roster={roster} />)}
               </div>
             </div>
+
+            <div className="w-full mt-5">
+              {tacticalBoard}
+            </div>
           </div>
         ) : (
           <>
@@ -3120,6 +3382,8 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 {recent.map(e => <EventRow key={e.id} event={e} roster={roster} />)}
               </div>
             </div>
+
+            {tacticalBoard}
           </>
         )}
       </div>
@@ -6062,7 +6326,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
 
 /* ---------- GAME DETAIL ---------- */
 function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
-  const events = [...game.events].sort((a, b) => a.at - b.at);
+  const events = [...game.events].filter(e => e.type !== 'POSITION').sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
   const [shareMsg, setShareMsg] = useState(null);
@@ -8581,7 +8845,7 @@ function LiveScoreboard({ game, roster }) {
   // for ASSIST right after GOAL, so they're adjacent within ~60s).
   const feed = useMemo(() => {
     if (!game) return [];
-    const events = [...(game.events || [])].sort((a, b) => a.at - b.at);
+    const events = [...(game.events || [])].filter(e => e.type !== 'POSITION').sort((a, b) => a.at - b.at);
     const out = [];
     let ourRun = 0, oppRun = 0;
     for (let i = 0; i < events.length; i++) {
