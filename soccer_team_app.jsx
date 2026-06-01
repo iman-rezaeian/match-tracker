@@ -68,10 +68,13 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 
 // Live-streaming provider toggle.
+// 'off'        — no live UI anywhere; all live code paths stay in the bundle
+//                so we can flip back without re-implementing anything
 // 'youtube'    — free: coach pastes YouTube video ID, app embeds the iframe
 // 'cloudflare' — paid ($5/mo): one-tap GO LIVE via Cloudflare Stream Live Input
-// Switch to 'cloudflare' when you subscribe to Cloudflare Stream Starter Bundle.
-const LIVE_MODE = 'cloudflare';
+// Switch to 'cloudflare' when you re-subscribe to Cloudflare Stream Starter
+// Bundle, or to 'youtube' to use the free @Stompers2016 auto-detect path.
+const LIVE_MODE = 'off';
 
 // Viewer tracking — logs to Firestore when users watch video/live
 function trackViewer(action, gameId) {
@@ -1321,7 +1324,6 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
   const draws = finishedGames.filter(g => g.ourScore === g.oppScore).length;
-  const [showLiveTest, setShowLiveTest] = useState(false);
   const [showWelcome, setShowWelcome] = useState(() => {
     try { return localStorage.getItem('stompers_welcome_dismissed') !== 'true'; } catch(e) { return true; }
   });
@@ -1479,18 +1481,6 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
       </div>
-
-      {/* Test live stream — dry-run helper, no game created */}
-      <div className="px-4 pt-3">
-        <button
-          onClick={() => setShowLiveTest(true)}
-          className="w-full py-2.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 text-sm font-bold hover:bg-stone-800 active:scale-[0.99] flex items-center justify-center gap-2"
-        >
-          <span>🧪</span><span>TEST LIVE STREAM</span>
-        </button>
-      </div>
-
-      {showLiveTest && <LiveStreamTester onClose={() => setShowLiveTest(false)} />}
 
       {/* Upcoming games */}
       {(() => {
@@ -3339,90 +3329,6 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
       >
         SKIP
       </button>
-    </div>
-  );
-}
-
-/* ---------- LIVE STREAM TESTER ----------
- * Dry-run helper for coaches: detects the active YouTube live stream on
- * @Stompers2016 via the worker and embeds it inline — no game doc, no
- * Firestore writes. Lets you verify Insta360 → YouTube → detection works
- * before kickoff.
- */
-function LiveStreamTester({ onClose }) {
-  const [videoId, setVideoId] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const [ranOnce, setRanOnce] = useState(false);
-
-  const detect = () => {
-    if (busy) return;
-    setBusy(true);
-    setErr(null);
-    fetch(`${R2_UPLOAD_WORKER}/youtube-live`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY }),
-    })
-      .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'detection failed')))
-      .then((data) => {
-        if (data.live && data.videoId) {
-          setVideoId(data.videoId);
-        } else {
-          setVideoId(null);
-          setErr('No live stream detected. Start streaming from Insta360 first, then tap DETECT again.');
-        }
-      })
-      .catch((e) => { setVideoId(null); setErr(String(e)); })
-      .finally(() => { setBusy(false); setRanOnce(true); });
-  };
-
-  useEffect(() => { detect(); /* auto-detect on open */ }, []);
-
-  return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-3" onClick={onClose}>
-      <div
-        className="w-full max-w-lg bg-stone-900 border border-stone-800 rounded-2xl p-4 max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 16px)' }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-display text-lg">🧪 TEST LIVE STREAM</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-stone-800 hover:bg-stone-700 flex items-center justify-center active:scale-95"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="text-xs text-stone-400 mb-3">
-          Dry-run check for the @Stompers2016 YouTube live stream. No game is created. Use this to confirm Insta360 → YouTube → detection works before kickoff.
-        </div>
-
-        {videoId ? (
-          <>
-            <div className="mb-2 text-[10px] uppercase tracking-wider text-lime-400">● LIVE · videoId {videoId}</div>
-            <YouTubeEmbed videoId={videoId} live={true} />
-          </>
-        ) : (
-          <div className="bg-stone-800/60 rounded-xl p-4 text-sm text-stone-300">
-            {busy ? 'Detecting…' : (err || 'Ready to detect.')}
-          </div>
-        )}
-
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={detect}
-            disabled={busy}
-            className="flex-1 py-2 rounded-xl bg-lime-500 text-stone-950 font-display text-sm active:scale-95 disabled:opacity-50"
-          >
-            {busy ? 'DETECTING…' : (ranOnce ? '↻ DETECT AGAIN' : 'DETECT')}
-          </button>
-          {videoId && (
-            <a
-              href={`https://www.youtube.com/watch?v=${videoId}`}
-              target="_blank"
-              rel="noreferrer"
-              className="py-2 px-3 rounded-xl bg-stone-800 text-stone-200 text-sm flex items-center active:scale-95"
-            >Open on YouTube ↗</a>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -6320,7 +6226,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
           <YouTubeEmbed videoId={game.youtubeVideoId} live={game.status === 'active'} />
         </div>
       )}
-      {!game.youtubeVideoId && (game.liveInput || game.status === 'active') && (
+      {!game.youtubeVideoId && LIVE_MODE !== 'off' && (game.liveInput || game.status === 'active') && (
         <div className="px-4 pt-4">
           {game.liveInput ? (
             <>

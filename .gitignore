@@ -22,3 +22,4 @@ post_game/models/
 .env
 .env.local
 dist/
+wipe_all_games.py
