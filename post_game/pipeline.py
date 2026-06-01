@@ -312,6 +312,26 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         "generated_at_ms": int(time.time() * 1000),
     }
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
+
+    # Public-safe slice on the game doc itself so parents can render the
+    # broadcast video + scorebug without being able to read the rest of
+    # the analytics subcollection. Firestore rules then lock analytics/
+    # to coaches.
+    public_fields: dict = {}
+    if tv_reel_meta and tv_reel_meta.r2_url:
+        public_fields["videoFullGameUrl"] = tv_reel_meta.r2_url
+        public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+    if auto_hl_meta and auto_hl_meta.r2_url:
+        public_fields["videoHighlightsUrl"] = auto_hl_meta.r2_url
+        public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+    if public_fields or events_index:
+        public_fields["broadcastEvents"] = _sanitize_json(events_index)
+        public_fields["broadcastHomeName"] = analytics["home_name"]
+        public_fields["broadcastAwayName"] = analytics["away_name"]
+        public_fields["broadcastHomeColor"] = analytics["home_color"]
+        public_fields["broadcastAwayColor"] = analytics["away_color"]
+        firestore_io.set_public_reels(game_id, public_fields)
+
     # Clean up legacy clip docs from older pipeline runs that wrote the
     # tv_reel / auto_highlights records into the per-event clips/ collection.
     # They render as broken "· P 0' · —" rows in the PWA highlight list.

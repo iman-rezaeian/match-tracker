@@ -306,6 +306,28 @@ def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> No
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 
 
+def set_public_reels(game_id: str, fields: dict[str, Any]) -> None:
+    """Merge public-safe broadcast-reel fields onto the game doc.
+
+    Why this lives on the game doc (not the analytics subcollection):
+    parents/spectators need the video URLs + the per-event overlay index
+    to render the public 'Watch Highlights' button + on-screen scorebug,
+    but they must NOT be able to read the rest of the analytics doc
+    (per-player stats, GK positioning, identity confidences, etc.).
+    Firestore rules then lock down the analytics/ subcollection to coaches.
+
+    Expected keys (all optional, only what's present is written):
+      videoHighlightsUrl, videoHighlightsDurationS,
+      videoFullGameUrl,   videoFullGameDurationS,
+      broadcastEvents (list[dict] — first-name + jersey# only),
+      broadcastHomeName, broadcastAwayName,
+      broadcastHomeColor, broadcastAwayColor.
+    """
+    if not fields:
+        return
+    _team_doc().collection("games").document(game_id).set(fields, merge=True)
+
+
 def set_video_url(game_id: str, url: str) -> None:
     """Set `videoUrl` on the game doc. Accepts file:// for local Mac files,
     https:// for R2 / hosted videos, or a bare path (will be normalized to file://)."""
