@@ -8230,13 +8230,17 @@ function PublicVideoToggle({ url, game, label }) {
   );
 }
 
-/* ---- PublicAnalyticsCard: anonymized post-game stats for finished matches ----
- * Reads teams/main/games/<id>/analytics/v1 + clips/*. Names shown as
- * "First #Number" only (no last names) to match site privacy rules.
+/* ---- PublicAnalyticsCard: PUBLIC = videos only --------------------------
+ * Parents/spectators see ONLY the broadcast videos (highlights + full game).
+ * All stats (distance, top speed, formation, GK positioning, identity, per-
+ * event clips) are locked to coaches and live in the coach-side AnalyticsPanel.
+ *
+ * The on-screen overlay inside the videos already follows the same privacy
+ * rule (first name + jersey number only — see _build_broadcast_events_index
+ * in post_game/pipeline.py).
  */
-function PublicAnalyticsCard({ game, roster }) {
+function PublicAnalyticsCard({ game, roster: _roster }) {
   const [analytics, setAnalytics] = useState(null);
-  const [clips, setClips] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
 
@@ -8244,14 +8248,10 @@ function PublicAnalyticsCard({ game, roster }) {
     if (!window.fbDb || !game?.id) { setLoaded(true); return; }
     let cancelled = false;
     const gref = window.fbDb.collection('teams').doc('main').collection('games').doc(game.id);
-    Promise.all([
-      gref.collection('analytics').doc('v1').get(),
-      gref.collection('clips').get(),
-    ])
-      .then(([aSnap, cQs]) => {
+    gref.collection('analytics').doc('v1').get()
+      .then((aSnap) => {
         if (cancelled) return;
         setAnalytics(aSnap.exists ? aSnap.data() : null);
-        setClips(cQs.docs.map(d => d.data()));
         setLoaded(true);
       })
       .catch(() => { if (!cancelled) setLoaded(true); });
@@ -8259,102 +8259,41 @@ function PublicAnalyticsCard({ game, roster }) {
   }, [game?.id]);
 
   if (!loaded) return null;
-  if (!analytics && clips.length === 0) return null;
-
-  const shortName = (pid) => {
-    const p = roster.find(r => r.id === pid);
-    if (!p) return '—';
-    const first = (p.name || '').split(/\s+/)[0] || p.name || 'Player';
-    return `${first} #${p.number || '?'}`;
-  };
-
-  const stats = analytics?.player_stats || [];
-  const topDistance = [...stats].sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0)).slice(0, 5);
-  const topSpeed = [...stats].sort((a, b) => (b.top_speed_ms || 0) - (a.top_speed_ms || 0)).slice(0, 5);
+  if (!analytics?.auto_highlights_url && !analytics?.tv_reel_url) return null;
 
   return (
     <div className="px-4 pt-4 max-w-2xl mx-auto">
-      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-lg">📊 MATCH ANALYTICS</h3>
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-2">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-display text-lg">🎬 MATCH VIDEO</h3>
           <span className="text-[10px] text-stone-500 tracking-wider">POST-GAME</span>
         </div>
-
-        {(analytics?.auto_highlights_url || analytics?.tv_reel_url) && (
-          <div className="space-y-2">
-            {analytics?.auto_highlights_url && (
-              <button
-                onClick={() => setBroadcastOpen('auto_highlights')}
-                className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
-              >
-                <span>▶ WATCH HIGHLIGHTS</span>
-                <span className="text-xs tabular-nums opacity-80">
-                  {analytics.auto_highlights_duration_s
-                    ? `${Math.floor(analytics.auto_highlights_duration_s / 60)}:${String(Math.floor(analytics.auto_highlights_duration_s % 60)).padStart(2, '0')}`
-                    : ''}
-                </span>
-              </button>
-            )}
-            {analytics?.tv_reel_url && (
-              <button
-                onClick={() => setBroadcastOpen('tv_reel')}
-                className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
-              >
-                <span>▶ WATCH FULL GAME</span>
-                <span className="text-xs tabular-nums text-stone-400">
-                  {analytics.tv_reel_duration_s
-                    ? `${Math.floor(analytics.tv_reel_duration_s / 60)}:${String(Math.floor(analytics.tv_reel_duration_s % 60)).padStart(2, '0')}`
-                    : ''}
-                </span>
-              </button>
-            )}
-          </div>
+        {analytics?.auto_highlights_url && (
+          <button
+            onClick={() => setBroadcastOpen('auto_highlights')}
+            className="w-full flex items-center justify-between bg-lime-600 hover:bg-lime-500 text-stone-950 font-display rounded-lg px-4 py-3 active:scale-[0.98]"
+          >
+            <span>▶ WATCH HIGHLIGHTS</span>
+            <span className="text-xs tabular-nums opacity-80">
+              {analytics.auto_highlights_duration_s
+                ? `${Math.floor(analytics.auto_highlights_duration_s / 60)}:${String(Math.floor(analytics.auto_highlights_duration_s % 60)).padStart(2, '0')}`
+                : ''}
+            </span>
+          </button>
         )}
-
-        {topDistance.length > 0 && (
-          <div>
-            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Most Distance Covered</div>
-            <ol className="space-y-1">
-              {topDistance.map((s, i) => (
-                <li key={s.player_id} className="flex items-center justify-between text-sm">
-                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
-                  <span className="font-bold tabular-nums text-lime-400">{(s.distance_m || 0).toFixed(0)} m</span>
-                </li>
-              ))}
-            </ol>
-          </div>
+        {analytics?.tv_reel_url && (
+          <button
+            onClick={() => setBroadcastOpen('tv_reel')}
+            className="w-full flex items-center justify-between bg-stone-800 hover:bg-stone-700 text-white font-display rounded-lg px-4 py-3 border border-stone-700 active:scale-[0.98]"
+          >
+            <span>▶ WATCH FULL GAME</span>
+            <span className="text-xs tabular-nums text-stone-400">
+              {analytics.tv_reel_duration_s
+                ? `${Math.floor(analytics.tv_reel_duration_s / 60)}:${String(Math.floor(analytics.tv_reel_duration_s % 60)).padStart(2, '0')}`
+                : ''}
+            </span>
+          </button>
         )}
-
-        {topSpeed.length > 0 && (
-          <div>
-            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Fastest Sprinters</div>
-            <ol className="space-y-1">
-              {topSpeed.map((s, i) => (
-                <li key={s.player_id} className="flex items-center justify-between text-sm">
-                  <span className="truncate">{i + 1}. {shortName(s.player_id)}</span>
-                  <span className="font-bold tabular-nums text-lime-400">{((s.top_speed_ms || 0) * 3.6).toFixed(1)} km/h</span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-
-        {(analytics?.formation_snapshots || []).length > 0 && (
-          <div>
-            <div className="text-[10px] text-stone-500 uppercase tracking-wider mb-1">Formation</div>
-            <div className="flex gap-3 text-sm">
-              {analytics.formation_snapshots.map(f => (
-                <div key={f.period} className="bg-stone-800/50 rounded-lg px-3 py-1">
-                  P{f.period}: <strong>{f.label}</strong>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Per-event highlight clips intentionally removed in favor of the
-            broadcast-style auto-highlights reel + full TV reel. Those will
-            surface as their own "WATCH HIGHLIGHTS" / "WATCH FULL GAME" cards. */}
       </div>
       {broadcastOpen && (
         <BroadcastVideoPlayer
@@ -8884,6 +8823,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
