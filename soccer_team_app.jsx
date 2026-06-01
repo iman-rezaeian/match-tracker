@@ -3470,7 +3470,7 @@ async function attachHls(video, url) {
   return () => { try { hls.destroy(); } catch {} };
 }
 
-function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode: initialDotsMode = 'all', lockDots = false }) {
+function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dotsMode: initialDotsMode = 'all', lockDots = false, initialTvMode = true }) {
   const wrapperRef = useRef(null);
   const placeholderRef = useRef(null);
   const containerRef = useRef(null);
@@ -3485,7 +3485,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [tvMode] = useState(true);
+  const [tvMode, setTvMode] = useState(initialTvMode);
   const [gyroActive, setGyroActive] = useState(false);
   const [dotsMode, setDotsMode] = useState(initialDotsMode);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -3650,14 +3650,20 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
     return () => clearTimeout(t);
   }, [isFullscreen, isPortrait, rect.width, rect.height]);
 
-  // TV mode is always on for soccer viewing — clamp vertical, narrow FOV.
-  // Set once on mount so the initial scene state matches the controls.
+  // TV mode constrains vertical look + narrows FOV (cinematic). 3D gyro mode
+  // unlocks the full 360° sphere so parents can look anywhere via gyro/touch.
+  // Toggleable via the 📺 / 🌐 button.
   useEffect(() => {
     const st = stateRef.current;
-    st.tvMode = true;
-    st.targetFov = 40;
-    st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
-  }, []);
+    st.tvMode = tvMode;
+    if (tvMode) {
+      st.targetFov = 40;
+      st.targetLat = Math.max(-45, Math.min(10, st.targetLat));
+    } else {
+      // Snap to a comfortable wide-angle when opening 3D mode
+      st.targetFov = Math.max(st.targetFov, 75);
+    }
+  }, [tvMode]);
 
   // Load Three.js and set up scene
   useEffect(() => {
@@ -4340,6 +4346,16 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
             {dotsMode === 'all' ? '● ALL' : '⚽ GOALS'}
           </button>
         )}
+        {/* TV / 3D mode toggle — lets parents switch between cinematic
+            broadcast view (TV) and free 360° look-anywhere (3D, pairs nicely
+            with the gyro toggle below). */}
+        <button onClick={() => setTvMode((v) => !v)}
+          className={`w-9 h-9 rounded-full flex items-center justify-center active:scale-95 text-sm ${tvMode ? 'bg-lime-500 text-black' : 'text-white'}`}
+          aria-label={tvMode ? 'Switch to 3D mode' : 'Switch to TV mode'}
+          title={tvMode ? 'TV mode — tap for 3D 360°' : '3D 360° — tap for TV mode'}
+        >
+          {tvMode ? '📺' : '🌐'}
+        </button>
         {/* Gyro toggle — compass-style SVG */}
         <button onClick={() => {
           const c = containerRef.current;

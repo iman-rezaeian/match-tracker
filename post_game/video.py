@@ -170,42 +170,62 @@ def iter_frames(
     aim: Optional[tuple[float, float, float]] = None,
     crop_w: int = config.CROP_W,
     crop_h: int = config.CROP_H,
+    windows: Optional[list[tuple[float, float]]] = None,
 ) -> Iterator[FrameSample]:
     """Yield perspective crops.
 
     Aim resolution order, highest priority first:
       1. `aim_stream[i]` if provided (per-sample pan).
-      2. `aim` if provided (fixed lon/lat/fov for whole video) \u2014 typical
+      2. `aim` if provided (fixed lon/lat/fov for whole video) — typical
          use: aim at the field centroid computed from calibration corners.
-      3. Default forward (0\u00b0, 0\u00b0, CROP_FOV_DEG).
+      3. Default forward (0°, 0°, CROP_FOV_DEG).
+
+    If `windows` is given (list of (start_s, end_s) in video seconds), frames
+    outside any window are skipped — used to trim warmup, halftime, and
+    post-game from a continuous game recording. The pipeline seeks the capture
+    to the start of each window so we don't decode every dead frame.
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    idx = 0
+
+    spans: list[tuple[int, int]]
+    if windows:
+        spans = []
+        for a, b in windows:
+            sf = max(0, int(round(a * fps)))
+            ef = int(round(b * fps))
+            if ef > sf:
+                spans.append((sf, ef))
+    else:
+        spans = [(0, 10 ** 12)]  # effectively unbounded; loop ends at EOF
+
     sample_i = 0
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        if idx % sample_rate == 0:
-            if aim_stream is not None and sample_i < len(aim_stream):
-                lon, lat, fov = aim_stream[sample_i]
-            elif aim is not None:
-                lon, lat, fov = aim
-            else:
-                lon, lat, fov = 0.0, 0.0, config.CROP_FOV_DEG
-            crop = render_perspective(frame, lon, lat, fov, crop_w, crop_h)
-            yield FrameSample(
-                frame_index=idx,
-                time_s=idx / fps,
-                eq_frame=frame,
-                crop=crop,
-                crop_lon_deg=lon,
-                crop_lat_deg=lat,
-                crop_fov_deg=fov,
-            )
-            sample_i += 1
-        idx += 1
+    for sf, ef in spans:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, sf)
+        idx = sf
+        while idx < ef:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if (idx - sf) % sample_rate == 0:
+                if aim_stream is not None and sample_i < len(aim_stream):
+                    lon, lat, fov = aim_stream[sample_i]
+                elif aim is not None:
+                    lon, lat, fov = aim
+                else:
+                    lon, lat, fov = 0.0, 0.0, config.CROP_FOV_DEG
+                crop = render_perspective(frame, lon, lat, fov, crop_w, crop_h)
+                yield FrameSample(
+                    frame_index=idx,
+                    time_s=idx / fps,
+                    eq_frame=frame,
+                    crop=crop,
+                    crop_lon_deg=lon,
+                    crop_lat_deg=lat,
+                    crop_fov_deg=fov,
+                )
+                sample_i += 1
+            idx += 1
     cap.release()

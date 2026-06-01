@@ -21,3 +21,4 @@ post_game/models/
 # local secrets for run_analytics.sh (R2 keys, etc.)
 .env
 .env.local
+dist/

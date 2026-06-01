@@ -46,21 +46,22 @@ def _build_page(video_url: str, game_label: str) -> str:
 <title>Field Calibration</title>
 <style>
   :root { color-scheme: dark; }
-  body { margin:0; background:#0c0a09; color:#e7e5e4; font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; }
-  header { padding:10px 14px; border-bottom:1px solid #292524; display:flex; gap:12px; align-items:center; }
+  html, body { height:100%; }
+  body { margin:0; background:#0c0a09; color:#e7e5e4; font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; }
+  header { padding:10px 14px; border-bottom:1px solid #292524; display:flex; gap:12px; align-items:center; flex:0 0 auto; }
   header h1 { margin:0; font-size:14px; letter-spacing:.04em; }
   .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1c1917; color:#a8a29e; font-size:11px; }
   #status { margin-left:auto; font-size:12px; color:#84cc16; }
   #status.warn { color:#fbbf24; }
   #status.err { color:#f87171; }
-  #wrap { display:flex; flex-direction:column; height:calc(100vh - 110px); }
+  #wrap { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
   #viewer { flex:1; position:relative; background:#0a0a0a; touch-action:none; user-select:none; }
-  #hint { padding:6px 14px; font-size:12px; color:#a8a29e; border-bottom:1px solid #292524; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #hint { padding:6px 14px; font-size:12px; color:#a8a29e; border-bottom:1px solid #292524; display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:0 0 auto; }
   #hint strong { color:#84cc16; }
   .seg { display:inline-flex; background:#1c1917; border:1px solid #44403c; border-radius:999px; padding:2px; font-size:11px; }
   .seg button { background:transparent; border:0; color:#d6d3d1; padding:4px 10px; border-radius:999px; cursor:pointer; }
   .seg button.on { background:#84cc16; color:#0c0a09; font-weight:600; }
-  footer { padding:10px 14px; border-top:1px solid #292524; display:flex; gap:8px; align-items:center; }
+  footer { padding:10px 14px; border-top:1px solid #292524; display:flex; gap:8px; align-items:center; flex:0 0 auto; background:#0c0a09; }
   footer button { flex:1; padding:10px; border-radius:8px; border:0; cursor:pointer; font-weight:600; }
   .btn-secondary { background:#292524; color:#d6d3d1; }
   .btn-primary { background:#84cc16; color:#0c0a09; }
@@ -301,7 +302,9 @@ async function init() {
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pointers.size === 1 && dragLast) {
         const dx = e.clientX - dragLast.x, dy = e.clientY - dragLast.y;
-        const sens = state.targetFov / 600;
+        // Sensitivity scales with FOV (zoomed in = finer control). Larger
+        // divisor = slower. 5000 ~ comfortable for trackpad + mouse.
+        const sens = state.targetFov / 5000;
         state.targetYaw -= dx * sens;
         state.targetPitch = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, state.targetPitch - dy * sens));
         dragLast = { x: e.clientX, y: e.clientY };
@@ -416,8 +419,22 @@ def calibrate_in_browser(game_id: str) -> dict:
     if not game.video_url:
         raise RuntimeError(f"Game {game_id} has no videoUrl set.")
 
+    # Resolve the URL the browser should use. file:// videos can't be loaded
+    # cross-origin into an http://localhost page, so for local files we serve
+    # them through this same HTTP server at /video.
+    raw_url = game.video_url
+    local_video_path: Optional[str] = None
+    if raw_url.startswith("file://"):
+        local_video_path = raw_url[len("file://"):]
+        browser_video_url = "/video"
+    elif not raw_url.startswith(("http://", "https://")):
+        local_video_path = raw_url
+        browser_video_url = "/video"
+    else:
+        browser_video_url = raw_url
+
     page_html = _build_page(
-        video_url=game.video_url,
+        video_url=browser_video_url,
         game_label=f"{game_id} · vs {game.opponent or 'OPP'}",
     ).encode("utf-8")
 
@@ -437,8 +454,56 @@ def calibrate_in_browser(game_id: str) -> dict:
                 self.send_header("Content-Length", str(len(page_html)))
                 self.end_headers()
                 self.wfile.write(page_html)
+            elif path == "/video" and local_video_path:
+                self._serve_local_video(local_video_path)
             else:
                 self.send_response(404); self.end_headers()
+
+        def _serve_local_video(self, file_path: str):
+            try:
+                import os
+                size = os.path.getsize(file_path)
+            except OSError as e:
+                self.send_response(404); self.end_headers()
+                self.wfile.write(f"video not found: {e}".encode("utf-8"))
+                return
+            range_header = self.headers.get("Range")
+            start = 0
+            end = size - 1
+            status = 200
+            if range_header and range_header.startswith("bytes="):
+                try:
+                    rng = range_header[len("bytes="):].strip()
+                    s, e = rng.split("-", 1)
+                    if s:
+                        start = int(s)
+                    if e:
+                        end = min(int(e), size - 1)
+                    status = 206
+                except Exception:
+                    start, end, status = 0, size - 1, 200
+            length = end - start + 1
+            self.send_response(status)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            if status == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                with open(file_path, "rb") as f:
+                    f.seek(start)
+                    remaining = length
+                    chunk = 1024 * 1024
+                    while remaining > 0:
+                        buf = f.read(min(chunk, remaining))
+                        if not buf:
+                            break
+                        self.wfile.write(buf)
+                        remaining -= len(buf)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         def do_POST(self):
             if urlparse(self.path).path != "/save":
@@ -467,8 +532,9 @@ def calibrate_in_browser(game_id: str) -> dict:
                 self.end_headers()
                 self.wfile.write(resp)
 
-    httpd = socketserver.TCPServer(("127.0.0.1", PORT), Handler)
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler)
     httpd.allow_reuse_address = True
+    httpd.daemon_threads = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
 
