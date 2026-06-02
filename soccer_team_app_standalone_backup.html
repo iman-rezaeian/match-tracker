@@ -1112,6 +1112,45 @@ function App() {
       : g));
   };
 
+  // Batched variant: write many POSITION events in a single state update.
+  // Used by the tactical board RESET button — calling addPositionEvent in a
+  // loop would race because each call captures the stale `games` closure.
+  // `slots` is an array of { playerId, x, y }. Each entry still goes through
+  // the 3% jitter dedupe vs the player's last logged spot.
+  const addPositionEventsBatch = (gameId, slots) => {
+    if (!gameId || !slots || slots.length === 0) return;
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const lastByPlayer = {};
+    for (const e of game.events) {
+      if (e.type === 'POSITION') lastByPlayer[e.playerId] = e;
+    }
+    const elapsed = computeElapsed(game);
+    const now = Date.now();
+    const newEvents = [];
+    for (const s of slots) {
+      if (!s.playerId) continue;
+      const cx = Math.max(0.04, Math.min(0.96, s.x));
+      const cy = Math.max(0.04, Math.min(0.96, s.y));
+      const last = lastByPlayer[s.playerId];
+      if (last && Math.hypot((last.x ?? 0) - cx, (last.y ?? 0) - cy) < 0.03) continue;
+      newEvents.push({
+        id: uid(),
+        type: 'POSITION',
+        playerId: s.playerId,
+        period: game.period,
+        elapsed,
+        at: now + newEvents.length, // preserve order within the batch
+        x: cx,
+        y: cy,
+      });
+    }
+    if (newEvents.length === 0) return;
+    persistGames(games.map(g => g.id === gameId
+      ? { ...g, events: [...g.events, ...newEvents] }
+      : g));
+  };
+
   const setGameGK = (gameId, newGKPlayerId, atTs) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
@@ -1335,6 +1374,7 @@ function App() {
           onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
           onSwapGK={() => setPendingEvent({ type: 'NEW_GK', defaultGK: currentGKAt(activeGame) })}
           onMovePosition={(playerId, x, y) => addPositionEvent(activeGame.id, playerId, x, y)}
+          onResetFormation={(slots) => addPositionEventsBatch(activeGame.id, slots)}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
               // Re-validate against the LIVE lineup at click time, not the
@@ -2827,7 +2867,7 @@ function computeDefaultFormation(outfield, totalOnField) {
   return out;
 }
 
-function TacticalBoard({ game, roster, gameGKId, onMove }) {
+function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
   const onField = useMemo(() => onFieldAt(game), [game.events]);
   const players = useMemo(
     () => roster.filter(p => onField.has(p.id))
@@ -2887,22 +2927,45 @@ function TacticalBoard({ game, roster, gameGKId, onMove }) {
     if (onMove) onMove(playerId, x, y);
   };
 
+  // Snap every on-field player back to the default formation slot for the
+  // current on-field count (e.g. 2-3-1 for 7v7). Used after big tactical
+  // shake-ups or to start fresh after a few rotations.
+  const handleReset = () => {
+    if (!onReset) return;
+    const slots = players.map(p => {
+      const def = p.id === gameGKId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
+      return { playerId: p.id, x: def.x, y: def.y };
+    });
+    onReset(slots);
+  };
+
   if (players.length === 0) return null;
 
   return (
     <div className="mt-5 mb-2 bg-stone-900/80 border border-stone-800 rounded-2xl p-3">
-      <button
-        type="button"
-        onClick={() => setCollapsed(c => !c)}
-        className="w-full flex items-center justify-between mb-2 active:scale-[0.99]"
-      >
-        <h3 className="font-display text-lg flex items-center gap-2">
-          <span>🧭</span><span>TACTICAL BOARD</span>
-        </h3>
-        <span className="text-[10px] text-stone-400 tracking-widest">
-          {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
-        </span>
-      </button>
+      <div className="w-full flex items-center justify-between mb-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2 active:scale-[0.99]"
+        >
+          <h3 className="font-display text-lg flex items-center gap-2">
+            <span>🧭</span><span>TACTICAL BOARD</span>
+          </h3>
+          <span className="text-[10px] text-stone-400 tracking-widest">
+            {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
+          </span>
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-[10px] font-bold text-stone-300 bg-stone-800 px-2.5 py-1 rounded-full active:scale-95 tracking-widest"
+          >
+            RESET
+          </button>
+        )}
+      </div>
       {!collapsed && (
         <>
           <div
@@ -2979,7 +3042,7 @@ function TacticalBoard({ game, roster, gameGKId, onMove }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -3009,6 +3072,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       roster={squadRoster}
       gameGKId={gameGKId}
       onMove={onMovePosition}
+      onReset={onResetFormation}
     />
   );
 
@@ -9108,6 +9172,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
