@@ -3047,16 +3047,43 @@ function learnPlayerDefaults(games) {
   });
   // { [playerId]: { [slotKey]: weightedCount } }
   const tally = {};
+  // Minimum dwell time (seconds) for an in-game POSITION event to count.
+  // Anything shorter is treated as a coach drag-correction.
+  const MIN_DWELL_S = 10;
   sorted.forEach((g, gameIdx) => {
     if (!Array.isArray(g.events)) return;
     const w = gameIdx < 5 ? 2 : 1; // recency weighting
+    // Group POSITION events by (playerId, period) so the dwell-time rule is
+    // computed within the same half. Pre-kickoff drag corrections (all at
+    // elapsed=0 in period 1) collapse to just the final position because
+    // every earlier event has an immediate next event in the same group.
+    const grouped = {}; // key = `${playerId}|${period}` -> [events sorted by at]
     for (const ev of g.events) {
       if (ev.type !== 'POSITION' || !ev.playerId) continue;
       if (typeof ev.x !== 'number' || typeof ev.y !== 'number') continue;
-      const slot = nearestPositionSlot(ev.x, ev.y);
-      if (!slot) continue;
-      if (!tally[ev.playerId]) tally[ev.playerId] = {};
-      tally[ev.playerId][slot.key] = (tally[ev.playerId][slot.key] || 0) + w;
+      const period = ev.period || 1;
+      const key = `${ev.playerId}|${period}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(ev);
+    }
+    for (const arr of Object.values(grouped)) {
+      arr.sort((a, b) => (a.at || 0) - (b.at || 0));
+      for (let i = 0; i < arr.length; i++) {
+        const ev = arr[i];
+        const next = arr[i + 1];
+        if (next) {
+          // Use wall-clock `at` (ms) — robust whether or not `elapsed` was
+          // updated for the new event.
+          const dwellMs = (next.at || 0) - (ev.at || 0);
+          if (dwellMs < MIN_DWELL_S * 1000) continue;
+        }
+        // ev "stuck" — either >=10s before being changed, or the last
+        // position of the period (no revision came).
+        const slot = nearestPositionSlot(ev.x, ev.y);
+        if (!slot) continue;
+        if (!tally[ev.playerId]) tally[ev.playerId] = {};
+        tally[ev.playerId][slot.key] = (tally[ev.playerId][slot.key] || 0) + w;
+      }
     }
   });
   const out = {};
@@ -9677,6 +9704,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
