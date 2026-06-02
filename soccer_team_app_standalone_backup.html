@@ -2935,6 +2935,90 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
 // Half-field portrait pitch (our goal at bottom, halfway line at top).
 // Coordinates: x,y ∈ [0,1]. Drag-end writes a POSITION event so the formation
 // snapshot survives reloads and feeds post-game analytics.
+
+// Named slots for the tap-to-pick position picker. y=0 is the halfway line
+// (opponent end), y=1 is our goal line. Strikers push high, defenders sit
+// deep just in front of the box. These are the labels coaches typically
+// shout from the sideline (LD/CD/RD, LM/CM/RM, LST/CST/RST).
+const POSITION_SLOTS = [
+  { key: 'LST', label: 'LST', x: 0.30, y: 0.28 },
+  { key: 'CST', label: 'CST', x: 0.50, y: 0.22 },
+  { key: 'RST', label: 'RST', x: 0.70, y: 0.28 },
+  { key: 'LM',  label: 'LM',  x: 0.22, y: 0.50 },
+  { key: 'CM',  label: 'CM',  x: 0.50, y: 0.50 },
+  { key: 'RM',  label: 'RM',  x: 0.78, y: 0.50 },
+  { key: 'LD',  label: 'LD',  x: 0.25, y: 0.72 },
+  { key: 'CD',  label: 'CD',  x: 0.50, y: 0.74 },
+  { key: 'RD',  label: 'RD',  x: 0.75, y: 0.72 },
+];
+
+// Small modal that floats above the tactical board so the coach can tap a
+// position label instead of dragging. Used by both KickoffTacticalBoard and
+// the in-game TacticalBoard. Rendered as a centered overlay so it works
+// regardless of where the player chip sits on the pitch.
+function PositionPickerModal({ player, currentXY, isGK, onPick, onClose }) {
+  if (!player) return null;
+  const first = (player.name || '').split(' ')[0] || player.name || 'Player';
+  // Highlight the slot the player is closest to so the current spot is obvious.
+  const nearest = (() => {
+    let best = null, bestD = Infinity;
+    for (const s of POSITION_SLOTS) {
+      const d = (s.x - currentXY.x) ** 2 + (s.y - currentXY.y) ** 2;
+      if (d < bestD) { bestD = d; best = s.key; }
+    }
+    return bestD < 0.015 ? best : null;
+  })();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-stone-900 border border-stone-700 rounded-2xl p-4 w-full max-w-xs shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center mb-3">
+          <div className="text-[10px] tracking-[0.2em] text-stone-400">PICK POSITION</div>
+          <div className="font-display text-xl text-stone-100 mt-0.5">
+            {isGK ? '🧤 ' : ''}#{player.number || '?'} {first}
+          </div>
+        </div>
+        {isGK ? (
+          <div className="text-xs text-stone-300 text-center bg-stone-800 rounded-xl p-3 mb-3">
+            Goalkeeper position is fixed.
+            Drag on the board if you want to nudge it.
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {POSITION_SLOTS.map(s => {
+              const isCurrent = nearest === s.key;
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => onPick(s)}
+                  className={`py-3 rounded-xl font-display text-sm border-2 active:scale-95 transition ${
+                    isCurrent
+                      ? 'bg-lime-500 text-stone-950 border-lime-300'
+                      : 'bg-stone-800 text-stone-100 border-stone-700 hover:bg-stone-700'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 rounded-xl bg-stone-800 text-stone-300 font-bold text-sm tracking-wider active:scale-95"
+        >
+          CANCEL
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function computeDefaultFormation(outfield, totalOnField) {
   // Pick a sensible default row split by total on-field count. Includes GK
   // count so common 7v7/9v9/5v5 line up cleanly.
@@ -3012,29 +3096,51 @@ function KickoffTacticalBoard({ players, gkId, positionsRef }) {
 
   const [collapsed, setCollapsed] = useState(false);
   const [drag, setDrag] = useState(null);
+  const [picker, setPicker] = useState(null); // { playerId } when tap (no drag)
   const fieldRef = useRef(null);
   const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+  // Pixel distance below which a pointerdown→pointerup is treated as a tap
+  // (open position picker) instead of a drag. Generous enough for finger taps
+  // on iPad where the touch can wobble a few pixels.
+  const TAP_PX = 8;
 
   const handlePointerDown = (playerId) => (e) => {
     e.preventDefault();
     e.stopPropagation();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     const pos = positions[playerId] || { x: 0.5, y: 0.5 };
-    setDrag({ playerId, pointerId: e.pointerId, x: pos.x, y: pos.y });
+    setDrag({
+      playerId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      x: pos.x,
+      y: pos.y,
+      moved: false,
+    });
   };
   const handlePointerMove = (e) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const rect = fieldRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const moved = drag.moved || (dx * dx + dy * dy) > (TAP_PX * TAP_PX);
+    if (!moved) { setDrag(d => d ? { ...d, moved: false } : d); return; }
     const x = clamp01((e.clientX - rect.left) / rect.width);
     const y = clamp01((e.clientY - rect.top) / rect.height);
-    setDrag(d => d ? { ...d, x, y } : d);
+    setDrag(d => d ? { ...d, x, y, moved: true } : d);
   };
   const handlePointerUp = () => {
     if (!drag) return;
-    const { playerId, x, y } = drag;
+    const { playerId, x, y, moved } = drag;
     setDrag(null);
-    setPositions(prev => ({ ...prev, [playerId]: { x, y } }));
+    if (moved) {
+      setPositions(prev => ({ ...prev, [playerId]: { x, y } }));
+    } else {
+      // Tap (no drag) → open the position picker for this player.
+      setPicker({ playerId });
+    }
   };
 
   const handleReset = () => {
@@ -3129,10 +3235,28 @@ function KickoffTacticalBoard({ players, gkId, positionsRef }) {
             })}
           </div>
           <div className="mt-2 text-[10px] text-stone-500 text-center">
-            Drag each player to their kickoff spot. Tap RESET for default {totalOnField === 7 ? '2-3-1' : 'formation'}.
+            Tap a player to pick a position (LD/CD/RD · LM/CM/RM · LST/CST/RST).
+            Drag to fine-tune. RESET = default {totalOnField === 7 ? '2-3-1' : 'formation'}.
           </div>
         </>
       )}
+      {picker && (() => {
+        const p = sorted.find(x => x.id === picker.playerId);
+        if (!p) return null;
+        const cur = positions[p.id] || { x: 0.5, y: 0.5 };
+        return (
+          <PositionPickerModal
+            player={p}
+            currentXY={cur}
+            isGK={p.id === gkId}
+            onPick={(slot) => {
+              setPositions(prev => ({ ...prev, [p.id]: { x: slot.x, y: slot.y } }));
+              setPicker(null);
+            }}
+            onClose={() => setPicker(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -3170,31 +3294,49 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
   }
 
   const [collapsed, setCollapsed] = useState(false);
-  const [drag, setDrag] = useState(null); // { playerId, x, y }
+  const [drag, setDrag] = useState(null); // { playerId, x, y, moved }
+  const [picker, setPicker] = useState(null); // { playerId } when tap (no drag)
   const fieldRef = useRef(null);
 
   const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+  const TAP_PX = 8;
 
   const handlePointerDown = (playerId) => (e) => {
     e.preventDefault();
     e.stopPropagation();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     const pos = positions[playerId];
-    setDrag({ playerId, pointerId: e.pointerId, x: pos.x, y: pos.y });
+    setDrag({
+      playerId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      x: pos.x,
+      y: pos.y,
+      moved: false,
+    });
   };
   const handlePointerMove = (e) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const rect = fieldRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const moved = drag.moved || (dx * dx + dy * dy) > (TAP_PX * TAP_PX);
+    if (!moved) return;
     const x = clamp01((e.clientX - rect.left) / rect.width);
     const y = clamp01((e.clientY - rect.top) / rect.height);
-    setDrag(d => d ? { ...d, x, y } : d);
+    setDrag(d => d ? { ...d, x, y, moved: true } : d);
   };
-  const handlePointerUp = (e) => {
+  const handlePointerUp = () => {
     if (!drag) return;
-    const { playerId, x, y } = drag;
+    const { playerId, x, y, moved } = drag;
     setDrag(null);
-    if (onMove) onMove(playerId, x, y);
+    if (moved) {
+      if (onMove) onMove(playerId, x, y);
+    } else {
+      setPicker({ playerId });
+    }
   };
 
   // Snap every on-field player back to the default formation slot for the
@@ -3303,10 +3445,28 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
             })}
           </div>
           <div className="mt-2 text-[10px] text-stone-500 text-center">
-            Drag any player to reposition. Subs inherit the position of the player they replace.
+            Tap a player to pick a position. Drag to fine-tune.
+            Subs inherit the position of the player they replace.
           </div>
         </>
       )}
+      {picker && (() => {
+        const p = players.find(x => x.id === picker.playerId);
+        if (!p) return null;
+        const cur = positions[p.id] || { x: 0.5, y: 0.5 };
+        return (
+          <PositionPickerModal
+            player={p}
+            currentXY={cur}
+            isGK={p.id === gameGKId}
+            onPick={(slot) => {
+              if (onMove) onMove(p.id, slot.x, slot.y);
+              setPicker(null);
+            }}
+            onClose={() => setPicker(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -9442,6 +9602,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
