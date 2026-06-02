@@ -59,12 +59,27 @@
     window.fbAuth = firebase.auth();
     // Offline persistence (so the app survives field wifi)
     window.fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
-    // Google sign-in — fbReady resolves once a user is signed in
+    // Complete any pending signInWithRedirect round-trip BEFORE anything else
+    // touches auth. Without this call, iPad PWAs that fall back from popup to
+    // redirect can come back to the page with no user and hang forever in the
+    // "Loading…" splash because onAuthStateChanged never fires.
+    window.fbRedirectReady = window.fbAuth.getRedirectResult().catch((e) => {
+      console.warn('getRedirectResult failed:', e && e.code, e && e.message);
+      return null;
+    });
+    // fbReady resolves on the FIRST auth state callback regardless of whether
+    // there is a signed-in user. Listeners gated on fbReady (e.g. the public
+    // games snapshot) used to never start on a fresh device with no cached
+    // user because the original Promise only resolved when user!=null.
     window.fbReady = new Promise((resolve) => {
       const unsub = window.fbAuth.onAuthStateChanged((user) => {
         window.fbUser = user;
-        if (user) { resolve(true); unsub(); }
+        resolve(!!user);
+        unsub();
       });
+      // Safety net: if Firebase auth never calls back (rare iPad PWA bug),
+      // resolve anyway after 6s so the UI can render the sign-in button.
+      setTimeout(() => { try { unsub(); } catch (_) {} resolve(false); }, 6000);
     });
 
     // ----- PWA service worker + install prompt -----
@@ -9758,6 +9773,8 @@ function LiveScoreboard({ game, roster }) {
 
 
 
+
+
     // ===== APP CODE ENDS =====
 
     // ===== AUTH GATE =====
@@ -9767,6 +9784,16 @@ function LiveScoreboard({ game, roster }) {
       const [error, setError] = useState(null);
 
       useEffect(() => {
+        // Surface any error from a completed signInWithRedirect round-trip.
+        if (window.fbRedirectReady) {
+          window.fbRedirectReady.then((res) => {
+            // res may be null on first load — only treat as error if there
+            // was an explicit failure (currentUser stays null too).
+            if (res === null && !window.fbAuth.currentUser) {
+              // nothing to do — onAuthStateChanged will flip checking off
+            }
+          });
+        }
         const unsub = window.fbAuth.onAuthStateChanged((u) => {
           setUser(u);
           setChecking(false);
@@ -9778,20 +9805,47 @@ function LiveScoreboard({ game, roster }) {
             }).catch(() => {});
           }
         });
-        return unsub;
+        // Safety timeout: if onAuthStateChanged never fires (iPad PWA edge
+        // case where Firebase auth init wedges), drop the splash after 6s so
+        // the coach can at least tap Sign In manually.
+        const safety = setTimeout(() => setChecking(false), 6000);
+        return () => { unsub(); clearTimeout(safety); };
       }, []);
 
-      const signIn = async () => {
+      // Detect iOS standalone PWA (added to home screen). signInWithPopup is
+      // unreliable there — window.open() is blocked or returns a window that
+      // can't communicate back to the opener — so we go straight to redirect.
+      const isIOSStandalone = (() => {
         try {
-          const provider = new firebase.auth.GoogleAuthProvider();
+          const ua = navigator.userAgent || '';
+          const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+          const standalone = (window.navigator && window.navigator.standalone) ||
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+          return isIOS && standalone;
+        } catch (_) { return false; }
+      })();
+
+      const signIn = async () => {
+        setError(null);
+        const provider = new firebase.auth.GoogleAuthProvider();
+        if (isIOSStandalone) {
+          try { await window.fbAuth.signInWithRedirect(provider); }
+          catch (err) { setError(err.message || String(err)); }
+          return;
+        }
+        try {
           await window.fbAuth.signInWithPopup(provider);
         } catch (err) {
-          // On mobile, popup might fail — try redirect
-          if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
-            const provider = new firebase.auth.GoogleAuthProvider();
-            await window.fbAuth.signInWithRedirect(provider);
+          // Any popup failure on mobile — fall back to redirect.
+          const code = err && err.code;
+          if (code === 'auth/popup-blocked' ||
+              code === 'auth/cancelled-popup-request' ||
+              code === 'auth/popup-closed-by-user' ||
+              code === 'auth/operation-not-supported-in-this-environment') {
+            try { await window.fbAuth.signInWithRedirect(provider); }
+            catch (e2) { setError(e2.message || String(e2)); }
           } else {
-            setError(err.message);
+            setError(err.message || String(err));
           }
         }
       };
