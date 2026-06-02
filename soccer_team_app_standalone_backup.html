@@ -2644,7 +2644,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
   const gkPlayer = sorted.find(p => p.id === gkId);
 
   return (
-    <div className="pb-40">
+    <div className="pb-8">
       <Header title="STARTING LINEUP" onBack={onBack} />
 
       <div className="px-4 pt-4">
@@ -2721,7 +2721,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 p-4 shadow-xl">
+      <div className="px-4 mt-6 bg-stone-900 border-t border-stone-800 pt-4 pb-6">
         <div className="text-center text-sm text-stone-300 mb-1">
           <span className="font-bold text-lime-700">{selected.size}</span> on field · <span className="font-bold text-stone-400">{sorted.length - selected.size}</span> on bench
         </div>
@@ -9427,6 +9427,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
