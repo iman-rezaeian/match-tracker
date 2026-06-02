@@ -1292,6 +1292,7 @@ export default function App() {
       {view === 'lineup' && pendingGameSetup && (
         <StartingLineupView
           roster={roster}
+          games={games}
           squad={pendingGameSetup.squad}
           setup={pendingGameSetup}
           teamLiveInput={teamLiveInput}
@@ -2378,7 +2379,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 }
 
 /* ---------- STARTING LINEUP ---------- */
-function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
+function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
   // Only players in the matchday squad are eligible. Legacy fallback: whole roster.
   const squadSet = squad && squad.length > 0 ? new Set(squad) : null;
   const pool = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
@@ -2736,6 +2737,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
           players={onFieldPlayers}
           gkId={gkId}
           positionsRef={kickoffPositionsRef}
+          learnedDefaults={useMemo(() => learnPlayerDefaults(games || []), [games])}
         />
 
         <button
@@ -2896,6 +2898,58 @@ function PositionPickerModal({ player, currentXY, isGK, onPick, onClose }) {
   );
 }
 
+// Snap an (x, y) coordinate to the nearest named position slot (LD/CM/RST…).
+function nearestPositionSlot(x, y) {
+  let best = null, bestD = Infinity;
+  for (const s of POSITION_SLOTS) {
+    const d = (s.x - x) ** 2 + (s.y - y) ** 2;
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return best;
+}
+
+// Scan all finished games' POSITION events and learn each player's most
+// frequent named slot. Recent games (last 5) count double so seasonal role
+// shifts win out over ancient data. Returns:
+//   { [playerId]: { slot: <POSITION_SLOTS entry>, count, weight } }
+// Only players with at least one POSITION event get an entry; everyone else
+// falls back to the default-formation grid in the caller.
+function learnPlayerDefaults(games) {
+  if (!Array.isArray(games) || games.length === 0) return {};
+  // Sort newest first by date, then by endedAt for tournament days.
+  const sorted = [...games].sort((a, b) => {
+    const dc = new Date(b.date || 0) - new Date(a.date || 0);
+    if (dc !== 0) return dc;
+    return (b.endedAt || 0) - (a.endedAt || 0);
+  });
+  // { [playerId]: { [slotKey]: weightedCount } }
+  const tally = {};
+  sorted.forEach((g, gameIdx) => {
+    if (!Array.isArray(g.events)) return;
+    const w = gameIdx < 5 ? 2 : 1; // recency weighting
+    for (const ev of g.events) {
+      if (ev.type !== 'POSITION' || !ev.playerId) continue;
+      if (typeof ev.x !== 'number' || typeof ev.y !== 'number') continue;
+      const slot = nearestPositionSlot(ev.x, ev.y);
+      if (!slot) continue;
+      if (!tally[ev.playerId]) tally[ev.playerId] = {};
+      tally[ev.playerId][slot.key] = (tally[ev.playerId][slot.key] || 0) + w;
+    }
+  });
+  const out = {};
+  for (const pid of Object.keys(tally)) {
+    let bestKey = null, bestW = 0;
+    for (const [k, w] of Object.entries(tally[pid])) {
+      if (w > bestW) { bestW = w; bestKey = k; }
+    }
+    if (!bestKey) continue;
+    const slot = POSITION_SLOTS.find(s => s.key === bestKey);
+    if (!slot) continue;
+    out[pid] = { slot, weight: bestW };
+  }
+  return out;
+}
+
 function computeDefaultFormation(outfield, totalOnField) {
   // Pick a sensible default row split by total on-field count. Includes GK
   // count so common 7v7/9v9/5v5 line up cleanly.
@@ -2937,7 +2991,7 @@ function computeDefaultFormation(outfield, totalOnField) {
 // in local state and exposes them via getPositions() so the parent can read
 // the final formation when the coach taps START GAME and seed it into the
 // new game as POSITION events at t=0.
-function KickoffTacticalBoard({ players, gkId, positionsRef }) {
+function KickoffTacticalBoard({ players, gkId, positionsRef, learnedDefaults }) {
   const sorted = useMemo(
     () => [...players].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0)),
     [players]
@@ -2950,20 +3004,41 @@ function KickoffTacticalBoard({ players, gkId, positionsRef }) {
   );
   const gkDefault = { x: 0.5, y: 0.94 };
 
-  // Seed positions from defaults whenever the player set or GK changes.
-  // Preserve any positions the coach has already dragged for players that
-  // remain on the field.
+  // Resolve learned-vs-default seeding once per (player set, gk) change.
+  // Rule: learned defaults from past games win first-come-first-served by
+  // jersey number. If two players have learned the same slot, the lower
+  // jersey number keeps it and the other falls back to the grid default.
+  const learnedSeed = useMemo(() => {
+    if (!learnedDefaults || Object.keys(learnedDefaults).length === 0) return {};
+    const taken = new Set();
+    const seed = {};
+    // sorted is already by jersey number — first-come wins.
+    for (const p of outfield) {
+      const entry = learnedDefaults[p.id];
+      if (!entry || !entry.slot) continue;
+      if (taken.has(entry.slot.key)) continue;
+      taken.add(entry.slot.key);
+      seed[p.id] = { x: entry.slot.x, y: entry.slot.y };
+    }
+    return seed;
+  }, [outfield.map(p => p.id).join(','), learnedDefaults]);
+
+  // Seed positions from learned defaults first, then grid defaults, whenever
+  // the player set or GK changes. Preserve anything the coach has already
+  // dragged for players that remain on the field.
   const [positions, setPositions] = useState({});
   useEffect(() => {
     setPositions(prev => {
       const next = {};
       for (const p of sorted) {
-        if (p.id === gkId) next[p.id] = prev[p.id] || gkDefault;
-        else next[p.id] = prev[p.id] || defaults[p.id] || { x: 0.5, y: 0.5 };
+        if (prev[p.id]) { next[p.id] = prev[p.id]; continue; }
+        if (p.id === gkId) { next[p.id] = gkDefault; continue; }
+        if (learnedSeed[p.id]) { next[p.id] = learnedSeed[p.id]; continue; }
+        next[p.id] = defaults[p.id] || { x: 0.5, y: 0.5 };
       }
       return next;
     });
-  }, [sorted.map(p => p.id).join(','), gkId, defaults]);
+  }, [sorted.map(p => p.id).join(','), gkId, defaults, learnedSeed]);
 
   // Publish the latest positions to the parent via the ref so START GAME
   // can seed POSITION events without a re-render dance.
