@@ -471,6 +471,25 @@ export default function App() {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
 
+  // Browser back / phone swipe-back inside the dugout: pop back to the
+  // home (dugout) view instead of exiting the whole app to the public page.
+  // Push one history entry whenever we enter any sub-view, pop it when we
+  // return to home. Intra-flow nav (gameSetup → squad → lineup → activeGame)
+  // does NOT change `inSubPage`, so the back stack stays a single entry.
+  const inSubPage = view !== 'home';
+  useEffect(() => {
+    if (!inSubPage) return;
+    window.history.pushState({ coachSubPage: true }, '');
+    const onPop = () => setView('home');
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.coachSubPage) {
+        window.history.back();
+      }
+    };
+  }, [inSubPage]);
+
   // Auto-unlock for coaches based on Firestore role
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
