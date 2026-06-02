@@ -210,6 +210,7 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         tracks_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
         gk_player_id=game.gk_player_id,
+        coach_events=game.events,
     )
     gk_positions = compute_gk_positions(
         events=game.events,
@@ -289,7 +290,11 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         "identity_assignments": [asdict(a) for a in assignments],
         "player_stats": [asdict(s) for s in player_stats],
         "formation_snapshots": [
-            {**asdict(f), "avg_positions": {k: list(v) for k, v in f.avg_positions.items()}}
+            {
+                **asdict(f),
+                "avg_positions": {k: list(v) for k, v in f.avg_positions.items()},
+                "coach_positions_norm": {k: list(v) for k, v in f.coach_positions_norm.items()},
+            }
             for f in formation_snaps
         ],
         "team_time_series": asdict(team_ts),
