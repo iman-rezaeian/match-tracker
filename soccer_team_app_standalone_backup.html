@@ -1112,6 +1112,45 @@ function App() {
       : g));
   };
 
+  // Batched variant: write many POSITION events in a single state update.
+  // Used by the tactical board RESET button — calling addPositionEvent in a
+  // loop would race because each call captures the stale `games` closure.
+  // `slots` is an array of { playerId, x, y }. Each entry still goes through
+  // the 3% jitter dedupe vs the player's last logged spot.
+  const addPositionEventsBatch = (gameId, slots) => {
+    if (!gameId || !slots || slots.length === 0) return;
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const lastByPlayer = {};
+    for (const e of game.events) {
+      if (e.type === 'POSITION') lastByPlayer[e.playerId] = e;
+    }
+    const elapsed = computeElapsed(game);
+    const now = Date.now();
+    const newEvents = [];
+    for (const s of slots) {
+      if (!s.playerId) continue;
+      const cx = Math.max(0.04, Math.min(0.96, s.x));
+      const cy = Math.max(0.04, Math.min(0.96, s.y));
+      const last = lastByPlayer[s.playerId];
+      if (last && Math.hypot((last.x ?? 0) - cx, (last.y ?? 0) - cy) < 0.03) continue;
+      newEvents.push({
+        id: uid(),
+        type: 'POSITION',
+        playerId: s.playerId,
+        period: game.period,
+        elapsed,
+        at: now + newEvents.length, // preserve order within the batch
+        x: cx,
+        y: cy,
+      });
+    }
+    if (newEvents.length === 0) return;
+    persistGames(games.map(g => g.id === gameId
+      ? { ...g, events: [...g.events, ...newEvents] }
+      : g));
+  };
+
   const setGameGK = (gameId, newGKPlayerId, atTs) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
@@ -1335,6 +1374,7 @@ function App() {
           onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
           onSwapGK={() => setPendingEvent({ type: 'NEW_GK', defaultGK: currentGKAt(activeGame) })}
           onMovePosition={(playerId, x, y) => addPositionEvent(activeGame.id, playerId, x, y)}
+          onResetFormation={(slots) => addPositionEventsBatch(activeGame.id, slots)}
           onSelectPlayer={(playerId) => {
             if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
               // Re-validate against the LIVE lineup at click time, not the
@@ -1478,7 +1518,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
           <button
             onClick={onConfirm}
             className={`py-4 rounded-xl font-display text-lg active:scale-[0.98] transition ${
-              danger ? 'bg-red-500 text-white' : 'bg-stone-900 text-white'
+              danger ? 'bg-red-500 text-white' : 'bg-lime-500 text-stone-950'
             }`}
           >
             {yesLabel}
@@ -2827,7 +2867,7 @@ function computeDefaultFormation(outfield, totalOnField) {
   return out;
 }
 
-function TacticalBoard({ game, roster, gameGKId, onMove }) {
+function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
   const onField = useMemo(() => onFieldAt(game), [game.events]);
   const players = useMemo(
     () => roster.filter(p => onField.has(p.id))
@@ -2887,54 +2927,77 @@ function TacticalBoard({ game, roster, gameGKId, onMove }) {
     if (onMove) onMove(playerId, x, y);
   };
 
+  // Snap every on-field player back to the default formation slot for the
+  // current on-field count (e.g. 2-3-1 for 7v7). Used after big tactical
+  // shake-ups or to start fresh after a few rotations.
+  const handleReset = () => {
+    if (!onReset) return;
+    const slots = players.map(p => {
+      const def = p.id === gameGKId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
+      return { playerId: p.id, x: def.x, y: def.y };
+    });
+    onReset(slots);
+  };
+
   if (players.length === 0) return null;
 
   return (
     <div className="mt-5 mb-2 bg-stone-900/80 border border-stone-800 rounded-2xl p-3">
-      <button
-        type="button"
-        onClick={() => setCollapsed(c => !c)}
-        className="w-full flex items-center justify-between mb-2 active:scale-[0.99]"
-      >
-        <h3 className="font-display text-lg flex items-center gap-2">
-          <span>🧭</span><span>TACTICAL BOARD</span>
-        </h3>
-        <span className="text-[10px] text-stone-400 tracking-widest">
-          {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
-        </span>
-      </button>
+      <div className="w-full flex items-center justify-between mb-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2 active:scale-[0.99]"
+        >
+          <h3 className="font-display text-lg flex items-center gap-2">
+            <span>🧭</span><span>TACTICAL BOARD</span>
+          </h3>
+          <span className="text-[10px] text-stone-400 tracking-widest">
+            {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
+          </span>
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-[10px] font-bold text-stone-300 bg-stone-800 px-2.5 py-1 rounded-full active:scale-95 tracking-widest"
+          >
+            RESET
+          </button>
+        )}
+      </div>
       {!collapsed && (
         <>
           <div
             ref={fieldRef}
             className="relative w-full mx-auto select-none touch-none overflow-hidden rounded-xl"
-            style={{ aspectRatio: '3 / 4', maxWidth: '420px' }}
+            style={{ aspectRatio: '4 / 3', maxWidth: '420px' }}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
           >
             <svg
-              viewBox="0 0 100 130"
+              viewBox="0 0 100 75"
               className="absolute inset-0 w-full h-full"
               preserveAspectRatio="none"
             >
               {/* Pitch fill with subtle horizontal stripes */}
-              <rect x="0" y="0" width="100" height="130" fill="#0e3a22" />
-              {[0, 1, 2, 3, 4, 5].map(i => (
-                <rect key={i} x="0" y={i * 21.7} width="100" height="10.8" fill="#0a3320" />
+              <rect x="0" y="0" width="100" height="75" fill="#0e3a22" />
+              {[0, 1, 2, 3].map(i => (
+                <rect key={i} x="0" y={i * 18.75} width="100" height="9.4" fill="#0a3320" />
               ))}
               {/* Touchlines */}
-              <rect x="2" y="2" width="96" height="126" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
-              {/* Halfway arc (we render top edge as halfway line) */}
+              <rect x="2" y="2" width="96" height="71" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              {/* Halfway line + center arc (top edge = halfway) */}
               <line x1="2" y1="2" x2="98" y2="2" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
               <path d="M 42 2 A 8 8 0 0 0 58 2" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
               {/* Penalty area (own goal at bottom) */}
-              <rect x="20" y="103" width="60" height="25" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
-              <rect x="35" y="117" width="30" height="11" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="20" y="55" width="60" height="18" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="35" y="66" width="30" height="7" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
               {/* Penalty arc */}
-              <path d="M 42 103 A 8 8 0 0 1 58 103" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 55 A 8 8 0 0 1 58 55" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
               {/* Goal */}
-              <line x1="42" y1="128" x2="58" y2="128" stroke="#ffffff" strokeWidth="1.2" />
+              <line x1="42" y1="73" x2="58" y2="73" stroke="#ffffff" strokeWidth="1.2" />
             </svg>
             {players.map(p => {
               const isDragging = drag?.playerId === p.id;
@@ -2979,7 +3042,7 @@ function TacticalBoard({ game, roster, gameGKId, onMove }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -3009,6 +3072,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       roster={squadRoster}
       gameGKId={gameGKId}
       onMove={onMovePosition}
+      onReset={onResetFormation}
     />
   );
 
@@ -3357,7 +3421,11 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
-            <div className="mt-8 w-full">
+            <div className="w-full">
+              {tacticalBoard}
+            </div>
+
+            <div className="mt-5 w-full">
               <h3 className="font-display text-lg mb-2 text-left">RECENT</h3>
               <div className="space-y-1.5">
                 {recent.length === 0 && (
@@ -3365,10 +3433,6 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 )}
                 {recent.map(e => <EventRow key={e.id} event={e} roster={roster} />)}
               </div>
-            </div>
-
-            <div className="w-full mt-5">
-              {tacticalBoard}
             </div>
           </div>
         ) : (
@@ -3471,6 +3535,8 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             )}
 
+            {tacticalBoard}
+
             <div className="mt-5 flex-1 min-h-0">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-display text-lg">RECENT</h3>
@@ -3490,8 +3556,6 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 {recent.map(e => <EventRow key={e.id} event={e} roster={roster} />)}
               </div>
             </div>
-
-            {tacticalBoard}
           </>
         )}
       </div>
@@ -9108,6 +9172,10 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
 
 
 
