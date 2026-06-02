@@ -471,6 +471,52 @@ export default function App() {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
 
+  // Per-view browser-history stack. Every time `view` changes to a deeper
+  // step (gameSetup → squad → lineup → activeGame), we pushState. When the
+  // user swipes back / hits the OS back gesture, popstate fires and we
+  // restore the previous view from our mirrored stack. When in-app code
+  // jumps back (e.g. an onBack button that calls setView('home') directly,
+  // skipping intermediate steps), we call history.go(-N) to keep the
+  // browser stack and our stack in sync. The `expectedPops` counter
+  // distinguishes a popstate triggered by our own history.go(-N) (which
+  // shouldn't run the back logic again) from a physical swipe.
+  const viewStackRef = useRef(['home']);
+  const expectedPopsRef = useRef(0);
+  useEffect(() => {
+    const stack = viewStackRef.current;
+    const top = stack[stack.length - 1];
+    if (view === top) return;
+    const idx = stack.lastIndexOf(view);
+    if (idx >= 0 && idx < stack.length - 1) {
+      // In-app navigation BACK to a previous view in the stack: collapse the
+      // stack and rewind the browser by the matching number of steps.
+      const steps = stack.length - 1 - idx;
+      viewStackRef.current = stack.slice(0, idx + 1);
+      expectedPopsRef.current += 1; // history.go(-N) fires one popstate
+      window.history.go(-steps);
+    } else {
+      // Forward navigation to a new view: push one entry.
+      viewStackRef.current = [...stack, view];
+      window.history.pushState({ coachView: view }, '');
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const onPop = () => {
+      if (expectedPopsRef.current > 0) {
+        expectedPopsRef.current -= 1;
+        return; // our own history.go(-N) — view already updated
+      }
+      const stack = viewStackRef.current;
+      if (stack.length <= 1) return; // already at home; let the browser exit
+      stack.pop();
+      const prev = stack[stack.length - 1] || 'home';
+      setView(prev);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // Auto-unlock for coaches based on Firestore role
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
