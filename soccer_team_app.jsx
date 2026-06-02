@@ -625,9 +625,33 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
+    // Seed POSITION events from the kickoff tactical board so the in-game
+    // board opens with the formation the coach already set, and post-game
+    // analytics has the kickoff slot for each starter.
+    const initialEvents = [];
+    if (Array.isArray(kickoffPositions)) {
+      const startingSet = new Set(startingLineup || []);
+      let i = 0;
+      for (const s of kickoffPositions) {
+        if (!s || !s.playerId || !startingSet.has(s.playerId)) continue;
+        const cx = Math.max(0.04, Math.min(0.96, Number(s.x)));
+        const cy = Math.max(0.04, Math.min(0.96, Number(s.y)));
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+        initialEvents.push({
+          id: uid(),
+          type: 'POSITION',
+          playerId: s.playerId,
+          period: 1,
+          elapsed: 0,
+          at: now + (i++),
+          x: cx,
+          y: cy,
+        });
+      }
+    }
     const game = {
       id: uid(),
       opponent: opponent || 'Opponent',
@@ -645,7 +669,7 @@ export default function App() {
       clockRunning: true,
       elapsedAtPause: 0,
       segmentStartedAt: now,
-      events: [],
+      events: initialEvents,
       squad: squadIds,
       startingLineup: startingLineup || [],
       gkPlayerId: gkPlayerId || null,
@@ -1273,8 +1297,8 @@ export default function App() {
           teamLiveInput={teamLiveInput}
           onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
-          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId);
+          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId, kickoffPositions) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions);
             setPendingGameSetup(null);
           }}
         />
@@ -2365,6 +2389,10 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
     const defaultGK = sorted.find(p => p.position === 'GK');
     return defaultGK ? defaultGK.id : null;
   });
+  // Live mirror of the kickoff tactical board's positions, kept in a ref so
+  // START GAME can snapshot them without re-rendering every drag.
+  const kickoffPositionsRef = useRef({});
+  const onFieldPlayers = sorted.filter(p => selected.has(p.id));
 
   // Livestream attachment. Cloudflare Stream Live Inputs are persistent: one
   // input = one fixed RTMPS URL + Stream Key, reusable forever. We provision
@@ -2704,11 +2732,25 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
           </>
         )}
 
+        <KickoffTacticalBoard
+          players={onFieldPlayers}
+          gkId={gkId}
+          positionsRef={kickoffPositionsRef}
+        />
+
         <button
           onClick={() => {
             const livePayload = LIVE_MODE === 'cloudflare' && attached ? teamLiveInput : null;
             const ytId = LIVE_MODE === 'youtube' ? ytVideoId : null;
-            onStart(Array.from(selected), gkId, livePayload, ytId);
+            // Snapshot the kickoff formation so startNewGame can seed
+            // POSITION events at t=0 — only for players who are actually
+            // on the field at kickoff.
+            const liveOnField = new Set(Array.from(selected));
+            const snap = kickoffPositionsRef.current || {};
+            const kickoffPositions = Object.entries(snap)
+              .filter(([pid]) => liveOnField.has(pid))
+              .map(([playerId, xy]) => ({ playerId, x: xy.x, y: xy.y }));
+            onStart(Array.from(selected), gkId, livePayload, ytId, kickoffPositions);
           }}
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
@@ -2803,6 +2845,173 @@ function computeDefaultFormation(outfield, totalOnField) {
     }
   });
   return out;
+}
+
+// Kickoff-time variant of the tactical board for the Starting Lineup screen.
+// The in-game TacticalBoard derives state from game.events (POSITION events),
+// but at lineup time we don't have a game yet. This version keeps positions
+// in local state and exposes them via getPositions() so the parent can read
+// the final formation when the coach taps START GAME and seed it into the
+// new game as POSITION events at t=0.
+function KickoffTacticalBoard({ players, gkId, positionsRef }) {
+  const sorted = useMemo(
+    () => [...players].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0)),
+    [players]
+  );
+  const outfield = useMemo(() => sorted.filter(p => p.id !== gkId), [sorted, gkId]);
+  const totalOnField = sorted.length;
+  const defaults = useMemo(
+    () => computeDefaultFormation(outfield, totalOnField),
+    [outfield.map(p => p.id).join(','), totalOnField]
+  );
+  const gkDefault = { x: 0.5, y: 0.94 };
+
+  // Seed positions from defaults whenever the player set or GK changes.
+  // Preserve any positions the coach has already dragged for players that
+  // remain on the field.
+  const [positions, setPositions] = useState({});
+  useEffect(() => {
+    setPositions(prev => {
+      const next = {};
+      for (const p of sorted) {
+        if (p.id === gkId) next[p.id] = prev[p.id] || gkDefault;
+        else next[p.id] = prev[p.id] || defaults[p.id] || { x: 0.5, y: 0.5 };
+      }
+      return next;
+    });
+  }, [sorted.map(p => p.id).join(','), gkId, defaults]);
+
+  // Publish the latest positions to the parent via the ref so START GAME
+  // can seed POSITION events without a re-render dance.
+  useEffect(() => {
+    if (positionsRef) positionsRef.current = positions;
+  }, [positions, positionsRef]);
+
+  const [collapsed, setCollapsed] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const fieldRef = useRef(null);
+  const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+
+  const handlePointerDown = (playerId) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    const pos = positions[playerId] || { x: 0.5, y: 0.5 };
+    setDrag({ playerId, pointerId: e.pointerId, x: pos.x, y: pos.y });
+  };
+  const handlePointerMove = (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const rect = fieldRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = clamp01((e.clientX - rect.left) / rect.width);
+    const y = clamp01((e.clientY - rect.top) / rect.height);
+    setDrag(d => d ? { ...d, x, y } : d);
+  };
+  const handlePointerUp = () => {
+    if (!drag) return;
+    const { playerId, x, y } = drag;
+    setDrag(null);
+    setPositions(prev => ({ ...prev, [playerId]: { x, y } }));
+  };
+
+  const handleReset = () => {
+    const next = {};
+    for (const p of sorted) {
+      next[p.id] = p.id === gkId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
+    }
+    setPositions(next);
+  };
+
+  if (sorted.length === 0) return null;
+
+  return (
+    <div className="mt-4 mb-3 bg-stone-900/80 border border-stone-800 rounded-2xl p-3">
+      <div className="w-full flex items-center justify-between mb-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2 active:scale-[0.99]"
+        >
+          <h3 className="font-display text-lg flex items-center gap-2">
+            <span>🧭</span><span>KICKOFF FORMATION</span>
+          </h3>
+          <span className="text-[10px] text-stone-400 tracking-widest">
+            {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
+          </span>
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-[10px] font-bold text-stone-300 bg-stone-800 px-2.5 py-1 rounded-full active:scale-95 tracking-widest"
+          >
+            RESET
+          </button>
+        )}
+      </div>
+      {!collapsed && (
+        <>
+          <div
+            ref={fieldRef}
+            className="relative w-full mx-auto select-none touch-none overflow-hidden rounded-xl"
+            style={{ aspectRatio: '4 / 3', maxWidth: '420px' }}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          >
+            <svg viewBox="0 0 100 75" className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+              <rect x="0" y="0" width="100" height="75" fill="#0e3a22" />
+              {[0, 1, 2, 3].map(i => (
+                <rect key={i} x="0" y={i * 18.75} width="100" height="9.4" fill="#0a3320" />
+              ))}
+              <rect x="2" y="2" width="96" height="71" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <line x1="2" y1="2" x2="98" y2="2" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 2 A 8 8 0 0 0 58 2" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="20" y="55" width="60" height="18" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="35" y="66" width="30" height="7" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 55 A 8 8 0 0 1 58 55" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <line x1="42" y1="73" x2="58" y2="73" stroke="#ffffff" strokeWidth="1.2" />
+            </svg>
+            {sorted.map(p => {
+              const isDragging = drag?.playerId === p.id;
+              const pos = isDragging ? { x: drag.x, y: drag.y } : (positions[p.id] || { x: 0.5, y: 0.5 });
+              const isGK = p.id === gkId;
+              const label = p.number || (p.name ? p.name[0] : '?');
+              const first = (p.name || '').split(' ')[0];
+              return (
+                <div
+                  key={p.id}
+                  onPointerDown={handlePointerDown(p.id)}
+                  className={`absolute flex flex-col items-center pointer-events-auto touch-none ${isDragging ? 'z-20' : 'z-10'}`}
+                  style={{
+                    left: `${pos.x * 100}%`,
+                    top: `${pos.y * 100}%`,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <div
+                    className={`rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg border-2 ${isGK
+                      ? 'bg-amber-500 border-amber-200 text-stone-900'
+                      : 'bg-lime-600 border-lime-300'
+                      } ${isDragging ? 'scale-110 ring-2 ring-white/70' : ''}`}
+                    style={{ width: '34px', height: '34px' }}
+                  >
+                    {label}
+                  </div>
+                  <div className="mt-0.5 text-[9px] leading-none font-bold text-white/85 bg-stone-950/60 px-1 rounded">
+                    {first}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-[10px] text-stone-500 text-center">
+            Drag each player to their kickoff spot. Tap RESET for default {totalOnField === 7 ? '2-3-1' : 'formation'}.
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
