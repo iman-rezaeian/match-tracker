@@ -9648,6 +9648,106 @@ function LiveScorePage({ gameId }) {
 }
 
 /* ---- PublicHomePage: default URL for parents ---- */
+// All public-page time logic is anchored in America/Toronto (the user calls
+// this "EDT"). Browsers may be in a different tz on the road, so we never
+// trust the local clock for date/hour decisions — we project Date.now() into
+// America/Toronto and reason about wall-clock there.
+const APP_TZ = 'America/Toronto';
+
+function tzNowParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour) % 24,
+    minute: Number(parts.minute),
+  };
+}
+
+// Convert a Toronto wall-clock (YYYY-MM-DD, HH:MM) to a UTC ms epoch.
+function tzTimestamp(dateStr, timeStr) {
+  if (!dateStr) return 0;
+  const [Y, M, D] = dateStr.split('-').map(Number);
+  const [h, m] = (timeStr || '00:00').split(':').map(Number);
+  const utcGuess = Date.UTC(Y, M - 1, D, h, m);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date(utcGuess)).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+  const asLocal = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+  );
+  const offset = asLocal - utcGuess;
+  return utcGuess - offset;
+}
+
+// Pre-game / cancelled card that mirrors LiveScoreboard's look so the public
+// home keeps a consistent "field" panel whether or not the game has started.
+function ScheduledScoreboard({ item }) {
+  const isCancelled = !!item.cancelled;
+  const HOME_NAME = 'Stompers';
+  const leftName = HOME_NAME;
+  const rightName = item.opponent || 'Opponent';
+  const longestName = Math.max(leftName.length, rightName.length);
+  const nameSizeClass =
+    longestName <= 7 ? 'text-4xl'
+    : longestName <= 9 ? 'text-3xl'
+    : longestName <= 12 ? 'text-2xl'
+    : longestName <= 16 ? 'text-xl'
+    : longestName <= 20 ? 'text-lg'
+    : 'text-base';
+  return (
+    <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
+      <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
+        {item.tournament || 'Match'} · {formatDate(item.date)}
+      </div>
+      <div className="flex items-start justify-between gap-4 mt-5 px-2">
+        <div className="flex-1 min-w-0 text-center">
+          <div className={`font-display ${nameSizeClass} leading-tight`}>{leftName}</div>
+        </div>
+        <div className="flex-1 min-w-0 text-center">
+          <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
+        </div>
+      </div>
+      <div className="font-display text-6xl tabular-nums text-center mt-3 leading-none text-white/30">
+        <span>–</span><span className="mx-3 text-3xl align-middle">vs</span><span>–</span>
+      </div>
+      <div className="text-center mt-5 flex items-center justify-center gap-2 flex-wrap">
+        {isCancelled ? (
+          <span className="inline-block bg-red-500/20 text-red-200 border border-red-400/60 font-extrabold tracking-wider text-sm px-3 py-1 rounded-full">
+            CANCELLED
+          </span>
+        ) : (
+          <span className="inline-block bg-yellow-400/15 text-yellow-100 border border-yellow-300/50 font-extrabold tracking-wider text-sm px-3 py-1 rounded-full">
+            {item.time ? `KICKS OFF AT ${formatTime12(item.time)}` : 'KICKOFF TBD'}
+          </span>
+        )}
+        {item.field && (
+          <span className="inline-block bg-blue-500/15 text-blue-200 border border-blue-500/40 font-extrabold tracking-wider text-xs px-2 py-1 rounded">
+            📍 {item.field}
+          </span>
+        )}
+      </div>
+      {item.location && (
+        <div className="text-center text-xs text-blue-300 mt-3">
+          {item.location.startsWith('http') ? (
+            <a href={item.location} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> View Map
+            </a>
+          ) : (
+            <a href={`https://maps.google.com/?q=${encodeURIComponent(item.location)}`} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> {item.location}
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PublicHomePage() {
   const [games, setGames] = useState([]);
   const [roster, setRoster] = useState([]);
@@ -9655,6 +9755,13 @@ function PublicHomePage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [isCoachUser, setIsCoachUser] = useState(false);
+  // Re-render once a minute so the featured card flips at 6 AM ET, kickoff,
+  // and (final whistle + 1h) without needing a page reload or new snapshot.
+  const [, setMinTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setMinTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
@@ -9706,18 +9813,81 @@ function PublicHomePage() {
   if (error) return <PublicErrorScreen msg={error} />;
   if (!loaded) return <PublicLoadingScreen />;
 
+  const nowMs = Date.now();
+  const todayStr = tzNowParts().date;
+  const HOUR = 60 * 60 * 1000;
+
   const active = games.find((g) => g.status === 'active');
   const finished = games.filter((g) => g.status === 'finished');
-  // Feature a finished game only if it was played today (local tz); otherwise demote to past.
-  const todayStr = new Date().toLocaleDateString('en-CA');
-  const featuredFinished = finished[0] && (finished[0].date || '').slice(0, 10) >= todayStr ? finished[0] : null;
-  const featured = active || featuredFinished || null;
-  const past = active ? finished : (featuredFinished ? finished.slice(1) : finished);
+
+  // Build today's slot list: today's finished/active games + today's schedule
+  // items not already represented by a game doc (matched by opponent).
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const todayFinished = finished.filter((g) => (g.date || '').slice(0, 10) === todayStr);
+  const isCovered = (s) => {
+    if (active && (active.date || '').slice(0, 10) === todayStr && norm(active.opponent) === norm(s.opponent)) return true;
+    return todayFinished.some((g) => norm(g.opponent) === norm(s.opponent));
+  };
+  const todaySched = (schedule || []).filter(
+    (s) => (s.date || '').slice(0, 10) === todayStr && !isCovered(s),
+  );
+
+  const slots = [];
+  for (const g of todayFinished) {
+    const kickoffMs = g.startedAt || tzTimestamp(todayStr, '00:00');
+    slots.push({ kind: 'finished', game: g, kickoffMs, endMs: g.endedAt || kickoffMs });
+  }
+  for (const s of todaySched) {
+    const kickoffMs = tzTimestamp(todayStr, s.time || '12:00');
+    // Per coach: a cancellation within 3h of kickoff is treated like a played
+    // game (so parents see CANCELLED on the home card). We don't record
+    // `cancelledAt` yet, so we honor any `s.cancelled === true` for today.
+    slots.push({
+      kind: s.cancelled ? 'cancelled' : 'upcoming',
+      item: s,
+      kickoffMs,
+      endMs: kickoffMs,
+    });
+  }
+  slots.sort((a, b) => a.kickoffMs - b.kickoffMs);
+
+  // Pick the featured slot.
+  //   1. Active game today always wins.
+  //   2. Otherwise, from 6 AM ET onward:
+  //      - Latest slot whose kickoff has passed and is still "current"
+  //        (within end+1h, OR is the last slot of the day → stay featured
+  //        until midnight ET).
+  //      - If nothing is current yet, show the next upcoming slot
+  //        (pre-kickoff card, starting at 6 AM ET).
+  let featuredSlot = null;
+  if (active && (active.date || '').slice(0, 10) === todayStr) {
+    featuredSlot = { kind: 'active', game: active };
+  } else {
+    const sixAm = tzTimestamp(todayStr, '06:00');
+    if (nowMs >= sixAm && slots.length > 0) {
+      for (let i = slots.length - 1; i >= 0; i--) {
+        const s = slots[i];
+        const isLast = i === slots.length - 1;
+        if (s.kickoffMs <= nowMs) {
+          const flipAt = s.endMs + HOUR;
+          if (isLast || nowMs < flipAt) { featuredSlot = s; break; }
+        }
+      }
+      if (!featuredSlot) featuredSlot = slots.find((s) => s.kickoffMs > nowMs) || null;
+    }
+  }
+
+  const featuredGame =
+    featuredSlot?.kind === 'active' || featuredSlot?.kind === 'finished' ? featuredSlot.game : null;
+  const featuredItem =
+    featuredSlot?.kind === 'upcoming' || featuredSlot?.kind === 'cancelled' ? featuredSlot.item : null;
+
+  const past = finished.filter((g) => !featuredGame || g.id !== featuredGame.id);
 
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      {featured ? (
+      {featuredSlot ? (
         <>
           <div className="relative stripes-bg text-white px-5 pt-16 pb-6 overflow-hidden border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
             <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
@@ -9751,26 +9921,30 @@ function PublicHomePage() {
               </div>
             </div>
           </div>
-          <a href={`./?live=${featured.id}`} className="block">
-            <LiveScoreboard game={featured} roster={roster} />
-          </a>
-          {featured.videoUrl && !featured.youtubeVideoId && (
+          {featuredGame ? (
+            <a href={`./?live=${featuredGame.id}`} className="block">
+              <LiveScoreboard game={featuredGame} roster={roster} />
+            </a>
+          ) : (
+            <ScheduledScoreboard item={featuredItem} />
+          )}
+          {featuredGame && featuredGame.videoUrl && !featuredGame.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <PublicVideoToggle url={featured.videoUrl} game={featured} label="🎥 WATCH 360° VIDEO" />
+              <PublicVideoToggle url={featuredGame.videoUrl} game={featuredGame} label="🎥 WATCH 360° VIDEO" />
             </div>
           )}
-          {featured.youtubeVideoId && (
+          {featuredGame && featuredGame.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <YouTubeEmbed videoId={featured.youtubeVideoId} live={featured.status === 'active'} />
+              <YouTubeEmbed videoId={featuredGame.youtubeVideoId} live={featuredGame.status === 'active'} />
             </div>
           )}
-          {!featured.youtubeVideoId && featured.liveInput?.hlsUrl && (
+          {featuredGame && !featuredGame.youtubeVideoId && featuredGame.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
+              <PublicVideoToggle url={featuredGame.liveInput.hlsUrl} game={featuredGame} label="🔴 WATCH LIVE" />
             </div>
           )}
-          {featured.status === 'finished' && (
-            <PublicAnalyticsCard game={featured} roster={roster} />
+          {featuredGame && featuredGame.status === 'finished' && (
+            <PublicAnalyticsCard game={featuredGame} roster={roster} />
           )}
         </>
       ) : (
@@ -9816,6 +9990,7 @@ function PublicHomePage() {
       {(() => {
         const upcoming = schedule
           .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .filter(s => !featuredItem || s.id !== featuredItem.id)
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
         if (upcoming.length === 0) return null;
         return (
@@ -10064,6 +10239,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
