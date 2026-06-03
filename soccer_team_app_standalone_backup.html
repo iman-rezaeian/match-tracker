@@ -3011,6 +3011,38 @@ const POSITION_SLOTS = [
   { key: 'RD',  label: 'RD',  x: 0.75, y: 0.72 },
 ];
 
+// Snap each outfield player to the closest named POSITION_SLOTS slot to
+// where they currently stand. If a slot is already claimed, the next-closest
+// available slot wins. Greedy assignment by ascending distance — good enough
+// for 6-10 players (a Hungarian-optimal solution would be overkill).
+// Returns: { [playerId]: { x, y } }
+function snapOutfieldToSlots(outfieldIds, currentPositions) {
+  const pairs = [];
+  for (const pid of outfieldIds) {
+    const cur = currentPositions[pid] || { x: 0.5, y: 0.5 };
+    for (const slot of POSITION_SLOTS) {
+      const d = (slot.x - cur.x) ** 2 + (slot.y - cur.y) ** 2;
+      pairs.push({ pid, slot, d });
+    }
+  }
+  pairs.sort((a, b) => a.d - b.d);
+  const assigned = {};
+  const usedSlots = new Set();
+  for (const { pid, slot } of pairs) {
+    if (assigned[pid]) continue;
+    if (usedSlots.has(slot.key)) continue;
+    assigned[pid] = { x: slot.x, y: slot.y };
+    usedSlots.add(slot.key);
+    if (Object.keys(assigned).length === outfieldIds.length) break;
+  }
+  // Edge case: more outfielders than slots (9 slots → only matters at 10v10+).
+  // Fall back to the player's current position so they're not displaced.
+  for (const pid of outfieldIds) {
+    if (!assigned[pid]) assigned[pid] = currentPositions[pid] || { x: 0.5, y: 0.5 };
+  }
+  return assigned;
+}
+
 // Small modal that floats above the tactical board so the coach can tap a
 // position label instead of dragging. Used by both KickoffTacticalBoard and
 // the in-game TacticalBoard. Rendered as a centered overlay so it works
@@ -3303,9 +3335,16 @@ function KickoffTacticalBoard({ players, gkId, positionsRef, learnedDefaults }) 
   };
 
   const handleReset = () => {
+    // Snap each outfield player to their nearest named position slot (with
+    // greedy conflict resolution). GK stays in goal. This keeps the coach's
+    // intent intact instead of bulldozing back to a grid formation.
+    const snapped = snapOutfieldToSlots(
+      outfield.map(p => p.id),
+      positions
+    );
     const next = {};
     for (const p of sorted) {
-      next[p.id] = p.id === gkId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
+      next[p.id] = p.id === gkId ? gkDefault : (snapped[p.id] || defaults[p.id] || { x: 0.5, y: 0.5 });
     }
     setPositions(next);
   };
@@ -3395,7 +3434,7 @@ function KickoffTacticalBoard({ players, gkId, positionsRef, learnedDefaults }) 
           </div>
           <div className="mt-2 text-[10px] text-stone-500 text-center">
             Tap a player to pick a position (LD/CD/RD · LM/CM/RM · LST/CST/RST).
-            Drag to fine-tune. RESET = default {totalOnField === 7 ? '2-3-1' : 'formation'}.
+            Drag to fine-tune. RESET snaps each player to their nearest open position.
           </div>
         </>
       )}
@@ -3498,14 +3537,18 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
     }
   };
 
-  // Snap every on-field player back to the default formation slot for the
-  // current on-field count (e.g. 2-3-1 for 7v7). Used after big tactical
-  // shake-ups or to start fresh after a few rotations.
+  // Snap every on-field outfield player to their nearest named position
+  // slot (with greedy conflict resolution). GK stays in goal. Coach
+  // doesn't have to drop players on exact spots — Reset tidies them up.
   const handleReset = () => {
     if (!onReset) return;
+    const snapped = snapOutfieldToSlots(
+      outfield.map(p => p.id),
+      positions
+    );
     const slots = players.map(p => {
-      const def = p.id === gameGKId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
-      return { playerId: p.id, x: def.x, y: def.y };
+      const pos = p.id === gameGKId ? gkDefault : (snapped[p.id] || positions[p.id] || { x: 0.5, y: 0.5 });
+      return { playerId: p.id, x: pos.x, y: pos.y };
     });
     onReset(slots);
   };
@@ -9976,6 +10019,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
