@@ -9602,13 +9602,15 @@ function LiveScorePage({ gameId }) {
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <a
-        href="./"
-        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
-      >
-        <ChevronLeft className="w-4 h-4" /> ALL MATCHES
-      </a>
-      <LiveScoreboard game={game} roster={roster} />
+      <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden pt-[calc(env(safe-area-inset-top,0px)+3.25rem)]">
+        <a
+          href="./"
+          className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
+        >
+          <ChevronLeft className="w-4 h-4" /> ALL MATCHES
+        </a>
+        <LiveScoreboard game={game} roster={roster} transparent />
+      </div>
       {game.youtubeVideoId && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
@@ -9686,7 +9688,7 @@ function tzTimestamp(dateStr, timeStr) {
 
 // Pre-game / cancelled card that mirrors LiveScoreboard's look so the public
 // home keeps a consistent "field" panel whether or not the game has started.
-function ScheduledScoreboard({ item }) {
+function ScheduledScoreboard({ item, transparent = false }) {
   const isCancelled = !!item.cancelled;
   const HOME_NAME = 'Stompers';
   const leftName = HOME_NAME;
@@ -9700,7 +9702,7 @@ function ScheduledScoreboard({ item }) {
     : longestName <= 20 ? 'text-lg'
     : 'text-base';
   return (
-    <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
+    <div className={`${transparent ? '' : 'stripes-bg '}text-white px-4 ${transparent ? 'pt-2' : 'pt-[calc(env(safe-area-inset-top,0px)+3.75rem)]'} pb-6`}>
       <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
         {item.tournament || 'Match'} · {formatDate(item.date)}
       </div>
@@ -9889,45 +9891,47 @@ function PublicHomePage() {
       <style>{FONT_STYLES}</style>
       {featuredSlot ? (
         <>
-          <div className="relative stripes-bg text-white px-5 pt-16 pb-6 overflow-hidden border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
-            <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
-              {window.fbUserInfo && (
-                <button
-                  onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
-                  aria-label="Sign out"
-                  className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+          <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden">
+            <div className="text-white px-5 pt-16 pb-2">
+              <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+                {window.fbUserInfo && (
+                  <button
+                    onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                    aria-label="Sign out"
+                    className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+                  >
+                    {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                    <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+                  </button>
+                )}
+                <a
+                  href="./?coach"
+                  className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
                 >
-                  {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-                  <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
-                </button>
-              )}
-              <a
-                href="./?coach"
-                className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
-              >
-                <span>🪑</span><span>DUGOUT</span>
-              </a>
-            </div>
-            <div className="flex items-center gap-4 mt-12">
-              <img
-                src="./stompers_logo.png"
-                alt=""
-                className="w-24 h-24 shrink-0 drop-shadow"
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
-              <div className="flex-1 min-w-0">
-                <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-                <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+                  <span>🪑</span><span>DUGOUT</span>
+                </a>
+              </div>
+              <div className="flex items-center gap-4 mt-12">
+                <img
+                  src="./stompers_logo.png"
+                  alt=""
+                  className="w-24 h-24 shrink-0 drop-shadow"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+                <div className="flex-1 min-w-0">
+                  <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+                  <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+                </div>
               </div>
             </div>
+            {featuredGame ? (
+              <a href={`./?live=${featuredGame.id}`} className="block">
+                <LiveScoreboard game={featuredGame} roster={roster} transparent />
+              </a>
+            ) : (
+              <ScheduledScoreboard item={featuredItem} transparent />
+            )}
           </div>
-          {featuredGame ? (
-            <a href={`./?live=${featuredGame.id}`} className="block">
-              <LiveScoreboard game={featuredGame} roster={roster} />
-            </a>
-          ) : (
-            <ScheduledScoreboard item={featuredItem} />
-          )}
           {featuredGame && featuredGame.videoUrl && !featuredGame.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
               <PublicVideoToggle url={featuredGame.videoUrl} game={featuredGame} label="🎥 WATCH 360° VIDEO" />
@@ -10089,7 +10093,7 @@ function PublicLoadingScreen() {
 }
 
 /* ---- LiveScoreboard: pure render given game + roster ---- */
-function LiveScoreboard({ game, roster }) {
+function LiveScoreboard({ game, roster, transparent = false }) {
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -10164,7 +10168,7 @@ function LiveScoreboard({ game, roster }) {
 
   return (
     <>
-      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
+      <div className={`${transparent ? '' : 'stripes-bg '}text-white px-4 ${transparent ? 'pt-2' : 'pt-[calc(env(safe-area-inset-top,0px)+3.75rem)]'} pb-6`}>
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
@@ -10239,6 +10243,10 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
+
+
 
 
 
