@@ -466,6 +466,13 @@ export default function App() {
   const [tick, setTick] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingGameSetup, setPendingGameSetup] = useState(null);
+  // When editing a scheduled game's pre-picked squad, we stash the schedule
+  // item id (+ a snapshot of the current squad) so the SquadPickerView can
+  // save back into the schedule and return to the schedule screen.
+  const [editingScheduleSquad, setEditingScheduleSquad] = useState(null);
+  // When returning from the squad picker, ScheduleView re-mounts; this hint
+  // tells it to drop back into edit mode for the same item.
+  const [resumeScheduleEditId, setResumeScheduleEditId] = useState(null);
 
   const askConfirm = (message, onYes, opts = {}) => {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
@@ -625,9 +632,33 @@ export default function App() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
+    // Seed POSITION events from the kickoff tactical board so the in-game
+    // board opens with the formation the coach already set, and post-game
+    // analytics has the kickoff slot for each starter.
+    const initialEvents = [];
+    if (Array.isArray(kickoffPositions)) {
+      const startingSet = new Set(startingLineup || []);
+      let i = 0;
+      for (const s of kickoffPositions) {
+        if (!s || !s.playerId || !startingSet.has(s.playerId)) continue;
+        const cx = Math.max(0.04, Math.min(0.96, Number(s.x)));
+        const cy = Math.max(0.04, Math.min(0.96, Number(s.y)));
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+        initialEvents.push({
+          id: uid(),
+          type: 'POSITION',
+          playerId: s.playerId,
+          period: 1,
+          elapsed: 0,
+          at: now + (i++),
+          x: cx,
+          y: cy,
+        });
+      }
+    }
     const game = {
       id: uid(),
       opponent: opponent || 'Opponent',
@@ -645,7 +676,7 @@ export default function App() {
       clockRunning: true,
       elapsedAtPause: 0,
       segmentStartedAt: now,
-      events: [],
+      events: initialEvents,
       squad: squadIds,
       startingLineup: startingLineup || [],
       gkPlayerId: gkPlayerId || null,
@@ -1179,11 +1210,28 @@ export default function App() {
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
           onStartScheduled={(item) => {
-            // Route through GameSetup so the coach can confirm/adjust jersey
-            // colors (and half length) before squad picking. Pre-fill from
-            // the schedule entry.
-            setPendingGameSetup({ opponent: item.opponent, isHome: true, tournament: item.tournament, fromSchedule: true });
-            setView('gameSetup');
+            // Pre-fill from the scheduled item. If the coach already pre-set
+            // every match-day field (squad, home/away, half length, both
+            // colors), skip gameSetup AND squad and land straight on the
+            // starting-lineup / kickoff board.
+            const prefill = {
+              opponent: item.opponent,
+              tournament: item.tournament,
+              fromSchedule: true,
+              isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
+              halfLengthMin: item.halfLengthMin,
+              homeColor: item.homeColor,
+              awayColor: item.awayColor,
+              squad: Array.isArray(item.squadIds) && item.squadIds.length > 0 ? item.squadIds : undefined,
+            };
+            const fullyPreset =
+              prefill.squad &&
+              typeof item.isHome === 'boolean' &&
+              typeof item.halfLengthMin === 'number' &&
+              !!item.homeColor &&
+              !!item.awayColor;
+            setPendingGameSetup(prefill);
+            setView(fullyPreset ? 'lineup' : 'gameSetup');
           }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
@@ -1245,7 +1293,9 @@ export default function App() {
           initial={pendingGameSetup}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
           onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
-            setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
+            // Preserve any pre-picked squad / fromSchedule flag carried in from
+            // a scheduled-game start, so it survives the GameSetup detour.
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -1268,13 +1318,14 @@ export default function App() {
       {view === 'lineup' && pendingGameSetup && (
         <StartingLineupView
           roster={roster}
+          games={games}
           squad={pendingGameSetup.squad}
           setup={pendingGameSetup}
           teamLiveInput={teamLiveInput}
           onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
-          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId);
+          onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId, kickoffPositions) => {
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions);
             setPendingGameSetup(null);
           }}
         />
@@ -1402,10 +1453,41 @@ export default function App() {
       {view === 'schedule' && (
         <ScheduleView
           schedule={schedule}
+          roster={roster}
+          initialEditId={resumeScheduleEditId}
+          onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
           onSave={persistSchedule}
           onBack={() => setView('home')}
+          onEditSquad={(item) => {
+            setEditingScheduleSquad({ itemId: item.id, opponent: item.opponent, squadIds: item.squadIds || [] });
+            setView('scheduleSquad');
+          }}
           askConfirm={askConfirm}
           showToast={showToast}
+        />
+      )}
+
+      {view === 'scheduleSquad' && editingScheduleSquad && (
+        <SquadPickerView
+          roster={roster}
+          setup={{ opponent: editingScheduleSquad.opponent }}
+          initialSquad={editingScheduleSquad.squadIds}
+          title="EDIT MATCH-DAY SQUAD"
+          subtitle={<>Pre-pick the squad now. On match day, tapping <span className="font-bold">START</span> will jump straight to the lineup.</>}
+          nextLabel="SAVE SQUAD"
+          onBack={() => {
+            setResumeScheduleEditId(editingScheduleSquad.itemId);
+            setEditingScheduleSquad(null);
+            setView('schedule');
+          }}
+          onNext={(squadIds) => {
+            const next = schedule.map(s => s.id === editingScheduleSquad.itemId ? { ...s, squadIds } : s);
+            persistSchedule(next);
+            showToast?.(`✅ Saved ${squadIds.length}-player squad`);
+            setResumeScheduleEditId(editingScheduleSquad.itemId);
+            setEditingScheduleSquad(null);
+            setView('schedule');
+          }}
         />
       )}
 
@@ -2107,6 +2189,7 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
   const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
+  const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
   const [halfLengthMin, setHalfLengthMin] = useState(initial?.halfLengthMin ?? 25);
   const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
   const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
@@ -2163,6 +2246,21 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
             placeholder="e.g., Lions FC"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
+        </Field>
+
+        <Field label="SIDE">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setIsHome(true)}
+              className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+            >🏠 HOME</button>
+            <button
+              type="button"
+              onClick={() => setIsHome(false)}
+              className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+            >✈️ AWAY</button>
+          </div>
         </Field>
 
         <Field label="HALF LENGTH (MIN)">
@@ -2251,7 +2349,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
 
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -2263,7 +2361,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
 }
 
 /* ---------- MATCH-DAY SQUAD ---------- */
-function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
+function SquadPickerView({ roster, setup, initialSquad, onBack, onNext, title, subtitle, nextLabel }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
   const SOFT_CAP = 12;
   const [selected, setSelected] = useState(() =>
@@ -2284,13 +2382,13 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 
   return (
     <div className="pb-40">
-      <Header title="MATCH-DAY SQUAD" onBack={onBack} />
+      <Header title={title || "MATCH-DAY SQUAD"} onBack={onBack} />
 
       <div className="px-4 pt-4">
         <div className="text-xs text-stone-400 mb-1">vs {setup.opponent}</div>
         <div className="text-sm text-stone-200 mb-3">
-          Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
-          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.
+          {subtitle || (<>Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
+          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.</>)}
         </div>
 
         <div className="flex gap-2 mb-4">
@@ -2346,7 +2444,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
               : 'bg-stone-800 text-stone-400 border-stone-700 cursor-not-allowed'
           }`}
         >
-          NEXT: STARTING LINEUP →
+          {nextLabel || 'NEXT: STARTING LINEUP →'}
         </button>
       </div>
     </div>
@@ -2354,7 +2452,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 }
 
 /* ---------- STARTING LINEUP ---------- */
-function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
+function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSaveTeamLiveInput, onBack, onStart }) {
   // Only players in the matchday squad are eligible. Legacy fallback: whole roster.
   const squadSet = squad && squad.length > 0 ? new Set(squad) : null;
   const pool = squadSet ? roster.filter(p => squadSet.has(p.id)) : roster;
@@ -2365,6 +2463,10 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
     const defaultGK = sorted.find(p => p.position === 'GK');
     return defaultGK ? defaultGK.id : null;
   });
+  // Live mirror of the kickoff tactical board's positions, kept in a ref so
+  // START GAME can snapshot them without re-rendering every drag.
+  const kickoffPositionsRef = useRef({});
+  const onFieldPlayers = sorted.filter(p => selected.has(p.id));
 
   // Livestream attachment. Cloudflare Stream Live Inputs are persistent: one
   // input = one fixed RTMPS URL + Stream Key, reusable forever. We provision
@@ -2508,7 +2610,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
   const gkPlayer = sorted.find(p => p.id === gkId);
 
   return (
-    <div className="pb-40">
+    <div className="pb-8">
       <Header title="STARTING LINEUP" onBack={onBack} />
 
       <div className="px-4 pt-4">
@@ -2585,7 +2687,7 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 p-4 shadow-xl">
+      <div className="px-4 mt-6 bg-stone-900 border-t border-stone-800 pt-4 pb-6">
         <div className="text-center text-sm text-stone-300 mb-1">
           <span className="font-bold text-lime-700">{selected.size}</span> on field · <span className="font-bold text-stone-400">{sorted.length - selected.size}</span> on bench
         </div>
@@ -2704,11 +2806,26 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
           </>
         )}
 
+        <KickoffTacticalBoard
+          players={onFieldPlayers}
+          gkId={gkId}
+          positionsRef={kickoffPositionsRef}
+          learnedDefaults={useMemo(() => learnPlayerDefaults(games || []), [games])}
+        />
+
         <button
           onClick={() => {
             const livePayload = LIVE_MODE === 'cloudflare' && attached ? teamLiveInput : null;
             const ytId = LIVE_MODE === 'youtube' ? ytVideoId : null;
-            onStart(Array.from(selected), gkId, livePayload, ytId);
+            // Snapshot the kickoff formation so startNewGame can seed
+            // POSITION events at t=0 — only for players who are actually
+            // on the field at kickoff.
+            const liveOnField = new Set(Array.from(selected));
+            const snap = kickoffPositionsRef.current || {};
+            const kickoffPositions = Object.entries(snap)
+              .filter(([pid]) => liveOnField.has(pid))
+              .map(([playerId, xy]) => ({ playerId, x: xy.x, y: xy.y }));
+            onStart(Array.from(selected), gkId, livePayload, ytId, kickoffPositions);
           }}
           disabled={!gkId}
           className={`w-full font-display text-2xl py-4 rounded-2xl shadow-lg border-2 active:scale-[0.99] transition ${
@@ -2770,6 +2887,201 @@ function StartingLineupView({ roster, squad, setup, teamLiveInput, onSaveTeamLiv
 // Half-field portrait pitch (our goal at bottom, halfway line at top).
 // Coordinates: x,y ∈ [0,1]. Drag-end writes a POSITION event so the formation
 // snapshot survives reloads and feeds post-game analytics.
+
+// Named slots for the tap-to-pick position picker. y=0 is the halfway line
+// (opponent end), y=1 is our goal line. Strikers push high, defenders sit
+// deep just in front of the box. These are the labels coaches typically
+// shout from the sideline (LD/CD/RD, LM/CM/RM, LST/CST/RST).
+const POSITION_SLOTS = [
+  { key: 'LST', label: 'LST', x: 0.30, y: 0.28 },
+  { key: 'CST', label: 'CST', x: 0.50, y: 0.22 },
+  { key: 'RST', label: 'RST', x: 0.70, y: 0.28 },
+  { key: 'LM',  label: 'LM',  x: 0.22, y: 0.50 },
+  { key: 'CM',  label: 'CM',  x: 0.50, y: 0.50 },
+  { key: 'RM',  label: 'RM',  x: 0.78, y: 0.50 },
+  { key: 'LD',  label: 'LD',  x: 0.25, y: 0.72 },
+  { key: 'CD',  label: 'CD',  x: 0.50, y: 0.74 },
+  { key: 'RD',  label: 'RD',  x: 0.75, y: 0.72 },
+];
+
+// Snap each outfield player to the closest named POSITION_SLOTS slot to
+// where they currently stand. If a slot is already claimed, the next-closest
+// available slot wins. Greedy assignment by ascending distance — good enough
+// for 6-10 players (a Hungarian-optimal solution would be overkill).
+// Returns: { [playerId]: { x, y } }
+function snapOutfieldToSlots(outfieldIds, currentPositions) {
+  const pairs = [];
+  for (const pid of outfieldIds) {
+    const cur = currentPositions[pid] || { x: 0.5, y: 0.5 };
+    for (const slot of POSITION_SLOTS) {
+      const d = (slot.x - cur.x) ** 2 + (slot.y - cur.y) ** 2;
+      pairs.push({ pid, slot, d });
+    }
+  }
+  pairs.sort((a, b) => a.d - b.d);
+  const assigned = {};
+  const usedSlots = new Set();
+  for (const { pid, slot } of pairs) {
+    if (assigned[pid]) continue;
+    if (usedSlots.has(slot.key)) continue;
+    assigned[pid] = { x: slot.x, y: slot.y };
+    usedSlots.add(slot.key);
+    if (Object.keys(assigned).length === outfieldIds.length) break;
+  }
+  // Edge case: more outfielders than slots (9 slots → only matters at 10v10+).
+  // Fall back to the player's current position so they're not displaced.
+  for (const pid of outfieldIds) {
+    if (!assigned[pid]) assigned[pid] = currentPositions[pid] || { x: 0.5, y: 0.5 };
+  }
+  return assigned;
+}
+
+// Small modal that floats above the tactical board so the coach can tap a
+// position label instead of dragging. Used by both KickoffTacticalBoard and
+// the in-game TacticalBoard. Rendered as a centered overlay so it works
+// regardless of where the player chip sits on the pitch.
+function PositionPickerModal({ player, currentXY, isGK, onPick, onClose }) {
+  if (!player) return null;
+  const first = (player.name || '').split(' ')[0] || player.name || 'Player';
+  // Highlight the slot the player is closest to so the current spot is obvious.
+  const nearest = (() => {
+    let best = null, bestD = Infinity;
+    for (const s of POSITION_SLOTS) {
+      const d = (s.x - currentXY.x) ** 2 + (s.y - currentXY.y) ** 2;
+      if (d < bestD) { bestD = d; best = s.key; }
+    }
+    return bestD < 0.015 ? best : null;
+  })();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-stone-900 border border-stone-700 rounded-2xl p-4 w-full max-w-xs shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-center mb-3">
+          <div className="text-[10px] tracking-[0.2em] text-stone-400">PICK POSITION</div>
+          <div className="font-display text-xl text-stone-100 mt-0.5">
+            {isGK ? '🧤 ' : ''}#{player.number || '?'} {first}
+          </div>
+        </div>
+        {isGK ? (
+          <div className="text-xs text-stone-300 text-center bg-stone-800 rounded-xl p-3 mb-3">
+            Goalkeeper position is fixed.
+            Drag on the board if you want to nudge it.
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {POSITION_SLOTS.map(s => {
+              const isCurrent = nearest === s.key;
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => onPick(s)}
+                  className={`py-3 rounded-xl font-display text-sm border-2 active:scale-95 transition ${
+                    isCurrent
+                      ? 'bg-lime-500 text-stone-950 border-lime-300'
+                      : 'bg-stone-800 text-stone-100 border-stone-700 hover:bg-stone-700'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 rounded-xl bg-stone-800 text-stone-300 font-bold text-sm tracking-wider active:scale-95"
+        >
+          CANCEL
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Snap an (x, y) coordinate to the nearest named position slot (LD/CM/RST…).
+function nearestPositionSlot(x, y) {
+  let best = null, bestD = Infinity;
+  for (const s of POSITION_SLOTS) {
+    const d = (s.x - x) ** 2 + (s.y - y) ** 2;
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return best;
+}
+
+// Scan all finished games' POSITION events and learn each player's most
+// frequent named slot. Recent games (last 5) count double so seasonal role
+// shifts win out over ancient data. Returns:
+//   { [playerId]: { slot: <POSITION_SLOTS entry>, count, weight } }
+// Only players with at least one POSITION event get an entry; everyone else
+// falls back to the default-formation grid in the caller.
+function learnPlayerDefaults(games) {
+  if (!Array.isArray(games) || games.length === 0) return {};
+  // Sort newest first by date, then by endedAt for tournament days.
+  const sorted = [...games].sort((a, b) => {
+    const dc = new Date(b.date || 0) - new Date(a.date || 0);
+    if (dc !== 0) return dc;
+    return (b.endedAt || 0) - (a.endedAt || 0);
+  });
+  // { [playerId]: { [slotKey]: weightedCount } }
+  const tally = {};
+  // Minimum dwell time (seconds) for an in-game POSITION event to count.
+  // Anything shorter is treated as a coach drag-correction.
+  const MIN_DWELL_S = 10;
+  sorted.forEach((g, gameIdx) => {
+    if (!Array.isArray(g.events)) return;
+    const w = gameIdx < 5 ? 2 : 1; // recency weighting
+    // Group POSITION events by (playerId, period) so the dwell-time rule is
+    // computed within the same half. Pre-kickoff drag corrections (all at
+    // elapsed=0 in period 1) collapse to just the final position because
+    // every earlier event has an immediate next event in the same group.
+    const grouped = {}; // key = `${playerId}|${period}` -> [events sorted by at]
+    for (const ev of g.events) {
+      if (ev.type !== 'POSITION' || !ev.playerId) continue;
+      if (typeof ev.x !== 'number' || typeof ev.y !== 'number') continue;
+      const period = ev.period || 1;
+      const key = `${ev.playerId}|${period}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(ev);
+    }
+    for (const arr of Object.values(grouped)) {
+      arr.sort((a, b) => (a.at || 0) - (b.at || 0));
+      for (let i = 0; i < arr.length; i++) {
+        const ev = arr[i];
+        const next = arr[i + 1];
+        if (next) {
+          // Use wall-clock `at` (ms) — robust whether or not `elapsed` was
+          // updated for the new event.
+          const dwellMs = (next.at || 0) - (ev.at || 0);
+          if (dwellMs < MIN_DWELL_S * 1000) continue;
+        }
+        // ev "stuck" — either >=10s before being changed, or the last
+        // position of the period (no revision came).
+        const slot = nearestPositionSlot(ev.x, ev.y);
+        if (!slot) continue;
+        if (!tally[ev.playerId]) tally[ev.playerId] = {};
+        tally[ev.playerId][slot.key] = (tally[ev.playerId][slot.key] || 0) + w;
+      }
+    }
+  });
+  const out = {};
+  for (const pid of Object.keys(tally)) {
+    let bestKey = null, bestW = 0;
+    for (const [k, w] of Object.entries(tally[pid])) {
+      if (w > bestW) { bestW = w; bestKey = k; }
+    }
+    if (!bestKey) continue;
+    const slot = POSITION_SLOTS.find(s => s.key === bestKey);
+    if (!slot) continue;
+    out[pid] = { slot, weight: bestW };
+  }
+  return out;
+}
+
 function computeDefaultFormation(outfield, totalOnField) {
   // Pick a sensible default row split by total on-field count. Includes GK
   // count so common 7v7/9v9/5v5 line up cleanly.
@@ -2805,6 +3117,241 @@ function computeDefaultFormation(outfield, totalOnField) {
   return out;
 }
 
+// Kickoff-time variant of the tactical board for the Starting Lineup screen.
+// The in-game TacticalBoard derives state from game.events (POSITION events),
+// but at lineup time we don't have a game yet. This version keeps positions
+// in local state and exposes them via getPositions() so the parent can read
+// the final formation when the coach taps START GAME and seed it into the
+// new game as POSITION events at t=0.
+function KickoffTacticalBoard({ players, gkId, positionsRef, learnedDefaults }) {
+  const sorted = useMemo(
+    () => [...players].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0)),
+    [players]
+  );
+  const outfield = useMemo(() => sorted.filter(p => p.id !== gkId), [sorted, gkId]);
+  const totalOnField = sorted.length;
+  const defaults = useMemo(
+    () => computeDefaultFormation(outfield, totalOnField),
+    [outfield.map(p => p.id).join(','), totalOnField]
+  );
+  const gkDefault = { x: 0.5, y: 0.94 };
+
+  // Resolve learned-vs-default seeding once per (player set, gk) change.
+  // Rule: learned defaults from past games win first-come-first-served by
+  // jersey number. If two players have learned the same slot, the lower
+  // jersey number keeps it and the other falls back to the grid default.
+  const learnedSeed = useMemo(() => {
+    if (!learnedDefaults || Object.keys(learnedDefaults).length === 0) return {};
+    const taken = new Set();
+    const seed = {};
+    // sorted is already by jersey number — first-come wins.
+    for (const p of outfield) {
+      const entry = learnedDefaults[p.id];
+      if (!entry || !entry.slot) continue;
+      if (taken.has(entry.slot.key)) continue;
+      taken.add(entry.slot.key);
+      seed[p.id] = { x: entry.slot.x, y: entry.slot.y };
+    }
+    return seed;
+  }, [outfield.map(p => p.id).join(','), learnedDefaults]);
+
+  // Seed positions from learned defaults first, then grid defaults, whenever
+  // the player set or GK changes. Preserve anything the coach has already
+  // dragged for players that remain on the field.
+  const [positions, setPositions] = useState({});
+  useEffect(() => {
+    setPositions(prev => {
+      const next = {};
+      for (const p of sorted) {
+        if (prev[p.id]) { next[p.id] = prev[p.id]; continue; }
+        if (p.id === gkId) { next[p.id] = gkDefault; continue; }
+        if (learnedSeed[p.id]) { next[p.id] = learnedSeed[p.id]; continue; }
+        next[p.id] = defaults[p.id] || { x: 0.5, y: 0.5 };
+      }
+      return next;
+    });
+  }, [sorted.map(p => p.id).join(','), gkId, defaults, learnedSeed]);
+
+  // Publish the latest positions to the parent via the ref so START GAME
+  // can seed POSITION events without a re-render dance.
+  useEffect(() => {
+    if (positionsRef) positionsRef.current = positions;
+  }, [positions, positionsRef]);
+
+  const [collapsed, setCollapsed] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [picker, setPicker] = useState(null); // { playerId } when tap (no drag)
+  const fieldRef = useRef(null);
+  const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+  // Pixel distance below which a pointerdown→pointerup is treated as a tap
+  // (open position picker) instead of a drag. Generous enough for finger taps
+  // on iPad where the touch can wobble a few pixels.
+  const TAP_PX = 8;
+
+  const handlePointerDown = (playerId) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    const pos = positions[playerId] || { x: 0.5, y: 0.5 };
+    setDrag({
+      playerId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      x: pos.x,
+      y: pos.y,
+      moved: false,
+    });
+  };
+  const handlePointerMove = (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const rect = fieldRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const moved = drag.moved || (dx * dx + dy * dy) > (TAP_PX * TAP_PX);
+    if (!moved) { setDrag(d => d ? { ...d, moved: false } : d); return; }
+    const x = clamp01((e.clientX - rect.left) / rect.width);
+    const y = clamp01((e.clientY - rect.top) / rect.height);
+    setDrag(d => d ? { ...d, x, y, moved: true } : d);
+  };
+  const handlePointerUp = () => {
+    if (!drag) return;
+    const { playerId, x, y, moved } = drag;
+    setDrag(null);
+    if (moved) {
+      setPositions(prev => ({ ...prev, [playerId]: { x, y } }));
+    } else {
+      // Tap (no drag) → open the position picker for this player.
+      setPicker({ playerId });
+    }
+  };
+
+  const handleReset = () => {
+    // Snap each outfield player to their nearest named position slot (with
+    // greedy conflict resolution). GK stays in goal. This keeps the coach's
+    // intent intact instead of bulldozing back to a grid formation.
+    const snapped = snapOutfieldToSlots(
+      outfield.map(p => p.id),
+      positions
+    );
+    const next = {};
+    for (const p of sorted) {
+      next[p.id] = p.id === gkId ? gkDefault : (snapped[p.id] || defaults[p.id] || { x: 0.5, y: 0.5 });
+    }
+    setPositions(next);
+  };
+
+  if (sorted.length === 0) return null;
+
+  return (
+    <div className="mt-4 mb-3 bg-stone-900/80 border border-stone-800 rounded-2xl p-3">
+      <div className="w-full flex items-center justify-between mb-2">
+        <button
+          type="button"
+          onClick={() => setCollapsed(c => !c)}
+          className="flex items-center gap-2 active:scale-[0.99]"
+        >
+          <h3 className="font-display text-lg flex items-center gap-2">
+            <span>🧭</span><span>KICKOFF FORMATION</span>
+          </h3>
+          <span className="text-[10px] text-stone-400 tracking-widest">
+            {totalOnField}-A-SIDE · {collapsed ? 'SHOW' : 'HIDE'}
+          </span>
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="text-[10px] font-bold text-stone-300 bg-stone-800 px-2.5 py-1 rounded-full active:scale-95 tracking-widest"
+          >
+            RESET
+          </button>
+        )}
+      </div>
+      {!collapsed && (
+        <>
+          <div
+            ref={fieldRef}
+            className="relative w-full mx-auto select-none touch-none overflow-hidden rounded-xl"
+            style={{ aspectRatio: '4 / 3', maxWidth: '420px' }}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          >
+            <svg viewBox="0 0 100 75" className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+              <rect x="0" y="0" width="100" height="75" fill="#0e3a22" />
+              {[0, 1, 2, 3].map(i => (
+                <rect key={i} x="0" y={i * 18.75} width="100" height="9.4" fill="#0a3320" />
+              ))}
+              <rect x="2" y="2" width="96" height="71" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <line x1="2" y1="2" x2="98" y2="2" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 2 A 8 8 0 0 0 58 2" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="20" y="55" width="60" height="18" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <rect x="35" y="66" width="30" height="7" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <path d="M 42 55 A 8 8 0 0 1 58 55" fill="none" stroke="#ffffff" strokeWidth="0.4" opacity="0.55" />
+              <line x1="42" y1="73" x2="58" y2="73" stroke="#ffffff" strokeWidth="1.2" />
+            </svg>
+            {sorted.map(p => {
+              const isDragging = drag?.playerId === p.id;
+              const pos = isDragging ? { x: drag.x, y: drag.y } : (positions[p.id] || { x: 0.5, y: 0.5 });
+              const isGK = p.id === gkId;
+              const label = p.number || (p.name ? p.name[0] : '?');
+              const first = (p.name || '').split(' ')[0];
+              return (
+                <div
+                  key={p.id}
+                  onPointerDown={handlePointerDown(p.id)}
+                  className={`absolute flex flex-col items-center pointer-events-auto touch-none ${isDragging ? 'z-20' : 'z-10'}`}
+                  style={{
+                    left: `${pos.x * 100}%`,
+                    top: `${pos.y * 100}%`,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                >
+                  <div
+                    className={`rounded-full flex items-center justify-center font-bold text-sm text-white shadow-lg border-2 ${isGK
+                      ? 'bg-amber-500 border-amber-200 text-stone-900'
+                      : 'bg-lime-600 border-lime-300'
+                      } ${isDragging ? 'scale-110 ring-2 ring-white/70' : ''}`}
+                    style={{ width: '34px', height: '34px' }}
+                  >
+                    {label}
+                  </div>
+                  <div className="mt-0.5 text-[9px] leading-none font-bold text-white/85 bg-stone-950/60 px-1 rounded">
+                    {first}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-[10px] text-stone-500 text-center">
+            Tap a player to pick a position (LD/CD/RD · LM/CM/RM · LST/CST/RST).
+            Drag to fine-tune. RESET snaps each player to their nearest open position.
+          </div>
+        </>
+      )}
+      {picker && (() => {
+        const p = sorted.find(x => x.id === picker.playerId);
+        if (!p) return null;
+        const cur = positions[p.id] || { x: 0.5, y: 0.5 };
+        return (
+          <PositionPickerModal
+            player={p}
+            currentXY={cur}
+            isGK={p.id === gkId}
+            onPick={(slot) => {
+              setPositions(prev => ({ ...prev, [p.id]: { x: slot.x, y: slot.y } }));
+              setPicker(null);
+            }}
+            onClose={() => setPicker(null)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
 function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
   const onField = useMemo(() => onFieldAt(game), [game.events]);
   const players = useMemo(
@@ -2838,41 +3385,63 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
   }
 
   const [collapsed, setCollapsed] = useState(false);
-  const [drag, setDrag] = useState(null); // { playerId, x, y }
+  const [drag, setDrag] = useState(null); // { playerId, x, y, moved }
+  const [picker, setPicker] = useState(null); // { playerId } when tap (no drag)
   const fieldRef = useRef(null);
 
   const clamp01 = (v) => Math.max(0.04, Math.min(0.96, v));
+  const TAP_PX = 8;
 
   const handlePointerDown = (playerId) => (e) => {
     e.preventDefault();
     e.stopPropagation();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
     const pos = positions[playerId];
-    setDrag({ playerId, pointerId: e.pointerId, x: pos.x, y: pos.y });
+    setDrag({
+      playerId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      x: pos.x,
+      y: pos.y,
+      moved: false,
+    });
   };
   const handlePointerMove = (e) => {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const rect = fieldRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    const moved = drag.moved || (dx * dx + dy * dy) > (TAP_PX * TAP_PX);
+    if (!moved) return;
     const x = clamp01((e.clientX - rect.left) / rect.width);
     const y = clamp01((e.clientY - rect.top) / rect.height);
-    setDrag(d => d ? { ...d, x, y } : d);
+    setDrag(d => d ? { ...d, x, y, moved: true } : d);
   };
-  const handlePointerUp = (e) => {
+  const handlePointerUp = () => {
     if (!drag) return;
-    const { playerId, x, y } = drag;
+    const { playerId, x, y, moved } = drag;
     setDrag(null);
-    if (onMove) onMove(playerId, x, y);
+    if (moved) {
+      if (onMove) onMove(playerId, x, y);
+    } else {
+      setPicker({ playerId });
+    }
   };
 
-  // Snap every on-field player back to the default formation slot for the
-  // current on-field count (e.g. 2-3-1 for 7v7). Used after big tactical
-  // shake-ups or to start fresh after a few rotations.
+  // Snap every on-field outfield player to their nearest named position
+  // slot (with greedy conflict resolution). GK stays in goal. Coach
+  // doesn't have to drop players on exact spots — Reset tidies them up.
   const handleReset = () => {
     if (!onReset) return;
+    const snapped = snapOutfieldToSlots(
+      outfield.map(p => p.id),
+      positions
+    );
     const slots = players.map(p => {
-      const def = p.id === gameGKId ? gkDefault : (defaults[p.id] || { x: 0.5, y: 0.5 });
-      return { playerId: p.id, x: def.x, y: def.y };
+      const pos = p.id === gameGKId ? gkDefault : (snapped[p.id] || positions[p.id] || { x: 0.5, y: 0.5 });
+      return { playerId: p.id, x: pos.x, y: pos.y };
     });
     onReset(slots);
   };
@@ -2971,10 +3540,28 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
             })}
           </div>
           <div className="mt-2 text-[10px] text-stone-500 text-center">
-            Drag any player to reposition. Subs inherit the position of the player they replace.
+            Tap a player to pick a position. Drag to fine-tune.
+            Subs inherit the position of the player they replace.
           </div>
         </>
       )}
+      {picker && (() => {
+        const p = players.find(x => x.id === picker.playerId);
+        if (!p) return null;
+        const cur = positions[p.id] || { x: 0.5, y: 0.5 };
+        return (
+          <PositionPickerModal
+            player={p}
+            currentXY={cur}
+            isGK={p.id === gameGKId}
+            onPick={(slot) => {
+              if (onMove) onMove(p.id, slot.x, slot.y);
+              setPicker(null);
+            }}
+            onClose={() => setPicker(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -7512,16 +8099,61 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
+function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [tournament, setTournament] = useState('');
   const [location, setLocation] = useState('');
+  // Optional match-day pre-fill — saved on the schedule item, used when the
+  // coach taps START on match day to skip setup screens.
+  const [isHome, setIsHome] = useState(true);
+  const [halfLengthMin, setHalfLengthMin] = useState(25);
+  const [homeColor, setHomeColor] = useState('#0a0a0a');
+  const [awayColor, setAwayColor] = useState('#dc2626');
+  const [squadIds, setSquadIds] = useState([]);
   const [pasteText, setPasteText] = useState('');
   const [parsed, setParsed] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [showSetup, setShowSetup] = useState(false);
   const formRef = React.useRef(null);
+  const isLightColor = (hex) => {
+    try {
+      const h = (hex || '').replace('#', '');
+      const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) > 160;
+    } catch { return false; }
+  };
+
+  // Keep our local squad state in sync when the parent saves an updated
+  // schedule (e.g., after returning from the squad picker for the same item).
+  React.useEffect(() => {
+    if (!editingId) return;
+    const item = schedule.find(s => s.id === editingId);
+    if (item && Array.isArray(item.squadIds)) setSquadIds(item.squadIds);
+  }, [schedule, editingId]);
+
+  // Resume edit mode when returning from the squad-picker detour.
+  React.useEffect(() => {
+    if (!initialEditId) return;
+    const item = schedule.find(s => s.id === initialEditId);
+    if (item) {
+      setEditingId(item.id);
+      setOpponent(item.opponent || '');
+      setDate(item.date || '');
+      setTime(item.time || '');
+      setTournament(item.tournament || '');
+      setLocation(item.location || '');
+      setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
+      setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+      setHomeColor(item.homeColor || '#0a0a0a');
+      setAwayColor(item.awayColor || '#dc2626');
+      setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
+      setShowSetup(true);
+    }
+    onConsumedInitialEditId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialEditId]);
 
   const parseECSL = (text) => {
     // ECSL table rows: # | Date | KO | Field | Home | Away
@@ -7606,6 +8238,13 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
 
   const handleAdd = () => {
     if (!opponent.trim() || !date) return;
+    const setupFields = {
+      isHome,
+      halfLengthMin,
+      homeColor,
+      awayColor,
+      squadIds: Array.isArray(squadIds) ? squadIds : [],
+    };
     if (editingId) {
       onSave(schedule.map(s => s.id === editingId ? {
         ...s,
@@ -7614,6 +8253,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
         time: time || '',
         tournament: tournament.trim(),
         location: location.trim(),
+        ...setupFields,
       } : s));
       showToast?.(`✏️ Updated vs ${opponent.trim()}`);
       resetForm();
@@ -7626,6 +8266,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
       time: time || '',
       tournament: tournament.trim(),
       location: location.trim(),
+      ...setupFields,
     };
     onSave([...schedule, item]);
     const dateLabel = new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
@@ -7635,6 +8276,8 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
 
   const resetForm = () => {
     setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation('');
+    setIsHome(true); setHalfLengthMin(25); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
+    setShowSetup(false);
     setEditingId(null);
   };
 
@@ -7645,6 +8288,18 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
     setTime(item.time || '');
     setTournament(item.tournament || '');
     setLocation(item.location || '');
+    setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
+    setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+    setHomeColor(item.homeColor || '#0a0a0a');
+    setAwayColor(item.awayColor || '#dc2626');
+    setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
+    setShowSetup(
+      typeof item.isHome === 'boolean' ||
+      typeof item.halfLengthMin === 'number' ||
+      !!item.homeColor ||
+      !!item.awayColor ||
+      (Array.isArray(item.squadIds) && item.squadIds.length > 0)
+    );
     if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -7776,6 +8431,155 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
             onChange={e => setLocation(e.target.value)}
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
+
+          {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
+          <button
+            type="button"
+            onClick={() => setShowSetup(s => !s)}
+            className="w-full flex items-center justify-between bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-sm text-stone-200 active:scale-[0.99]"
+          >
+            <span className="font-semibold tracking-wide">
+              ⚙️ MATCH-DAY SETUP <span className="text-stone-500 font-normal">(optional)</span>
+            </span>
+            <span className="text-stone-400 text-xs">{showSetup ? 'HIDE ▲' : 'SHOW ▼'}</span>
+          </button>
+          {showSetup && (
+            <div className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
+              <p className="text-[11px] text-stone-400 leading-snug">
+                Pre-fill what you know now. If you set <span className="font-bold text-stone-200">everything</span> (squad + home/away + half length + both colors), tapping START on match day jumps straight to the starting lineup — no setup screens.
+              </p>
+
+              {/* Home / Away */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SIDE</div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsHome(true)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                  >🏠 HOME</button>
+                  <button
+                    type="button"
+                    onClick={() => setIsHome(false)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                  >✈️ AWAY</button>
+                </div>
+              </div>
+
+              {/* Half length */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">HALF LENGTH (MIN)</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+                  >−</button>
+                  <div className="flex-1 py-2 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
+                    <div className="font-display text-2xl text-stone-100 tabular-nums leading-none">{halfLengthMin}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+                  >+</button>
+                </div>
+              </div>
+
+              {/* Stompers jersey */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">STOMPERS JERSEY</div>
+                <div className="flex gap-2 items-center">
+                  {[{ label: 'Black', color: '#0a0a0a' }, { label: 'Green', color: '#16a34a' }].map(p => (
+                    <button
+                      key={p.color}
+                      type="button"
+                      onClick={() => setHomeColor(p.color)}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                      style={{ background: p.color, color: '#fff' }}
+                    >{p.label.toUpperCase()}</button>
+                  ))}
+                  <label
+                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#0a0a0a', '#16a34a'].includes(homeColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                    style={{ background: homeColor, color: isLightColor(homeColor) ? '#0a0a0a' : '#fff' }}
+                  >
+                    🎨 CUSTOM
+                    <input type="color" value={homeColor} onChange={e => setHomeColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Opponent jersey */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">OPPONENT JERSEY</div>
+                <div className="flex gap-2 items-center">
+                  {[
+                    { label: 'Red', color: '#dc2626' },
+                    { label: 'Blue', color: '#2563eb' },
+                    { label: 'White', color: '#f5f5f4' },
+                  ].map(p => (
+                    <button
+                      key={p.color}
+                      type="button"
+                      onClick={() => setAwayColor(p.color)}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                      style={{ background: p.color, color: p.color === '#f5f5f4' ? '#0a0a0a' : '#fff' }}
+                    >{p.label.toUpperCase()}</button>
+                  ))}
+                  <label
+                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#dc2626', '#2563eb', '#f5f5f4'].includes(awayColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                    style={{ background: awayColor, color: isLightColor(awayColor) ? '#0a0a0a' : '#fff' }}
+                  >
+                    🎨 CUSTOM
+                    <input type="color" value={awayColor} onChange={e => setAwayColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Squad */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SQUAD (AVAILABLE PLAYERS)</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editingId) {
+                      showToast?.('💡 Save the game first, then edit its squad.');
+                      return;
+                    }
+                    // Persist current form state so the edit isn't lost while
+                    // we navigate away to the squad picker.
+                    onSave(schedule.map(s => s.id === editingId ? {
+                      ...s,
+                      opponent: opponent.trim() || s.opponent,
+                      date: date || s.date,
+                      time: time || '',
+                      tournament: tournament.trim(),
+                      location: location.trim(),
+                      isHome, halfLengthMin, homeColor, awayColor,
+                      squadIds: Array.isArray(squadIds) ? squadIds : [],
+                    } : s));
+                    onEditSquad?.({ id: editingId, opponent: opponent.trim() || 'Opponent', squadIds });
+                  }}
+                  className={`w-full flex items-center justify-between gap-3 px-3 py-3 rounded-xl border-2 active:scale-[0.99] transition ${
+                    Array.isArray(squadIds) && squadIds.length > 0
+                      ? 'bg-lime-500/10 border-lime-400 text-stone-100'
+                      : 'bg-stone-900 border-stone-800 text-stone-300'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="text-xl">👥</span>
+                    <span className="font-bold text-sm">
+                      {Array.isArray(squadIds) && squadIds.length > 0
+                        ? `${squadIds.length} player${squadIds.length === 1 ? '' : 's'} picked`
+                        : (editingId ? 'Tap to pick squad' : 'Save game first, then pick squad')}
+                    </span>
+                  </span>
+                  <span className="text-xs text-stone-400">{editingId ? 'EDIT →' : ''}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             {editingId && (
               <button
@@ -7833,6 +8637,22 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
+                      {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
+                        <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          👥 {item.squadIds.length}
+                        </span>
+                      )}
+                      {(() => {
+                        const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
+                          && typeof item.isHome === 'boolean'
+                          && typeof item.halfLengthMin === 'number'
+                          && !!item.homeColor && !!item.awayColor;
+                        return ready ? (
+                          <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                            READY
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                     {item.location && (
                       <a
@@ -8752,7 +9572,9 @@ function PublicHomePage() {
       <style>{FONT_STYLES}</style>
       {featured ? (
         <>
-          <div className="stripes-bg text-white px-5 pt-16 pb-6 relative">
+          <div className="relative text-white px-5 pt-16 pb-6 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
+            {/* Decorative pitch-stripe accent in the corner only, doesn't tile across the seam */}
+            <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
             <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
               {window.fbUserInfo && (
                 <button
@@ -8807,7 +9629,8 @@ function PublicHomePage() {
           )}
         </>
       ) : (
-        <div className="stripes-bg text-white px-5 pt-16 pb-12 relative">
+        <div className="relative text-white px-5 pt-16 pb-12 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
+          <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
           <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
             {window.fbUserInfo && (
               <button
@@ -9012,6 +9835,9 @@ function LiveScoreboard({ game, roster }) {
     return `${first} #${p.number || '?'}`;
   };
 
+  const usGoals = feed.filter(r => r.kind === 'us');
+  const oppGoals = feed.filter(r => r.kind === 'opp');
+
   return (
     <>
       <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
@@ -9030,7 +9856,39 @@ function LiveScoreboard({ game, roster }) {
         <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
           {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
         </div>
-        <div className="text-center mt-4 flex items-center justify-center gap-2 flex-wrap">
+        {/* TV-style: goals listed under each team in two columns. */}
+        {(usGoals.length > 0 || oppGoals.length > 0) && (
+          <div className="flex items-start justify-between gap-4 mt-5 px-2">
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {usGoals.map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="text-sm text-center">
+                    <div className="font-bold text-white truncate">
+                      ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                    </div>
+                    {row.assistId && (
+                      <div className="text-[11px] text-white/50 truncate pl-6">🅰️ {nameOf(row.assistId)}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {oppGoals.map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="text-sm text-center">
+                    <div className="font-bold text-white">
+                      ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div className="text-center mt-5 flex items-center justify-center gap-2 flex-wrap">
           {isActive && (
             <span className="inline-block bg-white/10 border border-white/20 text-white/90 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               {game.period >= 2 ? '2ND HALF' : '1ST HALF'}
@@ -9053,59 +9911,6 @@ function LiveScoreboard({ game, roster }) {
             </span>
           )}
         </div>
-      </div>
-      <div className="px-4 pt-5 max-w-md mx-auto">
-        {feed.length === 0 ? (
-          isActive ? (
-            <>
-              <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
-              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-                No goals yet.
-              </div>
-            </>
-          ) : null
-        ) : (
-          <>
-            <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
-            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
-            {feed.map((row, idx) => {
-              const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-              const isHt = idx > 0 && feed[idx - 1].period === 1 && row.period === 2;
-              return (
-                <React.Fragment key={idx}>
-                  {isHt && (
-                    <div className="bg-stone-900 px-3 py-1.5 text-center text-xs font-bold text-stone-400 uppercase tracking-widest">
-                      — Half Time —
-                    </div>
-                  )}
-                  {row.kind === 'us' ? (
-                    <div className="p-3 flex items-start gap-3">
-                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
-                      <div className="text-2xl">⚽</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-100 truncate">{nameOf(row.scorerId)}</div>
-                        {row.assistId && (
-                          <div className="text-xs text-stone-400 truncate">🅰️ {nameOf(row.assistId)}</div>
-                        )}
-                      </div>
-                      <div className="font-display text-sm text-lime-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
-                    </div>
-                  ) : (
-                    <div className="p-3 flex items-start gap-3 bg-red-950/30">
-                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
-                      <div className="text-2xl">⚽</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-100 truncate">{game.opponent || 'Opponent'}</div>
-                      </div>
-                      <div className="font-display text-sm text-red-400 tabular-nums">{row.ourRun}–{row.oppRun}</div>
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
-            </div>
-          </>
-        )}
       </div>
     </>
   );
