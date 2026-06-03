@@ -564,6 +564,13 @@ function App() {
   const [tick, setTick] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingGameSetup, setPendingGameSetup] = useState(null);
+  // When editing a scheduled game's pre-picked squad, we stash the schedule
+  // item id (+ a snapshot of the current squad) so the SquadPickerView can
+  // save back into the schedule and return to the schedule screen.
+  const [editingScheduleSquad, setEditingScheduleSquad] = useState(null);
+  // When returning from the squad picker, ScheduleView re-mounts; this hint
+  // tells it to drop back into edit mode for the same item.
+  const [resumeScheduleEditId, setResumeScheduleEditId] = useState(null);
 
   const askConfirm = (message, onYes, opts = {}) => {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
@@ -1326,11 +1333,28 @@ function App() {
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
           onStartScheduled={(item) => {
-            // Route through GameSetup so the coach can confirm/adjust jersey
-            // colors (and half length) before squad picking. Pre-fill from
-            // the schedule entry.
-            setPendingGameSetup({ opponent: item.opponent, isHome: true, tournament: item.tournament, fromSchedule: true });
-            setView('gameSetup');
+            // Pre-fill from the scheduled item. If the coach already pre-set
+            // every match-day field (squad, home/away, half length, both
+            // colors), skip gameSetup AND squad and land straight on the
+            // starting-lineup / kickoff board.
+            const prefill = {
+              opponent: item.opponent,
+              tournament: item.tournament,
+              fromSchedule: true,
+              isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
+              halfLengthMin: item.halfLengthMin,
+              homeColor: item.homeColor,
+              awayColor: item.awayColor,
+              squad: Array.isArray(item.squadIds) && item.squadIds.length > 0 ? item.squadIds : undefined,
+            };
+            const fullyPreset =
+              prefill.squad &&
+              typeof item.isHome === 'boolean' &&
+              typeof item.halfLengthMin === 'number' &&
+              !!item.homeColor &&
+              !!item.awayColor;
+            setPendingGameSetup(prefill);
+            setView(fullyPreset ? 'lineup' : 'gameSetup');
           }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
@@ -1392,7 +1416,9 @@ function App() {
           initial={pendingGameSetup}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
           onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
-            setPendingGameSetup({ opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
+            // Preserve any pre-picked squad / fromSchedule flag carried in from
+            // a scheduled-game start, so it survives the GameSetup detour.
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -1550,10 +1576,41 @@ function App() {
       {view === 'schedule' && (
         <ScheduleView
           schedule={schedule}
+          roster={roster}
+          initialEditId={resumeScheduleEditId}
+          onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
           onSave={persistSchedule}
           onBack={() => setView('home')}
+          onEditSquad={(item) => {
+            setEditingScheduleSquad({ itemId: item.id, opponent: item.opponent, squadIds: item.squadIds || [] });
+            setView('scheduleSquad');
+          }}
           askConfirm={askConfirm}
           showToast={showToast}
+        />
+      )}
+
+      {view === 'scheduleSquad' && editingScheduleSquad && (
+        <SquadPickerView
+          roster={roster}
+          setup={{ opponent: editingScheduleSquad.opponent }}
+          initialSquad={editingScheduleSquad.squadIds}
+          title="EDIT MATCH-DAY SQUAD"
+          subtitle={<>Pre-pick the squad now. On match day, tapping <span className="font-bold">START</span> will jump straight to the lineup.</>}
+          nextLabel="SAVE SQUAD"
+          onBack={() => {
+            setResumeScheduleEditId(editingScheduleSquad.itemId);
+            setEditingScheduleSquad(null);
+            setView('schedule');
+          }}
+          onNext={(squadIds) => {
+            const next = schedule.map(s => s.id === editingScheduleSquad.itemId ? { ...s, squadIds } : s);
+            persistSchedule(next);
+            showToast?.(`✅ Saved ${squadIds.length}-player squad`);
+            setResumeScheduleEditId(editingScheduleSquad.itemId);
+            setEditingScheduleSquad(null);
+            setView('schedule');
+          }}
         />
       )}
 
@@ -2411,7 +2468,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
 }
 
 /* ---------- MATCH-DAY SQUAD ---------- */
-function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
+function SquadPickerView({ roster, setup, initialSquad, onBack, onNext, title, subtitle, nextLabel }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
   const SOFT_CAP = 12;
   const [selected, setSelected] = useState(() =>
@@ -2432,13 +2489,13 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
 
   return (
     <div className="pb-40">
-      <Header title="MATCH-DAY SQUAD" onBack={onBack} />
+      <Header title={title || "MATCH-DAY SQUAD"} onBack={onBack} />
 
       <div className="px-4 pt-4">
         <div className="text-xs text-stone-400 mb-1">vs {setup.opponent}</div>
         <div className="text-sm text-stone-200 mb-3">
-          Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
-          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.
+          {subtitle || (<>Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
+          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.</>)}
         </div>
 
         <div className="flex gap-2 mb-4">
@@ -2494,7 +2551,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext }) {
               : 'bg-stone-800 text-stone-400 border-stone-700 cursor-not-allowed'
           }`}
         >
-          NEXT: STARTING LINEUP →
+          {nextLabel || 'NEXT: STARTING LINEUP →'}
         </button>
       </div>
     </div>
@@ -8106,16 +8163,61 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
+function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [tournament, setTournament] = useState('');
   const [location, setLocation] = useState('');
+  // Optional match-day pre-fill — saved on the schedule item, used when the
+  // coach taps START on match day to skip setup screens.
+  const [isHome, setIsHome] = useState(true);
+  const [halfLengthMin, setHalfLengthMin] = useState(25);
+  const [homeColor, setHomeColor] = useState('#0a0a0a');
+  const [awayColor, setAwayColor] = useState('#dc2626');
+  const [squadIds, setSquadIds] = useState([]);
   const [pasteText, setPasteText] = useState('');
   const [parsed, setParsed] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [showSetup, setShowSetup] = useState(false);
   const formRef = React.useRef(null);
+  const isLightColor = (hex) => {
+    try {
+      const h = (hex || '').replace('#', '');
+      const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) > 160;
+    } catch { return false; }
+  };
+
+  // Keep our local squad state in sync when the parent saves an updated
+  // schedule (e.g., after returning from the squad picker for the same item).
+  React.useEffect(() => {
+    if (!editingId) return;
+    const item = schedule.find(s => s.id === editingId);
+    if (item && Array.isArray(item.squadIds)) setSquadIds(item.squadIds);
+  }, [schedule, editingId]);
+
+  // Resume edit mode when returning from the squad-picker detour.
+  React.useEffect(() => {
+    if (!initialEditId) return;
+    const item = schedule.find(s => s.id === initialEditId);
+    if (item) {
+      setEditingId(item.id);
+      setOpponent(item.opponent || '');
+      setDate(item.date || '');
+      setTime(item.time || '');
+      setTournament(item.tournament || '');
+      setLocation(item.location || '');
+      setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
+      setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+      setHomeColor(item.homeColor || '#0a0a0a');
+      setAwayColor(item.awayColor || '#dc2626');
+      setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
+      setShowSetup(true);
+    }
+    onConsumedInitialEditId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialEditId]);
 
   const parseECSL = (text) => {
     // ECSL table rows: # | Date | KO | Field | Home | Away
@@ -8200,6 +8302,13 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
 
   const handleAdd = () => {
     if (!opponent.trim() || !date) return;
+    const setupFields = {
+      isHome,
+      halfLengthMin,
+      homeColor,
+      awayColor,
+      squadIds: Array.isArray(squadIds) ? squadIds : [],
+    };
     if (editingId) {
       onSave(schedule.map(s => s.id === editingId ? {
         ...s,
@@ -8208,6 +8317,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
         time: time || '',
         tournament: tournament.trim(),
         location: location.trim(),
+        ...setupFields,
       } : s));
       showToast?.(`✏️ Updated vs ${opponent.trim()}`);
       resetForm();
@@ -8220,6 +8330,7 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
       time: time || '',
       tournament: tournament.trim(),
       location: location.trim(),
+      ...setupFields,
     };
     onSave([...schedule, item]);
     const dateLabel = new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
@@ -8229,6 +8340,8 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
 
   const resetForm = () => {
     setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation('');
+    setIsHome(true); setHalfLengthMin(25); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
+    setShowSetup(false);
     setEditingId(null);
   };
 
@@ -8239,6 +8352,18 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
     setTime(item.time || '');
     setTournament(item.tournament || '');
     setLocation(item.location || '');
+    setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
+    setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+    setHomeColor(item.homeColor || '#0a0a0a');
+    setAwayColor(item.awayColor || '#dc2626');
+    setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
+    setShowSetup(
+      typeof item.isHome === 'boolean' ||
+      typeof item.halfLengthMin === 'number' ||
+      !!item.homeColor ||
+      !!item.awayColor ||
+      (Array.isArray(item.squadIds) && item.squadIds.length > 0)
+    );
     if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -8370,6 +8495,155 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
             onChange={e => setLocation(e.target.value)}
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
+
+          {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
+          <button
+            type="button"
+            onClick={() => setShowSetup(s => !s)}
+            className="w-full flex items-center justify-between bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-sm text-stone-200 active:scale-[0.99]"
+          >
+            <span className="font-semibold tracking-wide">
+              ⚙️ MATCH-DAY SETUP <span className="text-stone-500 font-normal">(optional)</span>
+            </span>
+            <span className="text-stone-400 text-xs">{showSetup ? 'HIDE ▲' : 'SHOW ▼'}</span>
+          </button>
+          {showSetup && (
+            <div className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
+              <p className="text-[11px] text-stone-400 leading-snug">
+                Pre-fill what you know now. If you set <span className="font-bold text-stone-200">everything</span> (squad + home/away + half length + both colors), tapping START on match day jumps straight to the starting lineup — no setup screens.
+              </p>
+
+              {/* Home / Away */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SIDE</div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsHome(true)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                  >🏠 HOME</button>
+                  <button
+                    type="button"
+                    onClick={() => setIsHome(false)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                  >✈️ AWAY</button>
+                </div>
+              </div>
+
+              {/* Half length */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">HALF LENGTH (MIN)</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+                  >−</button>
+                  <div className="flex-1 py-2 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
+                    <div className="font-display text-2xl text-stone-100 tabular-nums leading-none">{halfLengthMin}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+                  >+</button>
+                </div>
+              </div>
+
+              {/* Stompers jersey */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">STOMPERS JERSEY</div>
+                <div className="flex gap-2 items-center">
+                  {[{ label: 'Black', color: '#0a0a0a' }, { label: 'Green', color: '#16a34a' }].map(p => (
+                    <button
+                      key={p.color}
+                      type="button"
+                      onClick={() => setHomeColor(p.color)}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                      style={{ background: p.color, color: '#fff' }}
+                    >{p.label.toUpperCase()}</button>
+                  ))}
+                  <label
+                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#0a0a0a', '#16a34a'].includes(homeColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                    style={{ background: homeColor, color: isLightColor(homeColor) ? '#0a0a0a' : '#fff' }}
+                  >
+                    🎨 CUSTOM
+                    <input type="color" value={homeColor} onChange={e => setHomeColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Opponent jersey */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">OPPONENT JERSEY</div>
+                <div className="flex gap-2 items-center">
+                  {[
+                    { label: 'Red', color: '#dc2626' },
+                    { label: 'Blue', color: '#2563eb' },
+                    { label: 'White', color: '#f5f5f4' },
+                  ].map(p => (
+                    <button
+                      key={p.color}
+                      type="button"
+                      onClick={() => setAwayColor(p.color)}
+                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                      style={{ background: p.color, color: p.color === '#f5f5f4' ? '#0a0a0a' : '#fff' }}
+                    >{p.label.toUpperCase()}</button>
+                  ))}
+                  <label
+                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#dc2626', '#2563eb', '#f5f5f4'].includes(awayColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                    style={{ background: awayColor, color: isLightColor(awayColor) ? '#0a0a0a' : '#fff' }}
+                  >
+                    🎨 CUSTOM
+                    <input type="color" value={awayColor} onChange={e => setAwayColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Squad */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SQUAD (AVAILABLE PLAYERS)</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!editingId) {
+                      showToast?.('💡 Save the game first, then edit its squad.');
+                      return;
+                    }
+                    // Persist current form state so the edit isn't lost while
+                    // we navigate away to the squad picker.
+                    onSave(schedule.map(s => s.id === editingId ? {
+                      ...s,
+                      opponent: opponent.trim() || s.opponent,
+                      date: date || s.date,
+                      time: time || '',
+                      tournament: tournament.trim(),
+                      location: location.trim(),
+                      isHome, halfLengthMin, homeColor, awayColor,
+                      squadIds: Array.isArray(squadIds) ? squadIds : [],
+                    } : s));
+                    onEditSquad?.({ id: editingId, opponent: opponent.trim() || 'Opponent', squadIds });
+                  }}
+                  className={`w-full flex items-center justify-between gap-3 px-3 py-3 rounded-xl border-2 active:scale-[0.99] transition ${
+                    Array.isArray(squadIds) && squadIds.length > 0
+                      ? 'bg-lime-500/10 border-lime-400 text-stone-100'
+                      : 'bg-stone-900 border-stone-800 text-stone-300'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="text-xl">👥</span>
+                    <span className="font-bold text-sm">
+                      {Array.isArray(squadIds) && squadIds.length > 0
+                        ? `${squadIds.length} player${squadIds.length === 1 ? '' : 's'} picked`
+                        : (editingId ? 'Tap to pick squad' : 'Save game first, then pick squad')}
+                    </span>
+                  </span>
+                  <span className="text-xs text-stone-400">{editingId ? 'EDIT →' : ''}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             {editingId && (
               <button
@@ -8427,6 +8701,22 @@ function ScheduleView({ schedule, onSave, onBack, askConfirm, showToast }) {
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
+                      {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
+                        <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          👥 {item.squadIds.length}
+                        </span>
+                      )}
+                      {(() => {
+                        const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
+                          && typeof item.isHome === 'boolean'
+                          && typeof item.halfLengthMin === 'number'
+                          && !!item.homeColor && !!item.awayColor;
+                        return ready ? (
+                          <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                            READY
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                     {item.location && (
                       <a
@@ -9686,6 +9976,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
