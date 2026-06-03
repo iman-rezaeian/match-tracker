@@ -9483,53 +9483,59 @@ function LiveScoreboard({ game, roster }) {
     return `${first} #${p.number || '?'}`;
   };
 
+  const usGoals = feed.filter(r => r.kind === 'us');
+  const oppGoals = feed.filter(r => r.kind === 'opp');
+
   return (
     <>
-      <div className="bg-stone-950 text-white px-4 pt-6 pb-6 border-t border-stone-900">
-        <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-3">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
+        <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
-        {/* TV-style: team names side by side, big score in the middle, then a
-            per-team goal list directly under each name. */}
-        <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-          <div className="min-w-0 text-center">
+        {/* Names on top, full half-width each. Score sits below for breathing room. */}
+        <div className="flex items-start justify-between gap-4 mt-5 px-2">
+          <div className="flex-1 min-w-0 text-center">
             <div className={`font-display ${nameSizeClass} leading-tight`}>{leftName}</div>
-            <div className="font-display text-6xl tabular-nums leading-none mt-3">{leftScore}</div>
-            <div className="mt-3 space-y-1.5 text-left max-w-[14rem] mx-auto">
-              {feed.filter(r => r.kind === 'us').map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-                return (
-                  <div key={i} className="flex items-baseline gap-1.5 text-sm">
-                    <span className="text-stone-400 text-base leading-none">⚽</span>
-                    <span className="flex-1 min-w-0">
-                      <span className="font-bold text-stone-100 truncate inline-block max-w-full align-bottom">{nameOf(row.scorerId)}</span>
-                      <span className="text-stone-400 tabular-nums ml-1">{minute}'</span>
-                      {row.assistId && (
-                        <div className="text-[11px] text-stone-500 truncate pl-5">🅰️ {nameOf(row.assistId)}</div>
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
           </div>
-          <div className="self-center text-white/40 font-display text-5xl leading-none pt-8">–</div>
-          <div className="min-w-0 text-center">
+          <div className="flex-1 min-w-0 text-center">
             <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
-            <div className="font-display text-6xl tabular-nums leading-none mt-3">{rightScore}</div>
-            <div className="mt-3 space-y-1.5 text-left max-w-[14rem] mx-auto">
-              {feed.filter(r => r.kind === 'opp').map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-                return (
-                  <div key={i} className="flex items-baseline gap-1.5 text-sm">
-                    <span className="text-stone-400 text-base leading-none">⚽</span>
-                    <span className="text-stone-400 tabular-nums">{minute}'</span>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         </div>
+        <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
+          {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
+        </div>
+        {/* TV-style: goals listed under each team in two columns. */}
+        {(usGoals.length > 0 || oppGoals.length > 0) && (
+          <div className="flex items-start justify-between gap-4 mt-5 px-2">
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {usGoals.map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="text-sm text-center">
+                    <div className="font-bold text-white truncate">
+                      {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                    </div>
+                    {row.assistId && (
+                      <div className="text-[11px] text-white/50 truncate pl-6">🅰️ {nameOf(row.assistId)}</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {oppGoals.map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="text-sm text-center">
+                    <div className="font-bold text-white">
+                      Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="text-center mt-5 flex items-center justify-center gap-2 flex-wrap">
           {isActive && (
             <span className="inline-block bg-white/10 border border-white/20 text-white/90 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
