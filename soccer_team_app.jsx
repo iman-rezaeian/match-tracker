@@ -9485,23 +9485,52 @@ function LiveScoreboard({ game, roster }) {
 
   return (
     <>
-      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
-        <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
+      <div className="bg-stone-950 text-white px-4 pt-6 pb-6 border-t border-stone-900">
+        <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-3">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
-        {/* Names on top, full half-width each. Score sits below for breathing room. */}
-        <div className="flex items-start justify-between gap-4 mt-5 px-2">
-          <div className="flex-1 min-w-0 text-center">
+        {/* TV-style: team names side by side, big score in the middle, then a
+            per-team goal list directly under each name. */}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3">
+          <div className="min-w-0 text-center">
             <div className={`font-display ${nameSizeClass} leading-tight`}>{leftName}</div>
+            <div className="font-display text-6xl tabular-nums leading-none mt-3">{leftScore}</div>
+            <div className="mt-3 space-y-1.5 text-left max-w-[14rem] mx-auto">
+              {feed.filter(r => r.kind === 'us').map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="flex items-baseline gap-1.5 text-sm">
+                    <span className="text-stone-400 text-base leading-none">⚽</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="font-bold text-stone-100 truncate inline-block max-w-full align-bottom">{nameOf(row.scorerId)}</span>
+                      <span className="text-stone-400 tabular-nums ml-1">{minute}'</span>
+                      {row.assistId && (
+                        <div className="text-[11px] text-stone-500 truncate pl-5">🅰️ {nameOf(row.assistId)}</div>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex-1 min-w-0 text-center">
+          <div className="self-center text-white/40 font-display text-5xl leading-none pt-8">–</div>
+          <div className="min-w-0 text-center">
             <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
+            <div className="font-display text-6xl tabular-nums leading-none mt-3">{rightScore}</div>
+            <div className="mt-3 space-y-1.5 text-left max-w-[14rem] mx-auto">
+              {feed.filter(r => r.kind === 'opp').map((row, i) => {
+                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                return (
+                  <div key={i} className="flex items-baseline gap-1.5 text-sm">
+                    <span className="text-stone-400 text-base leading-none">⚽</span>
+                    <span className="text-stone-400 tabular-nums">{minute}'</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
-        <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
-          {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
-        </div>
-        <div className="text-center mt-4 flex items-center justify-center gap-2 flex-wrap">
+        <div className="text-center mt-5 flex items-center justify-center gap-2 flex-wrap">
           {isActive && (
             <span className="inline-block bg-white/10 border border-white/20 text-white/90 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               {game.period >= 2 ? '2ND HALF' : '1ST HALF'}
@@ -9524,59 +9553,6 @@ function LiveScoreboard({ game, roster }) {
             </span>
           )}
         </div>
-      </div>
-      <div className="px-4 pt-5 max-w-md mx-auto">
-        {feed.length === 0 ? (
-          isActive ? (
-            <>
-              <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
-              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-                No goals yet.
-              </div>
-            </>
-          ) : null
-        ) : (
-          <>
-            <h3 className="font-display text-xl text-stone-200 mb-2">GOALS</h3>
-            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
-            {feed.map((row, idx) => {
-              const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-              const isHt = idx > 0 && feed[idx - 1].period === 1 && row.period === 2;
-              return (
-                <React.Fragment key={idx}>
-                  {isHt && (
-                    <div className="bg-stone-900 px-3 py-1.5 text-center text-xs font-bold text-stone-400 uppercase tracking-widest">
-                      — Half Time —
-                    </div>
-                  )}
-                  {row.kind === 'us' ? (
-                    <div className="p-3 flex items-start gap-3">
-                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
-                      <div className="text-2xl">⚽</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-100 truncate">{nameOf(row.scorerId)}</div>
-                        {row.assistId && (
-                          <div className="text-xs text-stone-400 truncate">🅰️ {nameOf(row.assistId)}</div>
-                        )}
-                      </div>
-                      <div className="font-display text-sm text-lime-600 tabular-nums">{row.ourRun}–{row.oppRun}</div>
-                    </div>
-                  ) : (
-                    <div className="p-3 flex items-start gap-3 bg-red-950/30">
-                      <div className="w-10 text-right font-display text-lg text-stone-400 tabular-nums">{minute}'</div>
-                      <div className="text-2xl">⚽</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-stone-100 truncate">{game.opponent || 'Opponent'}</div>
-                      </div>
-                      <div className="font-display text-sm text-red-400 tabular-nums">{row.ourRun}–{row.oppRun}</div>
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
-            </div>
-          </>
-        )}
       </div>
     </>
   );
