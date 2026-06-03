@@ -1493,7 +1493,25 @@ export default function App() {
         <ScheduleView
           schedule={schedule}
           roster={roster}
+          games={games}
           opponentSuggestions={opponentSuggestions}
+          onRenameOpponent={async (oldName, newName) => {
+            const o = (oldName || '').trim().toLowerCase();
+            const n = (newName || '').trim();
+            if (!o || !n) return 0;
+            const matches = (s) => (s || '').trim().toLowerCase() === o;
+            let count = 0;
+            const nextGames = games.map((g) => {
+              if (matches(g.opponent)) { count++; return { ...g, opponent: n }; }
+              return g;
+            });
+            const nextSchedule = schedule.map((s) => {
+              if (matches(s.opponent)) { count++; return { ...s, opponent: n }; }
+              return s;
+            });
+            await Promise.all([persistGames(nextGames), persistSchedule(nextSchedule)]);
+            return count;
+          }}
           initialEditId={resumeScheduleEditId}
           onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
           onSave={persistSchedule}
@@ -8151,7 +8169,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, roster, opponentSuggestions = [], initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
+function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -8169,6 +8187,7 @@ function ScheduleView({ schedule, roster, opponentSuggestions = [], initialEditI
   const [parsed, setParsed] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [showOpponentManager, setShowOpponentManager] = useState(false);
   const formRef = React.useRef(null);
   const isLightColor = (hex) => {
     try {
@@ -8381,7 +8400,20 @@ function ScheduleView({ schedule, roster, opponentSuggestions = [], initialEditI
 
   return (
     <div className="min-h-screen bg-stone-900 pb-8">
-      <Header title="SCHEDULE" onBack={onBack} />
+      <Header
+        title="SCHEDULE"
+        onBack={onBack}
+        right={
+          opponentSuggestions.length > 0 && onRenameOpponent ? (
+            <button
+              onClick={() => setShowOpponentManager(true)}
+              className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
+            >
+              🏷️ OPPONENTS
+            </button>
+          ) : null
+        }
+      />
 
       {/* Import from ECSL */}
       <div className="px-4 pt-4">
@@ -8771,6 +8803,127 @@ function ScheduleView({ schedule, roster, opponentSuggestions = [], initialEditI
             })}
           </div>
         )}
+      </div>
+      {showOpponentManager && (
+        <OpponentManagerModal
+          opponentSuggestions={opponentSuggestions}
+          games={games}
+          schedule={schedule}
+          onClose={() => setShowOpponentManager(false)}
+          onRename={onRenameOpponent}
+          askConfirm={askConfirm}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- OPPONENT MANAGER MODAL ---------- */
+function OpponentManagerModal({ opponentSuggestions, games, schedule, onClose, onRename, askConfirm, showToast }) {
+  const [renaming, setRenaming] = useState(null); // { from: string, to: string }
+  const norm = (s) => (s || '').trim().toLowerCase();
+  // Count usages per opponent so the coach can see how many docs a rename
+  // (or how much demo data) is involved.
+  const counts = useMemo(() => {
+    const m = new Map();
+    const bump = (k, slot) => {
+      if (!k) return;
+      const e = m.get(k) || { games: 0, schedule: 0 };
+      e[slot] += 1;
+      m.set(k, e);
+    };
+    for (const g of games) bump(norm(g.opponent), 'games');
+    for (const s of schedule) bump(norm(s.opponent), 'schedule');
+    return m;
+  }, [games, schedule]);
+  const sorted = [...opponentSuggestions].sort((a, b) => a.localeCompare(b));
+
+  const doRename = async () => {
+    const from = renaming?.from;
+    const to = (renaming?.to || '').trim();
+    if (!from || !to) return;
+    if (norm(from) === norm(to)) { setRenaming(null); return; }
+    const exists = opponentSuggestions.some((n) => norm(n) === norm(to));
+    const apply = async () => {
+      try {
+        const n = await onRename(from, to);
+        showToast?.(n > 0 ? `Renamed ${n} entr${n === 1 ? 'y' : 'ies'} → "${to}"` : 'Nothing to rename');
+      } catch (e) {
+        showToast?.('Rename failed');
+      }
+      setRenaming(null);
+    };
+    if (exists) {
+      askConfirm?.(
+        `"${to}" already exists. Merge "${from}" into it? This updates all games and schedule entries.`,
+        apply,
+      );
+    } else {
+      apply();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-stone-900 border border-stone-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] flex flex-col">
+        <div className="px-4 py-3 border-b border-stone-800 flex items-center justify-between">
+          <div className="font-display text-lg">MANAGE OPPONENTS</div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-100 text-2xl leading-none px-2">×</button>
+        </div>
+        <div className="px-4 py-2 text-xs text-stone-400 border-b border-stone-800">
+          Rename a team to fix a typo or merge duplicates. Updates every game and schedule entry that uses the old name. To remove a test/demo team, delete the underlying game(s) from the past-games list.
+        </div>
+        <div className="flex-1 overflow-y-auto divide-y divide-stone-800">
+          {sorted.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-stone-500">No opponents yet.</div>
+          )}
+          {sorted.map((name) => {
+            const c = counts.get(norm(name)) || { games: 0, schedule: 0 };
+            const isRenaming = renaming?.from === name;
+            return (
+              <div key={name} className="px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">{name}</div>
+                    <div className="text-[11px] text-stone-500 mt-0.5">
+                      {c.games > 0 && `${c.games} game${c.games === 1 ? '' : 's'}`}
+                      {c.games > 0 && c.schedule > 0 && ' · '}
+                      {c.schedule > 0 && `${c.schedule} scheduled`}
+                      {c.games === 0 && c.schedule === 0 && 'unused'}
+                    </div>
+                  </div>
+                  {!isRenaming && (
+                    <button
+                      onClick={() => setRenaming({ from: name, to: name })}
+                      className="text-xs font-bold text-lime-400 hover:text-lime-300 px-3 py-1.5 rounded-lg border border-stone-800"
+                    >
+                      RENAME
+                    </button>
+                  )}
+                </div>
+                {isRenaming && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={renaming.to}
+                      onChange={(e) => setRenaming({ from: name, to: e.target.value })}
+                      autoFocus
+                      className="flex-1 bg-stone-950 border border-stone-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+                    />
+                    <button onClick={doRename} className="text-xs font-bold bg-lime-500 text-stone-900 px-3 py-1.5 rounded-lg">SAVE</button>
+                    <button onClick={() => setRenaming(null)} className="text-xs font-bold text-stone-400 px-2 py-1.5">CANCEL</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-4 py-3 border-t border-stone-800">
+          <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-stone-800 text-stone-200 font-display text-sm">
+            DONE
+          </button>
+        </div>
       </div>
     </div>
   );
