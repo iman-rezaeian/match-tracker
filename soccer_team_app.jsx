@@ -1739,6 +1739,11 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
+                      {item.field && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          📍 {item.field}
+                        </span>
+                      )}
                     </div>
                     {item.location && (
                       <a
@@ -8105,6 +8110,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
   const [time, setTime] = useState('');
   const [tournament, setTournament] = useState('');
   const [location, setLocation] = useState('');
+  const [field, setField] = useState('');
   // Optional match-day pre-fill — saved on the schedule item, used when the
   // coach taps START on match day to skip setup screens.
   const [isHome, setIsHome] = useState(true);
@@ -8144,6 +8150,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
       setTime(item.time || '');
       setTournament(item.tournament || '');
       setLocation(item.location || '');
+      setField(item.field || '');
       setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
       setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
       setHomeColor(item.homeColor || '#0a0a0a');
@@ -8210,7 +8217,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
       // Clean up opponent name (remove B10 prefix if present)
       opp = opp.replace(/^B\d+/i, '').trim() || opp;
 
-      results.push({ date: isoDate, time: isoTime, opponent: opp, location: field });
+      results.push({ date: isoDate, time: isoTime, opponent: opp, field });
     }
     return results;
   };
@@ -8228,7 +8235,8 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
       date: p.date,
       time: p.time,
       tournament: '',
-      location: p.location,
+      location: '',
+      field: p.field || '',
     }));
     onSave([...schedule, ...newItems]);
     showToast?.(`✅ Added ${newItems.length} game${newItems.length === 1 ? '' : 's'}`);
@@ -8253,6 +8261,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
         time: time || '',
         tournament: tournament.trim(),
         location: location.trim(),
+        field: field.trim(),
         ...setupFields,
       } : s));
       showToast?.(`✏️ Updated vs ${opponent.trim()}`);
@@ -8266,6 +8275,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
       time: time || '',
       tournament: tournament.trim(),
       location: location.trim(),
+      field: field.trim(),
       ...setupFields,
     };
     onSave([...schedule, item]);
@@ -8275,7 +8285,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
   };
 
   const resetForm = () => {
-    setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation('');
+    setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation(''); setField('');
     setIsHome(true); setHalfLengthMin(25); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
     setShowSetup(false);
     setEditingId(null);
@@ -8288,6 +8298,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
     setTime(item.time || '');
     setTournament(item.tournament || '');
     setLocation(item.location || '');
+    setField(item.field || '');
     setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
     setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
     setHomeColor(item.homeColor || '#0a0a0a');
@@ -8431,6 +8442,13 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
             onChange={e => setLocation(e.target.value)}
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
+          <input
+            type="text"
+            placeholder="Field # / name (e.g., Field 4)"
+            value={field}
+            onChange={e => setField(e.target.value)}
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+          />
 
           {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
           <button
@@ -8555,6 +8573,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
                       time: time || '',
                       tournament: tournament.trim(),
                       location: location.trim(),
+                      field: field.trim(),
                       isHome, halfLengthMin, homeColor, awayColor,
                       squadIds: Array.isArray(squadIds) ? squadIds : [],
                     } : s));
@@ -8637,6 +8656,11 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
+                      {item.field && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          📍 {item.field}
+                        </span>
+                      )}
                       {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
                         <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                           👥 {item.squadIds.length}
@@ -9694,6 +9718,11 @@ function PublicHomePage() {
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
                       {item.time && <span>{formatTime12(item.time)}</span>}
+                      {item.field && (
+                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                          📍 {item.field}
+                        </span>
+                      )}
                     </div>
                     {item.location && (
                       <div className="text-xs text-blue-400 truncate mt-0.5">
