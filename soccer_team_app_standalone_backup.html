@@ -2312,6 +2312,7 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
   const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
+  const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
   const [halfLengthMin, setHalfLengthMin] = useState(initial?.halfLengthMin ?? 25);
   const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
   const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
@@ -2368,6 +2369,21 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
             placeholder="e.g., Lions FC"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
+        </Field>
+
+        <Field label="SIDE">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setIsHome(true)}
+              className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+            >🏠 HOME</button>
+            <button
+              type="button"
+              onClick={() => setIsHome(false)}
+              className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+            >✈️ AWAY</button>
+          </div>
         </Field>
 
         <Field label="HALF LENGTH (MIN)">
@@ -2456,7 +2472,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
 
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', true, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -10019,6 +10035,8 @@ function LiveScoreboard({ game, roster }) {
     </>
   );
 }
+
+
 
 
 
