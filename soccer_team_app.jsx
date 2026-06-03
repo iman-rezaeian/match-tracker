@@ -9596,9 +9596,7 @@ function PublicHomePage() {
       <style>{FONT_STYLES}</style>
       {featured ? (
         <>
-          <div className="relative text-white px-5 pt-16 pb-6 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
-            {/* Decorative pitch-stripe accent in the corner only, doesn't tile across the seam */}
-            <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
+          <div className="relative stripes-bg text-white px-5 pt-16 pb-6 overflow-hidden border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
             <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
               {window.fbUserInfo && (
                 <button
@@ -9653,8 +9651,7 @@ function PublicHomePage() {
           )}
         </>
       ) : (
-        <div className="relative text-white px-5 pt-16 pb-12 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
-          <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
+        <div className="relative stripes-bg text-white px-5 pt-16 pb-12 overflow-hidden border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
           <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
             {window.fbUserInfo && (
               <button
