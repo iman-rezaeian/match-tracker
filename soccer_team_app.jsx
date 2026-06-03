@@ -407,6 +407,18 @@ function formatDate(iso) {
   return new Date(d + 'T12:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+// Soccer team names are usually "<city> <team-name>" (e.g. "Leamington FC",
+// "Belle River FC", "Amherstburg Fusion"). Split on the LAST whitespace so
+// multi-word cities like "Belle River" stay intact. Single-word names
+// ("Test", "Opponent") fall back to no city overline.
+function splitTeamName(full) {
+  const s = String(full || '').trim();
+  if (!s) return { city: '', name: '' };
+  const i = s.lastIndexOf(' ');
+  if (i === -1) return { city: '', name: s };
+  return { city: s.slice(0, i).trim(), name: s.slice(i + 1).trim() };
+}
+
 function formatTime12(time24) {
   const [h, m] = time24.split(':').map(Number);
   const suffix = h >= 12 ? 'PM' : 'AM';
@@ -9567,11 +9579,11 @@ function tzTimestamp(dateStr, timeStr) {
 // home keeps a consistent "field" panel whether or not the game has started.
 function ScheduledScoreboard({ item, transparent = false }) {
   const isCancelled = !!item.cancelled;
-  const rightName = item.opponent || 'Opponent';
-  // Home team is stacked ("LaSalle" overline above "Stompers") so the full
-  // club name fits without forcing the scoreboard into a tiny font tier.
-  // Size budget is driven by max("Stompers".length=8, opponent name length).
-  const longestName = Math.max(8, rightName.length);
+  const opp = splitTeamName(item.opponent || 'Opponent');
+  // Both teams are stacked ("<city>" overline above "<team>"). Width budget
+  // is driven by the longest team-name part and the longest city part.
+  const longestName = Math.max(8 /* Stompers */, opp.name.length);
+  const longestCity = Math.max(7 /* LaSalle */, opp.city.length);
   const nameSizeClass =
     longestName <= 7 ? 'text-4xl'
     : longestName <= 9 ? 'text-3xl'
@@ -9580,21 +9592,24 @@ function ScheduledScoreboard({ item, transparent = false }) {
     : longestName <= 20 ? 'text-lg'
     : 'text-base';
   const overlineSizeClass =
-    longestName <= 9 ? 'text-sm'
-    : longestName <= 12 ? 'text-xs'
+    longestCity <= 9 ? 'text-sm'
+    : longestCity <= 12 ? 'text-xs'
     : 'text-[10px]';
   return (
     <div className={`${transparent ? '' : 'stripes-bg '}text-white px-4 ${transparent ? 'pt-2' : 'pt-[calc(env(safe-area-inset-top,0px)+3.75rem)]'} pb-6`}>
       <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
         {item.tournament || 'Match'} · {formatDate(item.date)}
       </div>
-      <div className="flex items-start justify-between gap-4 mt-5 px-2">
+      <div className="flex items-end justify-between gap-4 mt-5 px-2">
         <div className="flex-1 min-w-0 text-center">
           <div className={`font-display ${overlineSizeClass} text-lime-400/90 leading-none tracking-wide`}>LaSalle</div>
           <div className={`font-display ${nameSizeClass} leading-tight`}>Stompers</div>
         </div>
-        <div className="flex-1 min-w-0 text-center self-end">
-          <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
+        <div className="flex-1 min-w-0 text-center">
+          {opp.city && (
+            <div className={`font-display ${overlineSizeClass} text-white/70 leading-none tracking-wide`}>{opp.city}</div>
+          )}
+          <div className={`font-display ${nameSizeClass} leading-tight`}>{opp.name}</div>
         </div>
       </div>
       <div className="font-display text-6xl tabular-nums text-center mt-3 leading-none text-white/30">
@@ -10022,13 +10037,13 @@ function LiveScoreboard({ game, roster, transparent = false }) {
   else if (isActive) statusLabel = `${mins}'`;
   else statusLabel = 'NOT STARTED';
 
-  const rightName = game.opponent || 'Opponent';
+  const opp = splitTeamName(game.opponent || 'Opponent');
   const leftScore = game.ourScore;
   const rightScore = game.oppScore;
-  // Home team is stacked ("LaSalle" overline above "Stompers") so the full
-  // club name fits without forcing a tiny font tier. Width budget is driven
-  // by max("Stompers".length=8, opponent name length).
-  const longestName = Math.max(8, rightName.length);
+  // Both teams are stacked ("<city>" overline above "<team>"). Width budget
+  // is driven by the longest team-name part and the longest city part.
+  const longestName = Math.max(8 /* Stompers */, opp.name.length);
+  const longestCity = Math.max(7 /* LaSalle */, opp.city.length);
   const nameSizeClass =
     longestName <= 7 ? 'text-4xl'
     : longestName <= 9 ? 'text-3xl'
@@ -10037,8 +10052,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     : longestName <= 20 ? 'text-lg'
     : 'text-base';
   const overlineSizeClass =
-    longestName <= 9 ? 'text-sm'
-    : longestName <= 12 ? 'text-xs'
+    longestCity <= 9 ? 'text-sm'
+    : longestCity <= 12 ? 'text-xs'
     : 'text-[10px]';
 
   // Privacy: first name + jersey number only — never last names on public pages.
@@ -10059,13 +10074,16 @@ function LiveScoreboard({ game, roster, transparent = false }) {
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
         {/* Names on top, full half-width each. Score sits below for breathing room. */}
-        <div className="flex items-start justify-between gap-4 mt-5 px-2">
+        <div className="flex items-end justify-between gap-4 mt-5 px-2">
           <div className="flex-1 min-w-0 text-center">
             <div className={`font-display ${overlineSizeClass} text-lime-400/90 leading-none tracking-wide`}>LaSalle</div>
             <div className={`font-display ${nameSizeClass} leading-tight`}>Stompers</div>
           </div>
-          <div className="flex-1 min-w-0 text-center self-end">
-            <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
+          <div className="flex-1 min-w-0 text-center">
+            {opp.city && (
+              <div className={`font-display ${overlineSizeClass} text-white/70 leading-none tracking-wide`}>{opp.city}</div>
+            )}
+            <div className={`font-display ${nameSizeClass} leading-tight`}>{opp.name}</div>
           </div>
         </div>
         <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
