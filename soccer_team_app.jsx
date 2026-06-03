@@ -490,6 +490,32 @@ export default function App() {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
 
+  // Recurring opponents dataset — derived from past games (most-recent first)
+  // and the schedule. Grassroots/festival teams play the same opponents over
+  // and over; we surface them as datalist suggestions on the game-setup and
+  // schedule-edit inputs so the coach can pick instead of retyping (and
+  // misspelling — which would break the schedule↔game-doc dedupe on the
+  // public home card).
+  const opponentSuggestions = useMemo(() => {
+    const seen = new Map(); // key = lowercase trimmed name → first-seen canonical
+    const add = (raw) => {
+      const v = (raw || '').trim();
+      if (!v) return;
+      const k = v.toLowerCase();
+      if (!seen.has(k)) seen.set(k, v);
+    };
+    // Games: newest first (by date, then endedAt).
+    const gs = [...games].sort((a, b) => {
+      const dc = new Date(b.date || 0) - new Date(a.date || 0);
+      if (dc !== 0) return dc;
+      return (b.endedAt || 0) - (a.endedAt || 0);
+    });
+    for (const g of gs) add(g.opponent);
+    // Then schedule entries (typically future).
+    for (const s of schedule) add(s.opponent);
+    return Array.from(seen.values());
+  }, [games, schedule]);
+
   // Per-view browser-history stack. Every time `view` changes to a deeper
   // step (gameSetup → squad → lineup → activeGame), we pushState. When the
   // user swipes back / hits the OS back gesture, popstate fires and we
@@ -1303,6 +1329,7 @@ export default function App() {
         <GameSetup
           rosterCount={roster.length}
           initial={pendingGameSetup}
+          opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
           onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
@@ -1466,6 +1493,7 @@ export default function App() {
         <ScheduleView
           schedule={schedule}
           roster={roster}
+          opponentSuggestions={opponentSuggestions}
           initialEditId={resumeScheduleEditId}
           onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
           onSave={persistSchedule}
@@ -2203,7 +2231,7 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 }
 
 /* ---------- GAME SETUP ---------- */
-function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
+function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, opponentSuggestions = [] }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
   const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
   const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
@@ -2261,8 +2289,15 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
             placeholder="e.g., Lions FC"
+            list="opponent-suggestions"
+            autoComplete="off"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
+          {opponentSuggestions.length > 0 && (
+            <datalist id="opponent-suggestions">
+              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+            </datalist>
+          )}
         </Field>
 
         <Field label="SIDE">
@@ -8116,7 +8151,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
+function ScheduleView({ schedule, roster, opponentSuggestions = [], initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -8412,8 +8447,15 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
             placeholder="Opponent *"
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
+            list="opponent-suggestions"
+            autoComplete="off"
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
+          {opponentSuggestions.length > 0 && (
+            <datalist id="opponent-suggestions">
+              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+            </datalist>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <label className="relative block">
               <span className="text-xs font-semibold text-stone-400 mb-1 block">DATE *</span>
