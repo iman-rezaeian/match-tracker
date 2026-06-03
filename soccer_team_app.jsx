@@ -9865,7 +9865,7 @@ function LiveScoreboard({ game, roster }) {
                 return (
                   <div key={i} className="text-sm text-center">
                     <div className="font-bold text-white truncate">
-                      {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
                     </div>
                     {row.assistId && (
                       <div className="text-[11px] text-white/50 truncate pl-6">🅰️ {nameOf(row.assistId)}</div>
@@ -9880,7 +9880,7 @@ function LiveScoreboard({ game, roster }) {
                 return (
                   <div key={i} className="text-sm text-center">
                     <div className="font-bold text-white">
-                      Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
                     </div>
                   </div>
                 );
