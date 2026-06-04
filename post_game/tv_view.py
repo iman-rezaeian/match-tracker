@@ -35,7 +35,8 @@ import pandas as pd
 
 from . import config, firestore_io
 from .firestore_io import CoachEvent
-from .highlights import _equirect_pixel_to_lonlat, _field_to_equirect_pixel, _smooth_aim_stream
+from .calibration import FieldProjector
+from .highlights import _smooth_aim_stream
 from .video import H264PipeWriter, render_perspective
 
 log = logging.getLogger(__name__)
@@ -44,9 +45,55 @@ log = logging.getLogger(__name__)
 # --- config (kept here; promote to config.py if ever tweaked from CLI) ----
 
 TV_AIM_HZ = 5.0          # how often to recompute the virtual-camera aim
-TV_SMOOTH_WINDOW = 15    # samples of moving average over the aim stream
-TV_FOV_DEG = 100.0       # broadcast feel — wider than per-clip 95° highlights
+TV_SMOOTH_WINDOW = 15    # samples of moving average over the aim stream (3s at 5Hz)
+TV_AGG_WINDOW_S = 1.0    # ±1s per-time aggregation window for the density-
+                         # cluster aim. Keep this short so the camera follows
+                         # play promptly — sub-second wobble that leaks
+                         # through is removed by the dedicated reversal
+                         # suppressor below, NOT by widening this window
+                         # (which makes the camera sluggish).
+TV_REVERSAL_MIN_DUR_S = 1.0  # Suppress back-and-forth aim reversals shorter
+                         # than this many seconds. Detected as turning-point
+                         # pairs in the smoothed aim where the camera reverses
+                         # direction and reverses BACK within < this duration.
+                         # The short excursion is flattened by linear
+                         # interpolation between the outer turning points,
+                         # which preserves the overall follow while killing
+                         # the "pan back a little then forward again" wobble.
+TV_FOV_DEG = 70.0        # narrower than 100° so the field fills the frame.
+                         # On a low sideline pole the field is a thin strip on
+                         # the horizon — wider FOV just imports parking lot + sky.
+TV_LAT_TILT_DEG = -7.0   # bias the aim DOWN by this many degrees. Players'
+                         # feet land near the horizon line in equirect, so a
+                         # pure player-centroid aim puts them at the vertical
+                         # center with sky above. -7° with a ~39° vertical FOV
+                         # puts players at ~32% from the top (broadcast-standard
+                         # head-room). Going much past -10° makes the players a
+                         # sliver at the top of the frame with empty foreground.
 TV_RESOLUTION = (1920, 1080)
+TV_ONFIELD_PAD_M = -1.0  # NEGATIVE: require tracks to be at least 1m INSIDE
+                         # the touchlines. Positive pad lets sideline coaches,
+                         # parents, and players-on-bench pull the centroid
+                         # toward the bench side and the aim misses the action.
+TV_DENSITY_BIN_M = 2.0   # 2m bins along the field-X axis for density histogram
+TV_DENSITY_WINDOW_M = 16.0  # find the densest 16m-wide window of players —
+                         # roughly the width of an attacking phase. Aim at the
+                         # mean of just those players, so a lone GK at the
+                         # other end can't drag the camera to midfield.
+TV_OUTLIER_RADIUS_M = 15.0  # (unused after density-aim refactor; kept for compat)
+TV_MIN_ONFIELD_TRACKS = 1  # need this many DISTINCT on-field tracks (after the
+                         # static-track filter) to update aim. Set to 1 because
+                         # detection is sparse on this footage (often only 2-3
+                         # real players survive on-field + not-static filters
+                         # per timestamp), so a single real player is still
+                         # better than falling back to field-center which sits
+                         # at the bench area.
+TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
+                         # Tracks below this are stationary people who slipped
+                         # past the on-field geometric filter: coaches standing
+                         # on the touchline, refs at midfield, the ball-kid by
+                         # the goalpost. Real U10 players cover way more than
+                         # 5 m total even in a 30-second smoke window.
 AUTO_HIGHLIGHT_WINDOW_S = 15.0
 AUTO_HIGHLIGHT_EVENT_TYPES = ("GOAL", "SHOT_ON", "SAVE", "KEY_PASS")
 
@@ -69,45 +116,235 @@ class TvViewMeta:
 
 # --- aim stream ----------------------------------------------------------
 
+def _suppress_short_reversals(x: np.ndarray, aim_hz: float, min_dur_s: float) -> np.ndarray:
+    """Median-filter a 1D aim series to flatten reversals shorter than `min_dur_s`.
+
+    A 1-second median filter is the textbook tool for "remove brief
+    excursions while preserving the underlying trajectory":
+      - A monotonic ramp: unchanged (the window median equals the center
+        sample for any monotonic input).
+      - A V-shaped dip (camera panning forward, briefly back, then forward
+        again) where the dip is shorter than half the window: the dip
+        samples get replaced by the nearby higher values from the trend,
+        because they are minority in the window — the camera "doesn't
+        see" the wobble.
+      - A sustained direction change (lasting longer than half the window):
+        survives, because once the new direction dominates the window the
+        median tracks it.
+
+    Window length is `min_dur_s * aim_hz` (rounded to next odd integer).
+    With min_dur_s=1.0 and aim_hz=5 that's 5 samples → any reversal
+    completed in <0.5 s vanishes; reversals lasting >0.5 s survive.
+
+    Crucially: this does NOT change the *rate* of long pans. The camera
+    still follows the play exactly as fast as the smoothed aim stream
+    says, only the sub-second back-and-forth is removed. This was the
+    user's exact request.
+    """
+    if x.size < 5 or min_dur_s <= 0:
+        return x
+    k = max(3, int(round(min_dur_s * aim_hz)))
+    if k % 2 == 0:
+        k += 1
+    from scipy.ndimage import median_filter
+    return median_filter(x, size=k, mode="nearest")
+
+
+def _field_lonlat_bounds(
+    projector: FieldProjector,
+    field_length_m: float, field_width_m: float,
+) -> tuple[float, float, float, float]:
+    """Project the four field corners (slightly padded) into (lon, lat) and
+    return (lon_min, lon_max, lat_min, lat_max). Used to clamp the virtual
+    camera aim so it can never point outside the pitch — the camera will
+    still see grass beyond the lines because of FOV, but the *center* stays
+    inside.
+    """
+    pad = TV_ONFIELD_PAD_M
+    corners_m = [
+        (-pad, -pad),
+        (field_length_m + pad, -pad),
+        (field_length_m + pad, field_width_m + pad),
+        (-pad, field_width_m + pad),
+    ]
+    lons, lats = [], []
+    for x_m, y_m in corners_m:
+        lon, lat = projector.field_to_lonlat(x_m, y_m)
+        lons.append(lon)
+        lats.append(lat)
+    # Unwrap lons so we don't get a 360° span across the seam.
+    lons_uw = np.degrees(np.unwrap(np.radians(np.array(lons))))
+    return float(lons_uw.min()), float(lons_uw.max()), float(min(lats)), float(max(lats))
+
+
 def _play_centroid_aim_for_time(
     tracks_field_df: pd.DataFrame,
     t_video: float,
-    H_inv: np.ndarray,
-    eq_w: int,
-    eq_h: int,
+    projector: FieldProjector,
     fallback: tuple[float, float],
-) -> tuple[float, float]:
-    """Mean foot position of all tracks in a ±1s window → equirect → (lon, lat)."""
+    field_length_m: float,
+    field_width_m: float,
+) -> tuple[tuple[float, float], bool]:
+    """DENSITY-based aim of ON-FIELD tracks in a ±1s window → (lon, lat).
+
+    Returns ((lon, lat), valid). `valid=False` means there were no
+    on-field tracks at this time — caller should hold the previous aim.
+
+    Mean/median centroid was the wrong primitive: when 9 attackers are at
+    one goal and 1 GK is at the other, the mean lands in the empty middle.
+    Instead: find the densest cluster along the field-X axis (where play
+    actually moves end-to-end), then take the mean of just those players.
+
+    Algorithm:
+      1. Filter to on-field tracks (inside touch+end lines by TV_ONFIELD_PAD_M).
+      2. DEDUPE by track_id (one (x,y) per track via median of its rows in
+         the window). A static coach standing inside the lines must NOT vote
+         8 times just because he was detected in 8 consecutive frames.
+      3. Drop tracks pre-flagged as static (`_track_static`) at the
+         `_build_aim_stream` level (see total-movement filter there).
+      4. Build a 1D histogram of x positions with TV_DENSITY_BIN_M bins.
+      5. Find the densest TV_DENSITY_WINDOW_M-wide window of x.
+      6. Take mean of (x, y) for tracks inside that window.
+    """
     if "x_m" not in tracks_field_df.columns or tracks_field_df.empty:
-        return fallback
-    mask = (tracks_field_df["time_s"] >= t_video - 1.0) & (tracks_field_df["time_s"] <= t_video + 1.0)
+        return fallback, False
+    pad = TV_ONFIELD_PAD_M
+    half_w = TV_AGG_WINDOW_S
+    mask = (
+        (tracks_field_df["time_s"] >= t_video - half_w)
+        & (tracks_field_df["time_s"] <= t_video + half_w)
+        & (tracks_field_df["x_m"] >= -pad)
+        & (tracks_field_df["x_m"] <= field_length_m + pad)
+        & (tracks_field_df["y_m"] >= -pad)
+        & (tracks_field_df["y_m"] <= field_width_m + pad)
+    )
+    # Drop tracks that the lifetime-movement filter marked as static.
+    if "_track_static" in tracks_field_df.columns:
+        mask = mask & (~tracks_field_df["_track_static"])
     win = tracks_field_df[mask]
     if win.empty:
-        return fallback
-    x_m = float(win["x_m"].mean())
-    y_m = float(win["y_m"].mean())
-    u, v = _field_to_equirect_pixel(H_inv, x_m, y_m)
-    return _equirect_pixel_to_lonlat(u, v, eq_w, eq_h)
+        return fallback, False
+
+    # Dedupe by track_id — one point per player.
+    per_track = win.groupby("track_id").agg(x_m=("x_m", "median"), y_m=("y_m", "median"))
+    if len(per_track) < TV_MIN_ONFIELD_TRACKS:
+        return fallback, False
+    x = per_track["x_m"].to_numpy(dtype=np.float64)
+    y = per_track["y_m"].to_numpy(dtype=np.float64)
+
+    # Densest-window on x. With only a handful of tracks, fall back to mean.
+    if len(x) >= 4:
+        bin_w = TV_DENSITY_BIN_M
+        win_w = TV_DENSITY_WINDOW_M
+        bins_per_window = max(1, int(round(win_w / bin_w)))
+        edges = np.arange(0.0, field_length_m + bin_w, bin_w)
+        hist, _ = np.histogram(x, bins=edges)
+        if len(hist) >= bins_per_window:
+            kernel = np.ones(bins_per_window, dtype=np.float64)
+            sums = np.convolve(hist, kernel, mode="valid")
+            peak = int(np.argmax(sums))
+            x_lo = edges[peak]
+            x_hi = edges[peak + bins_per_window]
+            inside = (x >= x_lo) & (x <= x_hi)
+            if inside.sum() >= 2:
+                cx = float(np.mean(x[inside]))
+                cy = float(np.mean(y[inside]))
+            else:
+                cx = float(np.mean(x))
+                cy = float(np.mean(y))
+        else:
+            cx = float(np.mean(x))
+            cy = float(np.mean(y))
+    else:
+        cx = float(np.mean(x))
+        cy = float(np.mean(y))
+
+    return projector.field_to_lonlat(cx, cy), True
 
 
 def _build_aim_stream(
     tracks_field_df: pd.DataFrame,
-    H_inv: np.ndarray,
-    eq_w: int,
-    eq_h: int,
+    projector: FieldProjector,
     start_s: float,
     end_s: float,
+    field_length_m: float,
+    field_width_m: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (aim_times, lons_unwrapped_deg, lats_deg) sampled at TV_AIM_HZ."""
+    """Return (aim_times, lons_unwrapped_deg, lats_deg) sampled at TV_AIM_HZ.
+
+    Aim is held at the last valid on-field centroid when no players are
+    detected on the pitch (between halves, restarts, deadballs). Final
+    aims are clamped to the projected field bounding box so the camera
+    center never points off the pitch.
+    """
     dt = 1.0 / TV_AIM_HZ
     aim_times = np.arange(start_s, end_s, dt)
-    raw = [
-        _play_centroid_aim_for_time(tracks_field_df, float(t), H_inv, eq_w, eq_h, (0.0, 0.0))
-        for t in aim_times
-    ]
+
+    # Pre-compute per-track lifetime movement and tag static tracks. This is
+    # the critical filter for "coach standing on the touchline gets detected
+    # in 300 frames and dominates the centroid". A real U10 player covers
+    # >>5 m over a 30-second window; a stationary adult covers <1 m.
+    if not tracks_field_df.empty and "track_id" in tracks_field_df.columns \
+            and "x_m" in tracks_field_df.columns:
+        agg = tracks_field_df.groupby("track_id").agg(
+            x_min=("x_m", "min"), x_max=("x_m", "max"),
+            y_min=("y_m", "min"), y_max=("y_m", "max"),
+        )
+        span = np.hypot(agg["x_max"] - agg["x_min"], agg["y_max"] - agg["y_min"])
+        static_ids = set(span[span < TV_STATIC_TRACK_MVMT_M].index.tolist())
+        tracks_field_df = tracks_field_df.copy()
+        tracks_field_df["_track_static"] = tracks_field_df["track_id"].isin(static_ids)
+        n_static = int(tracks_field_df["_track_static"].sum())
+        n_total_ids = tracks_field_df["track_id"].nunique()
+        log.info(
+            "  tv-view: dropping %d/%d static tracks (lifetime mvmt < %.1f m) "
+            "as non-players (coaches/refs/standing kids).",
+            len(static_ids), n_total_ids, TV_STATIC_TRACK_MVMT_M,
+        )
+    else:
+        n_static = 0
+
+    # Default fallback = field center projected to (lon, lat). Far better
+    # than (0, 0) which can land in the sky or behind the camera.
+    center_lonlat = projector.field_to_lonlat(field_length_m / 2.0, field_width_m / 2.0)
+
+    raw: list[tuple[float, float]] = []
+    last_valid = center_lonlat
+    for t in aim_times:
+        aim, valid = _play_centroid_aim_for_time(
+            tracks_field_df, float(t), projector,
+            last_valid, field_length_m, field_width_m,
+        )
+        if valid:
+            last_valid = aim
+        raw.append(aim)
+
     smoothed = _smooth_aim_stream(raw, window=TV_SMOOTH_WINDOW)
     lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in smoothed]))))
     lats = np.array([a[1] for a in smoothed])
+
+    # Sub-second reversal suppressor (the user complaint): the smoothed aim
+    # still has small back-and-forth bumps when a player briefly drifts into
+    # then out of the densest cluster. Flatten any reversal that completes
+    # in less than TV_REVERSAL_MIN_DUR_S. Long pans are preserved at their
+    # full rate — only short wobble is removed.
+    lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
+    lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
+
+    # Tilt the camera DOWN so the horizon sits at the top of the frame and
+    # the field fills the bottom 70–80% — broadcast-style. Without this, on a
+    # low sideline pole the field appears as a thin strip near the middle of
+    # the frame and the upper half is sky + parking lot.
+    lats = lats + TV_LAT_TILT_DEG
+
+    # Clamp aim center inside the projected field box (after tilt). The clamp
+    # is mainly a safety net for lon — the tilt offset intentionally pushes
+    # lat below the field, so we relax the lat lower bound by the tilt amount.
+    lon_min, lon_max, lat_min, lat_max = _field_lonlat_bounds(
+        projector, field_length_m, field_width_m,
+    )
+    lons = np.clip(lons, lon_min, lon_max)
+    lats = np.clip(lats, lat_min + TV_LAT_TILT_DEG, lat_max)
     return aim_times, lons, lats
 
 
@@ -180,19 +417,16 @@ def _event_windows(
 def render_tv_reel(
     video_path: str,
     tracks_field_df: pd.DataFrame,
-    H: np.ndarray,
+    projector: FieldProjector,
     game_id: str,
+    field_length_m: float,
+    field_width_m: float,
     upload: bool = True,
     play_windows: Optional[list[tuple[float, float]]] = None,
 ) -> Optional[TvViewMeta]:
     """Render the broadcast view. If `play_windows` is given, only those
     segments (typically 1st + 2nd half) are rendered and concatenated —
     halftime + warmup are skipped."""
-    try:
-        H_inv = np.linalg.inv(np.asarray(H, dtype=np.float64))
-    except np.linalg.LinAlgError as e:
-        raise RuntimeError("Homography is singular — cannot invert for TV reel aim.") from e
-
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -221,7 +455,8 @@ def render_tv_reel(
         part_paths: list[Path] = []
         for i, (a, b) in enumerate(windows):
             aim_times, aim_lons_uw, aim_lats = _build_aim_stream(
-                tracks_field_df, H_inv, eq_w, eq_h, a, b,
+                tracks_field_df, projector, a, b,
+                field_length_m, field_width_m,
             )
             part_path = tmp_dir / f"half_{i + 1}.mp4"
             writer = H264PipeWriter(part_path, fps, out_w, out_h)
@@ -293,18 +528,23 @@ def extract_auto_highlights(
     video_path: str,
     events: list[CoachEvent],
     tracks_field_df: pd.DataFrame,
-    H: np.ndarray,
+    projector: FieldProjector,
     period_clock_to_video_time: Callable[[int, int], float],
     game_id: str,
+    field_length_m: float,
+    field_width_m: float,
     window_s: float = AUTO_HIGHLIGHT_WINDOW_S,
     upload: bool = True,
+    analyzed_windows: Optional[list[tuple[float, float]]] = None,
 ) -> Optional[TvViewMeta]:
-    """Render only segments around scoring-adjacent events, concatenated."""
-    try:
-        H_inv = np.linalg.inv(np.asarray(H, dtype=np.float64))
-    except np.linalg.LinAlgError as e:
-        raise RuntimeError("Homography is singular — cannot invert for auto-highlights.") from e
+    """Render only segments around scoring-adjacent events, concatenated.
 
+    If `analyzed_windows` is provided (e.g. smoke mode's two 120s halves),
+    event windows are intersected with those ranges so we never render
+    highlights from source-video minutes the tracker never analyzed —
+    those frames have no aim data and would default to the field-center
+    fallback, producing a useless reel.
+    """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -315,6 +555,23 @@ def extract_auto_highlights(
     duration_s = total_frames / fps if fps else 0.0
 
     windows = _event_windows(events, period_clock_to_video_time, duration_s, window_s)
+    if analyzed_windows:
+        clipped: list[tuple[float, float]] = []
+        for (ea, eb) in windows:
+            for (aa, ab) in analyzed_windows:
+                lo = max(ea, aa)
+                hi = min(eb, ab)
+                if hi > lo + 0.5:
+                    clipped.append((lo, hi))
+        # Re-merge overlaps after clipping
+        clipped.sort()
+        merged: list[tuple[float, float]] = []
+        for a, b in clipped:
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        windows = merged
     if not windows:
         cap.release()
         log.info("Auto-highlights: no qualifying events; skipping.")
@@ -332,7 +589,8 @@ def extract_auto_highlights(
         part_paths: list[Path] = []
         for i, (a, b) in enumerate(windows):
             aim_times, aim_lons_uw, aim_lats = _build_aim_stream(
-                tracks_field_df, H_inv, eq_w, eq_h, a, b,
+                tracks_field_df, projector, a, b,
+                field_length_m, field_width_m,
             )
             part_path = tmp_dir / f"part_{i:03d}.mp4"
             writer = H264PipeWriter(part_path, fps, out_w, out_h)

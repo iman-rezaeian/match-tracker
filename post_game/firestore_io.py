@@ -70,6 +70,11 @@ class GameDoc:
     # derived from this offset + wallclock deltas in `pause_periods` /
     # `ended_at`.
     video_offset_h1_kickoff_s: float = 0.0
+    # Optional manual override for the 2nd-half kickoff in source-video
+    # seconds. When set (> 0), takes precedence over the wallclock-derived
+    # H2 start. Use this when the "start 2nd half" button was pressed late
+    # (sub chaos, distracted coach, etc.).
+    video_offset_h2_kickoff_s: float = 0.0
 
 
 @dataclass
@@ -89,6 +94,10 @@ class FieldCalibration:
     dst_points_m: list[tuple[float, float]]
     homography: list[list[float]]
     video_frame_size: tuple[int, int]
+    # Sphere model params (preferred). None if calibration was saved with the
+    # legacy planar-homography flow only. Populated from `ground_similarity`
+    # + `camera_height_m` + `camera_pitch_deg` + `camera_roll_deg`.
+    sphere: Optional[dict] = None
 
 
 # --- Client --------------------------------------------------------------
@@ -151,6 +160,7 @@ def get_game(game_id: str) -> GameDoc:
         away_color=d.get("awayColor"),
         field_name=d.get("fieldName"),
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
+        video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
     )
 
 
@@ -187,6 +197,7 @@ def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
             "has_calibration": bool(d.get("calibration")),
             "has_video_offset": d.get("videoOffsetH1KickoffS") is not None,
             "video_offset_h1_kickoff_s": float(d.get("videoOffsetH1KickoffS") or 0.0),
+            "video_offset_h2_kickoff_s": float(d.get("videoOffsetH2KickoffS") or 0.0),
             "has_analytics": has_analytics,
             "started_at": int(d.get("startedAt", 0)),
         })
@@ -261,6 +272,24 @@ def _calibration_from_dict(d: dict, default_name: str) -> FieldCalibration:
     else:
         size = tuple(d.get("video_frame_size", (0, 0)))
 
+    # Sphere model (preferred). Requires ground_similarity + a frame size.
+    sphere = None
+    gs = d.get("ground_similarity")
+    if gs and size[0] and size[1]:
+        try:
+            sphere = {
+                "a":  float(gs["a"]),  "b":  float(gs["b"]),
+                "tx": float(gs["tx"]), "ty": float(gs["ty"]),
+                "cam_h_m":   float(d.get("camera_height_m", 5.0)),
+                "pitch_deg": float(d.get("camera_pitch_deg", 0.0)),
+                "roll_deg":  float(d.get("camera_roll_deg",  0.0)),
+                "eq_w": int(size[0]),
+                "eq_h": int(size[1]),
+                "rms_m": float(gs.get("rms_m", 0.0)),
+            }
+        except (KeyError, TypeError, ValueError):
+            sphere = None
+
     return FieldCalibration(
         name=str(d.get("name", default_name)),
         length_m=float(d.get("length_m", 50.0)),
@@ -269,6 +298,7 @@ def _calibration_from_dict(d: dict, default_name: str) -> FieldCalibration:
         dst_points_m=dst,
         homography=H,
         video_frame_size=size,
+        sphere=sphere,
     )
 
 
@@ -292,6 +322,67 @@ def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
     _team_doc().collection("games").document(game_id).collection("analytics").document(
         config.ANALYTICS_DOC_VERSION
     ).set(analytics)
+
+
+# Public broadcast fields set on the game doc by `set_public_reels` after a
+# pipeline run. Keep this list in sync with the keys written below in
+# `set_public_reels` so `delete_analytics` clears every one of them.
+_PUBLIC_REEL_FIELDS = (
+    "videoHighlightsUrl",
+    "videoHighlightsDurationS",
+    "videoFullGameUrl",
+    "videoFullGameDurationS",
+    "broadcastEvents",
+    "broadcastHomeName",
+    "broadcastAwayName",
+    "broadcastHomeColor",
+    "broadcastAwayColor",
+)
+
+
+def delete_analytics(game_id: str) -> dict[str, int]:
+    """Wipe everything the pipeline writes for a game so it can be re-run.
+
+    Deletes:
+      - all docs in teams/main/games/<id>/analytics/   (per-version subdocs)
+      - all docs in teams/main/games/<id>/clips/       (per-event clip meta)
+      - public broadcast fields on the game doc (so PublicHomePage stops
+        offering the highlight / TV-reel buttons until next run)
+
+    Does NOT touch: videoUrl, calibration, video offsets, or the game's
+    own events / score — only post-game-analytics artefacts.
+
+    Returns a small {analytics_docs, clip_docs, public_fields_cleared}
+    counter so the caller can show the user what happened.
+    """
+    from google.cloud.firestore import DELETE_FIELD  # type: ignore
+
+    game_ref = _team_doc().collection("games").document(game_id)
+
+    analytics_count = 0
+    for snap in game_ref.collection("analytics").stream():
+        snap.reference.delete()
+        analytics_count += 1
+
+    clip_count = 0
+    for snap in game_ref.collection("clips").stream():
+        snap.reference.delete()
+        clip_count += 1
+
+    # Strip the public broadcast fields. update() with DELETE_FIELD on a
+    # missing key is a no-op, so we don't need to read first.
+    field_count = 0
+    try:
+        game_ref.update({k: DELETE_FIELD for k in _PUBLIC_REEL_FIELDS})
+        field_count = len(_PUBLIC_REEL_FIELDS)
+    except Exception as e:
+        log.warning("Could not clear public broadcast fields on %s: %s", game_id, e)
+
+    return {
+        "analytics_docs": analytics_count,
+        "clip_docs": clip_count,
+        "public_fields_cleared": field_count,
+    }
 
 
 def write_game_calibration(game_id: str, calibration: dict[str, Any]) -> None:
@@ -342,6 +433,18 @@ def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float) -> None:
     """Persist the seconds-into-source-video of the 1st-half kickoff whistle."""
     _team_doc().collection("games").document(game_id).set(
         {"videoOffsetH1KickoffS": float(offset_s)}, merge=True
+    )
+
+
+def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float) -> None:
+    """Persist a manual override for the 2nd-half kickoff (source-video seconds).
+
+    When > 0, overrides the wallclock-derived H2 start in `half_windows()`
+    and `period_clock_to_video_time_factory()`. Set to 0 to fall back to the
+    auto-derived value.
+    """
+    _team_doc().collection("games").document(game_id).set(
+        {"videoOffsetH2KickoffS": float(offset_s)}, merge=True
     )
 
 

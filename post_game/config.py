@@ -66,6 +66,31 @@ CROP_W = 1280
 CROP_H = 720
 CROP_FOV_DEG = 80.0
 
+# --- Multi-tile detection ------------------------------------------------
+#
+# A single perspective crop cannot cover the whole field from our mount
+# (centerline + 3m behind sideline + 5m up) — a 50m-wide pitch subtends
+# ~170° of horizontal angle from there, but pushing one crop past ~90° FOV
+# squishes far-side players below YOLO's detect threshold.
+#
+# Instead, we render N overlapping tiles per video frame, run YOLO on the
+# whole batch, project each detection to the field via the sphere
+# projector, and dedupe detections within DETECT_TILE_DEDUPE_M of each
+# other (same player picked up by two tiles where they overlap).
+#
+# Tile aims are computed from the field calibration once per pipeline run:
+# the outer tiles aim at the end-lines (field-X = 0 and L) and inner tiles
+# are evenly spaced between them, all projected through the sphere model.
+# Each tile is rendered at DETECT_TILE_FOV_DEG. From our centerline+3m+5m
+# X5 mount the far touchline corners sit at lon ≈ ±84°. With 3 tiles at
+# 75° FOV the total horizontal span is ~177° with ~24° overlap between
+# adjacent tiles — covers the whole pitch and gives any handed-off track
+# a chance to be re-detected in the neighbor tile.
+DETECT_N_TILES = 3
+DETECT_TILE_FOV_DEG = 75.0
+DETECT_TILE_DEDUPE_M = 1.5     # foot positions within this distance (m)
+                               # are merged; keep the higher-confidence det.
+
 # --- Detection -----------------------------------------------------------
 
 YOLO_MODEL = "yolo11s.pt"
@@ -109,7 +134,12 @@ CLIP_PRE_SECONDS = 12
 CLIP_POST_SECONDS = 8
 CLIP_EVENT_TYPES = ("GOAL", "ASSIST", "SAVE", "SHOT_ON", "KEY_PASS")
 CLIP_RESOLUTION = (1920, 1080)
-CLIP_FOV_DEG = 95.0                              # slightly wider than play crop
+CLIP_FOV_DEG = 70.0                              # narrow so field fills frame on
+                                                 # low sideline pole (was 95°;
+                                                 # wider just imports sky).
+CLIP_LAT_TILT_DEG = -7.0                         # downward tilt to push horizon
+                                                 # to top edge — see tv_view.py
+                                                 # TV_LAT_TILT_DEG for rationale.
 
 # --- GK positioning ------------------------------------------------------
 

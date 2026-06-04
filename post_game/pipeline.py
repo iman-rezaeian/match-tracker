@@ -12,7 +12,13 @@ from typing import Optional
 import numpy as np
 
 from . import config, firestore_io
-from .calibration import aim_from_calibration, pixel_to_field_batch
+from .calibration import (
+    FieldProjector,
+    aim_from_calibration,
+    compute_tile_aims,
+    dedupe_detections_by_field_position,
+    pixel_to_field_batch,
+)
 from .detection import Detector
 from .formation import compute_formation
 from .gk_positioning import compute_gk_positions
@@ -22,12 +28,21 @@ from .tv_view import extract_auto_highlights, render_tv_reel
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
 from .tracking import Tracker, TrackedDetection, to_dataframe
-from .video import crop_bbox_to_equirect, iter_frames, open_video
+from .video import crop_bbox_to_equirect, iter_frames, open_video, render_perspective
 
 log = logging.getLogger(__name__)
 
 
-def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> dict:
+def run(
+    game_id: str,
+    field_name: str | None = None,
+    tv_view: bool = False,
+    max_play_s: float | None = None,
+    debug_frames_every_s: float | None = None,
+    skip_clips: bool = False,
+    skip_upload: bool = False,
+    smoke_windows: list[tuple[float, float]] | None = None,
+) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
 
@@ -46,11 +61,11 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
     if field_cal is None and field_name:
         field_cal = firestore_io.get_field(field_name)
     if field_cal is None:
-        # Launch the local browser-based calibration tool, wait for the user
-        # to mark the 4 corners and save, then re-read the calibration.
-        from . import calibrate_local
-        log.info("No calibration found. Launching browser calibration UI...")
-        calibrate_local.calibrate_in_browser(game_id)
+        # Launch the multi-point sphere calibration tool, wait for the user
+        # to click the reference landmarks and save, then re-read.
+        from . import calibrate_flat
+        log.info("No calibration found. Launching multi-point sphere calibration UI...")
+        calibrate_flat.calibrate_flat(game_id)
         field_cal = firestore_io.get_game_calibration(game_id)
         if field_cal is None:
             raise RuntimeError(
@@ -65,13 +80,28 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
     log.info("Video: %dx%d @ %.2f fps (%.0fs)", eq_w, eq_h, meta["fps"], meta["duration_s"])
 
     # 1b. Aim the virtual camera at OUR field (away from the back-hemisphere
-    # field). Computed from the calibration corners — single aim for the
-    # whole game, no panning. This eliminates the "two fields" problem at
-    # detection time, so the model never sees the other pitch.
+    # field). Used only for the legacy single-aim fallback and for ball
+    # crop centering; detection itself now uses multi-tile coverage.
     aim_lon, aim_lat, aim_fov = aim_from_calibration(
         field_cal.src_points_px, eq_w, eq_h,
     )
-    log.info("Field aim: lon=%.1f° lat=%.1f° fov=%.1f°", aim_lon, aim_lat, aim_fov)
+    log.info("Field aim (single, legacy): lon=%.1f° lat=%.1f° fov=%.1f°",
+             aim_lon, aim_lat, aim_fov)
+
+    # 1c. Build the FieldProjector + the multi-tile detection aims. Three
+    # 75° tiles spread across the pitch cover the ~170° horizontal angle
+    # that one perspective crop can't (X5 on a 16ft pole 3m behind the
+    # near sideline). Each tile is processed independently by YOLO and
+    # detections are then merged in field space.
+    projector = FieldProjector(field_cal)
+    log.info("Projection model: %s", "sphere" if projector.use_sphere else "planar-homography")
+    tile_aims = compute_tile_aims(
+        projector, field_cal.length_m, field_cal.width_m,
+        n_tiles=config.DETECT_N_TILES, fov_deg=config.DETECT_TILE_FOV_DEG,
+    )
+    for i, (lon, lat, fov) in enumerate(tile_aims):
+        log.info("  tile %d/%d: lon=%+.1f° lat=%+.1f° fov=%.0f°",
+                 i + 1, len(tile_aims), lon, lat, fov)
 
     # 2. Detection + tracking on perspective crops
     # Compute play windows (1st half, 2nd half) so we skip warmup/halftime/post.
@@ -81,7 +111,27 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
              play_windows[1][0], play_windows[1][1])
     h1_end_s = play_windows[0][1]
 
-    detector = Detector()
+    # Smoke-test mode: keep a window of `max_play_s` seconds centered on the
+    # MIDDLE of each half. Sampling from the middle catches active play
+    # (warmup at the start and stoppage near the end are not representative).
+    if smoke_windows:
+        log.info("SMOKE-TEST (explicit): %s", smoke_windows)
+        play_windows = [(float(a), float(b)) for (a, b) in smoke_windows]
+        h1_end_s = play_windows[0][1]
+    elif max_play_s is not None and max_play_s > 0:
+        clipped: list[tuple[float, float]] = []
+        for a, b in play_windows:
+            half_len = b - a
+            take = min(max_play_s, half_len)
+            mid = a + half_len / 2.0
+            ca = max(a, mid - take / 2.0)
+            cb = min(b, ca + take)
+            clipped.append((ca, cb))
+        log.info("SMOKE-TEST: sampling %.0fs from the middle of each half (windows %s)",
+                 max_play_s, clipped)
+        play_windows = clipped
+        h1_end_s = play_windows[0][1]
+
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
 
     def _new_tracker() -> Tracker:
@@ -90,49 +140,186 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
             track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
         )
 
-    tracker = _new_tracker()
-    current_half = 1
+    # Stage-2 checkpoint: skip the multi-hour detection + tracking pass if a
+    # previous run already produced it. Lets us iterate on downstream stages
+    # (filtering, identity, stats, tv-view) without burning the whole pipeline.
+    # Smoke-test runs use a SEPARATE checkpoint file so a 4-minute smoke
+    # checkpoint never gets mistaken for (or clobbers) a full-game one.
+    ckpt_dir = config.OUTPUTS_DIR / game_id
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_suffix = ".smoke" if (smoke_windows or (max_play_s is not None and max_play_s > 0)) else ""
+    tracks_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.parquet"
+    jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
 
-    all_tracks: list[TrackedDetection] = []
-    track_jersey_samples: dict[int, list[np.ndarray]] = {}
+    if tracks_ckpt.exists() and jersey_ckpt.exists():
+        import pandas as pd
+        log.info("Stage 2/6: loading cached tracks from %s", tracks_ckpt)
+        tracks_df = pd.read_parquet(tracks_ckpt)
+        with np.load(jersey_ckpt, allow_pickle=True) as nz:
+            track_jersey_samples = {
+                int(k): list(nz[k]) for k in nz.files
+            }
+    else:
+        detector = Detector()
+        tracker = _new_tracker()
+        current_half = 1
 
-    log.info("Stage 2/6: detection + tracking...")
-    for sample in iter_frames(
-        str(video_path),
-        sample_rate=config.SAMPLE_RATE,
-        aim=(aim_lon, aim_lat, aim_fov),
-        windows=play_windows,
-    ):
-        # Reset tracker at halftime — track IDs must not bridge halves
-        # (players swap ends, teams swap sides, anyone could be off the field).
-        if current_half == 1 and sample.time_s >= h1_end_s:
-            tracker = _new_tracker()
-            current_half = 2
-        det_lists = detector.detect_persons([sample.crop])
-        dets = det_lists[0] if det_lists else []
-        for d in dets:
-            d.frame_index = sample.frame_index
-            d.bbox_eq = crop_bbox_to_equirect(
-                d.bbox_crop,
-                sample.crop_lon_deg, sample.crop_lat_deg, sample.crop_fov_deg,
-                eq_w, eq_h, config.CROP_W, config.CROP_H,
+        all_tracks: list[TrackedDetection] = []
+        track_jersey_samples: dict[int, list[np.ndarray]] = {}
+
+        log.info("Stage 2/6: detection + tracking...")
+        # Optional debug overlay: every N video seconds, dump the current
+        # crop with bbox + track_id overlays to disk so the user can eyeball
+        # detection quality mid-run without waiting for the TV reel.
+        debug_dir = None
+        next_debug_t = 0.0
+        if debug_frames_every_s and debug_frames_every_s > 0:
+            import cv2 as _cv2
+            debug_dir = ckpt_dir / "debug_frames"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            log.info("DEBUG-FRAMES: writing annotated previews to %s every %.1fs",
+                     debug_dir, debug_frames_every_s)
+        # Progress accounting — total video seconds we'll actually process
+        # (sum of play_windows). Lets us estimate ETA from wall-clock rate.
+        total_play_s = sum(b - a for a, b in play_windows)
+        stage2_t0 = time.time()
+        last_log_t = stage2_t0
+        n_samples = 0
+        for sample in iter_frames(
+            str(video_path),
+            sample_rate=config.SAMPLE_RATE,
+            windows=play_windows,
+            render_crop=False,
+        ):
+            n_samples += 1
+            # Reset tracker at halftime — track IDs must not bridge halves
+            # (players swap ends, teams swap sides, anyone could be off the field).
+            if current_half == 1 and sample.time_s >= h1_end_s:
+                tracker = _new_tracker()
+                current_half = 2
+
+            # --- Multi-tile detection ---
+            # Render N perspective tiles from the same equirect frame, run
+            # YOLO on the whole batch, then unify detections in equirect
+            # space + dedupe by ground-plane position. This covers the
+            # whole pitch from our centerline+3m+5m X5 mount (~170° H FOV).
+            tile_crops = [
+                render_perspective(sample.eq_frame, lon, lat, fov, config.CROP_W, config.CROP_H)
+                for (lon, lat, fov) in tile_aims
+            ]
+            det_lists = detector.detect_persons(tile_crops)
+            dets: list = []
+            for crop_idx, det_list in enumerate(det_lists):
+                lon, lat, fov = tile_aims[crop_idx]
+                for d in det_list:
+                    d.frame_index = sample.frame_index
+                    d.bbox_eq = crop_bbox_to_equirect(
+                        d.bbox_crop, lon, lat, fov,
+                        eq_w, eq_h, config.CROP_W, config.CROP_H,
+                    )
+                    # For the tracker: use equirect bbox as the working
+                    # coordinate system so detections from different tiles
+                    # are directly comparable.
+                    d.bbox_crop = d.bbox_eq
+                    dets.append(d)
+            dets = dedupe_detections_by_field_position(
+                dets, projector, config.DETECT_TILE_DEDUPE_M,
             )
-        tracked = tracker.update(sample.crop, dets, time_s=sample.time_s)
-        for t in tracked:
-            all_tracks.append(t)
-            if t.frame_index % (config.SAMPLE_RATE * 10) == 0:
-                hsv = sample_jersey_hsv(sample.crop, t.bbox_crop)
+
+            # ReID + tracker run on the equirect frame directly. BotSort
+            # crops ROIs by xyxy so any frame works as long as the bboxes
+            # are in that frame's coordinate space.
+            tracked = tracker.update(sample.eq_frame, dets, time_s=sample.time_s)
+            for t in tracked:
+                all_tracks.append(t)
+                # Sample jersey HSV on EVERY detection. The classifier needs
+                # >=2 tracks with samples or it bails out with team_id=-1 for
+                # everyone. Old gate (frame_index % 30 == 0) failed for short
+                # smoke windows. sample_jersey_hsv is cheap (a few hundred
+                # pixel reads on a ROI we already have in memory).
+                hsv = sample_jersey_hsv(sample.eq_frame, t.bbox_eq)
                 if len(hsv) > 0:
                     track_jersey_samples.setdefault(t.track_id, []).append(hsv)
 
-    tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
+            # Debug-frame dump (cheap; runs only when requested). Renders a
+            # downscaled equirect preview with ALL detection bboxes drawn,
+            # so you can see whether the whole field is being covered.
+            if debug_dir is not None and sample.time_s >= next_debug_t:
+                import cv2 as _cv2
+                # Downscale 5760x2880 -> 1920x960 for a viewable jpg.
+                scale = 1920.0 / sample.eq_frame.shape[1]
+                preview = _cv2.resize(
+                    sample.eq_frame, None, fx=scale, fy=scale,
+                    interpolation=_cv2.INTER_AREA,
+                )
+                for t in tracked:
+                    x1, y1, x2, y2 = (int(v * scale) for v in t.bbox_eq)
+                    _cv2.rectangle(preview, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    _cv2.putText(
+                        preview, f"#{t.track_id} {t.confidence:.2f}",
+                        (x1, max(0, y1 - 6)),
+                        _cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, _cv2.LINE_AA,
+                    )
+                label = f"t={sample.time_s:7.1f}s  n_tracks={len(tracked)}  n_dets={len(dets)}  tiles={len(tile_aims)}"
+                _cv2.putText(preview, label, (10, 24),
+                             _cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, _cv2.LINE_AA)
+                fname = debug_dir / f"frame_{int(sample.time_s):06d}s.jpg"
+                _cv2.imwrite(str(fname), preview, [_cv2.IMWRITE_JPEG_QUALITY, 80])
+                next_debug_t = sample.time_s + debug_frames_every_s
+
+            # Heartbeat every ~30s of wall time so the user can see progress
+            # and ETA. Cheap (no per-sample work in the common case).
+            now = time.time()
+            if now - last_log_t >= 30.0:
+                # Map sample.time_s into "play seconds processed so far" by
+                # accumulating completed windows + position within current one.
+                processed_play_s = 0.0
+                for a, b in play_windows:
+                    if sample.time_s >= b:
+                        processed_play_s += b - a
+                    elif sample.time_s > a:
+                        processed_play_s += sample.time_s - a
+                        break
+                    else:
+                        break
+                elapsed = now - stage2_t0
+                rate = n_samples / elapsed if elapsed > 0 else 0.0
+                frac = processed_play_s / total_play_s if total_play_s > 0 else 0.0
+                eta_s = elapsed * (1 - frac) / frac if frac > 0 else float("inf")
+                log.info(
+                    "  stage2: %5.1f%% | video %6.1fs / %.1fs | samples=%d "
+                    "(%.1f/s) | tracks=%d | elapsed=%.0fs eta=%.0fs",
+                    frac * 100.0, processed_play_s, total_play_s,
+                    n_samples, rate, len({t.track_id for t in all_tracks}),
+                    elapsed, eta_s,
+                )
+                last_log_t = now
+
+        tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
+        # Persist before any downstream filter touches the data — so a bug in
+        # filtering / identity / stats doesn't cost another detection pass.
+        tracks_df.to_parquet(tracks_ckpt)
+        np.savez(
+            jersey_ckpt,
+            **{str(k): np.array(v, dtype=object) for k, v in track_jersey_samples.items()},
+        )
+        log.info("  -> checkpoint written: %s + %s", tracks_ckpt.name, jersey_ckpt.name)
+        _n_unique_tracks = tracks_df["track_id"].nunique() if not tracks_df.empty else 0
+        _n_with_samples = len(track_jersey_samples)
+        _sample_counts = [len(v) for v in track_jersey_samples.values()]
+        _avg = (sum(_sample_counts) / len(_sample_counts)) if _sample_counts else 0
+        log.info(
+            "  -> jersey samples collected for %d / %d tracks (avg %.1f samples/track). "
+            "Need >=2 for classifier to run.",
+            _n_with_samples, _n_unique_tracks, _avg,
+        )
+
     log.info("  -> %d detections across %d tracks",
              len(tracks_df), tracks_df["track_id"].nunique() if not tracks_df.empty else 0)
 
-    # 3. Pixel (equirectangular) -> field meters
-    H = np.array(field_cal.homography, dtype=np.float64)
+    # 3. Pixel (equirectangular) -> field meters (projector built in stage 1c)
     foot_px = tracks_df[["foot_x_eq", "foot_y_eq"]].to_numpy() if not tracks_df.empty else np.zeros((0, 2))
-    xy = pixel_to_field_batch(H, foot_px)
+    xy = projector.pixel_to_field_batch(foot_px)
     if len(xy):
         tracks_df["x_m"] = xy[:, 0]
         tracks_df["y_m"] = xy[:, 1]
@@ -155,13 +342,13 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         if not tracks_df.empty and "track_id" in tracks_df.columns:
             lifetime = tracks_df.groupby("track_id").size().rename("track_lifetime")
             tracks_df = tracks_df.merge(lifetime, on="track_id")
-            conf_col = "confidence" if "confidence" in tracks_df.columns else None
+            conf_col = "conf" if "conf" in tracks_df.columns else None
             score = tracks_df["track_lifetime"].astype(float)
             if conf_col:
                 score = score * tracks_df[conf_col].astype(float).clip(lower=0.1)
             tracks_df["_rank_score"] = score
-            ranked = tracks_df.sort_values(["frame_index", "_rank_score"], ascending=[True, False])
-            top_n = ranked.groupby("frame_index", group_keys=False).head(20)
+            ranked = tracks_df.sort_values(["frame", "_rank_score"], ascending=[True, False])
+            top_n = ranked.groupby("frame", group_keys=False).head(20)
             dropped_topn = len(tracks_df) - len(top_n)
             tracks_df = top_n.drop(columns=["_rank_score", "track_lifetime"]).reset_index(drop=True)
         else:
@@ -172,10 +359,21 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
 
     # 4. Team classification
     log.info("Stage 4/6: team classification...")
+    our_color = _our_color(game)
     team_of_track = classify_tracks(
         tracks_df, track_jersey_samples,
-        our_home_color_hex=_our_color(game),
+        our_home_color_hex=our_color,
     )
+    _team_counts: dict[int, int] = {}
+    for _t in team_of_track.values():
+        _team_counts[_t] = _team_counts.get(_t, 0) + 1
+    log.info("  -> our_color=%s · %d tracks classified · team breakdown: %s "
+             "(0=ours, 1=opp, 2=ref/unknown)",
+             our_color, len(team_of_track), dict(sorted(_team_counts.items())))
+    if _team_counts.get(0, 0) == 0:
+        log.warning("  -> NO tracks classified as OUR TEAM. "
+                    "Check home/away color hex on the game doc + jersey color in the smoke window. "
+                    "Identity assignment will produce zero players.")
 
     # 5. Identity
     log.info("Stage 5/6: identity assignment...")
@@ -194,6 +392,16 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
     )
     identity_by_track = {a.track_id: a.player_id for a in assignments if a.player_id}
     team_of_player = _flip_team_map(team_of_track, identity_by_track)
+    _status_counts: dict[str, int] = {}
+    for _a in assignments:
+        _status_counts[_a.status] = _status_counts.get(_a.status, 0) + 1
+    log.info("  -> %d assignments · status breakdown: %s · %d tracks mapped to a player",
+             len(assignments), dict(sorted(_status_counts.items())), len(identity_by_track))
+    if not identity_by_track:
+        log.warning("  -> NO tracks assigned to any player. "
+                    "Likely causes: (1) team classification flagged everyone as opponent, "
+                    "(2) coach events fall outside the smoke window so no votes were cast, "
+                    "(3) tracks at event times don't match team 0.")
 
     # 6. Stats + Formation + GK positioning
     log.info("Stage 6/6: stats, formation, GK positioning...")
@@ -224,22 +432,27 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         field_width_m=field_cal.width_m,
     )
 
-    # 7. Highlight clips
-    log.info("Stage 7/7: highlight clips...")
-    try:
-        clips = extract_clips(
-            video_path=str(video_path),
-            events=game.events,
-            tracks_field_df=tracks_df,
-            identity_by_track=identity_by_track,
-            H=H,
-            period_clock_to_video_time=clock_to_video,
-            game_id=game_id,
-            upload=True,
-        )
-    except Exception as e:
-        log.warning("Highlight extraction failed: %s", e)
-        clips = []
+    # 7. Highlight clips (per-event MP4s). Slow because we re-seek the source
+    # video for every tagged event — skip during iteration.
+    clips = []
+    if skip_clips:
+        log.info("Stage 7/7: SKIPPED highlight clips (--skip-clips)")
+    else:
+        log.info("Stage 7/7: highlight clips...")
+        try:
+            clips = extract_clips(
+                video_path=str(video_path),
+                events=game.events,
+                tracks_field_df=tracks_df,
+                identity_by_track=identity_by_track,
+                projector=projector,
+                period_clock_to_video_time=clock_to_video,
+                game_id=game_id,
+                upload=not skip_upload,
+            )
+        except Exception as e:
+            log.warning("Highlight extraction failed: %s", e)
+            clips = []
 
     # 7b. Optional TV-view + auto-highlight reel
     tv_reel_meta = None
@@ -250,9 +463,11 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
             tv_reel_meta = render_tv_reel(
                 video_path=str(video_path),
                 tracks_field_df=tracks_df,
-                H=H,
+                projector=projector,
                 game_id=game_id,
-                upload=True,
+                field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m,
+                upload=not skip_upload,
                 play_windows=play_windows,
             )
         except Exception as e:
@@ -262,10 +477,13 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
                 video_path=str(video_path),
                 events=game.events,
                 tracks_field_df=tracks_df,
-                H=H,
+                projector=projector,
                 period_clock_to_video_time=clock_to_video,
                 game_id=game_id,
-                upload=True,
+                field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m,
+                upload=not skip_upload,
+                analyzed_windows=play_windows,
             )
         except Exception as e:
             log.warning("Auto-highlights failed: %s", e)
@@ -288,7 +506,7 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         "field_name": field_name,
         "video_meta": meta,
         "identity_assignments": [asdict(a) for a in assignments],
-        "player_stats": [asdict(s) for s in player_stats],
+        "player_stats": [_player_stat_to_dict(s) for s in player_stats],
         "formation_snapshots": [
             {
                 **asdict(f),
@@ -300,8 +518,8 @@ def run(game_id: str, field_name: str | None = None, tv_view: bool = False) -> d
         "team_time_series": asdict(team_ts),
         "gk_positions": [_gk_to_dict(g) for g in gk_positions],
         "clip_count": len(clips),
-        "tv_reel": asdict(tv_reel_meta) if tv_reel_meta else None,
-        "auto_highlights": asdict(auto_hl_meta) if auto_hl_meta else None,
+        "tv_reel": _tv_meta_to_dict(tv_reel_meta),
+        "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
         # Convenience top-level URLs the PWA can read without diving into
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
@@ -526,3 +744,40 @@ def _sanitize_json(obj):
     if isinstance(obj, np.generic):
         return _sanitize_json(obj.item())
     return obj
+
+
+def _tv_meta_to_dict(meta) -> dict | None:
+    """asdict(TvViewMeta) but with segments flattened to a list of dicts.
+
+    Firestore disallows arrays inside arrays; the dataclass stores
+    segments as list[tuple[float, float]] which sanitizes to nested
+    lists \u2192 \"Property tv_reel contains an invalid nested entity.\" Map
+    each segment to {\"start_s\": a, \"end_s\": b} instead.
+    """
+    if meta is None:
+        return None
+    d = asdict(meta)
+    segs = d.get("segments") or []
+    d["segments"] = [
+        {"start_s": float(a), "end_s": float(b)} for a, b in segs
+    ]
+    return d
+
+def _player_stat_to_dict(s) -> dict:
+    """asdict(PlayerStats) but with heatmap_grid flattened.
+
+    PlayerStats.heatmap_grid is list[list[int]] (12×8). Firestore disallows
+    arrays inside arrays, so we flatten row-major and record shape so any
+    consumer can rebuild it. No PWA code currently reads heatmap_grid.
+    """
+    d = asdict(s)
+    grid = d.get("heatmap_grid") or []
+    rows = len(grid)
+    cols = len(grid[0]) if rows and isinstance(grid[0], (list, tuple)) else 0
+    flat: list[int] = []
+    for row in grid:
+        flat.extend(int(v) for v in row)
+    d["heatmap_grid"] = flat
+    d["heatmap_grid_rows"] = rows
+    d["heatmap_grid_cols"] = cols
+    return d

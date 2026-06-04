@@ -43,6 +43,13 @@ def classify_tracks(
         means[tid] = np.median(stacked, axis=0)
 
     if len(means) < 2:
+        log.warning(
+            "Team classifier: only %d / %d tracks have jersey samples — cannot "
+            "cluster. Returning team_id=-1 for everything (identity will fail). "
+            "Likely cause: bboxes are tiny (lots of <30 px high) so sample_jersey_hsv "
+            "drops them, or jersey colors are mostly grass/sky (low saturation).",
+            len(means), len(track_ids),
+        )
         return {tid: -1 for tid in track_ids}
 
     from sklearn.cluster import KMeans
@@ -95,7 +102,10 @@ def sample_jersey_hsv(crop: np.ndarray, bbox_crop: tuple[float, float, float, fl
     """
     x1, y1, x2, y2 = (int(round(v)) for v in bbox_crop)
     h_box = y2 - y1
-    if h_box < 30:
+    # Lowered from 30 to 14 so distant U10 players on a wide 1280×720 crop
+    # (often ~16–25 px tall) still contribute jersey samples instead of being
+    # silently dropped — which is what caused all tracks to get team_id=-1.
+    if h_box < 14:
         return np.empty((0, 3), dtype=np.float32)
     jy1 = y1
     jy2 = y1 + h_box // 2

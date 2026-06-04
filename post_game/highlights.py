@@ -72,9 +72,7 @@ def _aim_for_time(
     tracks_field_df: pd.DataFrame,
     track_id: Optional[int],
     t_video: float,
-    H_inv: np.ndarray,
-    eq_w: int,
-    eq_h: int,
+    projector,  # FieldProjector (forward decl to avoid circular import)
     fallback: tuple[float, float],
 ) -> tuple[float, float]:
     """(lon_deg, lat_deg) to aim the virtual camera at time t_video.
@@ -89,8 +87,7 @@ def _aim_for_time(
             if abs(float(sub.loc[idx, "time_s"]) - t_video) <= 2.0:
                 x_m = float(sub.loc[idx, "x_m"])
                 y_m = float(sub.loc[idx, "y_m"])
-                u, v = _field_to_equirect_pixel(H_inv, x_m, y_m)
-                return _equirect_pixel_to_lonlat(u, v, eq_w, eq_h)
+                return projector.field_to_lonlat(x_m, y_m)
 
     if "x_m" in tracks_field_df.columns:
         mask = (tracks_field_df["time_s"] >= t_video - 1.0) & (tracks_field_df["time_s"] <= t_video + 1.0)
@@ -98,8 +95,7 @@ def _aim_for_time(
         if not win.empty:
             x_m = float(win["x_m"].mean())
             y_m = float(win["y_m"].mean())
-            u, v = _field_to_equirect_pixel(H_inv, x_m, y_m)
-            return _equirect_pixel_to_lonlat(u, v, eq_w, eq_h)
+            return projector.field_to_lonlat(x_m, y_m)
 
     return fallback
 
@@ -125,7 +121,7 @@ def _render_clip(
     t_video_s: float,
     track_id: Optional[int],
     tracks_field_df: pd.DataFrame,
-    H_inv: np.ndarray,
+    projector,  # FieldProjector
     out_path: Path,
 ) -> tuple[float, int, int]:
     cap = cv2.VideoCapture(str(video_path))
@@ -147,12 +143,12 @@ def _render_clip(
     aim_dt = 0.2
     aim_times = np.arange(start_s, end_s, aim_dt)
     raw_aims = [
-        _aim_for_time(tracks_field_df, track_id, float(t), H_inv, eq_w, eq_h, (0.0, 0.0))
+        _aim_for_time(tracks_field_df, track_id, float(t), projector, (0.0, 0.0))
         for t in aim_times
     ]
     aims = _smooth_aim_stream(raw_aims, window=7)
     aim_lons_uw = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in aims]))))
-    aim_lats = np.array([a[1] for a in aims])
+    aim_lats = np.array([a[1] for a in aims]) + config.CLIP_LAT_TILT_DEG
 
     out_w, out_h = config.CLIP_RESOLUTION
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,17 +179,13 @@ def extract_clips(
     events: list[CoachEvent],
     tracks_field_df: pd.DataFrame,
     identity_by_track: dict[int, str],
-    H: np.ndarray,
+    projector,  # FieldProjector
     period_clock_to_video_time: Callable[[int, int], float],
     game_id: str,
     upload: bool = True,
 ) -> list[ClipMeta]:
     if not events:
         return []
-    try:
-        H_inv = np.linalg.inv(np.asarray(H, dtype=np.float64))
-    except np.linalg.LinAlgError as e:
-        raise RuntimeError("Homography is singular — cannot invert for clip aim.") from e
 
     out: list[ClipMeta] = []
     clips_dir = config.OUTPUTS_DIR / game_id / "clips"
@@ -214,7 +206,7 @@ def extract_clips(
                 t_video_s=t_video_s,
                 track_id=track_id,
                 tracks_field_df=tracks_field_df,
-                H_inv=H_inv,
+                projector=projector,
                 out_path=local_path,
             )
         except Exception as e:
