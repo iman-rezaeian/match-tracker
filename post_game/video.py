@@ -151,7 +151,11 @@ def render_perspective(
     f = out_w / (2 * math.tan(math.radians(fov_deg) / 2))
 
     x = np.arange(out_w, dtype=np.float32) - out_w / 2
-    y = np.arange(out_h, dtype=np.float32) - out_h / 2
+    # Output image-y grows DOWNWARD, but world-Y grows UPWARD. Negate so the
+    # top of the output crop maps to the upper hemisphere of the sphere
+    # (otherwise every crop comes out vertically mirrored — sky at bottom,
+    # players upside-down, YOLO catches almost nothing).
+    y = -(np.arange(out_h, dtype=np.float32) - out_h / 2)
     xv, yv = np.meshgrid(x, y)
     z = np.full_like(xv, f, dtype=np.float32)
 
@@ -195,7 +199,8 @@ def crop_to_equirect_pixel(
     """Inverse of `render_perspective` for a single point."""
     f = out_w / (2 * math.tan(math.radians(crop_fov_deg) / 2))
     x = x_crop - out_w / 2
-    y = y_crop - out_h / 2
+    # Mirror of render_perspective: image-y down → world-y up.
+    y = -(y_crop - out_h / 2)
     z = f
 
     lon_r = math.radians(crop_lon_deg)
@@ -255,6 +260,7 @@ def iter_frames(
     crop_w: int = config.CROP_W,
     crop_h: int = config.CROP_H,
     windows: Optional[list[tuple[float, float]]] = None,
+    render_crop: bool = True,
 ) -> Iterator[FrameSample]:
     """Yield perspective crops.
 
@@ -268,6 +274,11 @@ def iter_frames(
     outside any window are skipped — used to trim warmup, halftime, and
     post-game from a continuous game recording. The pipeline seeks the capture
     to the start of each window so we don't decode every dead frame.
+
+    If `render_crop=False` the perspective crop is skipped entirely (saves
+    ~30ms per frame) and `sample.crop` is set to `sample.eq_frame`. Use
+    this when the caller will render its own tiles from `sample.eq_frame`
+    (e.g. multi-tile detection).
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -300,7 +311,10 @@ def iter_frames(
                     lon, lat, fov = aim
                 else:
                     lon, lat, fov = 0.0, 0.0, config.CROP_FOV_DEG
-                crop = render_perspective(frame, lon, lat, fov, crop_w, crop_h)
+                if render_crop:
+                    crop = render_perspective(frame, lon, lat, fov, crop_w, crop_h)
+                else:
+                    crop = frame  # alias; caller will tile from eq_frame
                 yield FrameSample(
                     frame_index=idx,
                     time_s=idx / fps,

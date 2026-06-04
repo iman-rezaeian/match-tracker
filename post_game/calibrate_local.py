@@ -1,17 +1,21 @@
-"""Local-browser field-calibration tool.
+"""DEPRECATED — 3D-sphere 4-corner field-calibration tool.
 
-Launches a tiny HTTP server on http://localhost:8765 that serves a Three.js
-360° sphere viewer of the game's video. The coach taps the 4 field corners
-in the browser, hits SAVE, and the calibration is written to Firestore
-on the game doc (`teams/main/games/<gameId>.calibration`). Then the server
-exits and control returns to the caller.
+⚠️  Do NOT use for new calibrations. Use `post_game.calibrate_flat`
+    instead (CLI: `python -m post_game.cli calibrate --game-id <id>`).
 
-This mirrors the PWA's FieldCalibrationModal UI but runs on the Mac so the
-whole analytics workflow can be a single command:
+This tool's planar-homography output is physically wrong for X5
+equirectangular footage: touchlines project as sphere-curves in
+equirect, not straight lines between corner pixels, so the 4-corner
+homography misaligns by several meters across the field.
 
-    ./run_analytics.sh <game-id>
+The replacement (`calibrate_flat.py`) clicks 13 landmarks on a flat
+frame, ray-traces each click to the ground plane on the unit sphere,
+and fits a 2D similarity + camera pitch/roll. Sub-meter accuracy on
+the near half of the pitch.
 
-If the game already has a calibration, the caller should skip launching this.
+Kept here only for backward reference. Will be removed in a future
+cleanup once no calibration in Firestore still uses the legacy
+homography_flat schema.
 """
 
 from __future__ import annotations
