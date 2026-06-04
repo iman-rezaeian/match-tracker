@@ -11207,6 +11207,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
 
 
 
+
+
     // ===== APP CODE ENDS =====
 
     // ===== AUTH GATE =====
@@ -11244,31 +11246,13 @@ function LiveScoreboard({ game, roster, transparent = false }) {
         return () => { unsub(); clearTimeout(safety); };
       }, []);
 
-      // Detect iOS standalone PWA (added to home screen). signInWithPopup is
-      // unreliable there — window.open() is blocked or returns a window that
-      // can't communicate back to the opener — so we go straight to redirect.
-      const isIOSStandalone = (() => {
-        try {
-          const ua = navigator.userAgent || '';
-          const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
-          const standalone = (window.navigator && window.navigator.standalone) ||
-            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-          return isIOS && standalone;
-        } catch (_) { return false; }
-      })();
-
       const signIn = async () => {
         setError(null);
         const provider = new firebase.auth.GoogleAuthProvider();
-        if (isIOSStandalone) {
-          try { await window.fbAuth.signInWithRedirect(provider); }
-          catch (err) { setError(err.message || String(err)); }
-          return;
-        }
         try {
           await window.fbAuth.signInWithPopup(provider);
         } catch (err) {
-          // Any popup failure on mobile — fall back to redirect.
+          // Any popup failure (iOS PWA, mobile browsers) — fall back to redirect.
           const code = err && err.code;
           if (code === 'auth/popup-blocked' ||
               code === 'auth/cancelled-popup-request' ||
