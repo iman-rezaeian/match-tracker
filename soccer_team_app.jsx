@@ -23,6 +23,15 @@ const EVENT_TYPES = {
   TURNOVER:  { id: 'TURNOVER',  label: 'TURNOVER',  emoji: '💨', tone: 'soft-red',   requiresPlayer: true },
   HOLDS_BALL:{ id: 'HOLDS_BALL',label: 'HOLDS BALL',emoji: '⏳', tone: 'yellow',     requiresPlayer: true },
   OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
+  // Discipline & set-piece events (added 2026 season).
+  // FOUL_ON / FOUL_BY = was the foul awarded to us, or against us?
+  // PEN_AWARDED / PEN_CONCEDED = same idea for penalty kicks.
+  // Coach taps these after the whistle; player picker follows (the player
+  // who DREW the foul/penalty for us, or the player who COMMITTED it).
+  FOUL_BY:      { id: 'FOUL_BY',      label: 'FOUL BY US',  emoji: '🟨', tone: 'soft-red',   requiresPlayer: true  },
+  FOUL_ON:      { id: 'FOUL_ON',      label: 'FOUL ON US',  emoji: '🛑', tone: 'soft-green', requiresPlayer: true  },
+  PEN_CONCEDED: { id: 'PEN_CONCEDED', label: 'PEN GIVEN',   emoji: '⚠️', tone: 'big-red',    requiresPlayer: true  },
+  PEN_AWARDED:  { id: 'PEN_AWARDED',  label: 'PEN WON',     emoji: '🎯', tone: 'big-green',  requiresPlayer: true  },
   // POSITION is a silent event written by the tactical board on drag-end.
   // Carries { playerId, x, y } where x,y ∈ [0,1] over a half-field portrait
   // (own goal bottom, halfway line top). Filtered out of RECENT and stats.
@@ -35,6 +44,7 @@ const EVENT_NEEDS_ZONE = new Set([
   'GOAL', 'SHOT_ON', 'SHOT_OFF', 'BALL_WIN', 'TURNOVER',
   'DUEL_WIN', 'DUEL_LOSE', 'KEY_PASS', 'GIVE_GO', 'GATES',
   'SAVE', 'BLOCK',
+  'FOUL_BY', 'FOUL_ON', 'PEN_AWARDED', 'PEN_CONCEDED',
 ]);
 
 // Events that get an optional pressure modifier (was the player under pressure when they did this?).
@@ -194,6 +204,15 @@ function formatClock(seconds) {
   return `${m}:${s}`;
 }
 
+// Display minute for a logged event using its period + the game's half length.
+// The clock resets to 0 at the start of P2, so a goal at elapsed=240s in P2 of
+// a 30-min-half game should display as 34' (30 + 4), not 4'. Round half-up.
+function eventDisplayMinute(event, halfLengthMin) {
+  const halfLen = Number(halfLengthMin) || 25;
+  const m = Math.max(1, Math.round((event?.elapsed || 0) / 60));
+  return m + ((event?.period || 1) === 2 ? halfLen : 0);
+}
+
 function computeElapsed(game) {
   if (game.elapsedAtPause === undefined) {
     return game.startedAt ? Math.floor((Date.now() - game.startedAt) / 1000) : 0;
@@ -327,12 +346,19 @@ const DEFAULT_WEIGHTS = {
     SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+    // Discipline & set-pieces.
+    FOUL_ON_atk: 2,   FOUL_BY_def: -2,
+    PEN_AWARDED_atk: 6, PEN_CONCEDED_def: -8,
+    OWN_GOAL_def: -10,
   },
   gkPoints: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
     SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+    FOUL_ON_atk: 2,   FOUL_BY_def: -2,
+    PEN_AWARDED_atk: 6, PEN_CONCEDED_def: -8,
+    OWN_GOAL_def: -10,
   },
   pillars: {
     outfield: { atk: 30, def: 25, dec: 30, inv: 15 },
@@ -358,6 +384,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   const perHalf = minutesPlayed / 20;
   const c = {};
   let partnerCount = 0; // give & go wall-pass credits earned by this player
+  let ownGoals = 0;     // own goals attributed to this player via OPP_GOAL.ownGoalById
   for (const e of events) {
     if (e.type === 'SUB') continue;
     if (e.playerId === playerId) {
@@ -366,23 +393,31 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
     if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
       partnerCount++;
     }
+    if (e.type === 'OPP_GOAL' && e.ownGoalById === playerId) {
+      ownGoals++;
+    }
   }
   const pts = W.points;
   const attacking = (
-    (c.GOAL || 0)     * pts.GOAL_atk +
-    (c.ASSIST || 0)   * pts.ASSIST_atk +
-    (c.KEY_PASS || 0) * pts.KEY_PASS_atk +
-    (c.SHOT_ON || 0)  * pts.SHOT_ON_atk +
-    (c.SHOT_OFF || 0) * pts.SHOT_OFF_atk
+    (c.GOAL || 0)        * pts.GOAL_atk +
+    (c.ASSIST || 0)      * pts.ASSIST_atk +
+    (c.KEY_PASS || 0)    * pts.KEY_PASS_atk +
+    (c.SHOT_ON || 0)     * pts.SHOT_ON_atk +
+    (c.SHOT_OFF || 0)    * pts.SHOT_OFF_atk +
+    (c.FOUL_ON || 0)     * (pts.FOUL_ON_atk || 0) +
+    (c.PEN_AWARDED || 0) * (pts.PEN_AWARDED_atk || 0)
   ) / perHalf;
   const concededPenalty = isGK ? (gkExtras.concededPenalty || 0) : 0;
   const cleanSheets = isGK ? (gkExtras.cleanSheets || 0) : 0;
   const defending = (
-    (c.SAVE || 0)      * pts.SAVE_def +
-    (c.BLOCK || 0)     * pts.BLOCK_def +
-    (c.BALL_WIN || 0)  * pts.BALL_WIN_def +
-    (c.DUEL_WIN || 0)  * pts.DUEL_WIN_def +
-    (c.DUEL_LOSE || 0) * pts.DUEL_LOSE_def +
+    (c.SAVE || 0)         * pts.SAVE_def +
+    (c.BLOCK || 0)        * pts.BLOCK_def +
+    (c.BALL_WIN || 0)     * pts.BALL_WIN_def +
+    (c.DUEL_WIN || 0)     * pts.DUEL_WIN_def +
+    (c.DUEL_LOSE || 0)    * pts.DUEL_LOSE_def +
+    (c.FOUL_BY || 0)      * (pts.FOUL_BY_def || 0) +
+    (c.PEN_CONCEDED || 0) * (pts.PEN_CONCEDED_def || 0) +
+    ownGoals              * (pts.OWN_GOAL_def || 0) +
     (isGK ? (-concededPenalty + cleanSheets * pts.CLEAN_SHEET_def) : 0)
   ) / perHalf;
   const decisions = (
@@ -394,7 +429,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
     (c.HOLDS_BALL || 0) * pts.HOLDS_BALL_dec +
     (c.TURNOVER || 0)   * pts.TURNOVER_dec
   ) / perHalf;
-  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount;
+  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount + ownGoals;
   const involvement = totalEvents / perHalf;
   const pil = isGK ? W.pillars.gk : W.pillars.outfield;
   const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
@@ -405,6 +440,18 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
 function formatDate(iso) {
   const d = typeof iso === 'string' ? iso.slice(0, 10) : '';
   return new Date(d + 'T12:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// Soccer team names are usually "<city> <team-name>" (e.g. "Leamington FC",
+// "Belle River FC", "Amherstburg Fusion"). Split on the LAST whitespace so
+// multi-word cities like "Belle River" stay intact. Single-word names
+// ("Test", "Opponent") fall back to no city overline.
+function splitTeamName(full) {
+  const s = String(full || '').trim();
+  if (!s) return { city: '', name: '' };
+  const i = s.lastIndexOf(' ');
+  if (i === -1) return { city: '', name: s };
+  return { city: s.slice(0, i).trim(), name: s.slice(i + 1).trim() };
 }
 
 function formatTime12(time24) {
@@ -477,6 +524,32 @@ export default function App() {
   const askConfirm = (message, onYes, opts = {}) => {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
+
+  // Recurring opponents dataset — derived from past games (most-recent first)
+  // and the schedule. Grassroots/festival teams play the same opponents over
+  // and over; we surface them as datalist suggestions on the game-setup and
+  // schedule-edit inputs so the coach can pick instead of retyping (and
+  // misspelling — which would break the schedule↔game-doc dedupe on the
+  // public home card).
+  const opponentSuggestions = useMemo(() => {
+    const seen = new Map(); // key = lowercase trimmed name → first-seen canonical
+    const add = (raw) => {
+      const v = (raw || '').trim();
+      if (!v) return;
+      const k = v.toLowerCase();
+      if (!seen.has(k)) seen.set(k, v);
+    };
+    // Games: newest first (by date, then endedAt).
+    const gs = [...games].sort((a, b) => {
+      const dc = new Date(b.date || 0) - new Date(a.date || 0);
+      if (dc !== 0) return dc;
+      return (b.endedAt || 0) - (a.endedAt || 0);
+    });
+    for (const g of gs) add(g.opponent);
+    // Then schedule entries (typically future).
+    for (const s of schedule) add(s.opponent);
+    return Array.from(seen.values());
+  }, [games, schedule]);
 
   // Per-view browser-history stack. Every time `view` changes to a deeper
   // step (gameSetup → squad → lineup → activeGame), we pushState. When the
@@ -1053,6 +1126,43 @@ export default function App() {
     }
   };
 
+  // Halftime bulk lineup change: coach picks the on-field set for the 2nd
+  // half in one pass. Emits paired SUB events for each net swap (one OFF
+  // player pairs with one ON player) so minutes-played stays accurate.
+  // Extras get standalone SUB rows with the "missing" side null — these are
+  // tolerated by playerSeconds / onFieldAt (they iterate independently).
+  const bulkReplaceLineup = (gameId, nextOnFieldIds) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const currentOn = onFieldAt(game);
+    const next = new Set(nextOnFieldIds);
+    const offNow = [...currentOn].filter(id => !next.has(id));
+    const onNow  = [...nextOnFieldIds].filter(id => !currentOn.has(id));
+    if (offNow.length === 0 && onNow.length === 0) {
+      showToast('Lineup unchanged');
+      return;
+    }
+    const baseAt = Date.now();
+    const elapsed = computeElapsed(game);
+    const pairs = Math.max(offNow.length, onNow.length);
+    const newEvents = [];
+    for (let i = 0; i < pairs; i++) {
+      newEvents.push({
+        id: uid(),
+        type: 'SUB',
+        playerId: offNow[i] || null,
+        subOnPlayerId: onNow[i] || null,
+        period: game.period,
+        elapsed,
+        at: baseAt + i, // distinct timestamps so onFieldAt orders deterministically
+        bulkHalftime: true,
+      });
+    }
+    const updated = { ...game, events: [...game.events, ...newEvents] };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+    showToast(`🔄 Lineup updated · ${onNow.length} on / ${offNow.length} off`);
+  };
+
   // Silent: writes a POSITION event from the tactical board. No toast, no
   // score change, no RECENT feed pollution. Skips if the new spot is within
   // 3% of the last logged spot for this player (drag jitter / accidental).
@@ -1210,10 +1320,9 @@ export default function App() {
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
           onStartScheduled={(item) => {
-            // Pre-fill from the scheduled item. If the coach already pre-set
-            // every match-day field (squad, home/away, half length, both
-            // colors), skip gameSetup AND squad and land straight on the
-            // starting-lineup / kickoff board.
+            // Pre-fill from the scheduled item and always route through the
+            // full Game Setup → Squad → Lineup flow so the coach can review
+            // and tweak anything (half length, colors, squad) before kickoff.
             const prefill = {
               opponent: item.opponent,
               tournament: item.tournament,
@@ -1224,14 +1333,8 @@ export default function App() {
               awayColor: item.awayColor,
               squad: Array.isArray(item.squadIds) && item.squadIds.length > 0 ? item.squadIds : undefined,
             };
-            const fullyPreset =
-              prefill.squad &&
-              typeof item.isHome === 'boolean' &&
-              typeof item.halfLengthMin === 'number' &&
-              !!item.homeColor &&
-              !!item.awayColor;
             setPendingGameSetup(prefill);
-            setView(fullyPreset ? 'lineup' : 'gameSetup');
+            setView('gameSetup');
           }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
@@ -1291,6 +1394,7 @@ export default function App() {
         <GameSetup
           rosterCount={roster.length}
           initial={pendingGameSetup}
+          opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
           onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
@@ -1357,7 +1461,13 @@ export default function App() {
             }
           }}
           onResolveOppGoal={(fault) => {
-            // fault: 'gk' | 'unstoppable' | null (neutral / unsure)
+            // fault: 'gk' | 'unstoppable' | 'own' | null (neutral / unsure)
+            // If own goal, we still need to attribute the player — flip to a
+            // dedicated picker step instead of logging immediately.
+            if (fault === 'own') {
+              setPendingEvent({ type: 'OPP_GOAL_OWN_PICK' });
+              return;
+            }
             logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: fault });
           }}
           onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
@@ -1394,6 +1504,13 @@ export default function App() {
               logEvent(activeGame.id, 'GIVE_GO', pendingEvent.initiatorId, extras);
               return;
             }
+            if (pendingEvent?.type === 'OPP_GOAL_OWN_PICK') {
+              // Own goal: opp's score still goes up (handled by OPP_GOAL.delta),
+              // but we tag the responsible player on the event and credit a
+              // negative weight to their Defense pillar via computePerformanceScore.
+              logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: 'own', ownGoalById: playerId });
+              return;
+            }
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
             // Live flow is ruthlessly single-tap. Zone / pressure / decision modifiers are
             // applied post-game from GameDetail's TAG button, so the coach never misses
@@ -1409,6 +1526,7 @@ export default function App() {
           onResumeClock={() => resumeClock(activeGame.id)}
           onEnd={() => askConfirm('End game and save final score?', () => endGame(activeGame.id))}
           onBack={() => setView('home')}
+          onBulkReplaceLineup={(ids) => bulkReplaceLineup(activeGame.id, ids)}
           tick={tick}
         />
       )}
@@ -1418,6 +1536,7 @@ export default function App() {
           game={viewingGame}
           roster={roster}
           weights={weights}
+          opponentSuggestions={opponentSuggestions}
           onBack={() => setView('home')}
           onDelete={() => {
             // In production, require the coach password before deleting a game.
@@ -1454,6 +1573,25 @@ export default function App() {
         <ScheduleView
           schedule={schedule}
           roster={roster}
+          games={games}
+          opponentSuggestions={opponentSuggestions}
+          onRenameOpponent={async (oldName, newName) => {
+            const o = (oldName || '').trim().toLowerCase();
+            const n = (newName || '').trim();
+            if (!o || !n) return 0;
+            const matches = (s) => (s || '').trim().toLowerCase() === o;
+            let count = 0;
+            const nextGames = games.map((g) => {
+              if (matches(g.opponent)) { count++; return { ...g, opponent: n }; }
+              return g;
+            });
+            const nextSchedule = schedule.map((s) => {
+              if (matches(s.opponent)) { count++; return { ...s, opponent: n }; }
+              return s;
+            });
+            await Promise.all([persistGames(nextGames), persistSchedule(nextSchedule)]);
+            return count;
+          }}
           initialEditId={resumeScheduleEditId}
           onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
           onSave={persistSchedule}
@@ -1715,8 +1853,11 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
 
       {/* Upcoming games */}
       {(() => {
+        const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
+        const playedKeys = new Set((games || []).map(playedKey));
         const upcoming = schedule
           .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .filter(s => !playedKeys.has(`${(s.date || '').slice(0,10)}|${(s.opponent || '').trim().toLowerCase()}`))
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
         if (upcoming.length === 0) return null;
         return (
@@ -1851,7 +1992,7 @@ function InstallModal({ canPrompt, onTriggerPrompt, onClose }) {
           <div className="font-display text-2xl">INSTALL ON YOUR PHONE</div>
         </div>
         <p className="text-sm text-stone-300 mb-4">
-          Adds a Stompers icon to your home screen. Opens fullscreen — no browser bar — and works offline.
+          Adds a LaSalle Stompers icon to your home screen. Opens fullscreen — no browser bar — and works offline.
         </p>
 
         {canPrompt && (
@@ -2191,7 +2332,7 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 }
 
 /* ---------- GAME SETUP ---------- */
-function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
+function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, opponentSuggestions = [] }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
   const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
   const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
@@ -2249,8 +2390,15 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
             placeholder="e.g., Lions FC"
+            list="opponent-suggestions"
+            autoComplete="off"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
+          {opponentSuggestions.length > 0 && (
+            <datalist id="opponent-suggestions">
+              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+            </datalist>
+          )}
         </Field>
 
         <Field label="SIDE">
@@ -2289,7 +2437,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial }) {
           </div>
         </Field>
 
-        <Field label="STOMPERS JERSEY">
+        <Field label="LASALLE STOMPERS JERSEY">
           <div className="flex gap-2 items-center">
             {STOMPERS_PRESETS.map(p => (
               <button
@@ -3572,7 +3720,7 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -3592,6 +3740,10 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   const inFirstHalf = game.period === 1 && game.clockRunning !== false;
   const inHalfTimeBreak = game.period === 1 && game.clockRunning === false;
   const inSecondHalf = game.period === 2;
+
+  // Halftime bulk-lineup modal: coach taps players to flip on/off the field
+  // in a single pass instead of doing one SUB at a time.
+  const [halftimePicker, setHalftimePicker] = useState(false);
 
   const statusLabel = inHalfTimeBreak ? 'HALF TIME' : inSecondHalf ? '2ND HALF' : '1ST HALF';
   const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-100' : 'bg-stone-900 text-lime-400';
@@ -3626,7 +3778,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
 
         <div className="grid grid-cols-3 items-center gap-3">
           <div className="text-center">
-            <div className="text-[10px] font-bold tracking-widest text-lime-400">STOMPERS</div>
+            <div className="text-[10px] font-bold tracking-widest text-lime-400">LASALLE STOMPERS</div>
             <div className="font-display text-5xl leading-none tabular-nums">{game.ourScore}</div>
           </div>
           <button
@@ -3854,7 +4006,36 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               >
                 NEUTRAL / UNSURE
               </button>
+              <button
+                onClick={() => onResolveOppGoal('own')}
+                className="mt-3 w-full bg-amber-900/30 text-amber-200 border border-amber-600/60 font-display text-base py-3 rounded-xl active:scale-[0.98] transition flex items-center justify-center gap-2"
+              >
+                <span className="text-lg">🙃</span>
+                <span>OWN GOAL — PICK PLAYER</span>
+              </button>
             </div>
+          );
+        })() : pendingEvent?.type === 'OPP_GOAL_OWN_PICK' ? (() => {
+          const onField = onFieldAt(game);
+          const ourPlayers = playersSorted.filter(p => onField.has(p.id)).sort((a, b) => {
+            // GK last for own goals (rare); outfield by number
+            const ag = a.id === gameGKId ? 1 : 0;
+            const bg = b.id === gameGKId ? 1 : 0;
+            if (ag !== bg) return ag - bg;
+            return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+          });
+          return (
+            <PlayerPicker
+              event={{ emoji: '🙃', label: 'OWN GOAL — WHO?', requiresPlayer: true }}
+              players={ourPlayers}
+              gameGKId={gameGKId}
+              skippable={false}
+              onPick={onSelectPlayer}
+              onSkip={onCancelEvent}
+              onUnknown={null}
+              onCancel={onCancelEvent}
+              emptyMessage="No players on the field."
+            />
           );
         })() : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
@@ -3951,6 +4132,16 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
+            {/* Bulk lineup re-pick: faster than chaining individual SUBs when
+                many players rotate at halftime. */}
+            <button
+              onClick={() => setHalftimePicker(true)}
+              className="mt-2 w-full max-w-sm bg-sky-900/50 text-sky-200 border-2 border-sky-600/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+            >
+              <span className="text-2xl">🔁</span>
+              <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">PICK 2ND-HALF LINEUP</span>
+            </button>
+
             <div className="w-full">
               {tacticalBoard}
             </div>
@@ -3979,7 +4170,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-lime-400/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK'].map(id => {
+                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK', 'FOUL_ON', 'PEN_AWARDED'].map(id => {
                   const ev = EVENT_TYPES[id];
                   const big = id === 'GOAL';
                   return (
@@ -4007,7 +4198,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-red-400/70 font-bold tracking-wider">LOWERS SCORE</div>
               </div>
               <div className="grid grid-cols-3 gap-2">
-                {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE'].map(id => {
+                {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE', 'FOUL_BY', 'PEN_CONCEDED'].map(id => {
                   const ev = EVENT_TYPES[id];
                   return (
                     <button
@@ -4091,6 +4282,87 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       </div>
 
       <div className="pb-6"></div>
+      {halftimePicker && (
+        <HalftimeLineupPicker
+          players={playersSorted}
+          gameGKId={gameGKId}
+          initialOnField={onFieldAt(game)}
+          secondsByPlayer={secondsByPlayer}
+          onCancel={() => setHalftimePicker(false)}
+          onSave={(ids) => {
+            onBulkReplaceLineup(ids);
+            setHalftimePicker(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function HalftimeLineupPicker({ players, gameGKId, initialOnField, secondsByPlayer, onCancel, onSave }) {
+  const [selected, setSelected] = useState(() => new Set(initialOnField));
+  const toggle = (pid) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
+  };
+  const onCount = selected.size;
+  return (
+    <div className="fixed inset-0 z-50 bg-stone-950/95 flex flex-col">
+      <div className="px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3 border-b border-stone-800 flex items-center justify-between">
+        <div>
+          <div className="font-display text-xl text-white leading-none">2ND-HALF LINEUP</div>
+          <div className="text-xs text-stone-400 mt-1">Tap to toggle. Selected go on field at the whistle.</div>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-display text-lime-400 leading-none">{onCount}</div>
+          <div className="text-[10px] text-stone-500 uppercase tracking-wide">on field</div>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="grid grid-cols-2 gap-2">
+          {players.map(p => {
+            const isOn = selected.has(p.id);
+            const isGK = p.id === gameGKId;
+            const secs = secondsByPlayer?.[p.id] || 0;
+            const mins = Math.floor(secs / 60);
+            return (
+              <button
+                key={p.id}
+                onClick={() => toggle(p.id)}
+                className={`rounded-2xl border-2 px-3 py-3 flex flex-col items-start gap-1 active:scale-[0.97] transition text-left ${
+                  isOn
+                    ? 'bg-lime-900/40 border-lime-500/70 text-lime-100'
+                    : 'bg-stone-900/60 border-stone-700 text-stone-400'
+                }`}
+              >
+                <div className="flex items-center gap-2 w-full">
+                  <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isOn ? 'bg-lime-700/60 text-white' : 'bg-stone-800 text-stone-400'}`}>#{p.number}</span>
+                  {isGK && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-700/60 text-amber-100">GK</span>}
+                  <span className={`ml-auto text-[10px] font-mono ${isOn ? 'text-lime-300' : 'text-stone-500'}`}>{mins}'</span>
+                </div>
+                <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] border-t border-stone-800 flex gap-2">
+        <button
+          onClick={onCancel}
+          className="flex-1 bg-stone-800 text-stone-200 border-2 border-stone-700 rounded-2xl py-3 font-display"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={() => onSave([...selected])}
+          className="flex-1 bg-lime-700 text-white border-2 border-lime-500 rounded-2xl py-3 font-display active:scale-[0.97] transition"
+        >
+          SAVE LINEUP
+        </button>
+      </div>
     </div>
   );
 }
@@ -4992,7 +5264,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         ? currentTime >= half2StartElapsed
         : (gameInfo && gameInfo.period >= 2));
   const displayedMinute = isLive
-    ? Math.floor(liveElapsedSec / 60)
+    ? Math.floor(liveElapsedSec / 60) + (inSecondHalf ? halfLen : 0)
     : (inSecondHalf
         ? (isFinite(half2StartElapsed)
             ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
@@ -5421,6 +5693,14 @@ function EventRow({ event, roster, onDelete, onTag, onSeek }) {
                 {event.gkFault === 'unstoppable' && (
                   <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 border border-stone-700">😮 UNSTOPPABLE</span>
                 )}
+                {event.gkFault === 'own' && (() => {
+                  const ogPlayer = roster.find(p => p.id === event.ownGoalById);
+                  return (
+                    <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-300">
+                      🙃 OWN GOAL{ogPlayer ? ` · ${ogPlayer.name} #${ogPlayer.number}` : ''}
+                    </span>
+                  );
+                })()}
                 {!event.gkFault && (
                   <span className="text-[10px] text-stone-400 italic">unmarked</span>
                 )}
@@ -6496,7 +6776,8 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
     const them = new Map();
     for (const e of allEvents) {
       if (e.t > cutT) break;
-      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1)}'`;
+      const halfLen = Number(doc?.halfLengthMin) || 25;
+      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1) + ((e.period || 1) === 2 ? halfLen : 0)}'`;
       const isOurGoal = e.type === 'GOAL';
       const isOppGoal = e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
       if (isOurGoal) {
@@ -7027,7 +7308,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
+function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].filter(e => e.type !== 'POSITION').sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
@@ -7045,6 +7326,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
   const [showLive, setShowLive] = useState(false);
   const [showLiveCreds, setShowLiveCreds] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showEditInfo, setShowEditInfo] = useState(false);
 
   // Each time the user enters a different game from the DUGOUT list, scroll
   // back to the top — otherwise the view keeps the previous page's scroll
@@ -7432,6 +7714,24 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
       )}
 
       <div className="px-4 pt-5">
+        <button
+          onClick={() => setShowEditInfo(v => !v)}
+          className="w-full flex items-center justify-between bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 active:scale-[0.99]"
+        >
+          <span className="font-display text-sm tracking-wider text-stone-200">⚙ EDIT GAME INFO</span>
+          <span className="text-xs text-stone-400">{showEditInfo ? 'CLOSE' : 'OPEN'}</span>
+        </button>
+        {showEditInfo && (
+          <GameInfoEditor
+            game={game}
+            opponentSuggestions={opponentSuggestions}
+            onSave={(patch) => { onUpdateGame(patch); setShowEditInfo(false); }}
+            onCancel={() => setShowEditInfo(false)}
+          />
+        )}
+      </div>
+
+      <div className="px-4 pt-5">
         <h3 className="font-display text-xl mb-2">TIMELINE</h3>
         {events.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
@@ -7523,6 +7823,113 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
           onClose={() => setTaggingEvent(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ---------- EDIT GAME INFO (post-hoc metadata fixes) ---------- */
+function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
+  const [opponent, setOpponent] = useState(game.opponent || '');
+  const [tournament, setTournament] = useState(game.tournament || 'Festival');
+  const [halfLengthMin, setHalfLengthMin] = useState(Number(game.halfLengthMin) || 25);
+  const [isHome, setIsHome] = useState(typeof game.isHome === 'boolean' ? game.isHome : true);
+  const [homeColor, setHomeColor] = useState(game.homeColor || '#0a0a0a');
+  const [awayColor, setAwayColor] = useState(game.awayColor || '#dc2626');
+  return (
+    <div className="mt-2 bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
+      <div className="text-[11px] text-amber-300/80 bg-amber-900/20 border border-amber-800/50 rounded-lg px-3 py-2">
+        Changing half length only updates how minutes are <em>displayed</em>. Stored event timestamps and minutes-played are kept exactly as recorded.
+      </div>
+
+      <Field label="OPPONENT">
+        <input
+          type="text"
+          value={opponent}
+          onChange={(e) => setOpponent(e.target.value)}
+          list="opponent-suggestions"
+          className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
+        />
+        {opponentSuggestions.length > 0 && (
+          <datalist id="opponent-suggestions">
+            {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+          </datalist>
+        )}
+      </Field>
+
+      <Field label="TOURNAMENT / COMPETITION">
+        <input
+          type="text"
+          value={tournament}
+          onChange={(e) => setTournament(e.target.value)}
+          placeholder="Festival"
+          className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
+        />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="HALF LENGTH (MIN)">
+          <div className="flex items-center bg-stone-950 border border-stone-800 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+              className="px-3 py-2 text-stone-300 active:scale-95"
+            >−</button>
+            <div className="flex-1 text-center font-display text-2xl tabular-nums">{halfLengthMin}</div>
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+              className="px-3 py-2 text-stone-300 active:scale-95"
+            >+</button>
+          </div>
+        </Field>
+        <Field label="VENUE">
+          <div className="grid grid-cols-2 gap-1 bg-stone-950 border border-stone-800 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => setIsHome(true)}
+              className={`py-2 rounded-md font-bold text-sm ${isHome ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >HOME</button>
+            <button
+              type="button"
+              onClick={() => setIsHome(false)}
+              className={`py-2 rounded-md font-bold text-sm ${!isHome ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >AWAY</button>
+          </div>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="OUR JERSEY">
+          <div className="flex items-center gap-2 bg-stone-950 border border-stone-800 rounded-lg px-2 py-1.5">
+            <input type="color" value={homeColor} onChange={(e) => setHomeColor(e.target.value)} className="w-9 h-9 bg-transparent border-0 cursor-pointer" />
+            <input type="text" value={homeColor} onChange={(e) => setHomeColor(e.target.value)} className="flex-1 bg-transparent text-xs font-mono" />
+          </div>
+        </Field>
+        <Field label="OPP JERSEY">
+          <div className="flex items-center gap-2 bg-stone-950 border border-stone-800 rounded-lg px-2 py-1.5">
+            <input type="color" value={awayColor} onChange={(e) => setAwayColor(e.target.value)} className="w-9 h-9 bg-transparent border-0 cursor-pointer" />
+            <input type="text" value={awayColor} onChange={(e) => setAwayColor(e.target.value)} className="flex-1 bg-transparent text-xs font-mono" />
+          </div>
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-2.5 rounded-lg bg-stone-800 text-stone-200 font-bold active:scale-95"
+        >CANCEL</button>
+        <button
+          onClick={() => onSave({
+            opponent: opponent.trim() || 'Opponent',
+            tournament: tournament.trim() || 'Festival',
+            halfLengthMin: Number(halfLengthMin) || 25,
+            isHome,
+            homeColor,
+            awayColor,
+          })}
+          className="flex-1 py-2.5 rounded-lg bg-lime-500 text-stone-950 font-bold active:scale-95"
+        >SAVE</button>
+      </div>
     </div>
   );
 }
@@ -8104,7 +8511,7 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
+function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
   const [opponent, setOpponent] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -8122,6 +8529,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
   const [parsed, setParsed] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [showOpponentManager, setShowOpponentManager] = useState(false);
   const formRef = React.useRef(null);
   const isLightColor = (hex) => {
     try {
@@ -8334,7 +8742,20 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
 
   return (
     <div className="min-h-screen bg-stone-900 pb-8">
-      <Header title="SCHEDULE" onBack={onBack} />
+      <Header
+        title="SCHEDULE"
+        onBack={onBack}
+        right={
+          opponentSuggestions.length > 0 && onRenameOpponent ? (
+            <button
+              onClick={() => setShowOpponentManager(true)}
+              className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
+            >
+              🏷️ OPPONENTS
+            </button>
+          ) : null
+        }
+      />
 
       {/* Import from ECSL */}
       <div className="px-4 pt-4">
@@ -8400,8 +8821,15 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
             placeholder="Opponent *"
             value={opponent}
             onChange={e => setOpponent(e.target.value)}
+            list="opponent-suggestions"
+            autoComplete="off"
             className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
           />
+          {opponentSuggestions.length > 0 && (
+            <datalist id="opponent-suggestions">
+              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+            </datalist>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <label className="relative block">
               <span className="text-xs font-semibold text-stone-400 mb-1 block">DATE *</span>
@@ -8506,7 +8934,7 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
 
               {/* Stompers jersey */}
               <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">STOMPERS JERSEY</div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">LASALLE STOMPERS JERSEY</div>
                 <div className="flex gap-2 items-center">
                   {[{ label: 'Black', color: '#0a0a0a' }, { label: 'Green', color: '#16a34a' }].map(p => (
                     <button
@@ -8717,6 +9145,127 @@ function ScheduleView({ schedule, roster, initialEditId, onConsumedInitialEditId
             })}
           </div>
         )}
+      </div>
+      {showOpponentManager && (
+        <OpponentManagerModal
+          opponentSuggestions={opponentSuggestions}
+          games={games}
+          schedule={schedule}
+          onClose={() => setShowOpponentManager(false)}
+          onRename={onRenameOpponent}
+          askConfirm={askConfirm}
+          showToast={showToast}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- OPPONENT MANAGER MODAL ---------- */
+function OpponentManagerModal({ opponentSuggestions, games, schedule, onClose, onRename, askConfirm, showToast }) {
+  const [renaming, setRenaming] = useState(null); // { from: string, to: string }
+  const norm = (s) => (s || '').trim().toLowerCase();
+  // Count usages per opponent so the coach can see how many docs a rename
+  // (or how much demo data) is involved.
+  const counts = useMemo(() => {
+    const m = new Map();
+    const bump = (k, slot) => {
+      if (!k) return;
+      const e = m.get(k) || { games: 0, schedule: 0 };
+      e[slot] += 1;
+      m.set(k, e);
+    };
+    for (const g of games) bump(norm(g.opponent), 'games');
+    for (const s of schedule) bump(norm(s.opponent), 'schedule');
+    return m;
+  }, [games, schedule]);
+  const sorted = [...opponentSuggestions].sort((a, b) => a.localeCompare(b));
+
+  const doRename = async () => {
+    const from = renaming?.from;
+    const to = (renaming?.to || '').trim();
+    if (!from || !to) return;
+    if (norm(from) === norm(to)) { setRenaming(null); return; }
+    const exists = opponentSuggestions.some((n) => norm(n) === norm(to));
+    const apply = async () => {
+      try {
+        const n = await onRename(from, to);
+        showToast?.(n > 0 ? `Renamed ${n} entr${n === 1 ? 'y' : 'ies'} → "${to}"` : 'Nothing to rename');
+      } catch (e) {
+        showToast?.('Rename failed');
+      }
+      setRenaming(null);
+    };
+    if (exists) {
+      askConfirm?.(
+        `"${to}" already exists. Merge "${from}" into it? This updates all games and schedule entries.`,
+        apply,
+      );
+    } else {
+      apply();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-stone-900 border border-stone-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] flex flex-col">
+        <div className="px-4 py-3 border-b border-stone-800 flex items-center justify-between">
+          <div className="font-display text-lg">MANAGE OPPONENTS</div>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-100 text-2xl leading-none px-2">×</button>
+        </div>
+        <div className="px-4 py-2 text-xs text-stone-400 border-b border-stone-800">
+          Rename a team to fix a typo or merge duplicates. Updates every game and schedule entry that uses the old name. To remove a test/demo team, delete the underlying game(s) from the past-games list.
+        </div>
+        <div className="flex-1 overflow-y-auto divide-y divide-stone-800">
+          {sorted.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-stone-500">No opponents yet.</div>
+          )}
+          {sorted.map((name) => {
+            const c = counts.get(norm(name)) || { games: 0, schedule: 0 };
+            const isRenaming = renaming?.from === name;
+            return (
+              <div key={name} className="px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">{name}</div>
+                    <div className="text-[11px] text-stone-500 mt-0.5">
+                      {c.games > 0 && `${c.games} game${c.games === 1 ? '' : 's'}`}
+                      {c.games > 0 && c.schedule > 0 && ' · '}
+                      {c.schedule > 0 && `${c.schedule} scheduled`}
+                      {c.games === 0 && c.schedule === 0 && 'unused'}
+                    </div>
+                  </div>
+                  {!isRenaming && (
+                    <button
+                      onClick={() => setRenaming({ from: name, to: name })}
+                      className="text-xs font-bold text-lime-400 hover:text-lime-300 px-3 py-1.5 rounded-lg border border-stone-800"
+                    >
+                      RENAME
+                    </button>
+                  )}
+                </div>
+                {isRenaming && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={renaming.to}
+                      onChange={(e) => setRenaming({ from: name, to: e.target.value })}
+                      autoFocus
+                      className="flex-1 bg-stone-950 border border-stone-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+                    />
+                    <button onClick={doRename} className="text-xs font-bold bg-lime-500 text-stone-900 px-3 py-1.5 rounded-lg">SAVE</button>
+                    <button onClick={() => setRenaming(null)} className="text-xs font-bold text-stone-400 px-2 py-1.5">CANCEL</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-4 py-3 border-t border-stone-800">
+          <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-stone-800 text-stone-200 font-display text-sm">
+            DONE
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -9450,9 +9999,9 @@ function LiveScorePage({ gameId }) {
       return;
     }
     let unsubGame = null, unsubRoster = null;
-    window.fbReady.then((ok) => {
-      if (!ok) { setError('Could not connect to Firebase.'); return; }
+    window.fbReady.then(() => {
       const db = window.fbDb;
+      if (!db) { setError('Could not connect to Firebase.'); return; }
       const teamRef = db.collection('teams').doc('main');
       unsubGame = teamRef.collection('games').doc(gameId).onSnapshot(
         (snap) => {
@@ -9479,13 +10028,15 @@ function LiveScorePage({ gameId }) {
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      <a
-        href="./"
-        className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
-      >
-        <ChevronLeft className="w-4 h-4" /> ALL MATCHES
-      </a>
-      <LiveScoreboard game={game} roster={roster} />
+      <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden pt-[calc(env(safe-area-inset-top,0px)+3.25rem)]">
+        <a
+          href="./"
+          className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
+        >
+          <ChevronLeft className="w-4 h-4" /> ALL MATCHES
+        </a>
+        <LiveScoreboard game={game} roster={roster} transparent />
+      </div>
       {game.youtubeVideoId && (
         <div className="px-4 pt-4 max-w-2xl mx-auto">
           <div className="bg-red-950/40 border border-red-800 rounded-xl px-4 py-2 flex items-center gap-2 mb-3">
@@ -9525,6 +10076,115 @@ function LiveScorePage({ gameId }) {
 }
 
 /* ---- PublicHomePage: default URL for parents ---- */
+// All public-page time logic is anchored in America/Toronto (the user calls
+// this "EDT"). Browsers may be in a different tz on the road, so we never
+// trust the local clock for date/hour decisions — we project Date.now() into
+// America/Toronto and reason about wall-clock there.
+const APP_TZ = 'America/Toronto';
+
+function tzNowParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour) % 24,
+    minute: Number(parts.minute),
+  };
+}
+
+// Convert a Toronto wall-clock (YYYY-MM-DD, HH:MM) to a UTC ms epoch.
+function tzTimestamp(dateStr, timeStr) {
+  if (!dateStr) return 0;
+  const [Y, M, D] = dateStr.split('-').map(Number);
+  const [h, m] = (timeStr || '00:00').split(':').map(Number);
+  const utcGuess = Date.UTC(Y, M - 1, D, h, m);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date(utcGuess)).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+  const asLocal = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second),
+  );
+  const offset = asLocal - utcGuess;
+  return utcGuess - offset;
+}
+
+// Pre-game / cancelled card that mirrors LiveScoreboard's look so the public
+// home keeps a consistent "field" panel whether or not the game has started.
+function ScheduledScoreboard({ item, transparent = false }) {
+  const isCancelled = !!item.cancelled;
+  const opp = splitTeamName(item.opponent || 'Opponent');
+  // Both teams are stacked ("<city>" overline above "<team>"). Width budget
+  // is driven by the longest team-name part and the longest city part.
+  const longestName = Math.max(8 /* Stompers */, opp.name.length);
+  const longestCity = Math.max(7 /* LaSalle */, opp.city.length);
+  const nameSizeClass =
+    longestName <= 7 ? 'text-4xl'
+    : longestName <= 9 ? 'text-3xl'
+    : longestName <= 12 ? 'text-2xl'
+    : longestName <= 16 ? 'text-xl'
+    : longestName <= 20 ? 'text-lg'
+    : 'text-base';
+  const overlineSizeClass =
+    longestCity <= 9 ? 'text-sm'
+    : longestCity <= 12 ? 'text-xs'
+    : 'text-[10px]';
+  return (
+    <div className={`${transparent ? '' : 'stripes-bg '}text-white px-4 ${transparent ? 'pt-2' : 'pt-[calc(env(safe-area-inset-top,0px)+3.75rem)]'} pb-6`}>
+      <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
+        {item.tournament || 'Match'} · {formatDate(item.date)}
+      </div>
+      <div className="flex items-end justify-between gap-4 mt-5 px-2">
+        <div className="flex-1 min-w-0 text-center">
+          <div className={`font-display ${overlineSizeClass} text-lime-400/90 leading-none tracking-wide`}>LaSalle</div>
+          <div className={`font-display ${nameSizeClass} leading-tight`}>Stompers</div>
+        </div>
+        <div className="flex-1 min-w-0 text-center">
+          {opp.city && (
+            <div className={`font-display ${overlineSizeClass} text-white/70 leading-none tracking-wide`}>{opp.city}</div>
+          )}
+          <div className={`font-display ${nameSizeClass} leading-tight`}>{opp.name}</div>
+        </div>
+      </div>
+      <div className="font-display text-6xl tabular-nums text-center mt-3 leading-none text-white/30">
+        <span>–</span><span className="mx-3 text-3xl align-middle">vs</span><span>–</span>
+      </div>
+      <div className="text-center mt-5 flex items-center justify-center gap-2 flex-wrap">
+        {isCancelled ? (
+          <span className="inline-block bg-red-500/20 text-red-200 border border-red-400/60 font-extrabold tracking-wider text-sm px-3 py-1 rounded-full">
+            CANCELLED
+          </span>
+        ) : (
+          <span className="inline-block bg-yellow-400/15 text-yellow-100 border border-yellow-300/50 font-extrabold tracking-wider text-sm px-3 py-1 rounded-full">
+            {item.time ? `KICKS OFF AT ${formatTime12(item.time)}` : 'KICKOFF TBD'}
+          </span>
+        )}
+        {item.field && (
+          <span className="inline-block bg-blue-500/15 text-blue-200 border border-blue-500/40 font-extrabold tracking-wider text-xs px-2 py-1 rounded">
+            📍 {item.field}
+          </span>
+        )}
+      </div>
+      {item.location && (
+        <div className="text-center text-xs text-blue-300 mt-3">
+          {item.location.startsWith('http') ? (
+            <a href={item.location} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> View Map
+            </a>
+          ) : (
+            <a href={`https://maps.google.com/?q=${encodeURIComponent(item.location)}`} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> {item.location}
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PublicHomePage() {
   const [games, setGames] = useState([]);
   const [roster, setRoster] = useState([]);
@@ -9532,6 +10192,13 @@ function PublicHomePage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [isCoachUser, setIsCoachUser] = useState(false);
+  // Re-render once a minute so the featured card flips at 6 AM ET, kickoff,
+  // and (final whistle + 1h) without needing a page reload or new snapshot.
+  const [, setMinTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setMinTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
@@ -9548,8 +10215,8 @@ function PublicHomePage() {
       return;
     }
     let unsubGames = null, unsubRoster = null;
-    window.fbReady.then((ok) => {
-      if (!ok) { setError('Could not connect to Firebase.'); return; }
+    window.fbReady.then(() => {
+      if (!window.fbDb) { setError('Could not connect to Firebase.'); return; }
       const teamRef = window.fbDb.collection('teams').doc('main');
       unsubGames = teamRef.collection('games').onSnapshot(
         (snap) => {
@@ -9583,78 +10250,144 @@ function PublicHomePage() {
   if (error) return <PublicErrorScreen msg={error} />;
   if (!loaded) return <PublicLoadingScreen />;
 
+  const nowMs = Date.now();
+  const todayStr = tzNowParts().date;
+  const HOUR = 60 * 60 * 1000;
+
   const active = games.find((g) => g.status === 'active');
   const finished = games.filter((g) => g.status === 'finished');
-  // Feature a finished game only if it was played today (local tz); otherwise demote to past.
-  const todayStr = new Date().toLocaleDateString('en-CA');
-  const featuredFinished = finished[0] && (finished[0].date || '').slice(0, 10) >= todayStr ? finished[0] : null;
-  const featured = active || featuredFinished || null;
-  const past = active ? finished : (featuredFinished ? finished.slice(1) : finished);
+
+  // Build today's slot list: today's finished/active games + today's schedule
+  // items not already represented by a game doc (matched by opponent).
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const todayFinished = finished.filter((g) => (g.date || '').slice(0, 10) === todayStr);
+  const isCovered = (s) => {
+    if (active && (active.date || '').slice(0, 10) === todayStr && norm(active.opponent) === norm(s.opponent)) return true;
+    return todayFinished.some((g) => norm(g.opponent) === norm(s.opponent));
+  };
+  const todaySched = (schedule || []).filter(
+    (s) => (s.date || '').slice(0, 10) === todayStr && !isCovered(s),
+  );
+
+  const slots = [];
+  for (const g of todayFinished) {
+    const kickoffMs = g.startedAt || tzTimestamp(todayStr, '00:00');
+    slots.push({ kind: 'finished', game: g, kickoffMs, endMs: g.endedAt || kickoffMs });
+  }
+  for (const s of todaySched) {
+    const kickoffMs = tzTimestamp(todayStr, s.time || '12:00');
+    // Per coach: a cancellation within 3h of kickoff is treated like a played
+    // game (so parents see CANCELLED on the home card). We don't record
+    // `cancelledAt` yet, so we honor any `s.cancelled === true` for today.
+    slots.push({
+      kind: s.cancelled ? 'cancelled' : 'upcoming',
+      item: s,
+      kickoffMs,
+      endMs: kickoffMs,
+    });
+  }
+  slots.sort((a, b) => a.kickoffMs - b.kickoffMs);
+
+  // Pick the featured slot.
+  //   1. Active game today always wins.
+  //   2. Otherwise, from 6 AM ET onward:
+  //      - Latest slot whose kickoff has passed and is still "current"
+  //        (within end+1h, OR is the last slot of the day → stay featured
+  //        until midnight ET).
+  //      - If nothing is current yet, show the next upcoming slot
+  //        (pre-kickoff card, starting at 6 AM ET).
+  let featuredSlot = null;
+  if (active && (active.date || '').slice(0, 10) === todayStr) {
+    featuredSlot = { kind: 'active', game: active };
+  } else {
+    const sixAm = tzTimestamp(todayStr, '06:00');
+    if (nowMs >= sixAm && slots.length > 0) {
+      for (let i = slots.length - 1; i >= 0; i--) {
+        const s = slots[i];
+        const isLast = i === slots.length - 1;
+        if (s.kickoffMs <= nowMs) {
+          const flipAt = s.endMs + HOUR;
+          if (isLast || nowMs < flipAt) { featuredSlot = s; break; }
+        }
+      }
+      if (!featuredSlot) featuredSlot = slots.find((s) => s.kickoffMs > nowMs) || null;
+    }
+  }
+
+  const featuredGame =
+    featuredSlot?.kind === 'active' || featuredSlot?.kind === 'finished' ? featuredSlot.game : null;
+  const featuredItem =
+    featuredSlot?.kind === 'upcoming' || featuredSlot?.kind === 'cancelled' ? featuredSlot.item : null;
+
+  const past = finished.filter((g) => !featuredGame || g.id !== featuredGame.id);
 
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
-      {featured ? (
+      {featuredSlot ? (
         <>
-          <div className="relative text-white px-5 pt-16 pb-6 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
-            {/* Decorative pitch-stripe accent in the corner only, doesn't tile across the seam */}
-            <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
-            <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
-              {window.fbUserInfo && (
-                <button
-                  onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
-                  aria-label="Sign out"
-                  className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+          <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden">
+            <div className="text-white px-5 pt-16 pb-2">
+              <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
+                {window.fbUserInfo && (
+                  <button
+                    onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }}
+                    aria-label="Sign out"
+                    className="h-9 px-2 rounded-full bg-white/10 hover:bg-white/20 flex items-center gap-1.5 border border-white/15 active:scale-95"
+                  >
+                    {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
+                    <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
+                  </button>
+                )}
+                <a
+                  href="./?coach"
+                  className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
                 >
-                  {window.fbUserInfo.photo && <img src={window.fbUserInfo.photo} className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />}
-                  <span className="text-[10px] text-white/70 font-bold">Sign Out</span>
-                </button>
-              )}
-              <a
-                href="./?coach"
-                className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
-              >
-                <span>🪑</span><span>DUGOUT</span>
-              </a>
-            </div>
-            <div className="flex items-center gap-4 mt-12">
-              <img
-                src="./stompers_logo.png"
-                alt=""
-                className="w-24 h-24 shrink-0 drop-shadow"
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
-              <div className="flex-1 min-w-0">
-                <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-                <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+                  <span>🪑</span><span>DUGOUT</span>
+                </a>
+              </div>
+              <div className="flex items-center gap-4 mt-12">
+                <img
+                  src="./stompers_logo.png"
+                  alt=""
+                  className="w-24 h-24 shrink-0 drop-shadow"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+                <div className="flex-1 min-w-0">
+                  <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
+                  <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+                </div>
               </div>
             </div>
+            {featuredGame ? (
+              <a href={`./?live=${featuredGame.id}`} className="block">
+                <LiveScoreboard game={featuredGame} roster={roster} transparent />
+              </a>
+            ) : (
+              <ScheduledScoreboard item={featuredItem} transparent />
+            )}
           </div>
-          <a href={`./?live=${featured.id}`} className="block">
-            <LiveScoreboard game={featured} roster={roster} />
-          </a>
-          {featured.videoUrl && !featured.youtubeVideoId && (
+          {featuredGame && featuredGame.videoUrl && !featuredGame.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <PublicVideoToggle url={featured.videoUrl} game={featured} label="🎥 WATCH 360° VIDEO" />
+              <PublicVideoToggle url={featuredGame.videoUrl} game={featuredGame} label="🎥 WATCH 360° VIDEO" />
             </div>
           )}
-          {featured.youtubeVideoId && (
+          {featuredGame && featuredGame.youtubeVideoId && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <YouTubeEmbed videoId={featured.youtubeVideoId} live={featured.status === 'active'} />
+              <YouTubeEmbed videoId={featuredGame.youtubeVideoId} live={featuredGame.status === 'active'} />
             </div>
           )}
-          {!featured.youtubeVideoId && featured.liveInput?.hlsUrl && (
+          {featuredGame && !featuredGame.youtubeVideoId && featuredGame.liveInput?.hlsUrl && (
             <div className="px-4 pt-4 max-w-2xl mx-auto">
-              <PublicVideoToggle url={featured.liveInput.hlsUrl} game={featured} label="🔴 WATCH LIVE" />
+              <PublicVideoToggle url={featuredGame.liveInput.hlsUrl} game={featuredGame} label="🔴 WATCH LIVE" />
             </div>
           )}
-          {featured.status === 'finished' && (
-            <PublicAnalyticsCard game={featured} roster={roster} />
+          {featuredGame && featuredGame.status === 'finished' && (
+            <PublicAnalyticsCard game={featuredGame} roster={roster} />
           )}
         </>
       ) : (
-        <div className="relative text-white px-5 pt-16 pb-12 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,_#0f3623_0%,_#081a10_55%,_#050d08_100%)] border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
-          <div className="pointer-events-none absolute -top-8 -right-10 w-64 h-64 opacity-[0.07] rotate-12 stripes-bg rounded-full" />
+        <div className="relative stripes-bg text-white px-5 pt-16 pb-12 overflow-hidden border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)]">
           <div className="absolute top-[calc(env(safe-area-inset-top,0px)+0.75rem)] right-4 flex items-center gap-2">
             {window.fbUserInfo && (
               <button
@@ -9694,8 +10427,12 @@ function PublicHomePage() {
         </div>
       )}
       {(() => {
+        const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
+        const playedKeys = new Set((games || []).map(playedKey));
         const upcoming = schedule
           .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .filter(s => !featuredItem || s.id !== featuredItem.id)
+          .filter(s => !playedKeys.has(`${(s.date || '').slice(0,10)}|${(s.opponent || '').trim().toLowerCase()}`))
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
         if (upcoming.length === 0) return null;
         return (
@@ -9794,7 +10531,7 @@ function PublicLoadingScreen() {
 }
 
 /* ---- LiveScoreboard: pure render given game + roster ---- */
-function LiveScoreboard({ game, roster }) {
+function LiveScoreboard({ game, roster, transparent = false }) {
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -9824,14 +10561,18 @@ function LiveScoreboard({ game, roster }) {
         out.push({ kind: 'us', at: e.at, elapsed: e.elapsed, period: e.period, scorerId: e.playerId, assistId: assist?.playerId || null, ourRun, oppRun });
       } else if (e.type === 'OPP_GOAL') {
         oppRun++;
-        out.push({ kind: 'opp', at: e.at, elapsed: e.elapsed, period: e.period, ourRun, oppRun });
+        out.push({ kind: 'opp', at: e.at, elapsed: e.elapsed, period: e.period, ownGoalById: e.ownGoalById || null, ourRun, oppRun });
       }
     }
     return out;
   }, [game]);
 
   const elapsed = computeElapsed(game);
-  const mins = Math.floor(elapsed / 60);
+  const halfLenMin = Number(game.halfLengthMin) || 25;
+  const totalMin = halfLenMin * 2;
+  // Continuous match minute: in P2 add the first-half length so it reads 34'/60'
+  // instead of restarting at 4'.
+  const mins = Math.floor(elapsed / 60) + ((game.period || 1) === 2 ? halfLenMin : 0);
   const isActive = game.status === 'active';
   const isFinished = game.status === 'finished';
   let statusLabel;
@@ -9840,14 +10581,13 @@ function LiveScoreboard({ game, roster }) {
   else if (isActive) statusLabel = `${mins}'`;
   else statusLabel = 'NOT STARTED';
 
-  const HOME_NAME = 'Stompers';
-  const leftName = HOME_NAME;
-  const rightName = game.opponent || 'Opponent';
+  const opp = splitTeamName(game.opponent || 'Opponent');
   const leftScore = game.ourScore;
   const rightScore = game.oppScore;
-  // Pick a font size that keeps both names on one line based on the longer name.
-  // Names now get the full half-width each (score sits below), so we can go bigger.
-  const longestName = Math.max(leftName.length, rightName.length);
+  // Both teams are stacked ("<city>" overline above "<team>"). Width budget
+  // is driven by the longest team-name part and the longest city part.
+  const longestName = Math.max(8 /* Stompers */, opp.name.length);
+  const longestCity = Math.max(7 /* LaSalle */, opp.city.length);
   const nameSizeClass =
     longestName <= 7 ? 'text-4xl'
     : longestName <= 9 ? 'text-3xl'
@@ -9855,6 +10595,10 @@ function LiveScoreboard({ game, roster }) {
     : longestName <= 16 ? 'text-xl'
     : longestName <= 20 ? 'text-lg'
     : 'text-base';
+  const overlineSizeClass =
+    longestCity <= 9 ? 'text-sm'
+    : longestCity <= 12 ? 'text-xs'
+    : 'text-[10px]';
 
   // Privacy: first name + jersey number only — never last names on public pages.
   const nameOf = (pid) => {
@@ -9869,51 +10613,66 @@ function LiveScoreboard({ game, roster }) {
 
   return (
     <>
-      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+3.75rem)] pb-6">
+      <div className={`${transparent ? '' : 'stripes-bg '}text-white px-4 ${transparent ? 'pt-2' : 'pt-[calc(env(safe-area-inset-top,0px)+3.75rem)]'} pb-6`}>
         <div className="text-center text-xs uppercase tracking-widest text-white/60 mb-1">
           {game.tournament || 'Match'} · {formatDate(game.date)}
         </div>
         {/* Names on top, full half-width each. Score sits below for breathing room. */}
-        <div className="flex items-start justify-between gap-4 mt-5 px-2">
+        <div className="flex items-end justify-between gap-4 mt-5 px-2">
           <div className="flex-1 min-w-0 text-center">
-            <div className={`font-display ${nameSizeClass} leading-tight`}>{leftName}</div>
+            <div className={`font-display ${overlineSizeClass} text-lime-400/90 leading-none tracking-wide`}>LaSalle</div>
+            <div className={`font-display ${nameSizeClass} leading-tight`}>Stompers</div>
           </div>
           <div className="flex-1 min-w-0 text-center">
-            <div className={`font-display ${nameSizeClass} leading-tight`}>{rightName}</div>
+            {opp.city && (
+              <div className={`font-display ${overlineSizeClass} text-white/70 leading-none tracking-wide`}>{opp.city}</div>
+            )}
+            <div className={`font-display ${nameSizeClass} leading-tight`}>{opp.name}</div>
           </div>
         </div>
         <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
           {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
         </div>
-        {/* TV-style: goals listed under each team in two columns. */}
+        {/* TV-style: goals listed under each team in two columns. Each column
+            centers an inline-block group so the goal list sits under the team
+            name, while rows inside the group are left-aligned so the ⚽ glyph
+            stacks on a consistent edge instead of drifting with name width. */}
         {(usGoals.length > 0 || oppGoals.length > 0) && (
           <div className="flex items-start justify-between gap-4 mt-5 px-2">
-            <div className="flex-1 min-w-0 space-y-1.5">
-              {usGoals.map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-                return (
-                  <div key={i} className="text-sm text-center">
-                    <div className="font-bold text-white truncate">
-                      ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+            <div className="flex-1 min-w-0 text-center">
+              <div className="inline-block text-left space-y-1.5">
+                {usGoals.map((row, i) => {
+                  const minute = eventDisplayMinute(row, halfLenMin);
+                  return (
+                    <div key={i} className="text-sm">
+                      <div className="font-bold text-white truncate">
+                        ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      </div>
+                      {row.assistId && (
+                        <div className="text-[11px] text-white/50 truncate pl-5">🅰️ {nameOf(row.assistId)}</div>
+                      )}
                     </div>
-                    {row.assistId && (
-                      <div className="text-[11px] text-white/50 truncate pl-6">🅰️ {nameOf(row.assistId)}</div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex-1 min-w-0 space-y-1.5">
-              {oppGoals.map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
-                return (
-                  <div key={i} className="text-sm text-center">
-                    <div className="font-bold text-white">
-                      ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+            <div className="flex-1 min-w-0 text-center">
+              <div className="inline-block text-left space-y-1.5">
+                {oppGoals.map((row, i) => {
+                  const minute = eventDisplayMinute(row, halfLenMin);
+                  const ownGoalName = row.ownGoalById ? nameOf(row.ownGoalById) : null;
+                  return (
+                    <div key={i} className="text-sm">
+                      <div className="font-bold text-white truncate">
+                        ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      </div>
+                      {ownGoalName && (
+                        <div className="text-[11px] text-amber-200/80 truncate pl-5">(OG {ownGoalName})</div>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -9926,7 +10685,7 @@ function LiveScoreboard({ game, roster }) {
           {isActive && game.clockRunning && (
             <span className="inline-flex items-center gap-2 bg-red-500/25 border border-red-400/50 text-red-100 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
-              LIVE · {mins}'
+              LIVE · {mins}'/{totalMin}'
             </span>
           )}
           {isActive && !game.clockRunning && (
