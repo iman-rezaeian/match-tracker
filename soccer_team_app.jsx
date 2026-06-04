@@ -9999,9 +9999,9 @@ function LiveScorePage({ gameId }) {
       return;
     }
     let unsubGame = null, unsubRoster = null;
-    window.fbReady.then((ok) => {
-      if (!ok) { setError('Could not connect to Firebase.'); return; }
+    window.fbReady.then(() => {
       const db = window.fbDb;
+      if (!db) { setError('Could not connect to Firebase.'); return; }
       const teamRef = db.collection('teams').doc('main');
       unsubGame = teamRef.collection('games').doc(gameId).onSnapshot(
         (snap) => {
@@ -10215,8 +10215,8 @@ function PublicHomePage() {
       return;
     }
     let unsubGames = null, unsubRoster = null;
-    window.fbReady.then((ok) => {
-      if (!ok) { setError('Could not connect to Firebase.'); return; }
+    window.fbReady.then(() => {
+      if (!window.fbDb) { setError('Could not connect to Firebase.'); return; }
       const teamRef = window.fbDb.collection('teams').doc('main');
       unsubGames = teamRef.collection('games').onSnapshot(
         (snap) => {
