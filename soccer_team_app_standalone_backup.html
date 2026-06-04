@@ -145,6 +145,15 @@ const EVENT_TYPES = {
   TURNOVER:  { id: 'TURNOVER',  label: 'TURNOVER',  emoji: '💨', tone: 'soft-red',   requiresPlayer: true },
   HOLDS_BALL:{ id: 'HOLDS_BALL',label: 'HOLDS BALL',emoji: '⏳', tone: 'yellow',     requiresPlayer: true },
   OPP_GOAL:  { id: 'OPP_GOAL',  label: 'OPP GOAL',  emoji: '⚽', tone: 'big-red',    requiresPlayer: false, delta: 'opp' },
+  // Discipline & set-piece events (added 2026 season).
+  // FOUL_ON / FOUL_BY = was the foul awarded to us, or against us?
+  // PEN_AWARDED / PEN_CONCEDED = same idea for penalty kicks.
+  // Coach taps these after the whistle; player picker follows (the player
+  // who DREW the foul/penalty for us, or the player who COMMITTED it).
+  FOUL_BY:      { id: 'FOUL_BY',      label: 'FOUL BY US',  emoji: '🟨', tone: 'soft-red',   requiresPlayer: true  },
+  FOUL_ON:      { id: 'FOUL_ON',      label: 'FOUL ON US',  emoji: '🛑', tone: 'soft-green', requiresPlayer: true  },
+  PEN_CONCEDED: { id: 'PEN_CONCEDED', label: 'PEN GIVEN',   emoji: '⚠️', tone: 'big-red',    requiresPlayer: true  },
+  PEN_AWARDED:  { id: 'PEN_AWARDED',  label: 'PEN WON',     emoji: '🎯', tone: 'big-green',  requiresPlayer: true  },
   // POSITION is a silent event written by the tactical board on drag-end.
   // Carries { playerId, x, y } where x,y ∈ [0,1] over a half-field portrait
   // (own goal bottom, halfway line top). Filtered out of RECENT and stats.
@@ -157,6 +166,7 @@ const EVENT_NEEDS_ZONE = new Set([
   'GOAL', 'SHOT_ON', 'SHOT_OFF', 'BALL_WIN', 'TURNOVER',
   'DUEL_WIN', 'DUEL_LOSE', 'KEY_PASS', 'GIVE_GO', 'GATES',
   'SAVE', 'BLOCK',
+  'FOUL_BY', 'FOUL_ON', 'PEN_AWARDED', 'PEN_CONCEDED',
 ]);
 
 // Events that get an optional pressure modifier (was the player under pressure when they did this?).
@@ -292,6 +302,15 @@ function formatClock(seconds) {
   return `${m}:${s}`;
 }
 
+// Display minute for a logged event using its period + the game's half length.
+// The clock resets to 0 at the start of P2, so a goal at elapsed=240s in P2 of
+// a 30-min-half game should display as 34' (30 + 4), not 4'. Round half-up.
+function eventDisplayMinute(event, halfLengthMin) {
+  const halfLen = Number(halfLengthMin) || 25;
+  const m = Math.max(1, Math.round((event?.elapsed || 0) / 60));
+  return m + ((event?.period || 1) === 2 ? halfLen : 0);
+}
+
 function computeElapsed(game) {
   if (game.elapsedAtPause === undefined) {
     return game.startedAt ? Math.floor((Date.now() - game.startedAt) / 1000) : 0;
@@ -425,12 +444,19 @@ const DEFAULT_WEIGHTS = {
     SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+    // Discipline & set-pieces.
+    FOUL_ON_atk: 2,   FOUL_BY_def: -2,
+    PEN_AWARDED_atk: 6, PEN_CONCEDED_def: -8,
+    OWN_GOAL_def: -10,
   },
   gkPoints: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
     SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
+    FOUL_ON_atk: 2,   FOUL_BY_def: -2,
+    PEN_AWARDED_atk: 6, PEN_CONCEDED_def: -8,
+    OWN_GOAL_def: -10,
   },
   pillars: {
     outfield: { atk: 30, def: 25, dec: 30, inv: 15 },
@@ -456,6 +482,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   const perHalf = minutesPlayed / 20;
   const c = {};
   let partnerCount = 0; // give & go wall-pass credits earned by this player
+  let ownGoals = 0;     // own goals attributed to this player via OPP_GOAL.ownGoalById
   for (const e of events) {
     if (e.type === 'SUB') continue;
     if (e.playerId === playerId) {
@@ -464,23 +491,31 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
     if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
       partnerCount++;
     }
+    if (e.type === 'OPP_GOAL' && e.ownGoalById === playerId) {
+      ownGoals++;
+    }
   }
   const pts = W.points;
   const attacking = (
-    (c.GOAL || 0)     * pts.GOAL_atk +
-    (c.ASSIST || 0)   * pts.ASSIST_atk +
-    (c.KEY_PASS || 0) * pts.KEY_PASS_atk +
-    (c.SHOT_ON || 0)  * pts.SHOT_ON_atk +
-    (c.SHOT_OFF || 0) * pts.SHOT_OFF_atk
+    (c.GOAL || 0)        * pts.GOAL_atk +
+    (c.ASSIST || 0)      * pts.ASSIST_atk +
+    (c.KEY_PASS || 0)    * pts.KEY_PASS_atk +
+    (c.SHOT_ON || 0)     * pts.SHOT_ON_atk +
+    (c.SHOT_OFF || 0)    * pts.SHOT_OFF_atk +
+    (c.FOUL_ON || 0)     * (pts.FOUL_ON_atk || 0) +
+    (c.PEN_AWARDED || 0) * (pts.PEN_AWARDED_atk || 0)
   ) / perHalf;
   const concededPenalty = isGK ? (gkExtras.concededPenalty || 0) : 0;
   const cleanSheets = isGK ? (gkExtras.cleanSheets || 0) : 0;
   const defending = (
-    (c.SAVE || 0)      * pts.SAVE_def +
-    (c.BLOCK || 0)     * pts.BLOCK_def +
-    (c.BALL_WIN || 0)  * pts.BALL_WIN_def +
-    (c.DUEL_WIN || 0)  * pts.DUEL_WIN_def +
-    (c.DUEL_LOSE || 0) * pts.DUEL_LOSE_def +
+    (c.SAVE || 0)         * pts.SAVE_def +
+    (c.BLOCK || 0)        * pts.BLOCK_def +
+    (c.BALL_WIN || 0)     * pts.BALL_WIN_def +
+    (c.DUEL_WIN || 0)     * pts.DUEL_WIN_def +
+    (c.DUEL_LOSE || 0)    * pts.DUEL_LOSE_def +
+    (c.FOUL_BY || 0)      * (pts.FOUL_BY_def || 0) +
+    (c.PEN_CONCEDED || 0) * (pts.PEN_CONCEDED_def || 0) +
+    ownGoals              * (pts.OWN_GOAL_def || 0) +
     (isGK ? (-concededPenalty + cleanSheets * pts.CLEAN_SHEET_def) : 0)
   ) / perHalf;
   const decisions = (
@@ -492,7 +527,7 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
     (c.HOLDS_BALL || 0) * pts.HOLDS_BALL_dec +
     (c.TURNOVER || 0)   * pts.TURNOVER_dec
   ) / perHalf;
-  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount;
+  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount + ownGoals;
   const involvement = totalEvents / perHalf;
   const pil = isGK ? W.pillars.gk : W.pillars.outfield;
   const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
@@ -1214,6 +1249,43 @@ function App() {
     }
   };
 
+  // Halftime bulk lineup change: coach picks the on-field set for the 2nd
+  // half in one pass. Emits paired SUB events for each net swap (one OFF
+  // player pairs with one ON player) so minutes-played stays accurate.
+  // Extras get standalone SUB rows with the "missing" side null — these are
+  // tolerated by playerSeconds / onFieldAt (they iterate independently).
+  const bulkReplaceLineup = (gameId, nextOnFieldIds) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const currentOn = onFieldAt(game);
+    const next = new Set(nextOnFieldIds);
+    const offNow = [...currentOn].filter(id => !next.has(id));
+    const onNow  = [...nextOnFieldIds].filter(id => !currentOn.has(id));
+    if (offNow.length === 0 && onNow.length === 0) {
+      showToast('Lineup unchanged');
+      return;
+    }
+    const baseAt = Date.now();
+    const elapsed = computeElapsed(game);
+    const pairs = Math.max(offNow.length, onNow.length);
+    const newEvents = [];
+    for (let i = 0; i < pairs; i++) {
+      newEvents.push({
+        id: uid(),
+        type: 'SUB',
+        playerId: offNow[i] || null,
+        subOnPlayerId: onNow[i] || null,
+        period: game.period,
+        elapsed,
+        at: baseAt + i, // distinct timestamps so onFieldAt orders deterministically
+        bulkHalftime: true,
+      });
+    }
+    const updated = { ...game, events: [...game.events, ...newEvents] };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+    showToast(`🔄 Lineup updated · ${onNow.length} on / ${offNow.length} off`);
+  };
+
   // Silent: writes a POSITION event from the tactical board. No toast, no
   // score change, no RECENT feed pollution. Skips if the new spot is within
   // 3% of the last logged spot for this player (drag jitter / accidental).
@@ -1371,10 +1443,9 @@ function App() {
           onGoRoster={() => setView('roster')}
           onNewGame={() => setView('gameSetup')}
           onStartScheduled={(item) => {
-            // Pre-fill from the scheduled item. If the coach already pre-set
-            // every match-day field (squad, home/away, half length, both
-            // colors), skip gameSetup AND squad and land straight on the
-            // starting-lineup / kickoff board.
+            // Pre-fill from the scheduled item and always route through the
+            // full Game Setup → Squad → Lineup flow so the coach can review
+            // and tweak anything (half length, colors, squad) before kickoff.
             const prefill = {
               opponent: item.opponent,
               tournament: item.tournament,
@@ -1385,14 +1456,8 @@ function App() {
               awayColor: item.awayColor,
               squad: Array.isArray(item.squadIds) && item.squadIds.length > 0 ? item.squadIds : undefined,
             };
-            const fullyPreset =
-              prefill.squad &&
-              typeof item.isHome === 'boolean' &&
-              typeof item.halfLengthMin === 'number' &&
-              !!item.homeColor &&
-              !!item.awayColor;
             setPendingGameSetup(prefill);
-            setView(fullyPreset ? 'lineup' : 'gameSetup');
+            setView('gameSetup');
           }}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
           onViewGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
@@ -1519,7 +1584,13 @@ function App() {
             }
           }}
           onResolveOppGoal={(fault) => {
-            // fault: 'gk' | 'unstoppable' | null (neutral / unsure)
+            // fault: 'gk' | 'unstoppable' | 'own' | null (neutral / unsure)
+            // If own goal, we still need to attribute the player — flip to a
+            // dedicated picker step instead of logging immediately.
+            if (fault === 'own') {
+              setPendingEvent({ type: 'OPP_GOAL_OWN_PICK' });
+              return;
+            }
             logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: fault });
           }}
           onConfirmGK={(playerId) => setGameGK(activeGame.id, playerId)}
@@ -1556,6 +1627,13 @@ function App() {
               logEvent(activeGame.id, 'GIVE_GO', pendingEvent.initiatorId, extras);
               return;
             }
+            if (pendingEvent?.type === 'OPP_GOAL_OWN_PICK') {
+              // Own goal: opp's score still goes up (handled by OPP_GOAL.delta),
+              // but we tag the responsible player on the event and credit a
+              // negative weight to their Defense pillar via computePerformanceScore.
+              logEvent(activeGame.id, 'OPP_GOAL', null, { gkFault: 'own', ownGoalById: playerId });
+              return;
+            }
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
             // Live flow is ruthlessly single-tap. Zone / pressure / decision modifiers are
             // applied post-game from GameDetail's TAG button, so the coach never misses
@@ -1571,6 +1649,7 @@ function App() {
           onResumeClock={() => resumeClock(activeGame.id)}
           onEnd={() => askConfirm('End game and save final score?', () => endGame(activeGame.id))}
           onBack={() => setView('home')}
+          onBulkReplaceLineup={(ids) => bulkReplaceLineup(activeGame.id, ids)}
           tick={tick}
         />
       )}
@@ -1580,6 +1659,7 @@ function App() {
           game={viewingGame}
           roster={roster}
           weights={weights}
+          opponentSuggestions={opponentSuggestions}
           onBack={() => setView('home')}
           onDelete={() => {
             // In production, require the coach password before deleting a game.
@@ -1896,8 +1976,11 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
 
       {/* Upcoming games */}
       {(() => {
+        const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
+        const playedKeys = new Set((games || []).map(playedKey));
         const upcoming = schedule
           .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
+          .filter(s => !playedKeys.has(`${(s.date || '').slice(0,10)}|${(s.opponent || '').trim().toLowerCase()}`))
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
         if (upcoming.length === 0) return null;
         return (
@@ -3760,7 +3843,7 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -3780,6 +3863,10 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   const inFirstHalf = game.period === 1 && game.clockRunning !== false;
   const inHalfTimeBreak = game.period === 1 && game.clockRunning === false;
   const inSecondHalf = game.period === 2;
+
+  // Halftime bulk-lineup modal: coach taps players to flip on/off the field
+  // in a single pass instead of doing one SUB at a time.
+  const [halftimePicker, setHalftimePicker] = useState(false);
 
   const statusLabel = inHalfTimeBreak ? 'HALF TIME' : inSecondHalf ? '2ND HALF' : '1ST HALF';
   const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-100' : 'bg-stone-900 text-lime-400';
@@ -4042,7 +4129,36 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               >
                 NEUTRAL / UNSURE
               </button>
+              <button
+                onClick={() => onResolveOppGoal('own')}
+                className="mt-3 w-full bg-amber-900/30 text-amber-200 border border-amber-600/60 font-display text-base py-3 rounded-xl active:scale-[0.98] transition flex items-center justify-center gap-2"
+              >
+                <span className="text-lg">🙃</span>
+                <span>OWN GOAL — PICK PLAYER</span>
+              </button>
             </div>
+          );
+        })() : pendingEvent?.type === 'OPP_GOAL_OWN_PICK' ? (() => {
+          const onField = onFieldAt(game);
+          const ourPlayers = playersSorted.filter(p => onField.has(p.id)).sort((a, b) => {
+            // GK last for own goals (rare); outfield by number
+            const ag = a.id === gameGKId ? 1 : 0;
+            const bg = b.id === gameGKId ? 1 : 0;
+            if (ag !== bg) return ag - bg;
+            return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+          });
+          return (
+            <PlayerPicker
+              event={{ emoji: '🙃', label: 'OWN GOAL — WHO?', requiresPlayer: true }}
+              players={ourPlayers}
+              gameGKId={gameGKId}
+              skippable={false}
+              onPick={onSelectPlayer}
+              onSkip={onCancelEvent}
+              onUnknown={null}
+              onCancel={onCancelEvent}
+              emptyMessage="No players on the field."
+            />
           );
         })() : pendingEvent ? (() => {
           const isSub = pendingEvent.type === 'SUB';
@@ -4139,6 +4255,16 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
+            {/* Bulk lineup re-pick: faster than chaining individual SUBs when
+                many players rotate at halftime. */}
+            <button
+              onClick={() => setHalftimePicker(true)}
+              className="mt-2 w-full max-w-sm bg-sky-900/50 text-sky-200 border-2 border-sky-600/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+            >
+              <span className="text-2xl">🔁</span>
+              <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">PICK 2ND-HALF LINEUP</span>
+            </button>
+
             <div className="w-full">
               {tacticalBoard}
             </div>
@@ -4167,7 +4293,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-lime-400/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK'].map(id => {
+                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK', 'FOUL_ON', 'PEN_AWARDED'].map(id => {
                   const ev = EVENT_TYPES[id];
                   const big = id === 'GOAL';
                   return (
@@ -4195,7 +4321,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-red-400/70 font-bold tracking-wider">LOWERS SCORE</div>
               </div>
               <div className="grid grid-cols-3 gap-2">
-                {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE'].map(id => {
+                {['TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE', 'FOUL_BY', 'PEN_CONCEDED'].map(id => {
                   const ev = EVENT_TYPES[id];
                   return (
                     <button
@@ -4279,6 +4405,87 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
       </div>
 
       <div className="pb-6"></div>
+      {halftimePicker && (
+        <HalftimeLineupPicker
+          players={playersSorted}
+          gameGKId={gameGKId}
+          initialOnField={onFieldAt(game)}
+          secondsByPlayer={secondsByPlayer}
+          onCancel={() => setHalftimePicker(false)}
+          onSave={(ids) => {
+            onBulkReplaceLineup(ids);
+            setHalftimePicker(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function HalftimeLineupPicker({ players, gameGKId, initialOnField, secondsByPlayer, onCancel, onSave }) {
+  const [selected, setSelected] = useState(() => new Set(initialOnField));
+  const toggle = (pid) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
+  };
+  const onCount = selected.size;
+  return (
+    <div className="fixed inset-0 z-50 bg-stone-950/95 flex flex-col">
+      <div className="px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3 border-b border-stone-800 flex items-center justify-between">
+        <div>
+          <div className="font-display text-xl text-white leading-none">2ND-HALF LINEUP</div>
+          <div className="text-xs text-stone-400 mt-1">Tap to toggle. Selected go on field at the whistle.</div>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-display text-lime-400 leading-none">{onCount}</div>
+          <div className="text-[10px] text-stone-500 uppercase tracking-wide">on field</div>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="grid grid-cols-2 gap-2">
+          {players.map(p => {
+            const isOn = selected.has(p.id);
+            const isGK = p.id === gameGKId;
+            const secs = secondsByPlayer?.[p.id] || 0;
+            const mins = Math.floor(secs / 60);
+            return (
+              <button
+                key={p.id}
+                onClick={() => toggle(p.id)}
+                className={`rounded-2xl border-2 px-3 py-3 flex flex-col items-start gap-1 active:scale-[0.97] transition text-left ${
+                  isOn
+                    ? 'bg-lime-900/40 border-lime-500/70 text-lime-100'
+                    : 'bg-stone-900/60 border-stone-700 text-stone-400'
+                }`}
+              >
+                <div className="flex items-center gap-2 w-full">
+                  <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${isOn ? 'bg-lime-700/60 text-white' : 'bg-stone-800 text-stone-400'}`}>#{p.number}</span>
+                  {isGK && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-700/60 text-amber-100">GK</span>}
+                  <span className={`ml-auto text-[10px] font-mono ${isOn ? 'text-lime-300' : 'text-stone-500'}`}>{mins}'</span>
+                </div>
+                <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] border-t border-stone-800 flex gap-2">
+        <button
+          onClick={onCancel}
+          className="flex-1 bg-stone-800 text-stone-200 border-2 border-stone-700 rounded-2xl py-3 font-display"
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={() => onSave([...selected])}
+          className="flex-1 bg-lime-700 text-white border-2 border-lime-500 rounded-2xl py-3 font-display active:scale-[0.97] transition"
+        >
+          SAVE LINEUP
+        </button>
+      </div>
     </div>
   );
 }
@@ -5180,7 +5387,7 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
         ? currentTime >= half2StartElapsed
         : (gameInfo && gameInfo.period >= 2));
   const displayedMinute = isLive
-    ? Math.floor(liveElapsedSec / 60)
+    ? Math.floor(liveElapsedSec / 60) + (inSecondHalf ? halfLen : 0)
     : (inSecondHalf
         ? (isFinite(half2StartElapsed)
             ? Math.floor((currentTime - half2StartElapsed) / 60) + halfLen
@@ -5609,6 +5816,14 @@ function EventRow({ event, roster, onDelete, onTag, onSeek }) {
                 {event.gkFault === 'unstoppable' && (
                   <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 border border-stone-700">😮 UNSTOPPABLE</span>
                 )}
+                {event.gkFault === 'own' && (() => {
+                  const ogPlayer = roster.find(p => p.id === event.ownGoalById);
+                  return (
+                    <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 border border-amber-300">
+                      🙃 OWN GOAL{ogPlayer ? ` · ${ogPlayer.name} #${ogPlayer.number}` : ''}
+                    </span>
+                  );
+                })()}
                 {!event.gkFault && (
                   <span className="text-[10px] text-stone-400 italic">unmarked</span>
                 )}
@@ -6684,7 +6899,8 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
     const them = new Map();
     for (const e of allEvents) {
       if (e.t > cutT) break;
-      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1)}'`;
+      const halfLen = Number(doc?.halfLengthMin) || 25;
+      const minStr = `${Math.max(1, Math.floor((e.elapsed || 0) / 60) + 1) + ((e.period || 1) === 2 ? halfLen : 0)}'`;
       const isOurGoal = e.type === 'GOAL';
       const isOppGoal = e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
       if (isOurGoal) {
@@ -7215,7 +7431,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
 }
 
 /* ---------- GAME DETAIL ---------- */
-function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
+function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, onDelete, onDeleteVideos, onDeleteEvent, onUpdateEvent, onUpdateGame }) {
   const events = [...game.events].filter(e => e.type !== 'POSITION').sort((a, b) => a.at - b.at);
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
@@ -7233,6 +7449,7 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
   const [showLive, setShowLive] = useState(false);
   const [showLiveCreds, setShowLiveCreds] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showEditInfo, setShowEditInfo] = useState(false);
 
   // Each time the user enters a different game from the DUGOUT list, scroll
   // back to the top — otherwise the view keeps the previous page's scroll
@@ -7620,6 +7837,24 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
       )}
 
       <div className="px-4 pt-5">
+        <button
+          onClick={() => setShowEditInfo(v => !v)}
+          className="w-full flex items-center justify-between bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 active:scale-[0.99]"
+        >
+          <span className="font-display text-sm tracking-wider text-stone-200">⚙ EDIT GAME INFO</span>
+          <span className="text-xs text-stone-400">{showEditInfo ? 'CLOSE' : 'OPEN'}</span>
+        </button>
+        {showEditInfo && (
+          <GameInfoEditor
+            game={game}
+            opponentSuggestions={opponentSuggestions}
+            onSave={(patch) => { onUpdateGame(patch); setShowEditInfo(false); }}
+            onCancel={() => setShowEditInfo(false)}
+          />
+        )}
+      </div>
+
+      <div className="px-4 pt-5">
         <h3 className="font-display text-xl mb-2">TIMELINE</h3>
         {events.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
@@ -7711,6 +7946,113 @@ function GameDetail({ game, roster, weights, onBack, onDelete, onDeleteVideos, o
           onClose={() => setTaggingEvent(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ---------- EDIT GAME INFO (post-hoc metadata fixes) ---------- */
+function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
+  const [opponent, setOpponent] = useState(game.opponent || '');
+  const [tournament, setTournament] = useState(game.tournament || 'Festival');
+  const [halfLengthMin, setHalfLengthMin] = useState(Number(game.halfLengthMin) || 25);
+  const [isHome, setIsHome] = useState(typeof game.isHome === 'boolean' ? game.isHome : true);
+  const [homeColor, setHomeColor] = useState(game.homeColor || '#0a0a0a');
+  const [awayColor, setAwayColor] = useState(game.awayColor || '#dc2626');
+  return (
+    <div className="mt-2 bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
+      <div className="text-[11px] text-amber-300/80 bg-amber-900/20 border border-amber-800/50 rounded-lg px-3 py-2">
+        Changing half length only updates how minutes are <em>displayed</em>. Stored event timestamps and minutes-played are kept exactly as recorded.
+      </div>
+
+      <Field label="OPPONENT">
+        <input
+          type="text"
+          value={opponent}
+          onChange={(e) => setOpponent(e.target.value)}
+          list="opponent-suggestions"
+          className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
+        />
+        {opponentSuggestions.length > 0 && (
+          <datalist id="opponent-suggestions">
+            {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+          </datalist>
+        )}
+      </Field>
+
+      <Field label="TOURNAMENT / COMPETITION">
+        <input
+          type="text"
+          value={tournament}
+          onChange={(e) => setTournament(e.target.value)}
+          placeholder="Festival"
+          className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
+        />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="HALF LENGTH (MIN)">
+          <div className="flex items-center bg-stone-950 border border-stone-800 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+              className="px-3 py-2 text-stone-300 active:scale-95"
+            >−</button>
+            <div className="flex-1 text-center font-display text-2xl tabular-nums">{halfLengthMin}</div>
+            <button
+              type="button"
+              onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+              className="px-3 py-2 text-stone-300 active:scale-95"
+            >+</button>
+          </div>
+        </Field>
+        <Field label="VENUE">
+          <div className="grid grid-cols-2 gap-1 bg-stone-950 border border-stone-800 rounded-lg p-1">
+            <button
+              type="button"
+              onClick={() => setIsHome(true)}
+              className={`py-2 rounded-md font-bold text-sm ${isHome ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >HOME</button>
+            <button
+              type="button"
+              onClick={() => setIsHome(false)}
+              className={`py-2 rounded-md font-bold text-sm ${!isHome ? 'bg-lime-500 text-stone-950' : 'text-stone-300'}`}
+            >AWAY</button>
+          </div>
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="OUR JERSEY">
+          <div className="flex items-center gap-2 bg-stone-950 border border-stone-800 rounded-lg px-2 py-1.5">
+            <input type="color" value={homeColor} onChange={(e) => setHomeColor(e.target.value)} className="w-9 h-9 bg-transparent border-0 cursor-pointer" />
+            <input type="text" value={homeColor} onChange={(e) => setHomeColor(e.target.value)} className="flex-1 bg-transparent text-xs font-mono" />
+          </div>
+        </Field>
+        <Field label="OPP JERSEY">
+          <div className="flex items-center gap-2 bg-stone-950 border border-stone-800 rounded-lg px-2 py-1.5">
+            <input type="color" value={awayColor} onChange={(e) => setAwayColor(e.target.value)} className="w-9 h-9 bg-transparent border-0 cursor-pointer" />
+            <input type="text" value={awayColor} onChange={(e) => setAwayColor(e.target.value)} className="flex-1 bg-transparent text-xs font-mono" />
+          </div>
+        </Field>
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-2.5 rounded-lg bg-stone-800 text-stone-200 font-bold active:scale-95"
+        >CANCEL</button>
+        <button
+          onClick={() => onSave({
+            opponent: opponent.trim() || 'Opponent',
+            tournament: tournament.trim() || 'Festival',
+            halfLengthMin: Number(halfLengthMin) || 25,
+            isHome,
+            homeColor,
+            awayColor,
+          })}
+          className="flex-1 py-2.5 rounded-lg bg-lime-500 text-stone-950 font-bold active:scale-95"
+        >SAVE</button>
+      </div>
     </div>
   );
 }
@@ -10208,9 +10550,12 @@ function PublicHomePage() {
         </div>
       )}
       {(() => {
+        const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
+        const playedKeys = new Set((games || []).map(playedKey));
         const upcoming = schedule
           .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
           .filter(s => !featuredItem || s.id !== featuredItem.id)
+          .filter(s => !playedKeys.has(`${(s.date || '').slice(0,10)}|${(s.opponent || '').trim().toLowerCase()}`))
           .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
         if (upcoming.length === 0) return null;
         return (
@@ -10339,14 +10684,18 @@ function LiveScoreboard({ game, roster, transparent = false }) {
         out.push({ kind: 'us', at: e.at, elapsed: e.elapsed, period: e.period, scorerId: e.playerId, assistId: assist?.playerId || null, ourRun, oppRun });
       } else if (e.type === 'OPP_GOAL') {
         oppRun++;
-        out.push({ kind: 'opp', at: e.at, elapsed: e.elapsed, period: e.period, ourRun, oppRun });
+        out.push({ kind: 'opp', at: e.at, elapsed: e.elapsed, period: e.period, ownGoalById: e.ownGoalById || null, ourRun, oppRun });
       }
     }
     return out;
   }, [game]);
 
   const elapsed = computeElapsed(game);
-  const mins = Math.floor(elapsed / 60);
+  const halfLenMin = Number(game.halfLengthMin) || 25;
+  const totalMin = halfLenMin * 2;
+  // Continuous match minute: in P2 add the first-half length so it reads 34'/60'
+  // instead of restarting at 4'.
+  const mins = Math.floor(elapsed / 60) + ((game.period || 1) === 2 ? halfLenMin : 0);
   const isActive = game.status === 'active';
   const isFinished = game.status === 'finished';
   let statusLabel;
@@ -10412,7 +10761,7 @@ function LiveScoreboard({ game, roster, transparent = false }) {
           <div className="flex items-start justify-between gap-4 mt-5 px-2">
             <div className="flex-1 min-w-0 space-y-1.5">
               {usGoals.map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                const minute = eventDisplayMinute(row, halfLenMin);
                 return (
                   <div key={i} className="text-sm text-center">
                     <div className="font-bold text-white truncate">
@@ -10427,12 +10776,16 @@ function LiveScoreboard({ game, roster, transparent = false }) {
             </div>
             <div className="flex-1 min-w-0 space-y-1.5">
               {oppGoals.map((row, i) => {
-                const minute = Math.max(1, Math.round((row.elapsed || 0) / 60));
+                const minute = eventDisplayMinute(row, halfLenMin);
+                const ownGoalName = row.ownGoalById ? nameOf(row.ownGoalById) : null;
                 return (
                   <div key={i} className="text-sm text-center">
                     <div className="font-bold text-white">
                       ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
                     </div>
+                    {ownGoalName && (
+                      <div className="text-[11px] text-amber-200/80 truncate">(OG {ownGoalName})</div>
+                    )}
                   </div>
                 );
               })}
@@ -10448,7 +10801,7 @@ function LiveScoreboard({ game, roster, transparent = false }) {
           {isActive && game.clockRunning && (
             <span className="inline-flex items-center gap-2 bg-red-500/25 border border-red-400/50 text-red-100 px-3 py-1.5 rounded-full text-sm font-bold tracking-wider">
               <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse"></span>
-              LIVE · {mins}'
+              LIVE · {mins}'/{totalMin}'
             </span>
           )}
           {isActive && !game.clockRunning && (
@@ -10466,6 +10819,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
