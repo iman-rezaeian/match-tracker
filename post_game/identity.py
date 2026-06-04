@@ -49,6 +49,10 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
     Boundaries are derived from `video_offset_h1_kickoff_s` (set in the UI)
     plus wallclock deltas from Firestore (`started_at`, `pause_periods`,
     `ended_at`). Falls back to half-length when wallclock data is missing.
+
+    If `video_offset_h2_kickoff_s` is set (> 0), it overrides the
+    wallclock-derived H2 start — use when the "start 2nd half" button was
+    pressed late.
     """
     offset = max(0.0, float(game.video_offset_h1_kickoff_s))
     half_len_s = game.half_length_min * 60
@@ -63,7 +67,12 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
         h1_play_s = float(half_len_s)
     h1_end = offset + max(0.0, h1_play_s)
 
-    h2_start = h1_end + halftime_gap_s
+    # H2 start: manual override wins; else derived from halftime gap.
+    h2_override = float(getattr(game, "video_offset_h2_kickoff_s", 0.0) or 0.0)
+    if h2_override > 0:
+        h2_start = h2_override
+    else:
+        h2_start = h1_end + halftime_gap_s
 
     # 2nd half end — prefer wallclock final whistle if present
     if game.ended_at and game.started_at:
@@ -98,10 +107,16 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     else:
         h1_play_s = float(half_len_s)
 
+    # Manual H2 override: when set, period-2 timestamps are offset from this
+    # instead of from (h1_end + halftime_gap). Keeps clip alignment correct
+    # even when the "start 2nd half" button was pressed late.
+    h2_override = float(getattr(game, "video_offset_h2_kickoff_s", 0.0) or 0.0)
+    h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
+
     def f(period: int, elapsed_s: int) -> float:
         if period == 1:
             return offset + float(elapsed_s)
-        return offset + h1_play_s + halftime_gap_s + float(elapsed_s)
+        return h2_kickoff_in_video + float(elapsed_s)
 
     return f
 
