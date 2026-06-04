@@ -10633,41 +10633,46 @@ function LiveScoreboard({ game, roster, transparent = false }) {
         <div className="font-display text-7xl tabular-nums text-center mt-3 leading-none">
           {leftScore}<span className="text-white/40 mx-3">–</span>{rightScore}
         </div>
-        {/* TV-style: goals listed under each team in two columns. Rows are
-            left-aligned within each column so the ⚽ glyph stacks on a
-            consistent edge instead of drifting with each name length. */}
+        {/* TV-style: goals listed under each team in two columns. Each column
+            centers an inline-block group so the goal list sits under the team
+            name, while rows inside the group are left-aligned so the ⚽ glyph
+            stacks on a consistent edge instead of drifting with name width. */}
         {(usGoals.length > 0 || oppGoals.length > 0) && (
           <div className="flex items-start justify-between gap-4 mt-5 px-2">
-            <div className="flex-1 min-w-0 space-y-1.5 pl-2">
-              {usGoals.map((row, i) => {
-                const minute = eventDisplayMinute(row, halfLenMin);
-                return (
-                  <div key={i} className="text-sm text-left">
-                    <div className="font-bold text-white truncate">
-                      ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+            <div className="flex-1 min-w-0 text-center">
+              <div className="inline-block text-left space-y-1.5">
+                {usGoals.map((row, i) => {
+                  const minute = eventDisplayMinute(row, halfLenMin);
+                  return (
+                    <div key={i} className="text-sm">
+                      <div className="font-bold text-white truncate">
+                        ⚽ {nameOf(row.scorerId)} <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      </div>
+                      {row.assistId && (
+                        <div className="text-[11px] text-white/50 truncate pl-5">🅰️ {nameOf(row.assistId)}</div>
+                      )}
                     </div>
-                    {row.assistId && (
-                      <div className="text-[11px] text-white/50 truncate pl-5">🅰️ {nameOf(row.assistId)}</div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex-1 min-w-0 space-y-1.5 pl-2">
-              {oppGoals.map((row, i) => {
-                const minute = eventDisplayMinute(row, halfLenMin);
-                const ownGoalName = row.ownGoalById ? nameOf(row.ownGoalById) : null;
-                return (
-                  <div key={i} className="text-sm text-left">
-                    <div className="font-bold text-white truncate">
-                      ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+            <div className="flex-1 min-w-0 text-center">
+              <div className="inline-block text-left space-y-1.5">
+                {oppGoals.map((row, i) => {
+                  const minute = eventDisplayMinute(row, halfLenMin);
+                  const ownGoalName = row.ownGoalById ? nameOf(row.ownGoalById) : null;
+                  return (
+                    <div key={i} className="text-sm">
+                      <div className="font-bold text-white truncate">
+                        ⚽ Goal <span className="text-white/60 tabular-nums font-normal">{minute}'</span>
+                      </div>
+                      {ownGoalName && (
+                        <div className="text-[11px] text-amber-200/80 truncate pl-5">(OG {ownGoalName})</div>
+                      )}
                     </div>
-                    {ownGoalName && (
-                      <div className="text-[11px] text-amber-200/80 truncate pl-5">(OG {ownGoalName})</div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
