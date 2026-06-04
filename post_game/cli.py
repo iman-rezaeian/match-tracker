@@ -20,6 +20,11 @@ def run(
     game_id: str = typer.Option(..., "--game-id", help="Firestore game document id."),
     field_name: str = typer.Option(None, "--field-name", help="(Legacy) Name of a calibrated field. If omitted, uses the per-game calibration stored on the game doc."),
     tv_view: bool = typer.Option(False, "--tv-view", help="Also render a full-game broadcast view + auto-highlight reel."),
+    max_play_s: float = typer.Option(None, "--max-play-s", help="SMOKE TEST: process only N seconds centered on the middle of each half. Use ~120 for a fast end-to-end accuracy check."),
+    smoke_window: list[str] = typer.Option(None, "--smoke-window", help="Explicit smoke window 'a-b' in source-video seconds. Pass multiple times for multiple windows. Overrides --max-play-s."),
+    debug_frames_every_s: float = typer.Option(None, "--debug-frames-every-s", help="Save annotated preview frames every N video seconds to outputs/<game>/debug_frames/. Eyeball detection quality mid-run."),
+    skip_clips: bool = typer.Option(True, "--skip-clips/--with-clips", help="Skip per-event highlight clip rendering. Default ON: the PWA uses tv_reel + broadcast_events to seek to any event, so per-event clips are only needed for downloadable montages (e.g. end-of-season). Pass --with-clips to render them."),
+    skip_upload: bool = typer.Option(False, "--skip-upload", help="Skip R2 uploads of clips / TV reel / highlights. Files stay local under outputs/<game>/."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -28,7 +33,16 @@ def run(
         format="%(message)s",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
-    analytics = pipeline.run(game_id=game_id, field_name=field_name, tv_view=tv_view)
+    analytics = pipeline.run(
+        game_id=game_id,
+        field_name=field_name,
+        tv_view=tv_view,
+        max_play_s=max_play_s,
+        debug_frames_every_s=debug_frames_every_s,
+        skip_clips=skip_clips,
+        skip_upload=skip_upload,
+        smoke_windows=[tuple(map(float, w.split("-"))) for w in smoke_window] if smoke_window else None,
+    )
     console.print_json(json.dumps({
         "game_id": game_id,
         "players_analyzed": len(analytics.get("player_stats", [])),
@@ -90,6 +104,54 @@ def set_video(
     console.print_json(json.dumps({"game_id": game_id, "videoUrl": f"file://{p.resolve()}"}))
 
 
+@app.command("delete-analytics")
+def delete_analytics_cmd(
+    game_id: str = typer.Option(..., "--game-id"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    keep_local: bool = typer.Option(False, "--keep-local", help="Don't delete the local outputs/<game_id>/ folder."),
+) -> None:
+    """Delete a game's analytics so the pipeline can be re-run cleanly.
+
+    Wipes:
+      - teams/main/games/<id>/analytics/*  (all version docs)
+      - teams/main/games/<id>/clips/*      (per-event clip metadata)
+      - public broadcast fields on the game doc (videoHighlightsUrl,
+        videoFullGameUrl, broadcastEvents, ...) so the public page stops
+        offering 'Watch Highlights' / 'Full Game' until the next run.
+      - the local post_game/outputs/<id>/ folder (unless --keep-local).
+
+    Does NOT touch: videoUrl, calibration, video offsets, the coach's
+    events / score, or any R2 objects (those expire / can be overwritten
+    on the next pipeline run).
+    """
+    import shutil
+    from . import config, firestore_io
+
+    if not yes:
+        confirm = typer.confirm(
+            f"Wipe analytics for game {game_id}? This is reversible only by re-running the pipeline.",
+            default=False,
+        )
+        if not confirm:
+            console.print("[yellow]Aborted.[/yellow]")
+            raise typer.Exit(code=1)
+
+    summary = firestore_io.delete_analytics(game_id)
+
+    local_removed = False
+    out_dir = config.OUTPUTS_DIR / game_id
+    if not keep_local and out_dir.exists():
+        shutil.rmtree(out_dir)
+        local_removed = True
+
+    console.print_json(json.dumps({
+        "game_id": game_id,
+        **summary,
+        "local_outputs_removed": local_removed,
+        "local_outputs_path": str(out_dir),
+    }))
+
+
 def _parse_offset(s: str) -> float:
     """Accept HH:MM:SS, MM:SS, or raw seconds (float)."""
     s = s.strip()
@@ -127,17 +189,45 @@ def set_offset(
 @app.command("calibrate")
 def calibrate(
     game_id: str = typer.Option(..., "--game-id"),
+    at: float = typer.Option(60.0, "--at", help="Seconds into the video to grab the calibration frame from."),
+    length: float = typer.Option(50.0, "--length", help="Field length (m)."),
+    width: float  = typer.Option(35.0, "--width",  help="Field width (m)."),
+    goal_width: float = typer.Option(4.88, "--goal-width", help="Goal mouth width (m). 4.88 = 16ft U10."),
+    cam_height: float = typer.Option(5.0, "--cam-height",
+        help="Camera height above pitch (m). Used as initial guess for the sphere fit; refined automatically. The X5-on-16ft-pole mount is ~5.0 m and changes <0.5m game to game."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Open the local browser calibration tool (tap 4 field corners, SAVE)."""
+    """Open the multi-point sphere-projection calibration tool in your browser.
+
+    Click 13 reference landmarks on a frame from the game (4 corners, the
+    halfway-line endpoints, the field center, all 4 goal posts, the 2 goal
+    mid-points). The tool fits a 2D similarity + camera pitch/roll on top
+    of the sphere-projection ray-trace and writes the result to Firestore
+    under games/<game_id>.calibration. The pipeline then auto-detects the
+    sphere model and uses it for all pixel↔field math.
+
+    Run this once per game (camera height is stable across games, so the
+    default 5.0m initial guess is fine — the optimizer refines it).
+    """
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(message)s",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
-    from . import calibrate_local
-    payload = calibrate_local.calibrate_in_browser(game_id)
-    console.print_json(json.dumps({"game_id": game_id, "calibration_saved": bool(payload)}))
+    from . import calibrate_flat
+    payload = calibrate_flat.calibrate_flat(
+        game_id, at_seconds=at,
+        field_length_m=length, field_width_m=width,
+        goal_width_m=goal_width, camera_height_m=cam_height,
+    )
+    gs = payload.get("ground_similarity", {}) if payload else {}
+    console.print_json(json.dumps({
+        "game_id": game_id,
+        "calibration_saved": bool(payload),
+        "reference_points": len(payload.get("reference_points", [])) if payload else 0,
+        "rms_m": gs.get("rms_m"),
+        "rms_weighted_m": gs.get("rms_weighted_m"),
+    }))
 
 
 @app.command("list")
