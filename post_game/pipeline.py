@@ -506,7 +506,7 @@ def run(
         "field_name": field_name,
         "video_meta": meta,
         "identity_assignments": [asdict(a) for a in assignments],
-        "player_stats": [asdict(s) for s in player_stats],
+        "player_stats": [_player_stat_to_dict(s) for s in player_stats],
         "formation_snapshots": [
             {
                 **asdict(f),
@@ -518,8 +518,8 @@ def run(
         "team_time_series": asdict(team_ts),
         "gk_positions": [_gk_to_dict(g) for g in gk_positions],
         "clip_count": len(clips),
-        "tv_reel": asdict(tv_reel_meta) if tv_reel_meta else None,
-        "auto_highlights": asdict(auto_hl_meta) if auto_hl_meta else None,
+        "tv_reel": _tv_meta_to_dict(tv_reel_meta),
+        "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
         # Convenience top-level URLs the PWA can read without diving into
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
@@ -744,3 +744,40 @@ def _sanitize_json(obj):
     if isinstance(obj, np.generic):
         return _sanitize_json(obj.item())
     return obj
+
+
+def _tv_meta_to_dict(meta) -> dict | None:
+    """asdict(TvViewMeta) but with segments flattened to a list of dicts.
+
+    Firestore disallows arrays inside arrays; the dataclass stores
+    segments as list[tuple[float, float]] which sanitizes to nested
+    lists \u2192 \"Property tv_reel contains an invalid nested entity.\" Map
+    each segment to {\"start_s\": a, \"end_s\": b} instead.
+    """
+    if meta is None:
+        return None
+    d = asdict(meta)
+    segs = d.get("segments") or []
+    d["segments"] = [
+        {"start_s": float(a), "end_s": float(b)} for a, b in segs
+    ]
+    return d
+
+def _player_stat_to_dict(s) -> dict:
+    """asdict(PlayerStats) but with heatmap_grid flattened.
+
+    PlayerStats.heatmap_grid is list[list[int]] (12×8). Firestore disallows
+    arrays inside arrays, so we flatten row-major and record shape so any
+    consumer can rebuild it. No PWA code currently reads heatmap_grid.
+    """
+    d = asdict(s)
+    grid = d.get("heatmap_grid") or []
+    rows = len(grid)
+    cols = len(grid[0]) if rows and isinstance(grid[0], (list, tuple)) else 0
+    flat: list[int] = []
+    for row in grid:
+        flat.extend(int(v) for v in row)
+    d["heatmap_grid"] = flat
+    d["heatmap_grid_rows"] = rows
+    d["heatmap_grid_cols"] = cols
+    return d
