@@ -381,10 +381,13 @@ function mergeWeights(w) {
   };
 }
 
-function computePerformanceScore(playerId, events, minutesPlayed, position, gkExtras = {}, weights) {
+function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gkExtras = {}, weights) {
   if (minutesPlayed <= 0) return { overall: 0, attacking: 0, defending: 0, decisions: 0, involvement: 0 };
   const W = mergeWeights(weights);
-  const isGK = position === 'GK';
+  // gkFraction ∈ [0,1] = share of minutes this player spent in goal. Point values
+  // AND pillar weights are blended outfield↔GK by it, so a part-time keeper is
+  // scored by their actual role mix (not 100% keeper for a brief stint).
+  const f = Math.max(0, Math.min(1, Number(gkFraction) || 0));
   const perHalf = minutesPlayed / 20;
   const c = {};
   let partnerCount = 0; // give & go wall-pass credits earned by this player
@@ -406,43 +409,53 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
       ownGoals++;
     }
   }
-  const pts = W.points;
+  // Blended point value for a key: outfield (W.points) at f=0, GK (W.gkPoints) at f=1.
+  const po = W.points, pg = W.gkPoints;
+  const pt = (k) => { const a = po[k] || 0; return a + f * ((pg[k] || 0) - a); };
   const attacking = (
-    (c.GOAL || 0)        * pts.GOAL_atk +
-    (c.ASSIST || 0)      * pts.ASSIST_atk +
-    (c.KEY_PASS || 0)    * pts.KEY_PASS_atk +
-    (c.SHOT_ON || 0)     * pts.SHOT_ON_atk +
-    (c.SHOT_OFF || 0)    * pts.SHOT_OFF_atk +
-    (c.FOUL_ON || 0)     * (pts.FOUL_ON_atk || 0) +
-    (c.PEN_AWARDED || 0) * (pts.PEN_AWARDED_atk || 0)
+    (c.GOAL || 0)        * pt('GOAL_atk') +
+    (c.ASSIST || 0)      * pt('ASSIST_atk') +
+    (c.KEY_PASS || 0)    * pt('KEY_PASS_atk') +
+    (c.SHOT_ON || 0)     * pt('SHOT_ON_atk') +
+    (c.SHOT_OFF || 0)    * pt('SHOT_OFF_atk') +
+    (c.FOUL_ON || 0)     * pt('FOUL_ON_atk') +
+    (c.PEN_AWARDED || 0) * pt('PEN_AWARDED_atk')
   ) / perHalf;
-  const concededPenalty = isGK ? (gkExtras.concededPenalty || 0) : 0;
-  const cleanSheets = isGK ? (gkExtras.cleanSheets || 0) : 0;
+  // Clean-sheet / conceded credit applies only to actual GK time (f > 0).
+  const concededPenalty = f > 0 ? (gkExtras.concededPenalty || 0) : 0;
+  const cleanSheets = f > 0 ? (gkExtras.cleanSheets || 0) : 0;
   const defending = (
-    (c.SAVE || 0)         * pts.SAVE_def +
-    (c.BLOCK || 0)        * pts.BLOCK_def +
-    (c.BALL_WIN || 0)     * pts.BALL_WIN_def +
-    (c.CLEAR || 0)        * (pts.CLEAR_def || 0) +
-    (c.KICK_OUT || 0)     * (pts.KICK_OUT_def || 0) +
-    (c.DUEL_WIN || 0)     * pts.DUEL_WIN_def +
-    (c.DUEL_LOSE || 0)    * pts.DUEL_LOSE_def +
-    (c.FOUL_BY || 0)      * (pts.FOUL_BY_def || 0) +
-    (c.PEN_CONCEDED || 0) * (pts.PEN_CONCEDED_def || 0) +
-    ownGoals              * (pts.OWN_GOAL_def || 0) +
-    (isGK ? (-concededPenalty + cleanSheets * pts.CLEAN_SHEET_def) : 0)
+    (c.SAVE || 0)         * pt('SAVE_def') +
+    (c.BLOCK || 0)        * pt('BLOCK_def') +
+    (c.BALL_WIN || 0)     * pt('BALL_WIN_def') +
+    (c.CLEAR || 0)        * pt('CLEAR_def') +
+    (c.KICK_OUT || 0)     * pt('KICK_OUT_def') +
+    (c.DUEL_WIN || 0)     * pt('DUEL_WIN_def') +
+    (c.DUEL_LOSE || 0)    * pt('DUEL_LOSE_def') +
+    (c.FOUL_BY || 0)      * pt('FOUL_BY_def') +
+    (c.PEN_CONCEDED || 0) * pt('PEN_CONCEDED_def') +
+    ownGoals              * pt('OWN_GOAL_def') +
+    (f > 0 ? (-concededPenalty + cleanSheets * pt('CLEAN_SHEET_def')) : 0)
   ) / perHalf;
   const decisions = (
-    (c.GIVE_GO || 0)    * pts.GIVE_GO_dec +
-    partnerCount        * pts.GIVE_GO_PARTNER_dec +
-    (c.GATES || 0)      * pts.GATES_dec +
-    (c.KEY_PASS || 0)   * pts.KEY_PASS_dec +
-    (c.ASSIST || 0)     * pts.ASSIST_dec +
-    (c.HOLDS_BALL || 0) * pts.HOLDS_BALL_dec +
-    (c.TURNOVER || 0)   * pts.TURNOVER_dec
+    (c.GIVE_GO || 0)    * pt('GIVE_GO_dec') +
+    partnerCount        * pt('GIVE_GO_PARTNER_dec') +
+    (c.GATES || 0)      * pt('GATES_dec') +
+    (c.KEY_PASS || 0)   * pt('KEY_PASS_dec') +
+    (c.ASSIST || 0)     * pt('ASSIST_dec') +
+    (c.HOLDS_BALL || 0) * pt('HOLDS_BALL_dec') +
+    (c.TURNOVER || 0)   * pt('TURNOVER_dec')
   ) / perHalf;
   const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount + ownGoals;
   const involvement = totalEvents / perHalf;
-  const pil = isGK ? W.pillars.gk : W.pillars.outfield;
+  // Blend pillar weights outfield↔GK by the same fraction.
+  const PO = W.pillars.outfield, PG = W.pillars.gk;
+  const pil = {
+    atk: PO.atk + f * (PG.atk - PO.atk),
+    def: PO.def + f * (PG.def - PO.def),
+    dec: PO.dec + f * (PG.dec - PO.dec),
+    inv: PO.inv + f * (PG.inv - PO.inv),
+  };
   const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
   const r = (n) => Math.round(n * 10) / 10;
   return { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
@@ -7777,10 +7790,11 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                 const player = roster.find(p => p.id === pid);
                 // Treat as GK for scoring if they served any GK time in this game.
                 const wasGKThisGame = (game.gkPlayerId === pid) || (game.gkChanges || []).some(c => c.gkPlayerId === pid);
-                const pos = wasGKThisGame ? 'GK' : player?.position;
                 const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
-                const score = computePerformanceScore(pid, events, min, pos, gkExtras, weights);
-                return { pid, stats, min, score, pos, gkExtras };
+                // Blend GK vs outfield scoring by the share of this game's minutes spent in goal.
+                const gkFraction = (wasGKThisGame && stats.seconds > 0) ? (gkExtras.secondsAsGK || 0) / stats.seconds : 0;
+                const score = computePerformanceScore(pid, events, min, gkFraction, gkExtras, weights);
+                return { pid, stats, min, score, gkExtras };
               })
               .sort((a, b) => b.score.overall - a.score.overall)
               .map(({ pid, stats, min, score }) => {
@@ -8171,8 +8185,10 @@ function StatsView({ roster, games, weights, onBack }) {
           gkExtras.cleanSheets += gx.cleanSheets;
         }
       }
-      const seasonPos = wasGKAnyGame ? 'GK' : p.position;
-      map[p.id] = computePerformanceScore(p.id, allEvents, min, seasonPos, wasGKAnyGame ? gkExtras : undefined, weights);
+      // Blend by the share of season minutes spent in goal (part-time keepers
+      // are scored proportionally, not as a full-season keeper).
+      const gkFraction = (s.totalSeconds > 0) ? (s.gkSeconds || 0) / s.totalSeconds : (p.position === 'GK' ? 1 : 0);
+      map[p.id] = computePerformanceScore(p.id, allEvents, min, gkFraction, wasGKAnyGame ? gkExtras : undefined, weights);
     }
     return map;
   }, [roster, finished, stats]);
