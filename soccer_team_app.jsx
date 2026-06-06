@@ -6863,42 +6863,47 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
   const awayColor = doc?.away_color || '#F87171';
 
   return (
-    <div className="fixed inset-0 bg-black z-[60] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
-      <div className="flex items-center justify-between px-3 py-2 bg-stone-950 border-b border-stone-800 shrink-0">
-        <div className="text-white font-display text-sm truncate pr-3">{label}</div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setFillMode(f => !f)}
-            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
-            title={fillMode ? 'Show the whole frame (letterboxed)' : 'Fill the screen (crops edges)'}
-          >{fillMode ? '⤡ FIT' : '⤢ FILL'}</button>
-          <button
-            onClick={onClose}
-            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
-          >CLOSE ✕</button>
-        </div>
-      </div>
+    <div className="fixed inset-0 bg-black z-[60]">
+      {/* Video fills the whole screen; chrome floats on top (no persistent band). */}
+      {url ? (
+        <video
+          ref={videoRef}
+          src={url}
+          controls
+          playsInline
+          autoPlay
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit: fillMode ? 'cover' : 'contain' }}
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center text-stone-400 text-sm p-6">Video not available yet.</div>
+      )}
 
-      <div className="relative flex-1 bg-black flex items-center justify-center min-h-0">
-        {url ? (
-          <video
-            ref={videoRef}
-            src={url}
-            controls
-            playsInline
-            autoPlay
-            className="max-h-full max-w-full"
-            style={{ width: '100%', height: '100%', objectFit: fillMode ? 'cover' : 'contain' }}
-          />
-        ) : (
-          <div className="text-stone-400 text-sm p-6">Video not available yet.</div>
-        )}
+      {/* Soft top scrim so the floating scorebug + buttons stay legible over bright video. */}
+      <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/55 to-transparent pointer-events-none z-10" />
+
+      {/* Floating controls — top-right overlay (replaces the old solid band). */}
+      <div
+        className="absolute z-20 flex items-center gap-2"
+        style={{ right: 'max(env(safe-area-inset-right, 0px), 12px)', top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
+      >
+        <span className="hidden sm:block text-white/85 font-display text-xs truncate max-w-[34vw] pr-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>{label}</span>
+        <button
+          onClick={() => setFillMode(f => !f)}
+          className="h-9 px-3 rounded-full bg-black/55 hover:bg-black/75 text-white font-display text-xs border border-white/25 active:scale-95 backdrop-blur-sm"
+          title={fillMode ? 'Show the whole frame (letterboxed)' : 'Fill the screen (crops edges)'}
+        >{fillMode ? '⤡ FIT' : '⤢ FILL'}</button>
+        <button
+          onClick={onClose}
+          className="h-9 px-3 rounded-full bg-black/55 hover:bg-black/75 text-white font-display text-xs border border-white/25 active:scale-95 backdrop-blur-sm"
+        >CLOSE ✕</button>
+      </div>
 
         {/* SCOREBUG — persistent, top-left. Mirrors the live in-game scorebug
             (rounded two-row card with concave fillets + glowing jersey chips).
             Full team names (wrap to 2 lines) instead of a 4-char abbreviation. */}
         <div
-          className="absolute z-10 pointer-events-none select-none flex flex-col items-center"
+          className="absolute z-20 pointer-events-none select-none flex flex-col items-center"
           style={{ left: 'max(env(safe-area-inset-left, 0px), 12px)', top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
         >
           {/* Row 1 — score (rounded all corners) */}
@@ -6957,7 +6962,6 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
             subs={activePopup.group}
           />
         )}
-      </div>
     </div>
   );
 }
@@ -7348,34 +7352,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
             </section>
           )}
 
-          {/* GK positioning */}
-          {(doc.gk_positions || []).length > 0 && (
-            <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-              <div className="text-xs text-stone-500 uppercase mb-2">Goalkeeper Positioning</div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-stone-500 border-b border-stone-800">
-                    <th className="text-left py-1 pr-2">Event</th>
-                    <th className="text-left py-1 px-2">GK</th>
-                    <th className="text-right py-1 px-2">Dist line (m)</th>
-                    <th className="text-right py-1 px-2">Lateral (m)</th>
-                    <th className="text-right py-1 px-2">On angle?</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {doc.gk_positions.map(g => (
-                    <tr key={g.event_id} className="border-b border-stone-800/50">
-                      <td className="py-1 pr-2">{g.event_type} P{g.period} {Math.floor(g.elapsed / 60)}'</td>
-                      <td className="px-2 truncate max-w-[120px]">{playerName(g.gk_player_id)}</td>
-                      <td className="text-right px-2">{(g.distance_from_goal_line_m || 0).toFixed(1)}</td>
-                      <td className="text-right px-2">{(g.lateral_offset_from_goal_center_m || 0).toFixed(1)}</td>
-                      <td className="text-right px-2">{g.on_correct_angle == null ? '—' : g.on_correct_angle ? '✓' : '✗'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
+          {/* GK positioning analysis removed — not used in the film room. */}
 
           {/* Per-event highlight clips intentionally removed — replaced
               by the broadcast-style auto-highlights + full TV reel videos
