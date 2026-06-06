@@ -6821,6 +6821,26 @@ function SparkBlock({ label, values, color, fmt }) {
  *   'tvReelTimeS'         — full TV reel
  *   'autoHighlightsTimeS' — condensed auto-highlights reel
  */
+// Shared scorebug chrome — keep in sync with the live in-game scorebug.
+const SCOREBUG_BG = 'linear-gradient(135deg, rgba(15,15,18,0.92) 0%, rgba(28,28,32,0.88) 100%)';
+const SCOREBUG_FILLET = 'rgba(22,22,25,0.91)';
+
+// Readable text color (black/white) over an arbitrary jersey hex (WCAG luminance).
+// Mirrors textOnColor() in the live VideoPlayer; used so a black jersey doesn't
+// produce black "GOAL" text on a black banner.
+function readableTextOn(hex) {
+  if (!hex || typeof hex !== 'string') return '#ffffff';
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  if (full.length !== 6) return '#ffffff';
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  const toLin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const lum = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+  return lum > 0.5 ? '#0a0a0a' : '#ffffff';
+}
+
 function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
   const videoRef = useRef(null);
   const [now, setNow] = useState(0);
@@ -6861,13 +6881,21 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
   let ourScore = 0;
   let oppScore = 0;
   let currentPeriod = 1;
+  let currentElapsed = 0;
   for (const e of allEvents) {
     if (e.t <= now + 0.01) {
       if (e.ourScoreAfter != null) ourScore = e.ourScoreAfter;
       if (e.oppScoreAfter != null) oppScore = e.oppScoreAfter;
       if (e.period) currentPeriod = e.period;
+      if (e.elapsed != null) currentElapsed = e.elapsed;
     } else break;
   }
+  // Row-2 label: half + minute, matching the live in-game scorebug
+  // ("1ST · 27'"). Minute is derived from the latest passed event's clock.
+  const halfLenMin = Number(doc?.halfLengthMin) || 25;
+  const minuteNum = Math.max(1, Math.floor((currentElapsed || 0) / 60) + 1)
+    + (currentPeriod === 2 ? halfLenMin : 0);
+  const statusLabel = `${currentPeriod === 2 ? '2ND' : '1ST'} · ${minuteNum}'`;
 
   // --- Active popup selection ---------------------------------------
   // Only GOAL and SUB events show popups. Sub events that fire within
@@ -6879,7 +6907,12 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
 
   // Pre-build sub groups (each group is contiguous SUB events within SUB_GROUP_S).
   const subGroups = (() => {
-    const subs = allEvents.filter(e => e.type === 'SUB' || e.type === 'SUBSTITUTION');
+    // Only show subs where we actually know who came on/off — an empty
+    // "IN — OUT —" bug is noise.
+    const subs = allEvents.filter(e =>
+      (e.type === 'SUB' || e.type === 'SUBSTITUTION') &&
+      (e.inFirstName || e.inJerseyNumber != null || e.outFirstName || e.outJerseyNumber != null)
+    );
     const groups = [];
     for (const s of subs) {
       const last = groups[groups.length - 1];
@@ -6942,8 +6975,10 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
     return { us: [...us.values()], them: [...them.values()] };
   })();
 
-  const homeName = (doc?.home_name || 'STO').slice(0, 4).toUpperCase();
-  const awayName = (doc?.away_name || 'OPP').slice(0, 4).toUpperCase();
+  // Full team names (CSS truncates if a name is very long) — matches the live
+  // in-game scorebug. Do NOT hard-slice to 4 chars ("WIND"/"STOM").
+  const homeName = (doc?.home_name || 'Stompers').toUpperCase();
+  const awayName = (doc?.away_name || 'OPP').toUpperCase();
   const homeColor = doc?.home_color || '#A3E635';
   const awayColor = doc?.away_color || '#F87171';
 
@@ -6972,24 +7007,43 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
           <div className="text-stone-400 text-sm p-6">Video not available yet.</div>
         )}
 
-        {/* SCOREBUG — persistent, bottom-left */}
+        {/* SCOREBUG — persistent, top-left. Mirrors the live in-game scorebug
+            (rounded two-row card with concave fillets + glowing jersey chips).
+            Full team names (wrap to 2 lines) instead of a 4-char abbreviation. */}
         <div
-          className="absolute pointer-events-none select-none"
-          style={{ left: 'max(env(safe-area-inset-left, 0px), 12px)', bottom: 56 }}
+          className="absolute z-10 pointer-events-none select-none flex flex-col items-center"
+          style={{ left: 'max(env(safe-area-inset-left, 0px), 12px)', top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
         >
-          <div className="flex items-stretch rounded-md overflow-hidden shadow-lg border border-black/40 text-white font-display text-sm" style={{ backdropFilter: 'blur(6px)' }}>
-            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(0,0,0,0.72)' }}>
-              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: homeColor }} />
-              <span className="tracking-wider">{homeName}</span>
-              <span className="ml-2 tabular-nums font-bold">{ourScore}</span>
+          {/* Row 1 — score (rounded all corners) */}
+          <div
+            className="rounded-2xl shadow-2xl border border-white/15 overflow-hidden backdrop-blur-md"
+            style={{ background: SCOREBUG_BG }}
+          >
+            <div className="flex items-stretch text-[11px]">
+              <div className="flex items-center pl-1.5 pr-2.5 py-1.5">
+                <div className="w-[6px] h-5 rounded-sm mr-2 shrink-0" style={{ background: homeColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${homeColor}80` }} />
+                <span className="font-bold tracking-wider text-white max-w-[7rem] leading-[1.05]" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{homeName}</span>
+              </div>
+              <div className="px-2.5 py-1.5 flex items-center gap-1.5 bg-black/30">
+                <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{ourScore}</span>
+                <span className="text-white/30 text-xs">–</span>
+                <span className="font-display tabular-nums text-white text-base leading-none" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{oppScore}</span>
+              </div>
+              <div className="flex items-center pl-2.5 pr-1.5 py-1.5">
+                <span className="font-bold tracking-wider text-white max-w-[7rem] leading-[1.05] text-right" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6)' }}>{awayName}</span>
+                <div className="w-[6px] h-5 rounded-sm ml-2 shrink-0" style={{ background: awayColor, border: '1px solid rgba(255,255,255,0.9)', boxShadow: `0 0 6px ${awayColor}80` }} />
+              </div>
             </div>
-            <div className="px-2 py-1 flex items-center gap-1" style={{ background: 'rgba(20,20,20,0.72)' }}>
-              <span className="tabular-nums font-bold">{oppScore}</span>
-              <span className="ml-1 tracking-wider">{awayName}</span>
-              <span className="inline-block w-2 h-4 rounded-sm" style={{ background: awayColor }} />
-            </div>
-            <div className="px-2 py-1 text-[10px] tracking-wider flex items-center" style={{ background: 'rgba(0,0,0,0.72)' }}>
-              P{currentPeriod}
+          </div>
+          {/* Row 2 wrapper — relative for the corner fillets */}
+          <div className="relative -mt-px">
+            <span aria-hidden className="absolute left-[-8px] top-0 w-2 h-2" style={{ background: SCOREBUG_FILLET, WebkitMaskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)', maskImage: 'radial-gradient(circle at bottom right, transparent 8px, black 8.5px)' }} />
+            <span aria-hidden className="absolute right-[-8px] top-0 w-2 h-2" style={{ background: SCOREBUG_FILLET, WebkitMaskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)', maskImage: 'radial-gradient(circle at bottom left, transparent 8px, black 8.5px)' }} />
+            <div
+              className="rounded-b-2xl shadow-lg border border-t-0 border-white/15 backdrop-blur-md flex items-center justify-center gap-1.5 px-3 py-1 w-[150px]"
+              style={{ background: SCOREBUG_BG }}
+            >
+              <span className="font-display tabular-nums text-white text-[13px] font-extrabold tracking-[0.15em] leading-none" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.7)' }}>{statusLabel}</span>
             </div>
           </div>
         </div>
@@ -7070,7 +7124,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
         }}
       >
         {/* Top banner */}
-        <div className="px-4 py-2 text-center text-[11px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: '#0c0a09' }}>
+        <div className="px-4 py-2 text-center text-[11px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: readableTextOn(scoringSide === 'us' ? homeColor : awayColor) }}>
           ⚽ GOAL
         </div>
 
@@ -7078,7 +7132,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-4 text-white">
           <div className="flex items-center gap-2 min-w-0">
             <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: homeColor }} />
-            <span className="font-display text-lg sm:text-2xl tracking-wider truncate">{homeName}</span>
+            <span className="font-display text-lg sm:text-2xl tracking-wider leading-tight break-words">{homeName}</span>
           </div>
           <div className="font-display text-3xl sm:text-5xl tabular-nums text-center px-2">
             <span className={scoringSide === 'us' ? 'text-lime-300' : ''}>{ourScore}</span>
@@ -7086,7 +7140,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
             <span className={scoringSide === 'them' ? 'text-red-300' : ''}>{oppScore}</span>
           </div>
           <div className="flex items-center gap-2 min-w-0 justify-end">
-            <span className="font-display text-lg sm:text-2xl tracking-wider truncate text-right">{awayName}</span>
+            <span className="font-display text-lg sm:text-2xl tracking-wider leading-tight break-words text-right">{awayName}</span>
             <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: awayColor }} />
           </div>
         </div>
@@ -10027,6 +10081,10 @@ function Header({ title, onBack, right }) {
 /* ---- PublicVideoToggle: collapsed by default, expands to show 360° player ---- */
 function PublicVideoToggle({ url, game, label }) {
   const [open, setOpen] = useState(false);
+  // Hidden for now: we're not broadcasting/serving the 360° sphere video to
+  // parents yet — they get the TV reel + highlights instead. Remove this early
+  // return to re-enable the public "WATCH 360° VIDEO" button.
+  return null;
   if (!open) {
     return (
       <button
@@ -10099,8 +10157,10 @@ function PublicAnalyticsCard({ game, roster: _roster }) {
   // We synthesize a minimal one from the public game-doc fields.
   const broadcastDoc = {
     broadcast_events: game?.broadcastEvents || [],
-    home_name: game?.broadcastHomeName || (game?.isHome ? 'Stompers' : (game?.opponent || 'OPP')),
-    away_name: game?.broadcastAwayName || (game?.isHome ? (game?.opponent || 'OPP') : 'Stompers'),
+    // Scorebug is us/them-oriented (us always left), matching the live in-game
+    // scorebug and the pipeline. Do NOT swap by isHome.
+    home_name: game?.broadcastHomeName || 'Stompers',
+    away_name: game?.broadcastAwayName || (game?.opponent || 'OPP'),
     home_color: game?.broadcastHomeColor || game?.homeColor,
     away_color: game?.broadcastAwayColor || game?.awayColor,
   };
@@ -10867,6 +10927,12 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
+
+
 
 
 
