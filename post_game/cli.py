@@ -25,6 +25,7 @@ def run(
     debug_frames_every_s: float = typer.Option(None, "--debug-frames-every-s", help="Save annotated preview frames every N video seconds to outputs/<game>/debug_frames/. Eyeball detection quality mid-run."),
     skip_clips: bool = typer.Option(True, "--skip-clips/--with-clips", help="Skip per-event highlight clip rendering. Default ON: the PWA uses tv_reel + broadcast_events to seek to any event, so per-event clips are only needed for downloadable montages (e.g. end-of-season). Pass --with-clips to render them."),
     skip_upload: bool = typer.Option(False, "--skip-upload", help="Skip R2 uploads of clips / TV reel / highlights. Files stay local under outputs/<game>/."),
+    reuse_tv_reel: bool = typer.Option(False, "--reuse-tv-reel", help="Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of re-rendering it (the multi-hour part). Implies --tv-view. Use to recover a run that died after the reel rendered but before uploads/analytics. Auto-highlights still render fresh."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -33,6 +34,9 @@ def run(
         format="%(message)s",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
+    # --reuse-tv-reel only makes sense with the TV-view stage; turn it on.
+    if reuse_tv_reel:
+        tv_view = True
     analytics = pipeline.run(
         game_id=game_id,
         field_name=field_name,
@@ -42,6 +46,7 @@ def run(
         skip_clips=skip_clips,
         skip_upload=skip_upload,
         smoke_windows=[tuple(map(float, w.split("-"))) for w in smoke_window] if smoke_window else None,
+        reuse_tv_reel=reuse_tv_reel,
     )
     console.print_json(json.dumps({
         "game_id": game_id,

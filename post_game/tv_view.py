@@ -95,7 +95,10 @@ TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
                          # the goalpost. Real U10 players cover way more than
                          # 5 m total even in a 30-second smoke window.
 AUTO_HIGHLIGHT_WINDOW_S = 15.0
-AUTO_HIGHLIGHT_EVENT_TYPES = ("GOAL", "SHOT_ON", "SAVE", "KEY_PASS")
+# Both teams' goals belong in the reel — OPP_GOAL was previously missing, so
+# the opponent's goals never made the highlight cut (a 3-6 game showed only the
+# 3 we scored). SAVE covers the opponent attacks our keeper stopped.
+AUTO_HIGHLIGHT_EVENT_TYPES = ("GOAL", "OPP_GOAL", "SHOT_ON", "SAVE", "KEY_PASS")
 
 
 @dataclass
@@ -413,6 +416,58 @@ def _event_windows(
 
 
 # --- public entry points -------------------------------------------------
+
+def tv_reel_meta_from_existing(
+    game_id: str,
+    play_windows: Optional[list[tuple[float, float]]] = None,
+    upload: bool = True,
+) -> Optional[TvViewMeta]:
+    """Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of
+    re-rendering it (the perspective render is the multi-hour part of stage 7b).
+
+    Probes the existing file for duration/resolution, uploads it to R2, and
+    returns a TvViewMeta whose `segments` == `play_windows` — i.e. exactly what
+    `render_tv_reel` would have rendered from, so the broadcast-events index
+    maps source-video times into reel time correctly.
+
+    Used by the --reuse-tv-reel fast-path to recover from a pipeline run that
+    was interrupted after the TV reel rendered but before analytics/uploads ran.
+    Returns None if no usable local reel exists (caller then renders fresh)."""
+    final_path = config.OUTPUTS_DIR / game_id / "tv_view" / "tv_reel.mp4"
+    if not final_path.exists() or final_path.stat().st_size == 0:
+        log.warning("--reuse-tv-reel: %s missing/empty; nothing to reuse.", final_path)
+        return None
+
+    probe_cap = cv2.VideoCapture(str(final_path))
+    pfps = probe_cap.get(cv2.CAP_PROP_FPS) or 30.0
+    pframes = int(probe_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    out_w = int(probe_cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or TV_RESOLUTION[0]
+    out_h = int(probe_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or TV_RESOLUTION[1]
+    probe_cap.release()
+    final_duration = pframes / pfps if pfps else 0.0
+
+    windows = [(float(a), float(b)) for (a, b) in (play_windows or []) if b > a + 0.5]
+
+    r2_url = ""
+    if upload:
+        try:
+            key = f"tv_view/{game_id}/tv_reel.mp4"
+            r2_url = firestore_io.upload_clip(str(final_path), key)
+        except Exception as e:
+            log.warning("TV reel (reuse) upload failed: %s", e)
+
+    meta = TvViewMeta(
+        kind="tv_reel",
+        duration_s=final_duration,
+        width=out_w,
+        height=out_h,
+        r2_url=r2_url,
+        segment_count=len(windows) or 1,
+        segments=windows,
+    )
+    log.info("TV reel reused (no re-render): %.1fs -> %s", final_duration, r2_url or final_path)
+    return meta
+
 
 def render_tv_reel(
     video_path: str,
