@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ball Labeler</title>
+<style>
+  :root { --lime:#A3E635; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0b0f14; color:#e5e7eb; font:14px/1.4 system-ui,sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:8px 14px; background:#111827; border-bottom:1px solid #1f2937; flex-wrap:wrap; }
+  header b { color:var(--lime); }
+  .pill { background:#1f2937; padding:3px 9px; border-radius:999px; }
+  .wrap { display:flex; gap:14px; padding:14px; align-items:flex-start; }
+  #stage { position:relative; }
+  canvas#main { background:#000; border:1px solid #334155; cursor:crosshair; }
+  #loupe { position:absolute; width:160px; height:160px; border:2px solid var(--lime); border-radius:50%; pointer-events:none; display:none; box-shadow:0 0 0 9999px rgba(0,0,0,.0); }
+  .side { width:260px; }
+  .key { display:inline-block; min-width:20px; text-align:center; background:#0b0f14; border:1px solid #334155; border-radius:4px; padding:1px 6px; margin-right:6px; color:var(--lime); font-weight:600; }
+  .row { margin:7px 0; }
+  button { background:#1f2937; color:#e5e7eb; border:1px solid #334155; border-radius:6px; padding:7px 10px; cursor:pointer; }
+  button:hover { border-color:var(--lime); }
+  button.primary { background:var(--lime); color:#0b0f14; font-weight:700; border:none; }
+  .muted { color:#9ca3af; }
+  #thumbs { display:flex; flex-wrap:wrap; gap:2px; margin-top:8px; max-height:120px; overflow:auto; }
+  .tk { width:12px; height:12px; border-radius:2px; background:#374151; }
+  .tk.ball { background:var(--lime); } .tk.none { background:#ef4444; } .tk.cur { outline:2px solid #fff; }
+</style>
+</head>
+<body>
+<header>
+  <b>⚽ Ball Labeler</b>
+  <span class="pill" id="pos">–/–</span>
+  <span class="pill">ball: <b id="cBall">0</b></span>
+  <span class="pill">no-ball: <b id="cNone">0</b></span>
+  <span class="pill">left: <b id="cLeft">0</b></span>
+  <span class="pill muted" id="tinfo"></span>
+  <button class="primary" onclick="exportLabels()">Export labels.json (E)</button>
+  <span class="muted">autosaves to browser</span>
+</header>
+<div id="picker" style="display:none; padding:40px; text-align:center;">
+  <h2>Open the dataset folder</h2>
+  <p class="muted">No server needed. Click below and choose the folder<br>
+    <code>post_game/outputs/ball_dataset/mpyo67cl4uflh</code></p>
+  <input type="file" id="folder" webkitdirectory directory multiple style="margin:14px 0;">
+  <p class="muted" id="pickstat"></p>
+</div>
+<div class="wrap" id="app">
+  <div id="stage">
+    <canvas id="main" width="1280" height="720"></canvas>
+    <div id="loupe"></div>
+  </div>
+  <div class="side">
+    <div class="row"><span class="key">click</span> place ball box at cursor</div>
+    <div class="row"><span class="key">drag</span> draw exact box</div>
+    <div class="row"><span class="key">wheel</span> resize box</div>
+    <div class="row"><span class="key">A</span>/<span class="key">⏎</span>/<span class="key">space</span> next — ball if boxed, else no-ball</div>
+    <div class="row"><span class="key">N</span> no ball here → next</div>
+    <div class="row"><span class="key">R</span> reset to AI proposal</div>
+    <div class="row"><span class="key">←</span><span class="key">→</span> prev / next</div>
+    <hr style="border-color:#1f2937">
+    <div class="row muted">Green dashed = AI proposal. Solid lime = your label.</div>
+    <div class="row"><label><input type="checkbox" id="skipNoProp"> jump only to frames with a proposal</label></div>
+    <div id="thumbs"></div>
+  </div>
+</div>
+<script>
+const BOX0 = 30;                       // default box side (px) for click-to-place
+let manifest = [], i = 0, labels = {}, brush = BOX0;
+let dragStart = null, curBox = null;   // curBox = [x1,y1,x2,y2] in image px
+let imgURL = null;                     // {filename: objectURL} when loaded from a folder pick
+const cv = document.getElementById('main'), ctx = cv.getContext('2d');
+const img = new Image();
+const LSKEY = 'ballLabeler:dataset';   // stable across server/file:// so labels persist
+
+async function boot(){
+  // Try server mode first (fetch ./manifest.json). If that fails (opened as a
+  // file://), fall back to a no-server folder picker.
+  try {
+    const r = await fetch('./manifest.json');
+    if (!r.ok) throw 0;
+    manifest = await r.json();
+    start();
+  } catch(e){
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('picker').style.display = 'block';
+    document.getElementById('folder').addEventListener('change', onFolder);
+  }
+}
+function onFolder(ev){
+  const files = [...ev.target.files];
+  const man = files.find(f => f.name === 'manifest.json');
+  if (!man){ document.getElementById('pickstat').textContent = 'No manifest.json in that folder — pick the dataset root.'; return; }
+  imgURL = {};
+  for (const f of files){ if (f.name.endsWith('.jpg')) imgURL[f.name] = URL.createObjectURL(f); }
+  const fr = new FileReader();
+  fr.onload = () => {
+    manifest = JSON.parse(fr.result);
+    document.getElementById('picker').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    start();
+  };
+  fr.readAsText(man);
+}
+function start(){
+  try { labels = JSON.parse(localStorage.getItem(LSKEY)) || {}; } catch(e){ labels = {}; }
+  i = manifest.findIndex(m => !(m.file in labels));   // resume at first undecided
+  if (i < 0) i = 0;
+  buildThumbs(); load();
+}
+function buildThumbs(){
+  const t = document.getElementById('thumbs'); t.innerHTML='';
+  manifest.forEach((m,k)=>{
+    const d = document.createElement('div'); d.className='tk'; d.id='tk'+k;
+    d.title = m.time_s+'s'; d.onclick=()=>{ i=k; load(); };
+    t.appendChild(d);
+  });
+  refreshThumbs();
+}
+function refreshThumbs(){
+  manifest.forEach((m,k)=>{
+    const d = document.getElementById('tk'+k); if(!d) return;
+    d.className = 'tk' + (m.file in labels ? (labels[m.file] ? ' ball':' none') : '') + (k===i?' cur':'');
+  });
+}
+function counts(){
+  let b=0,n=0; for(const f in labels){ labels[f]?b++:n++; }
+  document.getElementById('cBall').textContent=b;
+  document.getElementById('cNone').textContent=n;
+  document.getElementById('cLeft').textContent=manifest.length-b-n;
+}
+function load(){
+  const m = manifest[i];
+  document.getElementById('pos').textContent = (i+1)+'/'+manifest.length;
+  document.getElementById('tinfo').textContent = m.time_s+'s · '+(m.proposed_src?('AI:'+m.proposed_src+' ×'+m.proposed_agree):'no AI proposal');
+  // existing label > AI proposal > none
+  if (m.file in labels) curBox = labels[m.file] ? norm2px(labels[m.file]) : null;
+  else curBox = m.proposed ? m.proposed.slice() : null;
+  img.onload = draw; img.src = imgURL ? imgURL[m.file] : ('./images/' + m.file);
+  refreshThumbs(); counts();
+}
+function px2norm(b){ return [ (b[0]+b[2])/2/cv.width, (b[1]+b[3])/2/cv.height,
+                              Math.abs(b[2]-b[0])/cv.width, Math.abs(b[3]-b[1])/cv.height ]; }
+function norm2px(n){ const cx=n[0]*cv.width, cy=n[1]*cv.height, w=n[2]*cv.width, h=n[3]*cv.height;
+                     return [cx-w/2, cy-h/2, cx+w/2, cy+h/2]; }
+function draw(){
+  ctx.drawImage(img,0,0,cv.width,cv.height);
+  const m = manifest[i];
+  if (m.proposed && !(m.file in labels)){ // show AI proposal dashed (until decided)
+    ctx.setLineDash([6,4]); ctx.strokeStyle='#22c55e'; ctx.lineWidth=1.5;
+    const p=m.proposed; ctx.strokeRect(p[0],p[1],p[2]-p[0],p[3]-p[1]); ctx.setLineDash([]);
+  }
+  if (!curBox){
+    ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,cv.height-30,cv.width,30);
+    ctx.fillStyle='#fbbf24'; ctx.font='16px system-ui';
+    ctx.fillText('no box — click the ball then A, or press A / N for no-ball', 12, cv.height-10);
+  }
+  if (curBox){
+    ctx.strokeStyle='#A3E635'; ctx.lineWidth=2;
+    ctx.strokeRect(curBox[0],curBox[1],curBox[2]-curBox[0],curBox[3]-curBox[1]);
+    ctx.strokeStyle='rgba(163,230,53,.5)';
+    ctx.beginPath(); ctx.moveTo((curBox[0]+curBox[2])/2-14,(curBox[1]+curBox[3])/2);
+    ctx.lineTo((curBox[0]+curBox[2])/2+14,(curBox[1]+curBox[3])/2);
+    ctx.moveTo((curBox[0]+curBox[2])/2,(curBox[1]+curBox[3])/2-14);
+    ctx.lineTo((curBox[0]+curBox[2])/2,(curBox[1]+curBox[3])/2+14); ctx.stroke();
+  }
+}
+// ---- mouse ----
+function evpos(e){ const r=cv.getBoundingClientRect();
+  return [ (e.clientX-r.left)*cv.width/r.width, (e.clientY-r.top)*cv.height/r.height ]; }
+cv.addEventListener('mousedown', e=>{ dragStart = evpos(e); });
+cv.addEventListener('mousemove', e=>{
+  const p = evpos(e); loupe(e,p);
+  if (dragStart){ curBox=[Math.min(dragStart[0],p[0]),Math.min(dragStart[1],p[1]),
+                          Math.max(dragStart[0],p[0]),Math.max(dragStart[1],p[1])]; draw(); }
+});
+cv.addEventListener('mouseup', e=>{
+  const p = evpos(e);
+  if (dragStart && Math.hypot(p[0]-dragStart[0],p[1]-dragStart[1])<4){      // click = place
+    curBox=[p[0]-brush/2,p[1]-brush/2,p[0]+brush/2,p[1]+brush/2];
+  }
+  dragStart=null; draw();
+});
+cv.addEventListener('mouseleave', ()=>{ document.getElementById('loupe').style.display='none'; dragStart=null; });
+cv.addEventListener('wheel', e=>{ e.preventDefault();
+  if (!curBox) return;
+  const cx=(curBox[0]+curBox[2])/2, cy=(curBox[1]+curBox[3])/2;
+  brush = Math.max(10, Math.min(120, (curBox[2]-curBox[0]) - Math.sign(e.deltaY)*4));
+  curBox=[cx-brush/2,cy-brush/2,cx+brush/2,cy+brush/2]; draw();
+}, {passive:false});
+function loupe(e,p){
+  const L=document.getElementById('loupe'), z=4, s=160;
+  L.style.display='block'; L.style.left=(e.offsetX+18)+'px'; L.style.top=(e.offsetY-80)+'px';
+  const c=document.createElement('canvas'); c.width=s; c.height=s; const lx=c.getContext('2d');
+  lx.fillStyle='#000'; lx.fillRect(0,0,s,s);
+  lx.drawImage(img, p[0]-s/(2*z), p[1]-s/(2*z), s/z, s/z, 0,0,s,s);
+  lx.strokeStyle='#A3E635'; lx.beginPath(); lx.moveTo(s/2-10,s/2); lx.lineTo(s/2+10,s/2);
+  lx.moveTo(s/2,s/2-10); lx.lineTo(s/2,s/2+10); lx.stroke();
+  L.style.background='url('+c.toDataURL()+')';
+}
+// ---- decisions ----
+function commitBall(){ if(!curBox) return false; labels[manifest[i].file]=px2norm(curBox); save(); return true; }
+function commitNone(){ labels[manifest[i].file]=null; save(); }
+function save(){ localStorage.setItem(LSKEY, JSON.stringify(labels)); counts(); refreshThumbs(); }
+function next(){ let j=i+1; const skip=document.getElementById('skipNoProp').checked;
+  while(skip && j<manifest.length && !manifest[j].proposed) j++;
+  i=Math.min(manifest.length-1, j); load(); }
+function prev(){ i=Math.max(0,i-1); load(); }
+function exportLabels(){
+  const blob=new Blob([JSON.stringify(labels,null,0)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='labels.json'; a.click();
+}
+document.addEventListener('keydown', e=>{
+  const k=e.key;
+  // A / Enter / Space ALWAYS advance: ball if a box is placed, else no-ball.
+  if (k==='a'||k==='A'||k==='Enter'||k===' '){ e.preventDefault(); if(curBox) commitBall(); else commitNone(); next(); }
+  else if (k==='n'||k==='N'){ curBox=null; commitNone(); next(); }   // explicit no-ball
+  else if (k==='r'||k==='R'){ const m=manifest[i]; curBox=m.proposed?m.proposed.slice():null; draw(); }
+  else if (k==='ArrowRight'){ next(); }
+  else if (k==='ArrowLeft'){ prev(); }
+  else if (k==='e'||k==='E'){ exportLabels(); }
+});
+boot();
+</script>
+</body>
+</html>
