@@ -484,9 +484,12 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   let partnerCount = 0; // give & go wall-pass credits earned by this player
   let ownGoals = 0;     // own goals attributed to this player via OPP_GOAL.ownGoalById
   for (const e of events) {
-    // Skip SUB bookkeeping and silent events (e.g. POSITION tactical-board
-    // drags) — they must not count toward the Involvement pillar.
-    if (e.type === 'SUB' || EVENT_TYPES[e.type]?.silent) continue;
+    // Only real play events feed the score. Skip anything that isn't a known,
+    // non-silent EVENT_TYPE — this excludes bookkeeping events that aren't in
+    // EVENT_TYPES (SUB, GK_CHANGE) and silent ones (POSITION tactical-board
+    // drags), so none of them inflate the Involvement pillar.
+    const def = EVENT_TYPES[e.type];
+    if (!def || def.silent) continue;
     if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
     }
@@ -10836,6 +10839,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
