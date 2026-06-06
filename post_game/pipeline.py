@@ -538,8 +538,15 @@ def run(
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.
         "broadcast_events": events_index,
-        "home_name": ("Stompers" if game.is_home else (game.opponent or "OPP")),
-        "away_name": ((game.opponent or "OPP") if game.is_home else "Stompers"),
+        # The scorebug is us/them-oriented, NOT physical home/away: "home" is
+        # always us (left), "away" the opponent (right) — matching the live
+        # in-game scorebug. home_color/away_color are already our/opp jersey
+        # colors (GameSetup labels: "LASALLE STOMPERS JERSEY" -> home_color,
+        # "OPPONENT JERSEY" -> away_color), so the names must follow the same
+        # convention. Swapping names by is_home (the old behavior) paired the
+        # opponent name with our score/color on away games.
+        "home_name": "Stompers",
+        "away_name": game.opponent or "OPP",
         "home_color": game.home_color,
         "away_color": game.away_color,
         "generated_at_ms": int(time.time() * 1000),
@@ -646,8 +653,17 @@ def _build_broadcast_events_index(
             or ev.extras.get("assist")
         )
         a_first, a_num = _name_pair(assist_pid)
-        sub_in_pid = ev.extras.get("inPlayerId") or ev.extras.get("subInId")
+        # SUB events store the player coming ON in `subOnPlayerId` and the
+        # player going OFF in `playerId` (see logSubEvent in the PWA). Keep the
+        # older inPlayerId/outPlayerId fallbacks for any legacy events.
+        sub_in_pid = (
+            ev.extras.get("subOnPlayerId")
+            or ev.extras.get("inPlayerId")
+            or ev.extras.get("subInId")
+        )
         sub_out_pid = ev.extras.get("outPlayerId") or ev.extras.get("subOutId")
+        if et in ("SUB", "SUBSTITUTION") and not sub_out_pid:
+            sub_out_pid = ev.player_id
         in_first, in_num = _name_pair(sub_in_pid)
         out_first, out_num = _name_pair(sub_out_pid)
 
