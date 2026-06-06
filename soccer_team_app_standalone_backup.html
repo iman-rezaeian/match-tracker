@@ -138,6 +138,8 @@ const EVENT_TYPES = {
   SHOT_OFF:  { id: 'SHOT_OFF',  label: 'SHOT OFF',  emoji: '❌', tone: 'neutral',    requiresPlayer: true },
   BLOCK:     { id: 'BLOCK',     label: 'BLOCK',     emoji: '🛡️', tone: 'blue',       requiresPlayer: true },
   BALL_WIN:  { id: 'BALL_WIN',  label: 'BALL WIN',  emoji: '🔥', tone: 'soft-green', requiresPlayer: true },
+  CLEAR:     { id: 'CLEAR',     label: 'CLEARANCE', emoji: '🧹', tone: 'blue',       requiresPlayer: true },
+  KICK_OUT:  { id: 'KICK_OUT',  label: 'KICK OUT',  emoji: '🥾', tone: 'blue',       requiresPlayer: true },
   DUEL_WIN:  { id: 'DUEL_WIN',  label: '1V1 WIN',   emoji: '💪', tone: 'soft-green', requiresPlayer: true },
   DUEL_LOSE: { id: 'DUEL_LOSE', label: '1V1 LOSE',  emoji: '👎', tone: 'soft-red',   requiresPlayer: true },
   GIVE_GO:   { id: 'GIVE_GO',   label: 'GIVE-GO',   emoji: '🔁', tone: 'soft-green', requiresPlayer: true },
@@ -165,7 +167,7 @@ const EVENT_TYPES = {
 const EVENT_NEEDS_ZONE = new Set([
   'GOAL', 'SHOT_ON', 'SHOT_OFF', 'BALL_WIN', 'TURNOVER',
   'DUEL_WIN', 'DUEL_LOSE', 'KEY_PASS', 'GIVE_GO', 'GATES',
-  'SAVE', 'BLOCK',
+  'SAVE', 'BLOCK', 'CLEAR', 'KICK_OUT',
   'FOUL_BY', 'FOUL_ON', 'PEN_AWARDED', 'PEN_CONCEDED',
 ]);
 
@@ -173,7 +175,7 @@ const EVENT_NEEDS_ZONE = new Set([
 // Limited to decision-bearing events where pressure changes the meaning a lot.
 const EVENT_NEEDS_PRESSURE = new Set([
   'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN',
-  'SHOT_ON', 'SHOT_OFF', 'DUEL_WIN',
+  'SHOT_ON', 'SHOT_OFF', 'DUEL_WIN', 'CLEAR', 'KICK_OUT',
 ]);
 
 // Events that get an optional decision-quality flag (was this the right choice?).
@@ -440,8 +442,9 @@ function gkExtrasForGame(playerId, game) {
 // older saved overrides still work if new actions are added later.
 const DEFAULT_WEIGHTS = {
   points: {
-    GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 5, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
-    SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
+    GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 4, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
+    SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 2, DUEL_LOSE_def: -2,
+    CLEAR_def: 3, KICK_OUT_def: 1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 3, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
     // Discipline & set-pieces.
@@ -451,7 +454,8 @@ const DEFAULT_WEIGHTS = {
   },
   gkPoints: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
-    SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 4, DUEL_LOSE_def: -1,
+    SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 2, DUEL_LOSE_def: -2,
+    CLEAR_def: 3, KICK_OUT_def: 1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
     FOUL_ON_atk: 2,   FOUL_BY_def: -2,
@@ -516,6 +520,8 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
     (c.SAVE || 0)         * pts.SAVE_def +
     (c.BLOCK || 0)        * pts.BLOCK_def +
     (c.BALL_WIN || 0)     * pts.BALL_WIN_def +
+    (c.CLEAR || 0)        * (pts.CLEAR_def || 0) +
+    (c.KICK_OUT || 0)     * (pts.KICK_OUT_def || 0) +
     (c.DUEL_WIN || 0)     * pts.DUEL_WIN_def +
     (c.DUEL_LOSE || 0)    * pts.DUEL_LOSE_def +
     (c.FOUL_BY || 0)      * (pts.FOUL_BY_def || 0) +
@@ -4298,7 +4304,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
                 <div className="text-[10px] text-lime-400/70 font-bold tracking-wider">RAISES SCORE</div>
               </div>
               <div className="grid grid-cols-4 gap-2">
-                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK', 'FOUL_ON', 'PEN_AWARDED'].map(id => {
+                {['GOAL', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK', 'CLEAR', 'KICK_OUT', 'FOUL_ON', 'PEN_AWARDED'].map(id => {
                   const ev = EVENT_TYPES[id];
                   const big = id === 'GOAL';
                   return (
@@ -7556,7 +7562,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
   };
 
   const tally = useMemo(() => {
-    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0 });
+    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, CLEAR: 0, KICK_OUT: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0 });
     const map = {};
     for (const e of events) {
       if (e.type === 'SUB') continue;
@@ -7910,6 +7916,8 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                 if (stats.SHOT_ON) parts.push(`${stats.SHOT_ON} on`);
                 if (stats.SAVE) parts.push(`${stats.SAVE} saves`);
                 if (stats.BLOCK) parts.push(`${stats.BLOCK} blocks`);
+                if (stats.CLEAR) parts.push(`${stats.CLEAR}🧹`);
+                if (stats.KICK_OUT) parts.push(`${stats.KICK_OUT}🥾`);
                 if (stats.DUEL_WIN || stats.DUEL_LOSE) parts.push(`1v1: ${stats.DUEL_WIN || 0}-${stats.DUEL_LOSE || 0}`);
                 if (stats.GIVE_GO) parts.push(`${stats.GIVE_GO} g&g`);
                 if (stats.GIVE_GO_WALL) parts.push(`${stats.GIVE_GO_WALL} wall`);
@@ -8219,7 +8227,7 @@ function StatsView({ roster, games, weights, onBack }) {
   const finished = games.filter(g => g.status === 'finished');
 
   const stats = useMemo(() => {
-    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0, gkSeconds: 0, cleanSheets: 0, oppGoalsConceded: 0, gamesAsGK: 0 });
+    const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, CLEAR: 0, KICK_OUT: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0, gkSeconds: 0, cleanSheets: 0, oppGoalsConceded: 0, gamesAsGK: 0 });
     const map = {};
     for (const p of roster) map[p.id] = init();
     for (const g of finished) {
@@ -8393,6 +8401,8 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
     { label: 'Ball wins', value: stats.BALL_WIN || 0, accent: 'text-lime-700' },
     { label: 'Saves', value: stats.SAVE || 0 },
     { label: 'Blocks', value: stats.BLOCK || 0 },
+    { label: 'Clearances', value: stats.CLEAR || 0, accent: 'text-lime-700' },
+    { label: 'Kick-outs (under pressure)', value: stats.KICK_OUT || 0 },
     { label: '1v1 duels won', value: stats.DUEL_WIN || 0, accent: 'text-lime-700' },
     { label: '1v1 duels lost', value: stats.DUEL_LOSE || 0, accent: 'text-red-700' },
     { label: 'Give-and-go', value: stats.GIVE_GO || 0 },
@@ -8498,6 +8508,8 @@ function WeightsView({ weights, onSave, onBack }) {
     ['SAVE_def',        'Save',         '🧤'],
     ['BLOCK_def',       'Block',        '🛡️'],
     ['BALL_WIN_def',    'Ball win',     '🔥'],
+    ['CLEAR_def',       'Clearance',    '🧹'],
+    ['KICK_OUT_def',    'Kick out (under pressure)', '🥾'],
     ['DUEL_WIN_def',    '1v1 win',      '💪'],
     ['DUEL_LOSE_def',   '1v1 lose',     '💢'],
     ['CLEAN_SHEET_def', 'Clean sheet (GK)', '🧱'],
@@ -10839,6 +10851,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
