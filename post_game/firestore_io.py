@@ -454,12 +454,20 @@ def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float) -> None:
 def _r2_client():
     import os
     import boto3
+    # Corp VPNs MITM TLS with a self-signed root, which botocore's bundled
+    # certifi store doesn't trust -> uploads die with CERTIFICATE_VERIFY_FAILED.
+    # Honour the same CA-bundle env vars as download_video() so a combined
+    # macOS-keychain + certifi bundle can be pointed at via .env.
+    ca = (os.environ.get("AWS_CA_BUNDLE")
+          or os.environ.get("REQUESTS_CA_BUNDLE")
+          or os.environ.get("SSL_CERT_FILE"))
     return boto3.client(
         "s3",
         endpoint_url=config.R2_ENDPOINT,
         aws_access_key_id=os.environ.get("R2_ACCESS_KEY_ID"),
         aws_secret_access_key=os.environ.get("R2_SECRET_ACCESS_KEY"),
         region_name="auto",
+        verify=ca or None,
     )
 
 
