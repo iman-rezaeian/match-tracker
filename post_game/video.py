@@ -143,9 +143,14 @@ def render_perspective(
     fov_deg: float,
     out_w: int,
     out_h: int,
+    interp: int = cv2.INTER_LINEAR,
 ) -> np.ndarray:
     """Render a perspective crop. Note: latitude is negated — positive lat
     means "look up from equator" in our convention (matches phase0 notebook).
+
+    `interp` is the cv2 interpolation for the resample. INTER_LINEAR is fine
+    (and fast) for detection tiles; the broadcast reel passes INTER_LANCZOS4
+    for a sharper upscale since the TV crop is enlarged from the sphere.
     """
     h_eq, w_eq = eq_frame.shape[:2]
     f = out_w / (2 * math.tan(math.radians(fov_deg) / 2))
@@ -180,7 +185,7 @@ def render_perspective(
         eq_frame,
         u.astype(np.float32),
         v.astype(np.float32),
-        cv2.INTER_LINEAR,
+        interp,
         borderMode=cv2.BORDER_WRAP,
     )
 

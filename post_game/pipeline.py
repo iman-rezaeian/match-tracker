@@ -720,10 +720,10 @@ def _ensure_local_video(url: str, game_id: str) -> Path:
 
 
 def _our_color(game) -> str:
-    if game.is_home and game.home_color:
-        return game.home_color
-    if not game.is_home and game.away_color:
-        return game.away_color
+    # home_color is ALWAYS our jersey — GameSetup labels it "LASALLE STOMPERS
+    # JERSEY" (away_color is the opponent's), independent of is_home. The old
+    # logic returned away_color on away games, feeding the OPPONENT's jersey
+    # color to the team classifier and inverting the team split.
     return game.home_color or game.away_color or "#A3E635"
 
 

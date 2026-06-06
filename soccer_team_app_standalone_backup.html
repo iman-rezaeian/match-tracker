@@ -6844,6 +6844,9 @@ function readableTextOn(hex) {
 function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
   const videoRef = useRef(null);
   const [now, setNow] = useState(0);
+  // Fit (letterbox, whole frame) vs Fill (crop to fill the screen). The reel is
+  // 16:9 but phones in landscape are wider (~20:9), so Fit leaves side bars.
+  const [fillMode, setFillMode] = useState(false);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -6986,10 +6989,17 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
     <div className="fixed inset-0 bg-black z-[60] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
       <div className="flex items-center justify-between px-3 py-2 bg-stone-950 border-b border-stone-800 shrink-0">
         <div className="text-white font-display text-sm truncate pr-3">{label}</div>
-        <button
-          onClick={onClose}
-          className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
-        >CLOSE ✕</button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setFillMode(f => !f)}
+            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
+            title={fillMode ? 'Show the whole frame (letterboxed)' : 'Fill the screen (crops edges)'}
+          >{fillMode ? '⤡ FIT' : '⤢ FILL'}</button>
+          <button
+            onClick={onClose}
+            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
+          >CLOSE ✕</button>
+        </div>
       </div>
 
       <div className="relative flex-1 bg-black flex items-center justify-center min-h-0">
@@ -7001,7 +7011,7 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
             playsInline
             autoPlay
             className="max-h-full max-w-full"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            style={{ width: '100%', height: '100%', objectFit: fillMode ? 'cover' : 'contain' }}
           />
         ) : (
           <div className="text-stone-400 text-sm p-6">Video not available yet.</div>
@@ -10927,6 +10937,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
