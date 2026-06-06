@@ -21,7 +21,6 @@ from .calibration import (
 )
 from .detection import Detector
 from .formation import compute_formation
-from .gk_positioning import compute_gk_positions
 from .highlights import extract_clips
 from .identity import assign_identities, half_windows, period_clock_to_video_time_factory
 from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
@@ -420,18 +419,9 @@ def run(
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
         gk_player_id=game.gk_player_id,
         coach_events=game.events,
+        starting_lineup=game.starting_lineup,
     )
-    gk_positions = compute_gk_positions(
-        events=game.events,
-        tracks_field_df=tracks_df,
-        identity_by_track=identity_by_track,
-        gk_player_id=game.gk_player_id,
-        gk_changes=game.gk_changes,
-        we_attack_right_in_period=attack_dir,
-        period_clock_to_video_time=clock_to_video,
-        field_length_m=field_cal.length_m,
-        field_width_m=field_cal.width_m,
-    )
+    # GK positioning analysis removed — not used in the film room.
 
     # 7. Highlight clips (per-event MP4s). Slow because we re-seek the source
     # video for every tagged event — skip during iteration.
@@ -526,7 +516,6 @@ def run(
             for f in formation_snaps
         ],
         "team_time_series": asdict(team_ts),
-        "gk_positions": [_gk_to_dict(g) for g in gk_positions],
         "clip_count": len(clips),
         "tv_reel": _tv_meta_to_dict(tv_reel_meta),
         "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
@@ -576,8 +565,7 @@ def run(
     # tv_reel / auto_highlights records into the per-event clips/ collection.
     # They render as broken "· P 0' · —" rows in the PWA highlight list.
     _purge_legacy_reel_clip_docs(game_id)
-    log.info("Wrote analytics for game %s - %d players, %d GK events",
-             game_id, len(player_stats), len(gk_positions))
+    log.info("Wrote analytics for game %s - %d players", game_id, len(player_stats))
     return analytics
 
 
@@ -748,14 +736,6 @@ def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dic
         return {1: True, 2: False}
     attack_right_p1 = float(sub["x_m"].median()) < field_length_m / 2.0
     return {1: attack_right_p1, 2: not attack_right_p1}
-
-
-def _gk_to_dict(g) -> dict:
-    d = asdict(g)
-    d["gk_pos_m"] = list(g.gk_pos_m)
-    if g.shooter_pos_m is not None:
-        d["shooter_pos_m"] = list(g.shooter_pos_m)
-    return d
 
 
 def _sanitize_json(obj):

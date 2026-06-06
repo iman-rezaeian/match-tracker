@@ -23,6 +23,12 @@ from .firestore_io import CoachEvent, GameDoc, RosterPlayer
 
 log = logging.getLogger(__name__)
 
+# Coaches log subs late (sometimes minutes late, especially mass/whole-team
+# swaps in scrimmages), so a player can be on the field before their sub-in is
+# recorded. Treat on-field windows as a soft tiebreaker only, with a generous
+# tolerance — never hard-exclude a voted player based on exact sub times.
+ONFIELD_TOLERANCE_S = 240.0
+
 
 @dataclass
 class IdentityAssignment:
@@ -126,6 +132,49 @@ def _track_lifetimes(tracks_df: pd.DataFrame) -> dict[int, tuple[float, float]]:
     return {int(tid): (float(t.min()), float(t.max())) for tid, t in g}
 
 
+def _onfield_intervals(
+    starting_lineup: list[str],
+    events: list[CoachEvent],
+    period_clock_to_video_time: Callable[[int, int], float],
+    video_end_s: float = 1e9,
+) -> dict[str, list[tuple[float, float]]]:
+    """Per-player [start, end] video-second intervals they were ON THE FIELD,
+    reconstructed from the starting lineup + timed SUB events. Used to constrain
+    identity: a track can only be a player who was actually playing then."""
+    intervals: dict[str, list[tuple[float, float]]] = {}
+    on: dict[str, float] = {}
+    t0 = float(period_clock_to_video_time(1, 0))
+    for pid in starting_lineup or []:
+        if pid:
+            on[pid] = t0
+    subs = sorted(
+        (e for e in events if (e.type or "").upper() == "SUB"),
+        key=lambda e: (e.period, e.elapsed, e.at),
+    )
+    for e in subs:
+        tv = float(period_clock_to_video_time(e.period, e.elapsed))
+        off = e.player_id
+        on_pid = (e.extras or {}).get("subOnPlayerId")
+        if off in on:
+            intervals.setdefault(off, []).append((on.pop(off), tv))
+        if on_pid and on_pid not in on:
+            on[on_pid] = tv
+    for pid, since in on.items():
+        intervals.setdefault(pid, []).append((since, video_end_s))
+    return intervals
+
+
+def _is_onfield(intervals: dict[str, list[tuple[float, float]]], pid: str,
+                t0: float, t1: float) -> bool:
+    """True if player `pid` was on the field for any of [t0, t1]. Players with
+    no reconstructed intervals (e.g. coach never logged them) are allowed
+    through so we don't over-prune when lineup data is incomplete."""
+    iv = intervals.get(pid)
+    if not iv:
+        return True
+    return any(b >= t0 and a <= t1 for (a, b) in iv)
+
+
 def _nearest_track(
     tracks_df: pd.DataFrame,
     team_of_track: dict[int, int],
@@ -227,6 +276,7 @@ def assign_identities(
             votes[gk_track][seg["playerId"]] = votes[gk_track].get(seg["playerId"], 0) + 5
 
     lifetimes = _track_lifetimes(tracks_df)
+    onfield = _onfield_intervals(starting_lineup, events, period_clock_to_video_time)
     valid_roster_ids = {r.id for r in roster}
     assignments: list[IdentityAssignment] = []
     for tid in sorted(team_of_track.keys()):
@@ -248,7 +298,18 @@ def assign_identities(
                 breakdown={"coach_log": {}}, minutes_on_field=minutes,
             ))
             continue
-        winner, count = max(track_votes.items(), key=lambda kv: kv[1])
+        # Pick the most-voted player; break ties toward the player the coach log
+        # says was on the field during this track (with a generous tolerance for
+        # late-logged subs). This only resolves ties — it never drops a candidate.
+        life0, life1 = life
+        winner = max(
+            track_votes,
+            key=lambda pid: (
+                track_votes[pid],
+                _is_onfield(onfield, pid, life0 - ONFIELD_TOLERANCE_S, life1 + ONFIELD_TOLERANCE_S),
+            ),
+        )
+        count = track_votes[winner]
         total = sum(track_votes.values())
         share = count / max(total, 1)
         coach_score = min(1.0, count / 3.0)

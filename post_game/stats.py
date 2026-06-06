@@ -67,12 +67,18 @@ def compute_player_stats(
         y = sub["y_m"].to_numpy()
         t = sub["time_s"].to_numpy()
         dt = np.diff(t)
-        dt = np.clip(dt, 1e-3, 1.0)
+        # Floor dt at a realistic frame interval (not 1ms) so a near-zero gap
+        # can't manufacture an enormous speed; cap large gaps at 2s.
+        med_dt = float(np.median(dt)) if len(dt) else 0.2
+        dt = np.clip(dt, max(0.04, 0.5 * med_dt), 2.0)
         dx = np.diff(x)
         dy = np.diff(y)
         seg_dist = np.sqrt(dx * dx + dy * dy)
-        seg_dist = np.where(seg_dist > 10.0, 0.0, seg_dist)  # drop teleports
-        speed = seg_dist / dt
+        # Clamp each step to a physically plausible move (MAX_PLAUSIBLE_SPEED_MS
+        # * dt). Kills identity-swap teleports that otherwise produce absurd top
+        # speeds (6000+ km/h) and inflate total distance.
+        seg_dist = np.minimum(seg_dist, config.MAX_PLAUSIBLE_SPEED_MS * dt)
+        speed = seg_dist / dt  # inherently <= MAX_PLAUSIBLE_SPEED_MS now
         speed_s = _smooth(speed, config.SPEED_SMOOTH_WINDOW)
 
         # Sprints: continuous run above threshold for >= 0.5s

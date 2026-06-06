@@ -124,6 +124,11 @@ MIN_BBOX_H_FOR_FACE = 90       # px
 
 SPRINT_THRESHOLD_MS = 4.5                        # m/s; U10 sprint = ~16 km/h
 SPEED_SMOOTH_WINDOW = 5                          # samples (≈0.5s at SAMPLE_RATE=3)
+# Physical sanity ceiling. No U10 outfield player exceeds ~9 m/s (~32 km/h);
+# anything faster is an identity-swap teleport, not real motion. Used to clamp
+# per-step displacement so absurd top speeds (6000+ km/h) and teleport-inflated
+# distances can't occur.
+MAX_PLAUSIBLE_SPEED_MS = 9.0                      # ~32 km/h
 
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)

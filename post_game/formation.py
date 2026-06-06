@@ -81,6 +81,57 @@ def _coach_positions_for_period(
     return {pid: (x, y) for pid, (_, x, y) in by_player.items()}
 
 
+def _latest_positions(coach_events: Iterable[Any]) -> dict[str, tuple[float, float]]:
+    """Latest POSITION per player across ALL events (by `at`). Fallback for
+    on-field players who weren't re-dragged in a later period."""
+    by_player: dict[str, tuple[int, float, float]] = {}
+    for e in coach_events or []:
+        if getattr(e, "type", None) != "POSITION":
+            continue
+        pid = getattr(e, "player_id", None)
+        if not pid:
+            continue
+        extras = getattr(e, "extras", {}) or {}
+        x, y = extras.get("x"), extras.get("y")
+        if x is None or y is None:
+            continue
+        try:
+            x = float(x); y = float(y)
+        except (TypeError, ValueError):
+            continue
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            continue
+        at = int(getattr(e, "at", 0) or 0)
+        prev = by_player.get(pid)
+        if prev is None or at >= prev[0]:
+            by_player[pid] = (at, x, y)
+    return {pid: (x, y) for pid, (_, x, y) in by_player.items()}
+
+
+def _onfield_at_period_start(
+    starting_lineup: list[str],
+    coach_events: Iterable[Any],
+    period_1based: int,
+) -> set[str]:
+    """Reconstruct the set of players on the field at the kickoff of a period:
+    the starting lineup plus every SUB applied in earlier periods."""
+    on = set(starting_lineup or [])
+    subs = sorted(
+        (e for e in (coach_events or []) if getattr(e, "type", None) == "SUB"),
+        key=lambda e: (int(getattr(e, "period", 0) or 0), int(getattr(e, "elapsed", 0) or 0), int(getattr(e, "at", 0) or 0)),
+    )
+    for e in subs:
+        if int(getattr(e, "period", 0) or 0) >= period_1based:
+            break  # only subs from *earlier* periods affect this kickoff
+        off = getattr(e, "player_id", None)
+        on_pid = (getattr(e, "extras", {}) or {}).get("subOnPlayerId")
+        if off in on:
+            on.discard(off)
+        if on_pid:
+            on.add(on_pid)
+    return on
+
+
 def compute_formation(
     tracks_field_df: pd.DataFrame,
     identity_by_track: dict[int, str],
@@ -88,6 +139,7 @@ def compute_formation(
     periods: list[tuple[float, float]],
     gk_player_id: Optional[str] = None,
     coach_events: Optional[Iterable[Any]] = None,
+    starting_lineup: Optional[list[str]] = None,
 ) -> tuple[list[FormationSnapshot], TeamTimeSeries]:
     df = tracks_field_df.copy()
     df["player_id"] = df["track_id"].map(identity_by_track)
@@ -105,11 +157,25 @@ def compute_formation(
             )
             positions = {str(pid): (float(v["x_m"]), float(v["y_m"])) for pid, v in avg.items()}
 
-        # Coach POSITION events (ground truth): prefer for label when we have
-        # at least 3 outfield positions, since coach drags are far less noisy
-        # than tracker medians and explicitly encode positional intent.
+        # Coach POSITION events (ground truth): build the formation from the
+        # players ACTUALLY ON THE FIELD at this period's kickoff (lineup + subs
+        # from earlier periods) — not everyone who appeared in the period, which
+        # would include subs and yield 11-player shapes (e.g. 3-6-2) on a 7v7.
         coach_norm = _coach_positions_for_period(coach_events or [], i + 1)
-        coach_outfield = {pid: xy for pid, xy in coach_norm.items() if pid != gk_player_id}
+        onfield = _onfield_at_period_start(starting_lineup or [], coach_events or [], i + 1)
+        onfield_outfield = {p for p in onfield if p != gk_player_id}
+        # Position for each on-field outfield player: prefer this period's drag,
+        # else their last known position from any earlier period.
+        global_pos = _latest_positions(coach_events or [])
+        coach_outfield = {}
+        for pid in onfield_outfield:
+            xy = coach_norm.get(pid) or global_pos.get(pid)
+            if xy is not None:
+                coach_outfield[pid] = xy
+        # If we couldn't reconstruct the on-field set (no lineup/subs), fall back
+        # to all coach positions in the period (minus GK).
+        if not coach_outfield:
+            coach_outfield = {pid: xy for pid, xy in coach_norm.items() if pid != gk_player_id}
         if len(coach_outfield) >= 3:
             # Coach board: y=0 is halfway/attacking, y=1 is own goal. Use the
             # depth axis (1 - y) for row clustering so deeper defenders sit
