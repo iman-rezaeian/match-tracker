@@ -377,7 +377,10 @@ def _render_segment(
         lon_uw = float(np.interp(t, aim_times, aim_lons_uw))
         lat = float(np.interp(t, aim_times, aim_lats))
         lon = ((lon_uw + 180.0) % 360.0) - 180.0
-        crop = render_perspective(frame, lon, lat, TV_FOV_DEG, out_w, out_h)
+        # Lanczos gives a sharper upscale than bilinear — the TV crop is
+        # enlarged from a ~70° slice of the sphere, so the resample quality
+        # is one of the few real levers on perceived sharpness.
+        crop = render_perspective(frame, lon, lat, TV_FOV_DEG, out_w, out_h, interp=cv2.INTER_LANCZOS4)
         writer.write(crop)
         written += 1
     return written
@@ -514,7 +517,8 @@ def render_tv_reel(
                 field_length_m, field_width_m,
             )
             part_path = tmp_dir / f"half_{i + 1}.mp4"
-            writer = H264PipeWriter(part_path, fps, out_w, out_h)
+            # High-quality reel encode: CRF 18 + slow preset (vs default 23/veryfast).
+            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow")
             log.info("TV reel half %d: [%.1fs - %.1fs] (%.0fs)", i + 1, a, b, b - a)
             _render_segment(
                 cap, writer, fps, a, b,
@@ -648,7 +652,8 @@ def extract_auto_highlights(
                 field_length_m, field_width_m,
             )
             part_path = tmp_dir / f"part_{i:03d}.mp4"
-            writer = H264PipeWriter(part_path, fps, out_w, out_h)
+            # High-quality highlight encode: CRF 18 + slow preset.
+            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow")
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h,
