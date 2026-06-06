@@ -61,6 +61,11 @@ def main():
     candidates.append(("soccer_ball_y11n", soccer, ball_class_ids(soccer)))
     players = YOLO(f"{MODELS_DIR}/football_players_yolov8.pt")
     candidates.append(("uisikdag_v8(ball)", players, ball_class_ids(players)))
+    import os
+    ft = f"{MODELS_DIR}/ball_finetuned.pt"
+    if os.path.exists(ft):
+        fine = YOLO(ft)
+        candidates.append(("ball_finetuned", fine, ball_class_ids(fine)))
 
     print("Candidates + ball classes:")
     for name, m, cls in candidates:
