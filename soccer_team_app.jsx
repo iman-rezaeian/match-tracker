@@ -386,7 +386,9 @@ function computePerformanceScore(playerId, events, minutesPlayed, position, gkEx
   let partnerCount = 0; // give & go wall-pass credits earned by this player
   let ownGoals = 0;     // own goals attributed to this player via OPP_GOAL.ownGoalById
   for (const e of events) {
-    if (e.type === 'SUB') continue;
+    // Skip SUB bookkeeping and silent events (e.g. POSITION tactical-board
+    // drags) — they must not count toward the Involvement pillar.
+    if (e.type === 'SUB' || EVENT_TYPES[e.type]?.silent) continue;
     if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
     }
@@ -8173,7 +8175,15 @@ function StatsView({ roster, games, weights, onBack }) {
 
       <div className="px-4 pt-5">
         <div className="text-xs text-stone-400 mb-1">Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.</div>
-        <div className="text-xs text-stone-400 italic mb-3">Sorted by performance score. Tap a player for full breakdown.</div>
+        <div className="text-xs text-stone-400 italic mb-2">Sorted by performance score. Tap a player for full breakdown.</div>
+        <details className="bg-stone-900 border border-stone-800 rounded-xl mb-3 text-stone-300">
+          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold text-stone-200">ⓘ How this score works</summary>
+          <div className="px-3 pb-3 text-xs text-stone-400 space-y-1.5">
+            <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
+            <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
+            <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
+          </div>
+        </details>
 
         {roster.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
