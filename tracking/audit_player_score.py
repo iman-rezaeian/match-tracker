@@ -50,8 +50,9 @@ def player_seconds(pid, g):
     return math.floor(tot)
 
 
-PTS = dict(GOAL_atk=10, ASSIST_atk=8, KEY_PASS_atk=5, SHOT_ON_atk=3, SHOT_OFF_atk=1,
-           SAVE_def=7, BLOCK_def=5, BALL_WIN_def=5, DUEL_WIN_def=4, DUEL_LOSE_def=-1,
+PTS = dict(GOAL_atk=10, ASSIST_atk=8, KEY_PASS_atk=4, SHOT_ON_atk=3, SHOT_OFF_atk=1,
+           SAVE_def=7, BLOCK_def=5, BALL_WIN_def=5, DUEL_WIN_def=2, DUEL_LOSE_def=-2,
+           CLEAR_def=3, KICK_OUT_def=1,
            GIVE_GO_dec=6, GIVE_GO_PARTNER_dec=3, GATES_dec=4, KEY_PASS_dec=3, ASSIST_dec=3,
            HOLDS_BALL_dec=-4, TURNOVER_dec=-4, CLEAN_SHEET_def=8, FOUL_ON_atk=2, FOUL_BY_def=-2,
            PEN_AWARDED_atk=6, PEN_CONCEDED_def=-8, OWN_GOAL_def=-10)
@@ -77,6 +78,7 @@ def score(pid, events, minutes):
            + g("SHOT_ON")*PTS["SHOT_ON_atk"] + g("SHOT_OFF")*PTS["SHOT_OFF_atk"] + g("FOUL_ON")*PTS["FOUL_ON_atk"]
            + g("PEN_AWARDED")*PTS["PEN_AWARDED_atk"]) / ph
     dfn = (g("SAVE")*PTS["SAVE_def"] + g("BLOCK")*PTS["BLOCK_def"] + g("BALL_WIN")*PTS["BALL_WIN_def"]
+           + g("CLEAR")*PTS["CLEAR_def"] + g("KICK_OUT")*PTS["KICK_OUT_def"]
            + g("DUEL_WIN")*PTS["DUEL_WIN_def"] + g("DUEL_LOSE")*PTS["DUEL_LOSE_def"] + g("FOUL_BY")*PTS["FOUL_BY_def"]
            + g("PEN_CONCEDED")*PTS["PEN_CONCEDED_def"] + own*PTS["OWN_GOAL_def"]) / ph
     dec = (g("GIVE_GO")*PTS["GIVE_GO_dec"] + partner*PTS["GIVE_GO_PARTNER_dec"] + g("GATES")*PTS["GATES_dec"]
