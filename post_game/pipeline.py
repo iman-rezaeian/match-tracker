@@ -24,7 +24,7 @@ from .formation import compute_formation
 from .gk_positioning import compute_gk_positions
 from .highlights import extract_clips
 from .identity import assign_identities, half_windows, period_clock_to_video_time_factory
-from .tv_view import extract_auto_highlights, render_tv_reel
+from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
 from .tracking import Tracker, TrackedDetection, to_dataframe
@@ -42,6 +42,7 @@ def run(
     skip_clips: bool = False,
     skip_upload: bool = False,
     smoke_windows: list[tuple[float, float]] | None = None,
+    reuse_tv_reel: bool = False,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -460,16 +461,25 @@ def run(
     if tv_view:
         log.info("Stage 7b: TV reel + auto-highlights...")
         try:
-            tv_reel_meta = render_tv_reel(
-                video_path=str(video_path),
-                tracks_field_df=tracks_df,
-                projector=projector,
-                game_id=game_id,
-                field_length_m=field_cal.length_m,
-                field_width_m=field_cal.width_m,
-                upload=not skip_upload,
-                play_windows=play_windows,
-            )
+            if reuse_tv_reel:
+                tv_reel_meta = tv_reel_meta_from_existing(
+                    game_id=game_id,
+                    play_windows=play_windows,
+                    upload=not skip_upload,
+                )
+                if tv_reel_meta is None:
+                    log.info("  --reuse-tv-reel: no local reel to reuse; rendering fresh.")
+            if tv_reel_meta is None:
+                tv_reel_meta = render_tv_reel(
+                    video_path=str(video_path),
+                    tracks_field_df=tracks_df,
+                    projector=projector,
+                    game_id=game_id,
+                    field_length_m=field_cal.length_m,
+                    field_width_m=field_cal.width_m,
+                    upload=not skip_upload,
+                    play_windows=play_windows,
+                )
         except Exception as e:
             log.warning("TV reel failed: %s", e)
         try:
