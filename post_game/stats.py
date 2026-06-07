@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -54,10 +55,33 @@ def compute_player_stats(
     fps_after_sample: float,
     we_attack_right: bool = True,
     heatmap_grid_shape: tuple[int, int] = (12, 8),
+    periods: Optional[list[tuple[float, float]]] = None,
+    gk_player_id: Optional[str] = None,
 ) -> list[PlayerStats]:
     per_player = _per_player_trajectory(tracks_field_df, identity_by_track)
     third_low, third_high = config.THIRDS_FRACTIONS
     boundaries_x = (field_length_m * third_low, field_length_m * third_high)
+
+    # Canonical orientation per half so the heatmap + thirds always read
+    # "our net at the bottom, opponent net at the top", consistent across halves
+    # (teams switch ends at the break = a 180° rotation, so we flip BOTH the
+    # depth and width axes). The anchor is the GK: our net is whichever end the
+    # keeper guards that half. Falls back to `we_attack_right` if no GK data.
+    def _period_of(ts: float) -> int:
+        for i, (a, b) in enumerate(periods or [], start=1):
+            if a <= ts <= b:
+                return i
+        return 1
+
+    our_net_at_x0: dict[int, bool] = {}
+    gk_sub = per_player.get(str(gk_player_id)) if gk_player_id else None
+    for pi, (a, b) in enumerate(periods or [(0.0, 1e12)], start=1):
+        if gk_sub is not None:
+            m = gk_sub[(gk_sub["time_s"] >= a) & (gk_sub["time_s"] <= b)]
+            if len(m) >= 5:
+                our_net_at_x0[pi] = float(m["x_m"].median()) < field_length_m / 2.0
+                continue
+        our_net_at_x0[pi] = bool(we_attack_right)  # attack +x ⇒ our net at x=0
 
     out: list[PlayerStats] = []
     for pid, sub in per_player.items():
@@ -104,19 +128,25 @@ def compute_player_stats(
             sprint_count += 1
             sprint_dist += run_dist
 
-        # Field thirds along attack axis
-        if we_attack_right:
-            att = x >= boundaries_x[1]
-            mid = (x >= boundaries_x[0]) & (x < boundaries_x[1])
-            dfn = x < boundaries_x[0]
-        else:
-            dfn = x >= boundaries_x[1]
-            mid = (x >= boundaries_x[0]) & (x < boundaries_x[1])
-            att = x < boundaries_x[0]
+        # Canonical per-half coords: d = depth from OUR net (0 = our net,
+        # L = opponent net), w = consistent left/right. Flip both axes (180°)
+        # for halves where our net is at x=L, so a left-back reads bottom-left
+        # in both halves.
+        net_x0 = np.array([our_net_at_x0.get(_period_of(tt), True) for tt in t])
+        d = np.where(net_x0, x, field_length_m - x)
+        w = np.where(net_x0, y, field_width_m - y)
 
+        # Thirds along the canonical depth axis (attacking = toward opponent net).
+        att = d >= boundaries_x[1]
+        mid = (d >= boundaries_x[0]) & (d < boundaries_x[1])
+        dfn = d < boundaries_x[0]
+
+        # Heatmap grid in canonical coords: row 0 = our-net end, last row =
+        # opponent-net end; col 0 .. last = consistent left → right. The UI
+        # renders row 0 at the BOTTOM (our net).
         gh, gw = heatmap_grid_shape
         grid = np.histogram2d(
-            x, y, bins=[gh, gw],
+            d, w, bins=[gh, gw],
             range=[[0, field_length_m], [0, field_width_m]],
         )[0].astype(int).tolist()
 
