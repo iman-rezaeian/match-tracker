@@ -382,6 +382,8 @@ def run(
     team_of_track = classify_tracks(
         tracks_df, track_jersey_samples,
         our_home_color_hex=our_color,
+        opp_color_hex=game.away_color,
+        ref_color_hex=game.ref_color,
     )
     _team_counts: dict[int, int] = {}
     for _t in team_of_track.values():
