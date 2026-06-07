@@ -23,6 +23,8 @@ from .detection import Detector
 from .formation import compute_formation
 from .highlights import extract_clips
 from .identity import assign_identities, half_windows, period_clock_to_video_time_factory
+from .identity_assign import assign_identities_v2
+from .reid_stitch import stitch_tracklets, stitch_stats
 from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
@@ -150,6 +152,7 @@ def run(
     ckpt_suffix = ".smoke" if (smoke_windows or (max_play_s is not None and max_play_s > 0)) else ""
     tracks_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.parquet"
     jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
+    emb_ckpt = ckpt_dir / f"embeddings{ckpt_suffix}.npz"
 
     if tracks_ckpt.exists() and jersey_ckpt.exists():
         import pandas as pd
@@ -159,6 +162,13 @@ def run(
             track_jersey_samples = {
                 int(k): list(nz[k]) for k in nz.files
             }
+        # Per-track Re-ID embeddings (sidecar; absent on pre-embedding caches →
+        # stitching falls back to jersey-HSV).
+        track_embeddings: dict[int, np.ndarray] = {}
+        if emb_ckpt.exists():
+            with np.load(emb_ckpt, allow_pickle=True) as nz:
+                track_embeddings = {int(k): np.asarray(nz[k], dtype=np.float32) for k in nz.files}
+            log.info("  -> loaded Re-ID embeddings for %d tracks", len(track_embeddings))
     else:
         detector = Detector()
         tracker = _new_tracker()
@@ -166,6 +176,9 @@ def run(
 
         all_tracks: list[TrackedDetection] = []
         track_jersey_samples: dict[int, list[np.ndarray]] = {}
+        # Latest smoothed Re-ID embedding per track (boxmot's smooth_feat is an
+        # EMA over the track's life, so the last one summarizes its appearance).
+        track_embeddings: dict[int, np.ndarray] = {}
 
         log.info("Stage 2/6: detection + tracking...")
         # Optional debug overlay: every N video seconds, dump the current
@@ -240,6 +253,8 @@ def run(
                 hsv = sample_jersey_hsv(sample.eq_frame, t.bbox_eq)
                 if len(hsv) > 0:
                     track_jersey_samples.setdefault(t.track_id, []).append(hsv)
+                if t.appearance_embedding is not None:
+                    track_embeddings[t.track_id] = t.appearance_embedding
 
             # Debug-frame dump (cheap; runs only when requested). Renders a
             # downscaled equirect preview with ALL detection bboxes drawn,
@@ -303,7 +318,10 @@ def run(
             jersey_ckpt,
             **{str(k): np.array(v, dtype=object) for k, v in track_jersey_samples.items()},
         )
-        log.info("  -> checkpoint written: %s + %s", tracks_ckpt.name, jersey_ckpt.name)
+        if track_embeddings:
+            np.savez(emb_ckpt, **{str(k): v for k, v in track_embeddings.items()})
+        log.info("  -> checkpoint written: %s + %s%s", tracks_ckpt.name, jersey_ckpt.name,
+                 (" + " + emb_ckpt.name) if track_embeddings else " (no embeddings captured)")
         _n_unique_tracks = tracks_df["track_id"].nunique() if not tracks_df.empty else 0
         _n_with_samples = len(track_jersey_samples)
         _sample_counts = [len(v) for v in track_jersey_samples.values()]
@@ -375,21 +393,52 @@ def run(
                     "Check home/away color hex on the game doc + jersey color in the smoke window. "
                     "Identity assignment will produce zero players.")
 
-    # 5. Identity
+    # 4b. Tracklet stitching — collapse fragmented tracks of the same player
+    # (BoT-SORT yields ~100 fragments/player) into player-consistent tracklets
+    # using Re-ID embeddings (+ jersey-HSV fallback) and spatiotemporal gating.
+    tracklet_of_track = stitch_tracklets(
+        tracks_df, team_of_track,
+        track_embeddings=track_embeddings,
+        track_jersey_samples=track_jersey_samples,
+    )
+    _ss = stitch_stats(tracklet_of_track, team_of_track)
+    log.info("  -> stitching: %d our fragments -> %d tracklets (%d merged, largest=%d frags)",
+             _ss["our_fragments"], _ss["our_tracklets"], _ss["merged_tracklets"],
+             _ss["largest_tracklet_fragments"])
+
+    # 5. Identity — coach-log global assignment over stitched tracklets, with the
+    # v0 per-fragment voter kept as a fallback if v2 collapses (e.g. no coach
+    # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
-    assignments = assign_identities(
+    assignments = assign_identities_v2(
         tracks_df=tracks_df,
+        tracklet_of_track=tracklet_of_track,
         team_of_track=team_of_track,
         events=game.events,
         roster=roster,
         starting_lineup=game.starting_lineup,
         gk_player_id=game.gk_player_id,
-        gk_changes=game.gk_changes,
         period_clock_to_video_time=clock_to_video,
+        periods_video=play_windows,
         field_length_m=field_cal.length_m,
         field_width_m=field_cal.width_m,
     )
+    _n_players_v2 = len({a.player_id for a in assignments if a.player_id})
+    if _n_players_v2 < 3:
+        log.warning("  -> v2 assignment produced only %d players; falling back to v0 voter.", _n_players_v2)
+        assignments = assign_identities(
+            tracks_df=tracks_df,
+            team_of_track=team_of_track,
+            events=game.events,
+            roster=roster,
+            starting_lineup=game.starting_lineup,
+            gk_player_id=game.gk_player_id,
+            gk_changes=game.gk_changes,
+            period_clock_to_video_time=clock_to_video,
+            field_length_m=field_cal.length_m,
+            field_width_m=field_cal.width_m,
+        )
     identity_by_track = {a.track_id: a.player_id for a in assignments if a.player_id}
     team_of_player = _flip_team_map(team_of_track, identity_by_track)
     _status_counts: dict[str, int] = {}

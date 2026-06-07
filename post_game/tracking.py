@@ -68,6 +68,19 @@ class Tracker:
             dtype=np.float64,
         )
         tracks = self.impl.update(arr, frame)
+        # Pull the current smoothed OSNet Re-ID feature per track from boxmot's
+        # internal STrack list so it can be persisted for offline tracklet
+        # stitching. boxmot 11.x: BotSort.active_tracks -> STrack(.id, .smooth_feat).
+        # Best-effort: if the internal layout changes, embeddings stay None and
+        # stitching falls back to jersey-HSV.
+        feat_by_id: dict[int, np.ndarray] = {}
+        try:
+            for st in getattr(self.impl, "active_tracks", None) or []:
+                f = getattr(st, "smooth_feat", None)
+                if f is not None:
+                    feat_by_id[int(st.id)] = np.asarray(f, dtype=np.float32)
+        except Exception:
+            feat_by_id = {}
         out: list[TrackedDetection] = []
         # tracks layout (boxmot): x1, y1, x2, y2, track_id, conf, cls, det_index, ...
         for row in tracks:
@@ -83,6 +96,7 @@ class Tracker:
                     bbox_crop=(float(x1), float(y1), float(x2), float(y2)),
                     bbox_eq=bbox_eq,
                     track_id=int(tid),
+                    appearance_embedding=feat_by_id.get(int(tid)),
                 )
             )
         return out

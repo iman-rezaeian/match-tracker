@@ -120,6 +120,23 @@ ID_CONFIDENCE_REVIEW = 0.50    # 0.50..0.80 → flag for coach review
 MIN_BBOX_H_FOR_OCR = 80        # px; smaller → don't bother running OCR
 MIN_BBOX_H_FOR_FACE = 90       # px
 
+# --- Tracklet stitching (reid_stitch.py) ---
+STITCH_MAX_GAP_S = 10.0        # max temporal gap between fragments to consider linking
+STITCH_SLACK_M = 3.0           # plausible-move slack for near-zero gaps (foot-pos noise)
+STITCH_APPEARANCE_COS = 0.55   # OSNet Re-ID cosine ≥ this → same player (appearance gate)
+STITCH_HSV_COS = 0.90          # jersey-HSV cosine gate (fallback; mainly rejects cross-color)
+STITCH_GAP_WEIGHT = 0.5        # link-cost weight on temporal gap (s)
+STITCH_APP_WEIGHT = 5.0        # link-cost weight on (1 - appearance cosine)
+
+# --- Coach-log identity assignment (identity_assign.py) ---
+# Board (coach tactical drag) coords: x∈[0,1] left→right (coach POV),
+# y∈[0,1] 0=halfway/attacking → 1=own goal.
+ASSIGN_POS_SIGMA_M = 18.0      # Gaussian width for tracklet↔expected-position distance
+ASSIGN_W_POSITION = 1.0        # weight: agreement with coach board position over time
+ASSIGN_W_VOTES = 1.5           # weight: coach action-event votes (player did X here)
+ASSIGN_W_ONFIELD = 1.0         # weight: on-field-window overlap (lineup+subs, tolerant)
+ASSIGN_GK_BONUS = 3.0          # strong prior: GK tracklet ↔ GK player
+
 # --- Stats ---------------------------------------------------------------
 
 SPRINT_THRESHOLD_MS = 4.5                        # m/s; U10 sprint = ~16 km/h
