@@ -75,6 +75,14 @@ class GameDoc:
     # H2 start. Use this when the "start 2nd half" button was pressed late
     # (sub chaos, distracted coach, etc.).
     video_offset_h2_kickoff_s: float = 0.0
+    # Per-game coach identity corrections, written by the PWA IdentityFixView:
+    # { "<tracklet_id>": "<player_id>" | None }. A player_id force-assigns that
+    # stitched tracklet to that roster player (status="coach", confidence=1.0);
+    # None drops the tracklet (not our team / spectator). Coach overrides always
+    # win over the auto-assignment. Applied in identity_assign.assign_identities_v2.
+    # NOTE: tracklet ids are stable only while the Stage-2 track cache is
+    # unchanged — a full re-track regenerates them and invalidates overrides.
+    identity_overrides: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -161,6 +169,7 @@ def get_game(game_id: str) -> GameDoc:
         field_name=d.get("fieldName"),
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
+        identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
     )
 
 
@@ -473,6 +482,14 @@ def _r2_client():
 
 def upload_clip(local_path: str, key: str) -> str:
     _r2_client().upload_file(local_path, config.R2_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"})
+    base = config.R2_PUBLIC_BASE.rstrip("/")
+    return f"{base}/{key}" if base else f"r2://{config.R2_BUCKET}/{key}"
+
+
+def upload_image(local_path: str, key: str, content_type: str = "image/jpeg") -> str:
+    """Upload a still image (e.g. per-tracklet thumbnail) to R2 and return its
+    public URL. Same bucket/base as `upload_clip` but image content type."""
+    _r2_client().upload_file(local_path, config.R2_BUCKET, key, ExtraArgs={"ContentType": content_type})
     base = config.R2_PUBLIC_BASE.rstrip("/")
     return f"{base}/{key}" if base else f"r2://{config.R2_BUCKET}/{key}"
 
