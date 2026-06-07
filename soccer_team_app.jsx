@@ -4632,7 +4632,7 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
 }
 
 /* ---------- YOUTUBE EMBED ---------- */
-function YouTubeEmbed({ videoId, live = false, interactive = false }) {
+function YouTubeEmbed({ videoId, live = false, interactive = false, fill = false }) {
   // Sanitize videoId
   let id = videoId || '';
   if (id.includes('youtube.com') || id.includes('youtu.be')) {
@@ -4663,8 +4663,10 @@ function YouTubeEmbed({ videoId, live = false, interactive = false }) {
       ].filter(Boolean).join('&');
   const src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
 
+  // `fill` fills the parent (caller controls aspect, e.g. a 9:16 portrait
+  // shorts frame); default keeps the 16:9 box for inline/landscape use.
   return (
-    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+    <div className={fill ? 'relative w-full h-full bg-black' : 'relative w-full aspect-video rounded-xl overflow-hidden bg-black'}>
       <iframe
         src={src}
         className="absolute inset-0 w-full h-full"
@@ -6295,17 +6297,13 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
  * AnalyticsPanel for that game. Also the entry point for the (upcoming)
  * season-wide aggregate analytics view.
  */
-// Reusable Training Videos block: fetches each playlist from the worker and
-// renders a native thumbnail grid + an inline player modal. Used inline on the
-// public home page and inside the coach full-screen TrainingVideosView.
-function TrainingVideosSection({ showHeading = false }) {
-  // One entry per playlist id: { id, title, items, status: 'loading'|'ok'|'error' }
+// Loads the configured playlists from the worker. One entry per id:
+// { id, title, items, status: 'loading'|'ok'|'error' }.
+function useTrainingPlaylists() {
   const [playlists, setPlaylists] = useState(
     () => TRAINING_PLAYLISTS.map(id => ({ id, title: '', items: [], status: 'loading' }))
   );
-  const [activeVideo, setActiveVideo] = useState(null); // { videoId, title }
-
-  const loadPlaylist = (id) => {
+  const load = (id) => {
     setPlaylists(prev => prev.map(p => p.id === id ? { ...p, status: 'loading' } : p));
     fetch(`${R2_UPLOAD_WORKER}/youtube-playlist?id=${encodeURIComponent(id)}`)
       .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'load failed')))
@@ -6314,131 +6312,116 @@ function TrainingVideosSection({ showHeading = false }) {
         : p)))
       .catch(() => setPlaylists(prev => prev.map(p => p.id === id ? { ...p, status: 'error' } : p)));
   };
+  useEffect(() => { TRAINING_PLAYLISTS.forEach(load); }, []);
+  return { playlists, reload: load };
+}
 
-  useEffect(() => { TRAINING_PLAYLISTS.forEach(loadPlaylist); }, []);
+// Full-screen Training hub: one tile per playlist → opens the shorts player.
+function TrainingHub({ onBack }) {
+  const { playlists, reload } = useTrainingPlaylists();
+  const [open, setOpen] = useState(null); // the playlist object being viewed
 
   return (
-    <>
-      <div className="px-4 pt-6 max-w-2xl mx-auto space-y-8">
-        {showHeading && (
-          <h2 className="font-display text-2xl text-stone-100 flex items-center gap-2">
-            <span>🎓</span> TRAINING VIDEOS
-          </h2>
-        )}
-        {playlists.map(pl => (
-          <section key={pl.id}>
-            <div className="flex items-baseline justify-between mb-3">
-              <h3 className="font-display text-xl">{pl.title || 'Training'}</h3>
-              {pl.status === 'ok' && (
-                <span className="text-xs text-stone-500 uppercase tracking-wider">
-                  {pl.items.length} video{pl.items.length === 1 ? '' : 's'}
-                </span>
-              )}
-            </div>
-
-            {pl.status === 'loading' && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {[0,1,2].map(i => (
-                  <div key={i} className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden animate-pulse">
-                    <div className="aspect-video bg-stone-800" />
-                    <div className="p-2 space-y-1.5">
-                      <div className="h-3 bg-stone-800 rounded w-full" />
-                      <div className="h-3 bg-stone-800 rounded w-2/3" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {pl.status === 'error' && (
-              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center">
-                <div className="text-sm text-stone-400 mb-3">Couldn't load these videos.</div>
-                <button
-                  onClick={() => loadPlaylist(pl.id)}
-                  className="text-xs font-bold text-lime-400 bg-lime-500/10 hover:bg-lime-500/20 px-4 py-2 rounded-lg active:scale-95 transition"
-                >
-                  RETRY
-                </button>
-              </div>
-            )}
-
-            {pl.status === 'ok' && pl.items.length === 0 && (
-              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-                No videos in this playlist yet.
-              </div>
-            )}
-
-            {pl.status === 'ok' && pl.items.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {pl.items.map(v => (
-                  <button
-                    key={v.videoId}
-                    onClick={() => setActiveVideo({ videoId: v.videoId, title: v.title })}
-                    className="group bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-xl overflow-hidden text-left active:scale-[0.98] transition"
-                  >
-                    <div className="relative aspect-video bg-stone-800">
-                      {v.thumbnail && (
-                        <img src={v.thumbnail} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
-                      )}
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition">
-                        <span className="w-10 h-10 rounded-full bg-black/60 group-hover:bg-lime-500 flex items-center justify-center transition">
-                          <PlayCircle className="w-6 h-6 text-white" />
-                        </span>
-                      </div>
-                    </div>
-                    <div className="p-2">
-                      <div className="text-xs font-medium leading-snug line-clamp-2">{v.title}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-        ))}
+    <div className="fixed inset-0 z-50 bg-stone-950 text-stone-100 overflow-y-auto" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 bg-stone-950/90 backdrop-blur border-b border-stone-800">
+        <span className="font-display text-base">🎬 Training Videos</span>
+        <button onClick={onBack} className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 text-xs flex items-center active:scale-95">‹ Back</button>
       </div>
-
-      {/* Inline player modal */}
-      {activeVideo && (
-        <div
-          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
-          onClick={() => setActiveVideo(null)}
-        >
-          <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-2 gap-3">
-              <div className="text-sm font-medium text-stone-100 min-w-0 truncate">{activeVideo.title}</div>
-              <button
-                onClick={() => setActiveVideo(null)}
-                aria-label="Close"
-                className="shrink-0 h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <YouTubeEmbed videoId={activeVideo.videoId} interactive />
-          </div>
-        </div>
-      )}
-    </>
+      <div className="p-3 space-y-3 max-w-xl mx-auto">
+        {playlists.map(pl => {
+          const thumb = pl.items[0]?.thumbnail;
+          if (pl.status === 'error') {
+            return (
+              <div key={pl.id} className="rounded-2xl border border-stone-800 bg-stone-900 p-6 text-center">
+                <div className="text-sm text-stone-400 mb-3">Couldn't load this playlist.</div>
+                <button onClick={() => reload(pl.id)} className="text-xs font-bold text-lime-400 bg-lime-500/10 hover:bg-lime-500/20 px-4 py-2 rounded-lg active:scale-95">RETRY</button>
+              </div>
+            );
+          }
+          return (
+            <button
+              key={pl.id}
+              disabled={pl.status !== 'ok' || pl.items.length === 0}
+              onClick={() => setOpen(pl)}
+              className="w-full rounded-2xl overflow-hidden border border-stone-800 text-left active:scale-[0.98] transition disabled:opacity-60"
+            >
+              <div className="relative h-32 bg-stone-800">
+                {thumb && <img src={thumb} alt="" className="w-full h-full object-cover opacity-80" />}
+                {pl.status === 'loading' && <div className="absolute inset-0 animate-pulse bg-stone-800" />}
+                <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,transparent,rgba(0,0,0,0.85))' }} />
+                <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between">
+                  <span className="font-display text-lg">{pl.status === 'loading' ? 'Loading…' : (pl.title || 'Training')}</span>
+                  {pl.status === 'ok' && <span className="text-[11px] text-stone-100 bg-black/55 rounded-full px-2 py-0.5">{pl.items.length} clips</span>}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {open && <TrainingShortsPlayer playlist={open} onBack={() => setOpen(null)} />}
+    </div>
   );
 }
 
-// Coach full-screen wrapper around the shared Training Videos block.
-function TrainingVideosView({ onBack }) {
+// Portrait shorts player: swipe ↑/↓ (or ⏮/⏭) for prev/next, ↻ replay,
+// stop-on-end (no auto-advance). Tap the video to play/pause (native controls).
+function TrainingShortsPlayer({ playlist, onBack }) {
+  const items = playlist.items || [];
+  const [idx, setIdx] = useState(0);
+  const [nonce, setNonce] = useState(0); // bump to remount the iframe (replay)
+  const touchY = useRef(null);
+  const go = (d) => { setIdx(i => Math.min(items.length - 1, Math.max(0, i + d))); setNonce(0); };
+  const cur = items[idx];
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') go(1);
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') go(-1);
+      else if (e.key === 'Escape') onBack();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [items.length]);
+
+  if (!cur) return null;
+  const onTouchStart = (e) => { touchY.current = e.touches[0].clientY; };
+  const onTouchEnd = (e) => {
+    if (touchY.current == null) return;
+    const dy = e.changedTouches[0].clientY - touchY.current;
+    touchY.current = null;
+    if (Math.abs(dy) < 45) return;
+    go(dy < 0 ? 1 : -1); // swipe up → next, swipe down → prev
+  };
+
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
-      <div
-        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-      >
-        <button onClick={onBack} aria-label="Back" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
-          <ChevronRight className="w-5 h-5 rotate-180" />
-        </button>
-        <h2 className="font-display text-lg">🎓 TRAINING VIDEOS</h2>
-        <div className="w-9" />
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 gap-2" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)', paddingBottom: 8, background: 'linear-gradient(180deg,rgba(0,0,0,0.65),transparent)' }}>
+        <span className="text-xs font-display truncate">{playlist.title}</span>
+        <span className="text-[11px] bg-black/55 rounded-full px-2 py-0.5 shrink-0 tabular-nums">{idx + 1} / {items.length}</span>
+        <button onClick={onBack} aria-label="Close" className="shrink-0 h-9 w-9 rounded-full bg-white/15 flex items-center justify-center active:scale-95"><X className="w-5 h-5" /></button>
       </div>
-      <TrainingVideosSection />
+
+      <div className="flex-1 flex items-center justify-center min-h-0">
+        <div className="relative h-full" style={{ aspectRatio: '9 / 16', maxWidth: '100%' }}>
+          <YouTubeEmbed key={`${cur.videoId}-${nonce}`} videoId={cur.videoId} interactive fill />
+        </div>
+      </div>
+
+      <div className="absolute bottom-0 inset-x-0 z-20 px-4 pt-8" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)', background: 'linear-gradient(0deg,rgba(0,0,0,0.78),transparent)' }}>
+        <div className="text-[12px] text-stone-200 mb-3 line-clamp-2">{cur.title}</div>
+        <div className="flex items-center justify-center gap-5">
+          <button onClick={() => go(-1)} disabled={idx === 0} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Previous">⏮</button>
+          <button onClick={() => setNonce(n => n + 1)} className="h-11 px-4 rounded-full bg-white/15 flex items-center gap-1 text-xs active:scale-95">↻ Replay</button>
+          <button onClick={() => go(1)} disabled={idx === items.length - 1} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Next">⏭</button>
+        </div>
+      </div>
     </div>
   );
+}
+
+// Coach full-screen wrapper — reuses the same hub/player flow.
+function TrainingVideosView({ onBack }) {
+  return <TrainingHub onBack={onBack} />;
 }
 
 function FilmRoomView({ games, roster, onBack }) {
@@ -10575,6 +10558,7 @@ function PublicHomePage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [isCoachUser, setIsCoachUser] = useState(false);
+  const [showTraining, setShowTraining] = useState(false);
   // Re-render once a minute so the featured card flips at 6 AM ET, kickoff,
   // and (final whistle + 1h) without needing a page reload or new snapshot.
   const [, setMinTick] = useState(0);
@@ -10888,7 +10872,24 @@ function PublicHomePage() {
         </div>
       )}
 
-      <TrainingVideosSection showHeading />
+      {/* Single full-width Training Videos tile → opens the hub (playlists → shorts player) */}
+      <div className="px-4 pt-6 max-w-2xl mx-auto">
+        <button
+          onClick={() => setShowTraining(true)}
+          className="w-full rounded-2xl p-4 flex items-center justify-between active:scale-[0.98] transition"
+          style={{ background: 'linear-gradient(135deg,#0e7490,#155e75)', border: '1px solid rgba(34,211,238,0.2)' }}
+        >
+          <span className="flex items-center gap-3 min-w-0">
+            <span className="text-2xl">🎬</span>
+            <span className="text-left min-w-0">
+              <span className="block font-display text-base text-white">TRAINING VIDEOS</span>
+              <span className="block text-[11px] text-cyan-100/70">Soccer &amp; Goalkeeper drills</span>
+            </span>
+          </span>
+          <span className="text-white/70 shrink-0">›</span>
+        </button>
+      </div>
+      {showTraining && <TrainingHub onBack={() => setShowTraining(false)} />}
 
     </div>
   );
