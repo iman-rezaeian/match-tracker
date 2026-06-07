@@ -262,6 +262,66 @@ export default {
       }
     }
 
+    // ---- GET /youtube-playlist?id=<playlistId> — public read: titles + thumbs for a playlist ----
+    // Metadata only (no video hosting). Edge-cached 1h to protect the YouTube API quota.
+    if (request.method === 'GET' && url.pathname === '/youtube-playlist') {
+      const id = url.searchParams.get('id') || '';
+      if (!/^[A-Za-z0-9_-]+$/.test(id)) return json({ error: 'invalid playlist id' }, 400);
+      if (!env.YOUTUBE_API_KEY) {
+        return json({ error: 'YOUTUBE_API_KEY not configured on worker' }, 500);
+      }
+
+      const cache = caches.default;
+      const cacheKey = new Request(url.toString(), request);
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+
+      try {
+        // Playlist title (one call).
+        let title = '';
+        const plRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${encodeURIComponent(id)}&key=${env.YOUTUBE_API_KEY}`
+        );
+        const plData = await plRes.json();
+        if (plData.items && plData.items.length) title = plData.items[0].snippet.title;
+
+        // Items, paginated — cap at ~2 pages (100 videos) to bound quota.
+        const items = [];
+        let pageToken = '';
+        for (let page = 0; page < 2; page++) {
+          const itRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${encodeURIComponent(id)}&key=${env.YOUTUBE_API_KEY}${pageToken ? `&pageToken=${pageToken}` : ''}`
+          );
+          const itData = await itRes.json();
+          if (itData.error) return json({ error: itData.error.message || 'youtube error' }, 502);
+          for (const it of (itData.items || [])) {
+            const videoId = it.contentDetails && it.contentDetails.videoId;
+            const snip = it.snippet || {};
+            // Skip private/deleted entries.
+            if (!videoId || snip.title === 'Private video' || snip.title === 'Deleted video') continue;
+            const thumbs = snip.thumbnails || {};
+            const thumbnail = (thumbs.medium && thumbs.medium.url) || (thumbs.default && thumbs.default.url) || '';
+            items.push({ videoId, title: snip.title || '', thumbnail, position: snip.position });
+          }
+          pageToken = itData.nextPageToken || '';
+          if (!pageToken) break;
+        }
+
+        const res = new Response(JSON.stringify({ playlistId: id, title, items }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=3600',
+            ...corsHeaders,
+          },
+        });
+        await cache.put(cacheKey, res.clone());
+        return res;
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
     // ---- POST /live-input/:uid/delete ----
     const delMatch = url.pathname.match(/^\/live-input\/([a-zA-Z0-9_-]+)\/delete$/);
     if (request.method === 'POST' && delMatch) {

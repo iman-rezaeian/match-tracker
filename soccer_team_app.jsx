@@ -83,6 +83,14 @@ const R2_PUBLIC = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 // Worker URL here (no trailing slash), e.g. 'https://stompers-upload.<acct>.workers.dev'.
 const R2_UPLOAD_WORKER = 'https://stompers-upload.rezaian-iman.workers.dev';
 
+// Training Videos — YouTube playlist IDs surfaced in the TRAINING section.
+// Section titles come from each playlist's own title (fetched via the worker),
+// so adding/removing a playlist here is the only change needed.
+const TRAINING_PLAYLISTS = [
+  'PL1KXWwWfqmixlAhd_t--UOnux0EcGDo5o',
+  'PL1KXWwWfqmiwkxyAZaAAyx8o9LT3oCHW9',
+];
+
 // Live-streaming provider toggle.
 // 'off'        — no live UI anywhere; all live code paths stay in the bundle
 //                so we can flip back without re-implementing anything
@@ -1368,6 +1376,7 @@ export default function App() {
           onViewHelp={() => setView('help')}
           onViewViewers={() => setView('viewers')}
           onViewFilmRoom={() => setView('filmRoom')}
+          onViewTraining={() => setView('training')}
         />
       )}
 
@@ -1661,6 +1670,10 @@ export default function App() {
         <FilmRoomView games={games} roster={roster} onBack={() => setView('home')} />
       )}
 
+      {view === 'training' && (
+        <TrainingVideosView onBack={() => setView('home')} />
+      )}
+
       {confirmDialog && (
         <ConfirmDialog
           message={confirmDialog.message}
@@ -1712,7 +1725,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining }) {
   const finishedGames = games.filter(g => g.status === 'finished');
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
@@ -1873,6 +1886,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
         <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Who's watching" />
+        <TileButton onClick={onViewTraining} icon={<span className="text-2xl leading-none">🎓</span>} label="TRAINING" sub="Skill videos" />
       </div>
 
       {/* Upcoming games */}
@@ -4618,7 +4632,7 @@ function DecisionPicker({ event, onPick, onSkip, onCancel }) {
 }
 
 /* ---------- YOUTUBE EMBED ---------- */
-function YouTubeEmbed({ videoId, live = false }) {
+function YouTubeEmbed({ videoId, live = false, interactive = false }) {
   // Sanitize videoId
   let id = videoId || '';
   if (id.includes('youtube.com') || id.includes('youtu.be')) {
@@ -4631,13 +4645,22 @@ function YouTubeEmbed({ videoId, live = false }) {
   if (!id) return null;
 
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
-  const params = [
-    'autoplay=1', 'mute=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
-    'controls=0', 'disablekb=1', 'iv_load_policy=3', 'fs=0',
-    'showinfo=0', 'cc_load_policy=0',
-    live ? 'live=1' : '',
-    origin ? `origin=${encodeURIComponent(origin)}` : '',
-  ].filter(Boolean).join('&');
+  // Interactive mode (on-demand training playback): normal YouTube controls,
+  // keyboard, fullscreen, and no click-blocking overlay. Default (live scorebug)
+  // stays locked-down and overlay-blocked so taps can't pause/share the stream.
+  const params = interactive
+    ? [
+        'autoplay=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
+        'iv_load_policy=3',
+        origin ? `origin=${encodeURIComponent(origin)}` : '',
+      ].filter(Boolean).join('&')
+    : [
+        'autoplay=1', 'mute=1', 'rel=0', 'modestbranding=1', 'playsinline=1',
+        'controls=0', 'disablekb=1', 'iv_load_policy=3', 'fs=0',
+        'showinfo=0', 'cc_load_policy=0',
+        live ? 'live=1' : '',
+        origin ? `origin=${encodeURIComponent(origin)}` : '',
+      ].filter(Boolean).join('&');
   const src = `https://www.youtube-nocookie.com/embed/${id}?${params}`;
 
   return (
@@ -4649,10 +4672,11 @@ function YouTubeEmbed({ videoId, live = false }) {
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
         allowFullScreen
         referrerPolicy="strict-origin-when-cross-origin"
-        title="Match stream"
+        title={interactive ? 'Training video' : 'Match stream'}
       />
-      {/* Click-blocking overlay — prevents accidental taps on YT pause/share/title */}
-      <div className="absolute inset-0" aria-hidden="true" />
+      {/* Click-blocking overlay — prevents accidental taps on YT pause/share/title.
+          Omitted in interactive mode so users can scrub/fullscreen. */}
+      {!interactive && <div className="absolute inset-0" aria-hidden="true" />}
     </div>
   );
 }
@@ -6271,6 +6295,152 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
  * AnalyticsPanel for that game. Also the entry point for the (upcoming)
  * season-wide aggregate analytics view.
  */
+// Reusable Training Videos block: fetches each playlist from the worker and
+// renders a native thumbnail grid + an inline player modal. Used inline on the
+// public home page and inside the coach full-screen TrainingVideosView.
+function TrainingVideosSection({ showHeading = false }) {
+  // One entry per playlist id: { id, title, items, status: 'loading'|'ok'|'error' }
+  const [playlists, setPlaylists] = useState(
+    () => TRAINING_PLAYLISTS.map(id => ({ id, title: '', items: [], status: 'loading' }))
+  );
+  const [activeVideo, setActiveVideo] = useState(null); // { videoId, title }
+
+  const loadPlaylist = (id) => {
+    setPlaylists(prev => prev.map(p => p.id === id ? { ...p, status: 'loading' } : p));
+    fetch(`${R2_UPLOAD_WORKER}/youtube-playlist?id=${encodeURIComponent(id)}`)
+      .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'load failed')))
+      .then(data => setPlaylists(prev => prev.map(p => p.id === id
+        ? { ...p, title: data.title || 'Training', items: data.items || [], status: 'ok' }
+        : p)))
+      .catch(() => setPlaylists(prev => prev.map(p => p.id === id ? { ...p, status: 'error' } : p)));
+  };
+
+  useEffect(() => { TRAINING_PLAYLISTS.forEach(loadPlaylist); }, []);
+
+  return (
+    <>
+      <div className="px-4 pt-6 max-w-2xl mx-auto space-y-8">
+        {showHeading && (
+          <h2 className="font-display text-2xl text-stone-100 flex items-center gap-2">
+            <span>🎓</span> TRAINING VIDEOS
+          </h2>
+        )}
+        {playlists.map(pl => (
+          <section key={pl.id}>
+            <div className="flex items-baseline justify-between mb-3">
+              <h3 className="font-display text-xl">{pl.title || 'Training'}</h3>
+              {pl.status === 'ok' && (
+                <span className="text-xs text-stone-500 uppercase tracking-wider">
+                  {pl.items.length} video{pl.items.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+
+            {pl.status === 'loading' && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[0,1,2].map(i => (
+                  <div key={i} className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden animate-pulse">
+                    <div className="aspect-video bg-stone-800" />
+                    <div className="p-2 space-y-1.5">
+                      <div className="h-3 bg-stone-800 rounded w-full" />
+                      <div className="h-3 bg-stone-800 rounded w-2/3" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pl.status === 'error' && (
+              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center">
+                <div className="text-sm text-stone-400 mb-3">Couldn't load these videos.</div>
+                <button
+                  onClick={() => loadPlaylist(pl.id)}
+                  className="text-xs font-bold text-lime-400 bg-lime-500/10 hover:bg-lime-500/20 px-4 py-2 rounded-lg active:scale-95 transition"
+                >
+                  RETRY
+                </button>
+              </div>
+            )}
+
+            {pl.status === 'ok' && pl.items.length === 0 && (
+              <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+                No videos in this playlist yet.
+              </div>
+            )}
+
+            {pl.status === 'ok' && pl.items.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {pl.items.map(v => (
+                  <button
+                    key={v.videoId}
+                    onClick={() => setActiveVideo({ videoId: v.videoId, title: v.title })}
+                    className="group bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-xl overflow-hidden text-left active:scale-[0.98] transition"
+                  >
+                    <div className="relative aspect-video bg-stone-800">
+                      {v.thumbnail && (
+                        <img src={v.thumbnail} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                      )}
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition">
+                        <span className="w-10 h-10 rounded-full bg-black/60 group-hover:bg-lime-500 flex items-center justify-center transition">
+                          <PlayCircle className="w-6 h-6 text-white" />
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-2">
+                      <div className="text-xs font-medium leading-snug line-clamp-2">{v.title}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
+
+      {/* Inline player modal */}
+      {activeVideo && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setActiveVideo(null)}
+        >
+          <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2 gap-3">
+              <div className="text-sm font-medium text-stone-100 min-w-0 truncate">{activeVideo.title}</div>
+              <button
+                onClick={() => setActiveVideo(null)}
+                aria-label="Close"
+                className="shrink-0 h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <YouTubeEmbed videoId={activeVideo.videoId} interactive />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Coach full-screen wrapper around the shared Training Videos block.
+function TrainingVideosView({ onBack }) {
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
+      <div
+        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <button onClick={onBack} aria-label="Back" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
+          <ChevronRight className="w-5 h-5 rotate-180" />
+        </button>
+        <h2 className="font-display text-lg">🎓 TRAINING VIDEOS</h2>
+        <div className="w-9" />
+      </div>
+      <TrainingVideosSection />
+    </div>
+  );
+}
+
 function FilmRoomView({ games, roster, onBack }) {
   const [openGameId, setOpenGameId] = useState(null);
   const [showSeason, setShowSeason] = useState(false);
@@ -10663,6 +10833,8 @@ function PublicHomePage() {
 
         </div>
       )}
+
+      <TrainingVideosSection showHeading />
 
     </div>
   );
