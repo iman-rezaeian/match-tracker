@@ -574,7 +574,8 @@ def run(
     # records let the PWA list each stitched tracklet (worst-confidence first)
     # with its current player + a representative crop so the coach can fix swaps;
     # corrections come back as `identityOverrides` on the game doc.
-    tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled)
+    tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
+                                             field_cal.length_m, field_cal.width_m)
     if tracklet_records:
         try:
             thumbs = generate_tracklet_thumbnails(
@@ -830,7 +831,8 @@ def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dic
     return {1: attack_right_p1, 2: not attack_right_p1}
 
 
-def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled: float) -> list[dict]:
+def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled: float,
+                          field_length_m: float, field_width_m: float) -> list[dict]:
     """Aggregate the per-track identity assignments into per-tracklet records for
     the coach IdentityFixView. Our-team tracklets only (opponent tracks carry no
     `breakdown.tracklet`). Sorted worst-confidence first so the coach reviews the
@@ -846,6 +848,17 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
     spans = grp.agg(["min", "max"])
     counts = grp.size()
     fps = fps_sampled if fps_sampled and fps_sampled > 0 else 1.0
+
+    # Per-tracklet fraction of detections that land ON the pitch (within a small
+    # margin of the lines). Refs/coaches/spectators next to the touchline camera
+    # get mis-classified as our team by jersey color but sit OFF the pitch in
+    # field coords — a low on-pitch fraction lets us drop them from the review list.
+    onpitch_frac: dict[int, float] = {}
+    if {"x_m", "y_m"}.issubset(df.columns):
+        m = config.TRACKLET_REVIEW_ONPITCH_MARGIN_M
+        inb = ((df["x_m"] >= -m) & (df["x_m"] <= field_length_m + m)
+               & (df["y_m"] >= -m) & (df["y_m"] <= field_width_m + m))
+        onpitch_frac = df.assign(_inb=inb).groupby("tracklet")["_inb"].mean().to_dict()
     by_tl: dict[int, object] = {}
     for a in assignments:
         tl = (a.breakdown or {}).get("tracklet")
@@ -862,8 +875,13 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
         # player-time. Only review tracklets that matter: those already assigned
         # to a player (could be a wrong swap to fix) OR sizeable unassigned ones
         # worth rescuing. Drop the rest so the list is a few dozen, not ~400.
-        if not a.player_id and minutes < config.TRACKLET_REVIEW_MIN_MINUTES:
-            continue
+        # Assigned tracklets always show; unassigned ones must be substantial AND
+        # mostly on the pitch (filters out sideline refs/coaches/spectators).
+        if not a.player_id:
+            if minutes < config.TRACKLET_REVIEW_MIN_MINUTES:
+                continue
+            if onpitch_frac and onpitch_frac.get(tl, 1.0) < config.TRACKLET_REVIEW_ONPITCH_FRAC:
+                continue  # mostly off-pitch → not one of our players
         out.append({
             "tracklet_id": int(tl),
             "player_id": a.player_id,
