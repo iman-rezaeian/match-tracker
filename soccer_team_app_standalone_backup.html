@@ -7556,6 +7556,7 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const [overrides, setOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(null);
+  const [zoom, setZoom] = useState(null); // thumb_url shown full-screen for recognition
 
   useEffect(() => {
     window.history.pushState({ modal: 'idfix' }, '');
@@ -7655,7 +7656,10 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
               className={`flex gap-3 rounded-xl border p-2 ${overridden ? 'border-lime-500/50 bg-lime-500/5' : 'border-stone-800 bg-stone-900'}`}
             >
               {tl.thumb_url
-                ? <img src={tl.thumb_url} alt="" className="w-16 h-24 object-cover rounded-lg bg-stone-800 shrink-0" loading="lazy" />
+                ? <button onClick={() => setZoom(tl.thumb_url)} className="relative w-16 h-24 shrink-0 rounded-lg overflow-hidden bg-stone-800 active:scale-95" aria-label="Enlarge photo">
+                    <img src={tl.thumb_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    <span className="absolute bottom-0.5 right-0.5 h-5 w-5 rounded bg-black/60 flex items-center justify-center text-[11px] leading-none">⤢</span>
+                  </button>
                 : <div className="w-16 h-24 rounded-lg bg-stone-800 shrink-0 flex items-center justify-center text-stone-600 text-2xl">?</div>}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -7685,6 +7689,16 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
           <div className="text-center text-stone-500 text-sm py-10">No tracklets to review.</div>
         )}
       </div>
+
+      {zoom && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/95 flex flex-col items-center justify-center p-4"
+          onClick={() => setZoom(null)}
+        >
+          <img src={zoom} alt="" className="max-w-full max-h-[85vh] object-contain rounded-lg" style={{ imageRendering: 'auto' }} />
+          <div className="mt-4 text-stone-300 text-xs">Tap anywhere to close</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -11504,6 +11518,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
