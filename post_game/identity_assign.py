@@ -106,8 +106,49 @@ def assign_identities_v2(
         tl = tracklet_of_track.get(t, t)
         tracklet_members.setdefault(tl, []).append(t)
 
-    gk_track = _find_gk_track(tracks_df, team_of_track, field_length_m, field_width_m)
-    gk_tracklet = tracklet_of_track.get(gk_track, gk_track) if gk_track is not None else None
+    # --- Goalkeeper handled SEPARATELY ---------------------------------------
+    # The keeper stands near our goal with little lengthwise movement. Forcing
+    # the GK into the per-window outfield Hungarian smeared his identity across
+    # the field (an outfield tracklet got labeled GK whenever the keeper wasn't
+    # detected that window). Instead: identify keeper tracklet(s) geometrically,
+    # assign them to the GK player, and EXCLUDE both the GK player and the keeper
+    # tracklets from the outfield matching.
+    keeper_tracklets: set[int] = set()
+    if has_xy and gk_player_id:
+        L = field_length_m
+        _dft = tracks_df[tracks_df["track_id"].isin(our_tracks)].copy()
+        _dft["tracklet"] = _dft["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t)))
+        # Per-period: a deep, low-movement tracklet sits near a goal line — but
+        # that's true at BOTH ends (our keeper vs a team-mate camped at the
+        # opponent goal). Disambiguate by which end has the most deep+stationary
+        # presence: the real keeper is there the whole half, so OUR goal = the
+        # end with more keeper-candidate samples. Only flag tracklets on that end.
+        for (pstart, pend) in (periods_video or [(0.0, 1e12)]):
+            pdf = _dft[(_dft["time_s"] >= pstart) & (_dft["time_s"] <= pend)]
+            cands = []  # (tracklet, median_x, n_samples)
+            for tl, sub in pdf.groupby("tracklet"):
+                if len(sub) < 10:
+                    continue
+                medx = float(sub["x_m"].median())
+                xspread = float(sub["x_m"].quantile(0.9) - sub["x_m"].quantile(0.1))
+                if min(medx, L - medx) < L * 0.12 and xspread < L * 0.25:
+                    cands.append((int(tl), medx, len(sub)))
+            if not cands:
+                continue
+            near0 = sum(n for _t, mx, n in cands if mx < L / 2)
+            nearL = sum(n for _t, mx, n in cands if mx >= L / 2)
+            our_end_is_0 = near0 >= nearL  # our goal = end with more keeper presence
+            # There's exactly ONE keeper — take only the single most-present
+            # deep tracklet on our end (flagging all of them swept in deep
+            # defenders and ballooned the GK's distance).
+            our_cands = [c for c in cands if (c[1] < L / 2) == our_end_is_0]
+            if our_cands:
+                keeper_tracklets.add(max(our_cands, key=lambda c: c[2])[0])
+        # Fallback: if geometry found nothing, use the single closest-to-goal track.
+        if not keeper_tracklets:
+            gkt = _find_gk_track(tracks_df, team_of_track, field_length_m, field_width_m)
+            if gkt is not None:
+                keeper_tracklets.add(tracklet_of_track.get(gkt, gkt))
 
     # match_count[tracklet][player] accumulated over windows
     match_count: dict[int, dict[str, float]] = {}
@@ -139,16 +180,18 @@ def assign_identities_v2(
                         wdf = pdf[(pdf["time_s"] >= w0) & (pdf["time_s"] < w1)]
                         if wdf.empty:
                             continue
-                        # median pos per tracklet present
+                        # median pos per OUTFIELD tracklet present (keeper handled separately)
                         tl_pos = wdf.groupby("tracklet")[["x_m", "y_m"]].median()
-                        tls = [int(t) for t in tl_pos.index]
-                        # on-field players (tolerant) with a known board spot
+                        tls = [int(t) for t in tl_pos.index if int(t) not in keeper_tracklets]
+                        # on-field OUTFIELD players (exclude GK), tolerant window
                         wmid = 0.5 * (w0 + w1)
                         cand = [p for p in exp
-                                if _is_onfield(onfield, p, wmid - ONFIELD_TOLERANCE_S,
-                                               wmid + ONFIELD_TOLERANCE_S)]
+                                if p != gk_player_id
+                                and _is_onfield(onfield, p, wmid - ONFIELD_TOLERANCE_S,
+                                                wmid + ONFIELD_TOLERANCE_S)]
                         if not tls or not cand:
                             continue
+                        gate2 = (field_length_m * config.ASSIGN_MATCH_MAX_FRAC) ** 2
                         C = np.zeros((len(tls), len(cand)), dtype=np.float64)
                         for ai, tl in enumerate(tls):
                             px, py = float(tl_pos.loc[tl, "x_m"]), float(tl_pos.loc[tl, "y_m"])
@@ -156,12 +199,17 @@ def assign_identities_v2(
                                 ex, ey = exp[p]
                                 d2 = (px - ex) ** 2 + (py - ey) ** 2
                                 score = config.ASSIGN_W_POSITION * np.exp(-d2 / (2 * config.ASSIGN_POS_SIGMA_M ** 2))
-                                if gk_tracklet is not None and tl == gk_tracklet and p == gk_player_id:
-                                    score += config.ASSIGN_GK_BONUS
                                 C[ai, bj] = -score  # minimize → maximize score
                         ri, ci = linear_sum_assignment(C)
-                        matched = [(tls[a], cand[b]) for a, b in zip(ri, ci)]
-                        total_cost += float(C[ri, ci].sum())
+                        matched = []
+                        for a, b in zip(ri, ci):
+                            tl, p = tls[a], cand[b]
+                            ex, ey = exp[p]
+                            d2 = (float(tl_pos.loc[tl, "x_m"]) - ex) ** 2 + (float(tl_pos.loc[tl, "y_m"]) - ey) ** 2
+                            if d2 > gate2:
+                                continue  # too far to be a real match — don't vote
+                            matched.append((tl, p))
+                            total_cost += float(C[a, b])
                         per_window.append((wmid, matched))
                     if best is None or total_cost < best[0]:
                         best = (total_cost, flip_d, flip_l, per_window)
@@ -175,31 +223,78 @@ def assign_identities_v2(
                 for tl, p in matched:
                     match_count.setdefault(tl, {})[p] = match_count.setdefault(tl, {}).get(p, 0.0) + 1.0
 
-    # --- aggregate per tracklet → player + confidence ---
-    tracklet_assign: dict[int, tuple[Optional[str], float, str]] = {}
+    # --- per-player minute BUDGET from the coach log (ground truth) ----------
+    # A player can't own more track-time than the coach logged them on the field
+    # (±slack). This caps over-assignment that smears one player's data across
+    # another's tracks (e.g. an 18-min sub holding 56 min of tracks).
+    def _played_minutes(pid: str) -> float:
+        tot = 0.0
+        for (a, b) in onfield.get(pid, []):
+            for (pa, pb) in (periods_video or []):
+                lo, hi = max(a, pa), min(b, pb)
+                if hi > lo:
+                    tot += hi - lo
+        return tot / 60.0
+    budget = {p: _played_minutes(p) + config.ASSIGN_MINUTE_SLACK for p in valid_ids}
+
+    def _tl_minutes(members: list[int]) -> float:
+        lo = min(lifetimes.get(m, (0, 0))[0] for m in members)
+        hi = max(lifetimes.get(m, (0, 0))[1] for m in members)
+        return max(0.0, (hi - lo) / 60.0)
+
+    # Pre-compute each tracklet's candidate ranking + confidence.
+    tl_rank: dict[int, dict] = {}
     for tl, members in tracklet_members.items():
         votes = match_count.get(tl, {})
-        # restrict to roster + on-field over the tracklet lifetime (tolerant)
         span = (min(lifetimes.get(m, (0, 0))[0] for m in members),
                 max(lifetimes.get(m, (0, 0))[1] for m in members))
         votes = {p: v for p, v in votes.items()
                  if p in valid_ids and _is_onfield(onfield, p, span[0] - ONFIELD_TOLERANCE_S,
                                                     span[1] + ONFIELD_TOLERANCE_S)}
-        if not votes:
-            tracklet_assign[tl] = (None, 0.0, "unknown")
+        if votes:
+            ordered = sorted(votes.values(), reverse=True)
+            share = ordered[0] / max(sum(ordered), 1.0)
+            margin = (ordered[0] - ordered[1]) / ordered[0] if len(ordered) > 1 and ordered[0] > 0 else 1.0
+            conf = float(min(1.0, 0.6 * share + 0.4 * margin))
+        else:
+            conf = 0.0
+        tl_rank[tl] = {
+            "ranked": sorted(votes, key=votes.get, reverse=True),
+            "conf": conf,
+            "minutes": _tl_minutes(members),
+        }
+
+    # --- greedy capacity assignment, highest-confidence tracklets first -------
+    tracklet_assign: dict[int, tuple[Optional[str], float, str]] = {}
+    assigned_min: dict[str, float] = {}
+
+    # 1. Keeper tracklets → GK unconditionally (don't let the cap drop them).
+    if gk_player_id:
+        for tl in keeper_tracklets:
+            if tl in tracklet_members:
+                tracklet_assign[tl] = (gk_player_id, 0.95, "auto")
+                assigned_min[gk_player_id] = assigned_min.get(gk_player_id, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
+
+    # 2. Everyone else by descending confidence, respecting per-player budgets.
+    remaining = [tl for tl in tracklet_members if tl not in keeper_tracklets]
+    for tl in sorted(remaining, key=lambda t: tl_rank[t]["conf"], reverse=True):
+        info = tl_rank[tl]
+        conf, tl_min = info["conf"], info["minutes"]
+        chosen = None
+        for p in info["ranked"]:
+            if p == gk_player_id:
+                continue  # GK only gets keeper tracklets
+            if assigned_min.get(p, 0.0) + tl_min <= budget.get(p, 1e9):
+                chosen = p
+                break
+        if chosen is None:
+            tracklet_assign[tl] = (None, conf, "unknown")  # over budget / no candidate → drop
             continue
-        total = sum(votes.values())
-        winner, count = max(votes.items(), key=lambda kv: kv[1])
-        share = count / max(total, 1.0)
-        # confidence: agreement share, lightly boosted when the winner clearly
-        # leads the runner-up.
-        ordered = sorted(votes.values(), reverse=True)
-        margin = (ordered[0] - ordered[1]) / ordered[0] if len(ordered) > 1 and ordered[0] > 0 else 1.0
-        conf = float(min(1.0, 0.6 * share + 0.4 * margin))
+        assigned_min[chosen] = assigned_min.get(chosen, 0.0) + tl_min
         status = ("auto" if conf >= config.ID_CONFIDENCE_AUTO
                   else "review" if conf >= config.ID_CONFIDENCE_REVIEW
                   else "unknown")
-        tracklet_assign[tl] = (winner if status != "unknown" else None, conf, status)
+        tracklet_assign[tl] = (chosen if status != "unknown" else None, conf, status)
 
     # --- emit per original track ---
     out: list[IdentityAssignment] = []

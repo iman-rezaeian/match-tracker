@@ -135,7 +135,11 @@ ASSIGN_POS_SIGMA_M = 18.0      # Gaussian width for tracklet↔expected-position
 ASSIGN_W_POSITION = 1.0        # weight: agreement with coach board position over time
 ASSIGN_W_VOTES = 1.5           # weight: coach action-event votes (player did X here)
 ASSIGN_W_ONFIELD = 1.0         # weight: on-field-window overlap (lineup+subs, tolerant)
-ASSIGN_GK_BONUS = 3.0          # strong prior: GK tracklet ↔ GK player
+ASSIGN_GK_BONUS = 3.0          # (legacy) GK now handled separately, not via bonus
+ASSIGN_MATCH_MAX_FRAC = 0.55   # reject a tracklet↔player window-match beyond this
+                               # fraction of field length (kills far-fetched votes)
+ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
+                               # (a player can't own more track-time than played)
 
 # --- Stats ---------------------------------------------------------------
 
