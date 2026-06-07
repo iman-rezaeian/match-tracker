@@ -212,6 +212,31 @@ const TRAINING_PLAYLISTS = [
   'PL1KXWwWfqmixlAhd_t--UOnux0EcGDo5o',
   'PL1KXWwWfqmiwkxyAZaAAyx8o9LT3oCHW9',
 ];
+// Fixed, coach-friendly labels for the two training playlists (we don't trust
+// the raw YouTube playlist title/thumbnail — they render messy). Keyed by id.
+const TRAINING_PLAYLIST_META = {
+  'PL1KXWwWfqmixlAhd_t--UOnux0EcGDo5o': { label: 'Soccer Training', icon: '⚽', gradient: 'linear-gradient(135deg,#3f6212,#1a2e05)', border: 'rgba(132,204,22,0.30)' },
+  'PL1KXWwWfqmiwkxyAZaAAyx8o9LT3oCHW9': { label: 'Goalkeeper Training', icon: '🧤', gradient: 'linear-gradient(135deg,#0e7490,#155e75)', border: 'rgba(34,211,238,0.25)' },
+};
+const _trainingMeta = (id) => TRAINING_PLAYLIST_META[id] || { label: 'Training', icon: '🎬', gradient: 'linear-gradient(135deg,#44403c,#1c1917)', border: 'rgba(255,255,255,0.12)' };
+
+// Lazy-load the YouTube IFrame Player API once. Returns a promise of window.YT.
+// A persistent Player lets us loadVideoById() to autoplay across navigations
+// (an iframe remount with autoplay=1 gets re-gated by iOS every time).
+let _ytApiPromise = null;
+function loadYouTubeIframeApi() {
+  if (typeof window === 'undefined') return Promise.reject('no window');
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (_ytApiPromise) return _ytApiPromise;
+  _ytApiPromise = new Promise((resolve) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { try { prev && prev(); } catch (e) {} resolve(window.YT); };
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  });
+  return _ytApiPromise;
+}
 
 // Live-streaming provider toggle.
 // 'off'        — no live UI anywhere; all live code paths stay in the bundle
@@ -6450,33 +6475,41 @@ function TrainingHub({ onBack }) {
         <span className="font-display text-base">🎬 Training Videos</span>
         <button onClick={onBack} className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 text-xs flex items-center active:scale-95">‹ Back</button>
       </div>
-      <div className="p-3 space-y-3 max-w-xl mx-auto">
+      <div className="p-4 space-y-3 max-w-xl mx-auto">
         {playlists.map(pl => {
-          const thumb = pl.items[0]?.thumbnail;
+          const meta = _trainingMeta(pl.id);
           if (pl.status === 'error') {
             return (
-              <div key={pl.id} className="rounded-2xl border border-stone-800 bg-stone-900 p-6 text-center">
-                <div className="text-sm text-stone-400 mb-3">Couldn't load this playlist.</div>
+              <div key={pl.id} className="rounded-2xl border border-stone-800 bg-stone-900 p-5 flex items-center justify-between">
+                <span className="flex items-center gap-3 min-w-0">
+                  <span className="text-2xl">{meta.icon}</span>
+                  <span className="text-left min-w-0">
+                    <span className="block font-display text-base text-white">{meta.label}</span>
+                    <span className="block text-[11px] text-stone-400">Couldn't load</span>
+                  </span>
+                </span>
                 <button onClick={() => reload(pl.id)} className="text-xs font-bold text-lime-400 bg-lime-500/10 hover:bg-lime-500/20 px-4 py-2 rounded-lg active:scale-95">RETRY</button>
               </div>
             );
           }
+          const loading = pl.status !== 'ok';
+          const sub = loading ? 'Loading…' : `${pl.items.length} video${pl.items.length === 1 ? '' : 's'}`;
           return (
             <button
               key={pl.id}
-              disabled={pl.status !== 'ok' || pl.items.length === 0}
+              disabled={loading || pl.items.length === 0}
               onClick={() => setOpen(pl)}
-              className="w-full rounded-2xl overflow-hidden border border-stone-800 text-left active:scale-[0.98] transition disabled:opacity-60"
+              className="w-full rounded-2xl p-4 flex items-center justify-between active:scale-[0.98] transition disabled:opacity-60"
+              style={{ background: meta.gradient, border: `1px solid ${meta.border}` }}
             >
-              <div className="relative h-32 bg-stone-800">
-                {thumb && <img src={thumb} alt="" className="w-full h-full object-cover opacity-80" />}
-                {pl.status === 'loading' && <div className="absolute inset-0 animate-pulse bg-stone-800" />}
-                <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,transparent,rgba(0,0,0,0.85))' }} />
-                <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between">
-                  <span className="font-display text-lg">{pl.status === 'loading' ? 'Loading…' : (pl.title || 'Training')}</span>
-                  {pl.status === 'ok' && <span className="text-[11px] text-stone-100 bg-black/55 rounded-full px-2 py-0.5">{pl.items.length} clips</span>}
-                </div>
-              </div>
+              <span className="flex items-center gap-3 min-w-0">
+                <span className="text-3xl">{meta.icon}</span>
+                <span className="text-left min-w-0">
+                  <span className="block font-display text-lg text-white">{meta.label}</span>
+                  <span className="block text-[11px] text-white/70">{sub}</span>
+                </span>
+              </span>
+              <span className="text-white/70 shrink-0 text-lg">›</span>
             </button>
           );
         })}
@@ -6486,15 +6519,71 @@ function TrainingHub({ onBack }) {
   );
 }
 
-// Portrait shorts player: swipe ↑/↓ (or ⏮/⏭) for prev/next, ↻ replay,
-// stop-on-end (no auto-advance). Tap the video to play/pause (native controls).
+// Portrait shorts player: swipe ←/→ or ↑/↓ (or ⏮/⏭) for next/prev — each new
+// video AUTOPLAYS. ↻ replay. Uses a persistent YouTube IFrame-API player and
+// loadVideoById() so autoplay survives navigation (an iframe remount with
+// autoplay=1 gets re-gated by iOS on every change).
 function TrainingShortsPlayer({ playlist, onBack }) {
   const items = playlist.items || [];
+  const title = _trainingMeta(playlist.id).label || playlist.title || 'Training';
   const [idx, setIdx] = useState(0);
-  const [nonce, setNonce] = useState(0); // bump to remount the iframe (replay)
-  const touchY = useRef(null);
-  const go = (d) => { setIdx(i => Math.min(items.length - 1, Math.max(0, i + d))); setNonce(0); };
-  const cur = items[idx];
+  const [paused, setPaused] = useState(false);
+  const idxRef = useRef(0);
+  const playerHostRef = useRef(null);
+  const playerRef = useRef(null);
+  const readyRef = useRef(false);
+  const loadedIdxRef = useRef(-1);
+  const touch = useRef(null);
+
+  const go = (d) => setIdx(i => Math.min(items.length - 1, Math.max(0, i + d)));
+  const replay = () => {
+    const p = playerRef.current;
+    if (p && p.seekTo) { p.seekTo(0, true); p.playVideo && p.playVideo(); }
+  };
+  const togglePlay = () => {
+    const p = playerRef.current;
+    if (!p || !p.getPlayerState) return;
+    if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo();
+  };
+
+  // Create the persistent player once.
+  useEffect(() => {
+    let cancelled = false;
+    if (!items.length) return;
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !playerHostRef.current || playerRef.current) return;
+      playerRef.current = new YT.Player(playerHostRef.current, {
+        videoId: items[0].videoId,
+        playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, controls: 0, iv_load_policy: 3 },
+        events: {
+          onReady: (e) => {
+            readyRef.current = true;
+            loadedIdxRef.current = 0;
+            try { const f = e.target.getIframe(); f.style.width = '100%'; f.style.height = '100%'; } catch (err) {}
+            // If the user already navigated before the player was ready, sync.
+            if (idxRef.current !== 0) { e.target.loadVideoById(items[idxRef.current].videoId); loadedIdxRef.current = idxRef.current; }
+            else { e.target.playVideo && e.target.playVideo(); }
+          },
+          onStateChange: (e) => { setPaused(e.data === 2); }, // 2 = paused
+        },
+      });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      try { playerRef.current && playerRef.current.destroy && playerRef.current.destroy(); } catch (e) {}
+      playerRef.current = null; readyRef.current = false;
+    };
+  }, []);
+
+  // On navigation, load + autoplay the new video via the existing player.
+  useEffect(() => {
+    idxRef.current = idx;
+    const p = playerRef.current;
+    if (p && readyRef.current && loadedIdxRef.current !== idx && items[idx]) {
+      p.loadVideoById(items[idx].videoId); // loadVideoById autoplays
+      loadedIdxRef.current = idx;
+    }
+  }, [idx]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -6506,37 +6595,57 @@ function TrainingShortsPlayer({ playlist, onBack }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [items.length]);
 
+  const cur = items[idx];
   if (!cur) return null;
-  const onTouchStart = (e) => { touchY.current = e.touches[0].clientY; };
+
+  // Gesture overlay sits ON TOP of the iframe (an iframe swallows touch events,
+  // so an outer handler never sees swipes over the video). Tap = play/pause,
+  // swipe ←/↑ = next, →/↓ = previous.
+  const onTouchStart = (e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
   const onTouchEnd = (e) => {
-    if (touchY.current == null) return;
-    const dy = e.changedTouches[0].clientY - touchY.current;
-    touchY.current = null;
-    if (Math.abs(dy) < 45) return;
-    go(dy < 0 ? 1 : -1); // swipe up → next, swipe down → prev
+    if (!touch.current) return;
+    const dx = e.changedTouches[0].clientX - touch.current.x;
+    const dy = e.changedTouches[0].clientY - touch.current.y;
+    touch.current = null;
+    e.preventDefault(); // suppress the synthetic click so it doesn't double-fire
+    const dist = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    if (Math.abs(dist) < 45) { togglePlay(); return; } // tap
+    go(dist < 0 ? 1 : -1);
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black flex flex-col" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col">
       <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 gap-2" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)', paddingBottom: 8, background: 'linear-gradient(180deg,rgba(0,0,0,0.65),transparent)' }}>
-        <span className="text-xs font-display truncate">{playlist.title}</span>
+        <span className="text-xs font-display truncate">{title}</span>
         <span className="text-[11px] bg-black/55 rounded-full px-2 py-0.5 shrink-0 tabular-nums">{idx + 1} / {items.length}</span>
         <button onClick={onBack} aria-label="Close" className="shrink-0 h-9 w-9 rounded-full bg-white/15 flex items-center justify-center active:scale-95"><X className="w-5 h-5" /></button>
       </div>
 
       <div className="flex-1 flex items-center justify-center min-h-0">
-        <div className="relative h-full" style={{ aspectRatio: '9 / 16', maxWidth: '100%' }}>
-          <YouTubeEmbed key={`${cur.videoId}-${nonce}`} videoId={cur.videoId} interactive fill />
+        <div className="relative h-full bg-black" style={{ aspectRatio: '9 / 16', maxWidth: '100%' }}>
+          {/* Persistent player host — the IFrame API replaces this div with the iframe. */}
+          <div className="absolute inset-0"><div ref={playerHostRef} className="w-full h-full" /></div>
+          {/* Gesture layer: tap = play/pause, swipe = prev/next. */}
+          <div
+            className="absolute inset-0 z-10"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+            onClick={togglePlay}
+          />
+          {paused && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+              <div className="h-16 w-16 rounded-full bg-black/45 flex items-center justify-center text-3xl">▶</div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="absolute bottom-0 inset-x-0 z-20 px-4 pt-8" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)', background: 'linear-gradient(0deg,rgba(0,0,0,0.78),transparent)' }}>
         <div className="text-[12px] text-stone-200 mb-3 line-clamp-2">{cur.title}</div>
-        <div className="flex items-center justify-center gap-5">
-          <button onClick={() => go(-1)} disabled={idx === 0} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Previous">⏮</button>
-          <button onClick={() => setNonce(n => n + 1)} className="h-11 px-4 rounded-full bg-white/15 flex items-center gap-1 text-xs active:scale-95">↻ Replay</button>
-          <button onClick={() => go(1)} disabled={idx === items.length - 1} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Next">⏭</button>
+        <div className="flex items-center justify-center">
+          <button onClick={replay} className="h-11 px-5 rounded-full bg-white/15 flex items-center gap-1 text-xs active:scale-95">↻ Replay</button>
         </div>
+        <div className="text-center text-[10px] text-stone-400 mt-2">Swipe for next / previous · tap to pause</div>
       </div>
     </div>
   );
@@ -7442,11 +7551,28 @@ function PlayerHeatmap({ grid, rows, cols }) {
 // player"). Corrections are written to game.identityOverrides and applied by the
 // post_game pipeline on the next re-run (see PLAYER_ID_CORRECTION_UI.md).
 function IdentityFixView({ doc, roster, game, onSave, onClose }) {
-  const tracklets = [...((doc && doc.tracklets) || [])]
-    .sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
+  const allTracklets = (doc && doc.tracklets) || [];
   const [overrides, setOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(null);
+  const [zoom, setZoom] = useState(null); // thumb_url shown full-screen for recognition
+  // Tracklets the coach has already decided (saved). They drop off the list so
+  // only the remaining work shows. Seeded from the saved overrides on the game.
+  const [savedSet, setSavedSet] = useState(() => new Set(Object.keys(game.identityOverrides || {})));
+  const [showAll, setShowAll] = useState(false); // false = only unassigned to do
+
+  // Review priority: most IMPORTANT first = uncertain AND high player-time.
+  // A confidently-assigned tracklet scores ~0 (nothing to do); a long unassigned
+  // one scores high (worth rescuing); a 1-second fragment barely registers.
+  const importance = (t) => (1 - (t.confidence || 0)) * ((t.minutes || 0) + 0.2);
+  const tracklets = [...allTracklets]
+    .filter(t => {
+      if (savedSet.has(String(t.tracklet_id))) return false; // already decided + saved
+      if (showAll) return true;
+      return !t.player_id; // default view: only the still-unassigned ones
+    })
+    .sort((a, b) => importance(b) - importance(a));
+  const remainingUnassigned = allTracklets.filter(t => !t.player_id && !savedSet.has(String(t.tracklet_id))).length;
 
   useEffect(() => {
     window.history.pushState({ modal: 'idfix' }, '');
@@ -7459,7 +7585,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   }, [onClose]);
 
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
-  const sortedRoster = [...roster].sort((a, b) => ((a.number ?? 999) - (b.number ?? 999)));
+  // Only offer players who actually dressed for THIS game (squad), not the whole
+  // team roster. Fall back to the starting lineup, then the full roster.
+  const squadIds = new Set((game.squad && game.squad.length ? game.squad : (game.startingLineup || [])));
+  const sortedRoster = [...roster]
+    .filter(p => squadIds.size === 0 || squadIds.has(p.id))
+    .sort((a, b) => ((a.number ?? 999) - (b.number ?? 999)));
   const pname = (pid) => {
     const p = rosterById[pid];
     if (!p) return pid ? '(unknown)' : 'unassigned';
@@ -7467,10 +7598,16 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   };
   const fmt = (s) => { const m = Math.floor((s || 0) / 60), ss = Math.round((s || 0) % 60); return `${m}:${String(ss).padStart(2, '0')}`; };
 
+  // Override value: a player id, or a labelled non-player sentinel. The labels
+  // (ref/opp/other) are kept on the game doc so the pipeline can learn from them
+  // later; all of them drop the tracklet from analytics for now.
+  const NONPLAYER = { '__opp__': '⚪ Opponent', '__ref__': '🟨 Referee', '__other__': '🚫 Coach / other' };
   const selFor = (tl) => {
     const id = String(tl.tracklet_id);
     if (!(id in overrides)) return '__auto__';
-    return overrides[id] == null ? '__none__' : overrides[id];
+    const v = overrides[id];
+    if (v == null || v === '__none__') return '__other__'; // legacy "not a player"
+    return v;
   };
   const setSel = (tl, val) => {
     const id = String(tl.tracklet_id);
@@ -7478,8 +7615,7 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     setOverrides(prev => {
       const next = { ...prev };
       if (val === '__auto__') delete next[id];
-      else if (val === '__none__') next[id] = null;
-      else next[id] = val;
+      else next[id] = val; // player id OR a non-player sentinel
       return next;
     });
   };
@@ -7487,7 +7623,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const pendingCount = Object.keys(overrides).length;
   const doSave = async () => {
     setSaving(true);
-    try { await onSave(overrides); setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.'); }
+    try {
+      await onSave(overrides);
+      // Drop everything decided so far off the list — coach now sees only what's left.
+      setSavedSet(new Set(Object.keys(overrides)));
+      setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.');
+    }
     catch (e) { setSavedMsg('Save failed: ' + e); }
     setSaving(false);
   };
@@ -7516,15 +7657,22 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
       </div>
 
       <div className="px-4 py-3 text-stone-400 text-xs leading-relaxed border-b border-stone-800">
-        Each card is one tracked player segment, <span className="text-stone-200">worst-confidence first</span>.
-        Reassign any that are wrong, or mark non-players. Tap <span className="text-lime-300">SAVE</span>,
-        then re-run <code className="text-stone-300">./run_analytics.sh {game.id}</code> on the Mac to apply.
+        Cards are sorted <span className="text-stone-200">most important first</span> (uncertain + most
+        play-time). Assign each, or mark non-players. Tap <span className="text-lime-300">SAVE</span> —
+        decided ones drop off so you only see what's left. Then re-run
+        <code className="text-stone-300"> ./run_analytics.sh {game.id}</code> on the Mac to apply.
       </div>
 
-      <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between">
-        <span className="text-xs text-stone-300">
-          {pendingCount} correction{pendingCount === 1 ? '' : 's'} pending
+      <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between gap-2">
+        <span className="text-xs text-stone-300 shrink-0">
+          {remainingUnassigned} to identify{pendingCount ? ` · ${pendingCount} pending` : ''}
         </span>
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className={`shrink-0 h-7 px-2.5 rounded-full text-[11px] border active:scale-95 ${showAll ? 'bg-white/15 text-white border-white/25' : 'bg-stone-800 text-stone-400 border-stone-700'}`}
+        >
+          {showAll ? 'All segments' : 'Unassigned only'}
+        </button>
         <div className="flex items-center gap-2">
           {savedMsg && <span className="text-[11px] text-lime-300">{savedMsg}</span>}
           <button
@@ -7546,7 +7694,10 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
               className={`flex gap-3 rounded-xl border p-2 ${overridden ? 'border-lime-500/50 bg-lime-500/5' : 'border-stone-800 bg-stone-900'}`}
             >
               {tl.thumb_url
-                ? <img src={tl.thumb_url} alt="" className="w-16 h-24 object-cover rounded-lg bg-stone-800 shrink-0" loading="lazy" />
+                ? <button onClick={() => setZoom(tl.thumb_url)} className="relative w-16 h-24 shrink-0 rounded-lg overflow-hidden bg-stone-800 active:scale-95" aria-label="Enlarge photo">
+                    <img src={tl.thumb_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    <span className="absolute bottom-0.5 right-0.5 h-5 w-5 rounded bg-black/60 flex items-center justify-center text-[11px] leading-none">⤢</span>
+                  </button>
                 : <div className="w-16 h-24 rounded-lg bg-stone-800 shrink-0 flex items-center justify-center text-stone-600 text-2xl">?</div>}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -7563,19 +7714,45 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                   className="mt-2 w-full bg-stone-800 border border-stone-700 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-lime-500"
                 >
                   <option value="__auto__">Auto: {pname(tl.player_id)}</option>
-                  {sortedRoster.map(p => (
-                    <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
-                  ))}
-                  <option value="__none__">🚫 Not a player / opponent</option>
+                  <optgroup label="Our players (this game)">
+                    {sortedRoster.map(p => (
+                      <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Not our player">
+                    <option value="__opp__">⚪ Opponent</option>
+                    <option value="__ref__">🟨 Referee</option>
+                    <option value="__other__">🚫 Coach / spectator / other</option>
+                  </optgroup>
                 </select>
               </div>
             </div>
           );
         })}
         {tracklets.length === 0 && (
-          <div className="text-center text-stone-500 text-sm py-10">No tracklets to review.</div>
+          <div className="text-center text-stone-400 text-sm py-12">
+            <div className="text-3xl mb-2">✅</div>
+            {showAll ? 'Nothing left to review.' : 'All players identified — nothing unassigned left.'}
+            {!showAll && allTracklets.some(t => t.player_id) && (
+              <div className="mt-3">
+                <button onClick={() => setShowAll(true)} className="text-xs text-lime-400 underline">
+                  Show all segments to double-check assignments
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
+
+      {zoom && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/95 flex flex-col items-center justify-center p-4"
+          onClick={() => setZoom(null)}
+        >
+          <img src={zoom} alt="" className="max-w-full max-h-[85vh] object-contain rounded-lg" style={{ imageRendering: 'auto' }} />
+          <div className="mt-4 text-stone-300 text-xs">Tap anywhere to close</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -11395,6 +11572,18 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

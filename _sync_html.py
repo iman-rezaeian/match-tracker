@@ -381,6 +381,14 @@ except subprocess.CalledProcessError as e:
 except FileNotFoundError:
     print("  WARNING: tailwindcss not found (no .build-tools/tailwindcss and no npx). Keeping CDN runtime.")
 
+# Per-build cache-busting id derived from the actual app bundle, so the service
+# worker's CACHE_VERSION changes whenever the app changes. A changed sw.js is how
+# browsers detect "new version" → install → activate → purge old caches → fresh
+# shell. Without this, CACHE_VERSION was a hand-edited constant that nobody bumped,
+# so installed PWAs kept serving the stale shell after a deploy.
+import hashlib
+_build_id = hashlib.sha1(deploy_html.encode("utf-8")).hexdigest()[:10]
+
 # Copy PWA shell files into the deploy folder.
 copied_pwa = []
 for name in PWA_FILES:
@@ -391,6 +399,17 @@ for name in PWA_FILES:
             copied_pwa.append(name)
             continue
         print(f"  WARNING: PWA file missing: {name}")
+        continue
+    if name == "sw.js":
+        # Rewrite CACHE_VERSION to the per-build hash so the SW updates every deploy.
+        sw_text = src.read_text()
+        sw_text, n = re.subn(r"const CACHE_VERSION = '[^']*';",
+                             f"const CACHE_VERSION = 'stompers-{_build_id}';", sw_text, count=1)
+        if n == 0:
+            print("  WARNING: could not rewrite CACHE_VERSION in sw.js")
+        (DEPLOY_DIR / name).write_text(sw_text)
+        copied_pwa.append(name)
+        print(f"  SW cache version → stompers-{_build_id}")
         continue
     shutil.copy2(src, DEPLOY_DIR / name)
     copied_pwa.append(name)

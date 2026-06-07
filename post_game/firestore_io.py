@@ -63,6 +63,10 @@ class GameDoc:
     video_url: Optional[str]
     home_color: Optional[str]
     away_color: Optional[str]
+    # Optional referee kit color (hex). When set AND distinct from both kits,
+    # the team classifier uses a supervised 3-anchor split (ours/opp/ref) so the
+    # on-pitch referee is excluded instead of mislabeled as our team.
+    ref_color: Optional[str]
     field_name: Optional[str]
     # Seconds from the start of the source video to the 1st-half kickoff
     # whistle. Used to trim out pre-game warmup, halftime, and post-game tail.
@@ -166,6 +170,7 @@ def get_game(game_id: str) -> GameDoc:
         video_url=d.get("videoUrl"),
         home_color=d.get("homeColor"),
         away_color=d.get("awayColor"),
+        ref_color=d.get("refColor"),
         field_name=d.get("fieldName"),
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
