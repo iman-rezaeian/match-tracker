@@ -7551,12 +7551,28 @@ function PlayerHeatmap({ grid, rows, cols }) {
 // player"). Corrections are written to game.identityOverrides and applied by the
 // post_game pipeline on the next re-run (see PLAYER_ID_CORRECTION_UI.md).
 function IdentityFixView({ doc, roster, game, onSave, onClose }) {
-  const tracklets = [...((doc && doc.tracklets) || [])]
-    .sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
+  const allTracklets = (doc && doc.tracklets) || [];
   const [overrides, setOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(null);
   const [zoom, setZoom] = useState(null); // thumb_url shown full-screen for recognition
+  // Tracklets the coach has already decided (saved). They drop off the list so
+  // only the remaining work shows. Seeded from the saved overrides on the game.
+  const [savedSet, setSavedSet] = useState(() => new Set(Object.keys(game.identityOverrides || {})));
+  const [showAll, setShowAll] = useState(false); // false = only unassigned to do
+
+  // Review priority: most IMPORTANT first = uncertain AND high player-time.
+  // A confidently-assigned tracklet scores ~0 (nothing to do); a long unassigned
+  // one scores high (worth rescuing); a 1-second fragment barely registers.
+  const importance = (t) => (1 - (t.confidence || 0)) * ((t.minutes || 0) + 0.2);
+  const tracklets = [...allTracklets]
+    .filter(t => {
+      if (savedSet.has(String(t.tracklet_id))) return false; // already decided + saved
+      if (showAll) return true;
+      return !t.player_id; // default view: only the still-unassigned ones
+    })
+    .sort((a, b) => importance(b) - importance(a));
+  const remainingUnassigned = allTracklets.filter(t => !t.player_id && !savedSet.has(String(t.tracklet_id))).length;
 
   useEffect(() => {
     window.history.pushState({ modal: 'idfix' }, '');
@@ -7607,7 +7623,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const pendingCount = Object.keys(overrides).length;
   const doSave = async () => {
     setSaving(true);
-    try { await onSave(overrides); setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.'); }
+    try {
+      await onSave(overrides);
+      // Drop everything decided so far off the list — coach now sees only what's left.
+      setSavedSet(new Set(Object.keys(overrides)));
+      setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.');
+    }
     catch (e) { setSavedMsg('Save failed: ' + e); }
     setSaving(false);
   };
@@ -7636,15 +7657,22 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
       </div>
 
       <div className="px-4 py-3 text-stone-400 text-xs leading-relaxed border-b border-stone-800">
-        Each card is one tracked player segment, <span className="text-stone-200">worst-confidence first</span>.
-        Reassign any that are wrong, or mark non-players. Tap <span className="text-lime-300">SAVE</span>,
-        then re-run <code className="text-stone-300">./run_analytics.sh {game.id}</code> on the Mac to apply.
+        Cards are sorted <span className="text-stone-200">most important first</span> (uncertain + most
+        play-time). Assign each, or mark non-players. Tap <span className="text-lime-300">SAVE</span> —
+        decided ones drop off so you only see what's left. Then re-run
+        <code className="text-stone-300"> ./run_analytics.sh {game.id}</code> on the Mac to apply.
       </div>
 
-      <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between">
-        <span className="text-xs text-stone-300">
-          {pendingCount} correction{pendingCount === 1 ? '' : 's'} pending
+      <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between gap-2">
+        <span className="text-xs text-stone-300 shrink-0">
+          {remainingUnassigned} to identify{pendingCount ? ` · ${pendingCount} pending` : ''}
         </span>
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className={`shrink-0 h-7 px-2.5 rounded-full text-[11px] border active:scale-95 ${showAll ? 'bg-white/15 text-white border-white/25' : 'bg-stone-800 text-stone-400 border-stone-700'}`}
+        >
+          {showAll ? 'All segments' : 'Unassigned only'}
+        </button>
         <div className="flex items-center gap-2">
           {savedMsg && <span className="text-[11px] text-lime-300">{savedMsg}</span>}
           <button
@@ -7702,7 +7730,17 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
           );
         })}
         {tracklets.length === 0 && (
-          <div className="text-center text-stone-500 text-sm py-10">No tracklets to review.</div>
+          <div className="text-center text-stone-400 text-sm py-12">
+            <div className="text-3xl mb-2">✅</div>
+            {showAll ? 'Nothing left to review.' : 'All players identified — nothing unassigned left.'}
+            {!showAll && allTracklets.some(t => t.player_id) && (
+              <div className="mt-3">
+                <button onClick={() => setShowAll(true)} className="text-xs text-lime-400 underline">
+                  Show all segments to double-check assignments
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -11534,6 +11572,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

@@ -92,6 +92,7 @@ def assign_identities_v2(
     field_length_m: float,
     field_width_m: float,
     overrides: Optional[dict] = None,
+    squad: Optional[list[str]] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
     video-second spans per period (half_windows).
@@ -102,7 +103,13 @@ def assign_identities_v2(
     it (not our team). Coach overrides always win over the auto-assignment and
     consume that player's minute budget before the greedy pass runs.
     """
-    valid_ids = {r.id for r in roster}
+    # Coach log is ground truth: only players who DRESSED for this game (the
+    # logged squad) can be assigned — not the whole team roster. This is a hard
+    # constraint on both auto-assignment AND coach overrides (an override onto a
+    # non-squad player is rejected → that tracklet drops). Falls back to the full
+    # roster only when no squad was logged.
+    roster_ids = {r.id for r in roster}
+    valid_ids = (set(squad) & roster_ids) if squad else roster_ids
     # Normalise overrides to int tracklet keys; tolerate str/int from Firestore.
     ov: dict[int, Optional[str]] = {}
     for k, v in (overrides or {}).items():

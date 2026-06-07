@@ -427,6 +427,7 @@ def run(
         field_length_m=field_cal.length_m,
         field_width_m=field_cal.width_m,
         overrides=game.identity_overrides,
+        squad=game.squad,
     )
     if game.identity_overrides:
         log.info("  -> %d coach identity override(s) loaded from game doc",
