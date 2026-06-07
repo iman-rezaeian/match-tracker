@@ -7406,10 +7406,16 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
     const i = t.indexOf(Math.max(...t));
     return ['DEFENDER', 'MIDFIELDER', 'FORWARD'][i];
   };
+  // Per-player identity confidence = track-time-weighted average of the
+  // assigned tracks' confidences (how much of this player's tracked data is
+  // reliable). NOT the max — almost everyone has one perfect track, which made
+  // every badge read ~100%.
   const playerConf = (pid) => {
-    const a = (doc.identity_assignments || []).filter(x => x.player_id === pid && x.confidence);
+    const a = (doc.identity_assignments || []).filter(x => x.player_id === pid && x.confidence != null);
     if (!a.length) return null;
-    return Math.max(...a.map(x => x.confidence || 0));
+    let wsum = 0, csum = 0;
+    for (const x of a) { const w = (x.minutes_on_field || 0) + 0.01; wsum += w; csum += w * x.confidence; }
+    return wsum ? csum / wsum : null;
   };
 
   return (
