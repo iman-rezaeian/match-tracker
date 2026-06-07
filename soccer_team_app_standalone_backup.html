@@ -212,6 +212,31 @@ const TRAINING_PLAYLISTS = [
   'PL1KXWwWfqmixlAhd_t--UOnux0EcGDo5o',
   'PL1KXWwWfqmiwkxyAZaAAyx8o9LT3oCHW9',
 ];
+// Fixed, coach-friendly labels for the two training playlists (we don't trust
+// the raw YouTube playlist title/thumbnail — they render messy). Keyed by id.
+const TRAINING_PLAYLIST_META = {
+  'PL1KXWwWfqmixlAhd_t--UOnux0EcGDo5o': { label: 'Soccer Training', icon: '⚽', gradient: 'linear-gradient(135deg,#3f6212,#1a2e05)', border: 'rgba(132,204,22,0.30)' },
+  'PL1KXWwWfqmiwkxyAZaAAyx8o9LT3oCHW9': { label: 'Goalkeeper Training', icon: '🧤', gradient: 'linear-gradient(135deg,#0e7490,#155e75)', border: 'rgba(34,211,238,0.25)' },
+};
+const _trainingMeta = (id) => TRAINING_PLAYLIST_META[id] || { label: 'Training', icon: '🎬', gradient: 'linear-gradient(135deg,#44403c,#1c1917)', border: 'rgba(255,255,255,0.12)' };
+
+// Lazy-load the YouTube IFrame Player API once. Returns a promise of window.YT.
+// A persistent Player lets us loadVideoById() to autoplay across navigations
+// (an iframe remount with autoplay=1 gets re-gated by iOS every time).
+let _ytApiPromise = null;
+function loadYouTubeIframeApi() {
+  if (typeof window === 'undefined') return Promise.reject('no window');
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT);
+  if (_ytApiPromise) return _ytApiPromise;
+  _ytApiPromise = new Promise((resolve) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => { try { prev && prev(); } catch (e) {} resolve(window.YT); };
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  });
+  return _ytApiPromise;
+}
 
 // Live-streaming provider toggle.
 // 'off'        — no live UI anywhere; all live code paths stay in the bundle
@@ -6450,33 +6475,41 @@ function TrainingHub({ onBack }) {
         <span className="font-display text-base">🎬 Training Videos</span>
         <button onClick={onBack} className="h-9 px-3 rounded-full bg-white/10 hover:bg-white/20 text-xs flex items-center active:scale-95">‹ Back</button>
       </div>
-      <div className="p-3 space-y-3 max-w-xl mx-auto">
+      <div className="p-4 space-y-3 max-w-xl mx-auto">
         {playlists.map(pl => {
-          const thumb = pl.items[0]?.thumbnail;
+          const meta = _trainingMeta(pl.id);
           if (pl.status === 'error') {
             return (
-              <div key={pl.id} className="rounded-2xl border border-stone-800 bg-stone-900 p-6 text-center">
-                <div className="text-sm text-stone-400 mb-3">Couldn't load this playlist.</div>
+              <div key={pl.id} className="rounded-2xl border border-stone-800 bg-stone-900 p-5 flex items-center justify-between">
+                <span className="flex items-center gap-3 min-w-0">
+                  <span className="text-2xl">{meta.icon}</span>
+                  <span className="text-left min-w-0">
+                    <span className="block font-display text-base text-white">{meta.label}</span>
+                    <span className="block text-[11px] text-stone-400">Couldn't load</span>
+                  </span>
+                </span>
                 <button onClick={() => reload(pl.id)} className="text-xs font-bold text-lime-400 bg-lime-500/10 hover:bg-lime-500/20 px-4 py-2 rounded-lg active:scale-95">RETRY</button>
               </div>
             );
           }
+          const loading = pl.status !== 'ok';
+          const sub = loading ? 'Loading…' : `${pl.items.length} video${pl.items.length === 1 ? '' : 's'}`;
           return (
             <button
               key={pl.id}
-              disabled={pl.status !== 'ok' || pl.items.length === 0}
+              disabled={loading || pl.items.length === 0}
               onClick={() => setOpen(pl)}
-              className="w-full rounded-2xl overflow-hidden border border-stone-800 text-left active:scale-[0.98] transition disabled:opacity-60"
+              className="w-full rounded-2xl p-4 flex items-center justify-between active:scale-[0.98] transition disabled:opacity-60"
+              style={{ background: meta.gradient, border: `1px solid ${meta.border}` }}
             >
-              <div className="relative h-32 bg-stone-800">
-                {thumb && <img src={thumb} alt="" className="w-full h-full object-cover opacity-80" />}
-                {pl.status === 'loading' && <div className="absolute inset-0 animate-pulse bg-stone-800" />}
-                <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,transparent,rgba(0,0,0,0.85))' }} />
-                <div className="absolute bottom-2 left-3 right-3 flex items-end justify-between">
-                  <span className="font-display text-lg">{pl.status === 'loading' ? 'Loading…' : (pl.title || 'Training')}</span>
-                  {pl.status === 'ok' && <span className="text-[11px] text-stone-100 bg-black/55 rounded-full px-2 py-0.5">{pl.items.length} clips</span>}
-                </div>
-              </div>
+              <span className="flex items-center gap-3 min-w-0">
+                <span className="text-3xl">{meta.icon}</span>
+                <span className="text-left min-w-0">
+                  <span className="block font-display text-lg text-white">{meta.label}</span>
+                  <span className="block text-[11px] text-white/70">{sub}</span>
+                </span>
+              </span>
+              <span className="text-white/70 shrink-0 text-lg">›</span>
             </button>
           );
         })}
@@ -6486,15 +6519,71 @@ function TrainingHub({ onBack }) {
   );
 }
 
-// Portrait shorts player: swipe ↑/↓ (or ⏮/⏭) for prev/next, ↻ replay,
-// stop-on-end (no auto-advance). Tap the video to play/pause (native controls).
+// Portrait shorts player: swipe ←/→ or ↑/↓ (or ⏮/⏭) for next/prev — each new
+// video AUTOPLAYS. ↻ replay. Uses a persistent YouTube IFrame-API player and
+// loadVideoById() so autoplay survives navigation (an iframe remount with
+// autoplay=1 gets re-gated by iOS on every change).
 function TrainingShortsPlayer({ playlist, onBack }) {
   const items = playlist.items || [];
+  const title = _trainingMeta(playlist.id).label || playlist.title || 'Training';
   const [idx, setIdx] = useState(0);
-  const [nonce, setNonce] = useState(0); // bump to remount the iframe (replay)
-  const touchY = useRef(null);
-  const go = (d) => { setIdx(i => Math.min(items.length - 1, Math.max(0, i + d))); setNonce(0); };
-  const cur = items[idx];
+  const [paused, setPaused] = useState(false);
+  const idxRef = useRef(0);
+  const playerHostRef = useRef(null);
+  const playerRef = useRef(null);
+  const readyRef = useRef(false);
+  const loadedIdxRef = useRef(-1);
+  const touch = useRef(null);
+
+  const go = (d) => setIdx(i => Math.min(items.length - 1, Math.max(0, i + d)));
+  const replay = () => {
+    const p = playerRef.current;
+    if (p && p.seekTo) { p.seekTo(0, true); p.playVideo && p.playVideo(); }
+  };
+  const togglePlay = () => {
+    const p = playerRef.current;
+    if (!p || !p.getPlayerState) return;
+    if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo();
+  };
+
+  // Create the persistent player once.
+  useEffect(() => {
+    let cancelled = false;
+    if (!items.length) return;
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !playerHostRef.current || playerRef.current) return;
+      playerRef.current = new YT.Player(playerHostRef.current, {
+        videoId: items[0].videoId,
+        playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, controls: 0, iv_load_policy: 3 },
+        events: {
+          onReady: (e) => {
+            readyRef.current = true;
+            loadedIdxRef.current = 0;
+            try { const f = e.target.getIframe(); f.style.width = '100%'; f.style.height = '100%'; } catch (err) {}
+            // If the user already navigated before the player was ready, sync.
+            if (idxRef.current !== 0) { e.target.loadVideoById(items[idxRef.current].videoId); loadedIdxRef.current = idxRef.current; }
+            else { e.target.playVideo && e.target.playVideo(); }
+          },
+          onStateChange: (e) => { setPaused(e.data === 2); }, // 2 = paused
+        },
+      });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      try { playerRef.current && playerRef.current.destroy && playerRef.current.destroy(); } catch (e) {}
+      playerRef.current = null; readyRef.current = false;
+    };
+  }, []);
+
+  // On navigation, load + autoplay the new video via the existing player.
+  useEffect(() => {
+    idxRef.current = idx;
+    const p = playerRef.current;
+    if (p && readyRef.current && loadedIdxRef.current !== idx && items[idx]) {
+      p.loadVideoById(items[idx].videoId); // loadVideoById autoplays
+      loadedIdxRef.current = idx;
+    }
+  }, [idx]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -6506,37 +6595,57 @@ function TrainingShortsPlayer({ playlist, onBack }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [items.length]);
 
+  const cur = items[idx];
   if (!cur) return null;
-  const onTouchStart = (e) => { touchY.current = e.touches[0].clientY; };
+
+  // Gesture overlay sits ON TOP of the iframe (an iframe swallows touch events,
+  // so an outer handler never sees swipes over the video). Tap = play/pause,
+  // swipe ←/↑ = next, →/↓ = previous.
+  const onTouchStart = (e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
   const onTouchEnd = (e) => {
-    if (touchY.current == null) return;
-    const dy = e.changedTouches[0].clientY - touchY.current;
-    touchY.current = null;
-    if (Math.abs(dy) < 45) return;
-    go(dy < 0 ? 1 : -1); // swipe up → next, swipe down → prev
+    if (!touch.current) return;
+    const dx = e.changedTouches[0].clientX - touch.current.x;
+    const dy = e.changedTouches[0].clientY - touch.current.y;
+    touch.current = null;
+    e.preventDefault(); // suppress the synthetic click so it doesn't double-fire
+    const dist = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    if (Math.abs(dist) < 45) { togglePlay(); return; } // tap
+    go(dist < 0 ? 1 : -1);
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black flex flex-col" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col">
       <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-3 gap-2" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)', paddingBottom: 8, background: 'linear-gradient(180deg,rgba(0,0,0,0.65),transparent)' }}>
-        <span className="text-xs font-display truncate">{playlist.title}</span>
+        <span className="text-xs font-display truncate">{title}</span>
         <span className="text-[11px] bg-black/55 rounded-full px-2 py-0.5 shrink-0 tabular-nums">{idx + 1} / {items.length}</span>
         <button onClick={onBack} aria-label="Close" className="shrink-0 h-9 w-9 rounded-full bg-white/15 flex items-center justify-center active:scale-95"><X className="w-5 h-5" /></button>
       </div>
 
       <div className="flex-1 flex items-center justify-center min-h-0">
-        <div className="relative h-full" style={{ aspectRatio: '9 / 16', maxWidth: '100%' }}>
-          <YouTubeEmbed key={`${cur.videoId}-${nonce}`} videoId={cur.videoId} interactive fill />
+        <div className="relative h-full bg-black" style={{ aspectRatio: '9 / 16', maxWidth: '100%' }}>
+          {/* Persistent player host — the IFrame API replaces this div with the iframe. */}
+          <div className="absolute inset-0"><div ref={playerHostRef} className="w-full h-full" /></div>
+          {/* Gesture layer: tap = play/pause, swipe = prev/next. */}
+          <div
+            className="absolute inset-0 z-10"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+            onClick={togglePlay}
+          />
+          {paused && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+              <div className="h-16 w-16 rounded-full bg-black/45 flex items-center justify-center text-3xl">▶</div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="absolute bottom-0 inset-x-0 z-20 px-4 pt-8" style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)', background: 'linear-gradient(0deg,rgba(0,0,0,0.78),transparent)' }}>
         <div className="text-[12px] text-stone-200 mb-3 line-clamp-2">{cur.title}</div>
-        <div className="flex items-center justify-center gap-5">
-          <button onClick={() => go(-1)} disabled={idx === 0} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Previous">⏮</button>
-          <button onClick={() => setNonce(n => n + 1)} className="h-11 px-4 rounded-full bg-white/15 flex items-center gap-1 text-xs active:scale-95">↻ Replay</button>
-          <button onClick={() => go(1)} disabled={idx === items.length - 1} className="h-11 w-11 rounded-full bg-white/15 disabled:opacity-30 flex items-center justify-center active:scale-95" aria-label="Next">⏭</button>
+        <div className="flex items-center justify-center">
+          <button onClick={replay} className="h-11 px-5 rounded-full bg-white/15 flex items-center gap-1 text-xs active:scale-95">↻ Replay</button>
         </div>
+        <div className="text-center text-[10px] text-stone-400 mt-2">Swipe for next / previous · tap to pause</div>
       </div>
     </div>
   );
@@ -11395,6 +11504,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
