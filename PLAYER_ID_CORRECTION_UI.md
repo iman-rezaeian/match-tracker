@@ -12,6 +12,22 @@ reassigns each to the correct roster player (or "not our team"). Corrections are
 stored per-game and **re-applied on every pipeline re-run** so they compound and
 survive re-processing.
 
+## Scope decision: PER-GAME (not cross-game)
+Identity assignment + corrections are **per-game**, and should stay that way:
+- Tracks/tracklets are inherently per-game (the tracker resets each game; IDs don't
+  relate across games), and the lineup/subs/POSITION ground truth is per-game — each
+  game has everything it needs to assign itself.
+- Appearance is NOT stable across games for youth (kit colors change per game,
+  weather/lighting/growth) — a cross-game Re-ID gallery would add errors, not remove
+  them. So do NOT build a cross-game identity/appearance model.
+- The only cross-game-stable identifier is the **jersey number**, already in the
+  roster (`player.number`) → a direct lookup if/when 8K + OCR lands. No global model
+  needed.
+- "All games" belongs only to a **season stats rollup** (sum each game's per-player
+  analytics by `player_id`) — a separate feature that sits ON TOP of per-game
+  identity; it does not need cross-game identification. Corrections therefore live on
+  each game doc (`identityOverrides`) and never span games.
+
 ## Architecture (respect the existing split)
 The PWA is **read-only** over Firestore and has no track data, so it can't
 recompute stats client-side. So: PWA writes *correction intents*; the Mac pipeline
