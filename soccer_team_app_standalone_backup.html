@@ -7436,13 +7436,170 @@ function PlayerHeatmap({ grid, rows, cols }) {
   );
 }
 
-function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) {
+// Coach identity-correction screen. Lists the pipeline's stitched tracklets
+// (worst-confidence first) with a representative crop + current assignment, and
+// lets the coach reassign each to the right roster player (or mark "not a
+// player"). Corrections are written to game.identityOverrides and applied by the
+// post_game pipeline on the next re-run (see PLAYER_ID_CORRECTION_UI.md).
+function IdentityFixView({ doc, roster, game, onSave, onClose }) {
+  const tracklets = [...((doc && doc.tracklets) || [])]
+    .sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
+  const [overrides, setOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(null);
+
+  useEffect(() => {
+    window.history.pushState({ modal: 'idfix' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'idfix') window.history.back();
+    };
+  }, [onClose]);
+
+  const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
+  const sortedRoster = [...roster].sort((a, b) => ((a.number ?? 999) - (b.number ?? 999)));
+  const pname = (pid) => {
+    const p = rosterById[pid];
+    if (!p) return pid ? '(unknown)' : 'unassigned';
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
+  };
+  const fmt = (s) => { const m = Math.floor((s || 0) / 60), ss = Math.round((s || 0) % 60); return `${m}:${String(ss).padStart(2, '0')}`; };
+
+  const selFor = (tl) => {
+    const id = String(tl.tracklet_id);
+    if (!(id in overrides)) return '__auto__';
+    return overrides[id] == null ? '__none__' : overrides[id];
+  };
+  const setSel = (tl, val) => {
+    const id = String(tl.tracklet_id);
+    setSavedMsg(null);
+    setOverrides(prev => {
+      const next = { ...prev };
+      if (val === '__auto__') delete next[id];
+      else if (val === '__none__') next[id] = null;
+      else next[id] = val;
+      return next;
+    });
+  };
+
+  const pendingCount = Object.keys(overrides).length;
+  const doSave = async () => {
+    setSaving(true);
+    try { await onSave(overrides); setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.'); }
+    catch (e) { setSavedMsg('Save failed: ' + e); }
+    setSaving(false);
+  };
+
+  const confBadge = (c) => {
+    const pct = Math.round((c || 0) * 100);
+    const cls = c >= 0.75 ? 'bg-lime-500/20 text-lime-300'
+      : c >= 0.5 ? 'bg-amber-500/20 text-amber-300'
+      : 'bg-rose-500/20 text-rose-300';
+    return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${cls}`}>{pct}%</span>;
+  };
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-[60] overflow-y-auto">
+      <div
+        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <h2 className="font-display text-lg truncate pr-3">🪪 FIX PLAYER IDS</h2>
+        <button
+          onClick={onClose}
+          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs border border-white/20 active:scale-95"
+        >
+          CLOSE ✕
+        </button>
+      </div>
+
+      <div className="px-4 py-3 text-stone-400 text-xs leading-relaxed border-b border-stone-800">
+        Each card is one tracked player segment, <span className="text-stone-200">worst-confidence first</span>.
+        Reassign any that are wrong, or mark non-players. Tap <span className="text-lime-300">SAVE</span>,
+        then re-run <code className="text-stone-300">./run_analytics.sh {game.id}</code> on the Mac to apply.
+      </div>
+
+      <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between">
+        <span className="text-xs text-stone-300">
+          {pendingCount} correction{pendingCount === 1 ? '' : 's'} pending
+        </span>
+        <div className="flex items-center gap-2">
+          {savedMsg && <span className="text-[11px] text-lime-300">{savedMsg}</span>}
+          <button
+            onClick={doSave}
+            disabled={saving}
+            className="h-8 px-4 rounded-full bg-lime-500 text-stone-950 font-display text-xs active:scale-95 disabled:opacity-50"
+          >
+            {saving ? 'SAVING…' : 'SAVE'}
+          </button>
+        </div>
+      </div>
+
+      <div className="p-3 space-y-2 pb-24">
+        {tracklets.map((tl) => {
+          const overridden = String(tl.tracklet_id) in overrides;
+          return (
+            <div
+              key={tl.tracklet_id}
+              className={`flex gap-3 rounded-xl border p-2 ${overridden ? 'border-lime-500/50 bg-lime-500/5' : 'border-stone-800 bg-stone-900'}`}
+            >
+              {tl.thumb_url
+                ? <img src={tl.thumb_url} alt="" className="w-16 h-24 object-cover rounded-lg bg-stone-800 shrink-0" loading="lazy" />
+                : <div className="w-16 h-24 rounded-lg bg-stone-800 shrink-0 flex items-center justify-center text-stone-600 text-2xl">?</div>}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-stone-200 text-sm font-semibold truncate">{pname(tl.player_id)}</span>
+                  {confBadge(tl.confidence)}
+                  {tl.status === 'coach' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300">COACH</span>}
+                </div>
+                <div className="text-[11px] text-stone-500 mt-0.5">
+                  {Math.round(tl.minutes || 0)} min · {fmt(tl.t_start_s)}–{fmt(tl.t_end_s)} <span className="text-stone-700">· #{tl.tracklet_id}</span>
+                </div>
+                <select
+                  value={selFor(tl)}
+                  onChange={(e) => setSel(tl, e.target.value)}
+                  className="mt-2 w-full bg-stone-800 border border-stone-700 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-lime-500"
+                >
+                  <option value="__auto__">Auto: {pname(tl.player_id)}</option>
+                  {sortedRoster.map(p => (
+                    <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
+                  ))}
+                  <option value="__none__">🚫 Not a player / opponent</option>
+                </select>
+              </div>
+            </div>
+          );
+        })}
+        {tracklets.length === 0 && (
+          <div className="text-center text-stone-500 text-sm py-10">No tracklets to review.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, onUpdateGame }) {
   const [doc, setDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [clips, setClips] = useState([]);
   const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
   const [openHeatmap, setOpenHeatmap] = useState(null); // player_id whose heatmap is expanded
+  const [showFix, setShowFix] = useState(false); // IdentityFixView open?
+
+  // Persist coach identity corrections. Prefer the app's updateGame path (keeps
+  // local state synced + writes teams/main/games/<id> where the pipeline reads);
+  // fall back to a direct Firestore write when this panel is mounted without it
+  // (e.g. the Film Room browser).
+  const saveOverrides = async (overrides) => {
+    if (onUpdateGame) { onUpdateGame({ identityOverrides: overrides }); return; }
+    if (window.fbDb && game?.id) {
+      await window.fbDb.collection('teams').doc('main').collection('games')
+        .doc(game.id).update({ identityOverrides: overrides });
+    }
+  };
 
   // Push a history entry so swipe-back closes the panel instead of leaving the app.
   // Also lock body scroll so the page underneath keeps its scroll position
@@ -7548,13 +7705,32 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
       >
         <h2 className="font-display text-lg truncate pr-3">📊 ANALYTICS — {game.opponent}</h2>
-        <button
-          onClick={onClose}
-          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
-        >
-          CLOSE ✕
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          {doc && Array.isArray(doc.tracklets) && doc.tracklets.length > 0 && (
+            <button
+              onClick={() => setShowFix(true)}
+              className="h-9 px-3 rounded-full bg-lime-500/20 hover:bg-lime-500/30 text-lime-300 font-display text-xs flex items-center gap-1 border border-lime-500/40 active:scale-95"
+            >
+              🪪 FIX IDS
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
+          >
+            CLOSE ✕
+          </button>
+        </div>
       </div>
+      {showFix && (
+        <IdentityFixView
+          doc={doc}
+          roster={roster}
+          game={game}
+          onSave={saveOverrides}
+          onClose={() => setShowFix(false)}
+        />
+      )}
 
       {err && (
         <div className="m-4 p-3 bg-red-900/40 border border-red-800 rounded-xl text-sm text-red-200">
@@ -8182,6 +8358,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
           onClose={() => setShowAnalytics(false)}
           onSeekVideo={(t) => { setSeekTo(t); setShowVideo(true); setShowAnalytics(false); }}
           onDeleteVideos={onDeleteVideos}
+          onUpdateGame={onUpdateGame}
         />
       )}
 
@@ -11218,6 +11395,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

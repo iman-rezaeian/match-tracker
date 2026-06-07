@@ -140,6 +140,10 @@ ASSIGN_MATCH_MAX_FRAC = 0.55   # reject a tracklet↔player window-match beyond 
                                # fraction of field length (kills far-fetched votes)
 ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
                                # (a player can't own more track-time than played)
+# Coach IdentityFixView: an UNASSIGNED tracklet shorter than this (span minutes)
+# is a stitching fragment with no meaningful player-time — hidden from review so
+# the fix list stays a few dozen cards, not ~400. Assigned tracklets always show.
+TRACKLET_REVIEW_MIN_MINUTES = 1.0
 
 # --- Stats ---------------------------------------------------------------
 

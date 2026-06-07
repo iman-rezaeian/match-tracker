@@ -25,6 +25,7 @@ from .highlights import extract_clips
 from .identity import assign_identities, half_windows, period_clock_to_video_time_factory, _onfield_intervals
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
+from .tracklet_thumbs import generate_tracklet_thumbnails
 from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
@@ -423,7 +424,11 @@ def run(
         periods_video=play_windows,
         field_length_m=field_cal.length_m,
         field_width_m=field_cal.width_m,
+        overrides=game.identity_overrides,
     )
+    if game.identity_overrides:
+        log.info("  -> %d coach identity override(s) loaded from game doc",
+                 len(game.identity_overrides))
     _n_players_v2 = len({a.player_id for a in assignments if a.player_id})
     if _n_players_v2 < 3:
         log.warning("  -> v2 assignment produced only %d players; falling back to v0 voter.", _n_players_v2)
@@ -565,11 +570,34 @@ def run(
         auto_highlights_segments=(auto_hl_meta.segments if auto_hl_meta else []),
     )
 
+    # 7d. Per-tracklet records + thumbnails for the coach IdentityFixView. The
+    # records let the PWA list each stitched tracklet (worst-confidence first)
+    # with its current player + a representative crop so the coach can fix swaps;
+    # corrections come back as `identityOverrides` on the game doc.
+    tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled)
+    if tracklet_records:
+        try:
+            thumbs = generate_tracklet_thumbnails(
+                tracks_df=tracks_df,
+                tracklet_of_track=tracklet_of_track,
+                tracklet_records=tracklet_records,
+                video_path=str(video_path),
+                game_id=game_id,
+                upload=not skip_upload,
+            )
+            for r in tracklet_records:
+                if r["tracklet_id"] in thumbs:
+                    r["thumb_url"] = thumbs[r["tracklet_id"]]
+        except Exception as e:
+            log.warning("Tracklet thumbnails failed: %s", e)
+
     analytics = {
         "version": config.ANALYTICS_DOC_VERSION,
         "field_name": field_name,
         "video_meta": meta,
         "identity_assignments": [asdict(a) for a in assignments],
+        # Per-tracklet review records for the coach IdentityFixView (Phase 3).
+        "tracklets": tracklet_records,
         "player_stats": [_player_stat_to_dict(s) for s in player_stats],
         "formation_snapshots": [
             {
@@ -800,6 +828,54 @@ def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dic
         return {1: True, 2: False}
     attack_right_p1 = float(sub["x_m"].median()) < field_length_m / 2.0
     return {1: attack_right_p1, 2: not attack_right_p1}
+
+
+def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled: float) -> list[dict]:
+    """Aggregate the per-track identity assignments into per-tracklet records for
+    the coach IdentityFixView. Our-team tracklets only (opponent tracks carry no
+    `breakdown.tracklet`). Sorted worst-confidence first so the coach reviews the
+    shakiest tracklets at the top. `thumb_url` is filled in later (Phase 2).
+
+    `minutes` is ACTUAL tracked coverage (detection count ÷ sample rate), NOT the
+    span end-start: stitched fragments can span the whole game while holding only
+    a few seconds of real detections, so span would let pure noise through the
+    review filter."""
+    df = tracks_df.copy()
+    df["tracklet"] = df["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t)))
+    grp = df.groupby("tracklet")["time_s"]
+    spans = grp.agg(["min", "max"])
+    counts = grp.size()
+    fps = fps_sampled if fps_sampled and fps_sampled > 0 else 1.0
+    by_tl: dict[int, object] = {}
+    for a in assignments:
+        tl = (a.breakdown or {}).get("tracklet")
+        if tl is None:
+            continue
+        by_tl[int(tl)] = a  # member tracks share the tracklet-level assignment
+    out: list[dict] = []
+    for tl, a in by_tl.items():
+        if tl not in spans.index:
+            continue
+        t0 = float(spans.loc[tl, "min"]); t1 = float(spans.loc[tl, "max"])
+        minutes = float(counts.loc[tl]) / fps / 60.0  # real tracked coverage
+        # Stitching leaves many tiny unmerged fragments that carry no meaningful
+        # player-time. Only review tracklets that matter: those already assigned
+        # to a player (could be a wrong swap to fix) OR sizeable unassigned ones
+        # worth rescuing. Drop the rest so the list is a few dozen, not ~400.
+        if not a.player_id and minutes < config.TRACKLET_REVIEW_MIN_MINUTES:
+            continue
+        out.append({
+            "tracklet_id": int(tl),
+            "player_id": a.player_id,
+            "confidence": round(float(a.confidence), 3),
+            "status": a.status,
+            "minutes": round(minutes, 1),
+            "t_start_s": round(t0, 1),
+            "t_end_s": round(t1, 1),
+            "thumb_url": None,
+        })
+    out.sort(key=lambda r: (r["confidence"], -r["minutes"]))
+    return out
 
 
 def _sanitize_json(obj):

@@ -91,10 +91,25 @@ def assign_identities_v2(
     periods_video: list[tuple[float, float]],
     field_length_m: float,
     field_width_m: float,
+    overrides: Optional[dict] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
-    video-second spans per period (half_windows)."""
+    video-second spans per period (half_windows).
+
+    `overrides` is the per-game coach correction map { "<tracklet_id>":
+    "<player_id>" | None } from the PWA: a player_id force-assigns that stitched
+    tracklet to that roster player (status="coach", confidence 1.0); None drops
+    it (not our team). Coach overrides always win over the auto-assignment and
+    consume that player's minute budget before the greedy pass runs.
+    """
     valid_ids = {r.id for r in roster}
+    # Normalise overrides to int tracklet keys; tolerate str/int from Firestore.
+    ov: dict[int, Optional[str]] = {}
+    for k, v in (overrides or {}).items():
+        try:
+            ov[int(k)] = (str(v) if v else None)
+        except (TypeError, ValueError):
+            continue
     has_xy = {"x_m", "y_m"}.issubset(tracks_df.columns)
     lifetimes = _track_lifetimes(tracks_df)
     onfield = _onfield_intervals(starting_lineup, events, period_clock_to_video_time)
@@ -268,15 +283,31 @@ def assign_identities_v2(
     tracklet_assign: dict[int, tuple[Optional[str], float, str]] = {}
     assigned_min: dict[str, float] = {}
 
+    # 0. Coach overrides win — force first so they consume budget before auto,
+    #    and exclude them from the keeper + greedy passes.
+    forced: set[int] = set()
+    for tl, pid in ov.items():
+        if tl not in tracklet_members:
+            continue  # stale override (tracklet ids change on a full re-track)
+        forced.add(tl)
+        if pid and pid in valid_ids:
+            tracklet_assign[tl] = (pid, 1.0, "coach")
+            assigned_min[pid] = assigned_min.get(pid, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
+        else:
+            tracklet_assign[tl] = (None, 1.0, "coach_drop")  # not our team
+    if forced:
+        log.info("  identity: applied %d coach override(s)", len(forced))
+
     # 1. Keeper tracklets → GK unconditionally (don't let the cap drop them).
     if gk_player_id:
         for tl in keeper_tracklets:
-            if tl in tracklet_members:
+            if tl in tracklet_members and tl not in forced:
                 tracklet_assign[tl] = (gk_player_id, 0.95, "auto")
                 assigned_min[gk_player_id] = assigned_min.get(gk_player_id, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
 
     # 2. Everyone else by descending confidence, respecting per-player budgets.
-    remaining = [tl for tl in tracklet_members if tl not in keeper_tracklets]
+    remaining = [tl for tl in tracklet_members
+                 if tl not in keeper_tracklets and tl not in forced]
     for tl in sorted(remaining, key=lambda t: tl_rank[t]["conf"], reverse=True):
         info = tl_rank[tl]
         conf, tl_min = info["conf"], info["minutes"]
