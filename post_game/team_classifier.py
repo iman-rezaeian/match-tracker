@@ -32,6 +32,8 @@ def classify_tracks(
     tracks_df: pd.DataFrame,
     track_jersey_samples: dict[int, list[np.ndarray]],
     our_home_color_hex: str,
+    opp_color_hex: str | None = None,
+    ref_color_hex: str | None = None,
 ) -> dict[int, int]:
     track_ids = sorted(set(int(t) for t in tracks_df["track_id"].unique()))
     means: dict[int, np.ndarray] = {}
@@ -41,6 +43,25 @@ def classify_tracks(
             continue
         stacked = np.vstack(samples)
         means[tid] = np.median(stacked, axis=0)
+
+    # Supervised 3-anchor: when the coach has logged a referee color (distinct
+    # from both kits), classify each track to the NEAREST of the three known
+    # colors instead of unsupervised KMeans. ours→0, opp→1, ref→-1 (excluded).
+    # This reliably pulls the on-pitch referee out of our-team tracks — KMeans
+    # can't, because the ref fragments into many tracks and a black-clad ref
+    # clusters with a black kit. Gated on ref_color so other games are unchanged.
+    if ref_color_hex and opp_color_hex and len(means) >= 1:
+        anchors = [(0, _hex_to_hsv(our_home_color_hex)),
+                   (1, _hex_to_hsv(opp_color_hex)),
+                   (-1, _hex_to_hsv(ref_color_hex))]
+        out = {tid: -1 for tid in track_ids}
+        for tid, m in means.items():
+            out[tid] = min(anchors, key=lambda a: float(np.linalg.norm(m - a[1])))[0]
+        from collections import Counter
+        c = Counter(out.values())
+        log.info("Team classifier (supervised, ref-color set): ours=%d opp=%d ref/excluded=%d",
+                 c.get(0, 0), c.get(1, 0), c.get(-1, 0))
+        return out
 
     if len(means) < 2:
         log.warning(

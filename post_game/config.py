@@ -144,6 +144,13 @@ ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
 # is a stitching fragment with no meaningful player-time — hidden from review so
 # the fix list stays a few dozen cards, not ~400. Assigned tracklets always show.
 TRACKLET_REVIEW_MIN_MINUTES = 1.0
+# Refs/coaches/spectators next to the touchline 360 cam get mis-classified as our
+# team by jersey color (dark clothing ≈ black kit) and clutter the review list.
+# They live OFF the pitch in field coords, so drop UNASSIGNED tracklets that spend
+# less than this fraction of their detections within the field (± margin metres).
+# Assigned (coach-log-matched) tracklets are never dropped.
+TRACKLET_REVIEW_ONPITCH_FRAC = 0.6
+TRACKLET_REVIEW_ONPITCH_MARGIN_M = 3.0
 
 # --- Stats ---------------------------------------------------------------
 

@@ -7446,7 +7446,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   }, [onClose]);
 
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
-  const sortedRoster = [...roster].sort((a, b) => ((a.number ?? 999) - (b.number ?? 999)));
+  // Only offer players who actually dressed for THIS game (squad), not the whole
+  // team roster. Fall back to the starting lineup, then the full roster.
+  const squadIds = new Set((game.squad && game.squad.length ? game.squad : (game.startingLineup || [])));
+  const sortedRoster = [...roster]
+    .filter(p => squadIds.size === 0 || squadIds.has(p.id))
+    .sort((a, b) => ((a.number ?? 999) - (b.number ?? 999)));
   const pname = (pid) => {
     const p = rosterById[pid];
     if (!p) return pid ? '(unknown)' : 'unassigned';
@@ -7454,10 +7459,16 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   };
   const fmt = (s) => { const m = Math.floor((s || 0) / 60), ss = Math.round((s || 0) % 60); return `${m}:${String(ss).padStart(2, '0')}`; };
 
+  // Override value: a player id, or a labelled non-player sentinel. The labels
+  // (ref/opp/other) are kept on the game doc so the pipeline can learn from them
+  // later; all of them drop the tracklet from analytics for now.
+  const NONPLAYER = { '__opp__': '⚪ Opponent', '__ref__': '🟨 Referee', '__other__': '🚫 Coach / other' };
   const selFor = (tl) => {
     const id = String(tl.tracklet_id);
     if (!(id in overrides)) return '__auto__';
-    return overrides[id] == null ? '__none__' : overrides[id];
+    const v = overrides[id];
+    if (v == null || v === '__none__') return '__other__'; // legacy "not a player"
+    return v;
   };
   const setSel = (tl, val) => {
     const id = String(tl.tracklet_id);
@@ -7465,8 +7476,7 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     setOverrides(prev => {
       const next = { ...prev };
       if (val === '__auto__') delete next[id];
-      else if (val === '__none__') next[id] = null;
-      else next[id] = val;
+      else next[id] = val; // player id OR a non-player sentinel
       return next;
     });
   };
@@ -7553,10 +7563,16 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                   className="mt-2 w-full bg-stone-800 border border-stone-700 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-lime-500"
                 >
                   <option value="__auto__">Auto: {pname(tl.player_id)}</option>
-                  {sortedRoster.map(p => (
-                    <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
-                  ))}
-                  <option value="__none__">🚫 Not a player / opponent</option>
+                  <optgroup label="Our players (this game)">
+                    {sortedRoster.map(p => (
+                      <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Not our player">
+                    <option value="__opp__">⚪ Opponent</option>
+                    <option value="__ref__">🟨 Referee</option>
+                    <option value="__other__">🚫 Coach / spectator / other</option>
+                  </optgroup>
                 </select>
               </div>
             </div>
