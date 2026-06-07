@@ -285,6 +285,10 @@ def assign_identities_v2(
 
     # 0. Coach overrides win — force first so they consume budget before auto,
     #    and exclude them from the keeper + greedy passes.
+    # Labelled non-player sentinels written by the PWA picker. All drop the
+    # tracklet, but we keep the reason in the status so it can feed a future
+    # "learn the referee/opponent appearance" step.
+    _drop_status = {"__ref__": "coach_ref", "__opp__": "coach_opp", "__other__": "coach_other"}
     forced: set[int] = set()
     for tl, pid in ov.items():
         if tl not in tracklet_members:
@@ -294,7 +298,7 @@ def assign_identities_v2(
             tracklet_assign[tl] = (pid, 1.0, "coach")
             assigned_min[pid] = assigned_min.get(pid, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
         else:
-            tracklet_assign[tl] = (None, 1.0, "coach_drop")  # not our team
+            tracklet_assign[tl] = (None, 1.0, _drop_status.get(pid, "coach_drop"))
     if forced:
         log.info("  identity: applied %d coach override(s)", len(forced))
 
