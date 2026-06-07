@@ -462,6 +462,8 @@ def run(
         field_width_m=field_cal.width_m,
         fps_after_sample=fps_sampled,
         we_attack_right=attack_dir.get(1, True),
+        periods=play_windows,
+        gk_player_id=game.gk_player_id,
     )
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,

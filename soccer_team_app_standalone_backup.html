@@ -7228,12 +7228,68 @@ function BroadcastSubBug({ elapsed, holdEnd, subs }) {
  * formation, GK positioning, and links to highlight clips.
  * Coach-only — purely a read view here.
  */
+/* ---- Player heatmap: canonical pitch, BOTTOM = our net, TOP = opponent ----
+ * grid is the flattened row-major heatmap_grid (rows×cols), row 0 = our-net end
+ * (computed half-canonical in stats.py), col 0 = consistent left. We draw a
+ * vertical pitch and shade each cell by occupancy; row 0 is rendered at the
+ * bottom so "bottom-left" always = our-half left side, in both halves.
+ */
+function PlayerHeatmap({ grid, rows, cols }) {
+  if (!grid || !grid.length || !rows || !cols) {
+    return <div className="text-[11px] text-stone-500 py-2">No positional data.</div>;
+  }
+  const max = Math.max(1, ...grid);
+  // Build display rows top→bottom = opponent-net → our-net (data row index high→low).
+  const displayRows = [];
+  for (let r = rows - 1; r >= 0; r--) {
+    const cells = [];
+    for (let c = 0; c < cols; c++) cells.push(grid[r * cols + c] || 0);
+    displayRows.push(cells);
+  }
+  const heat = (v) => {
+    if (v <= 0) return 'transparent';
+    const a = Math.pow(v / max, 0.6); // gamma so low cells stay visible
+    // green → yellow → red ramp by intensity
+    if (a < 0.5) {
+      const t = a / 0.5; // green→yellow
+      return `rgba(${Math.round(120 + 135 * t)}, ${Math.round(200)}, 40, ${0.25 + 0.55 * a})`;
+    }
+    const t = (a - 0.5) / 0.5; // yellow→red
+    return `rgba(255, ${Math.round(200 - 160 * t)}, 30, ${0.45 + 0.5 * a})`;
+  };
+  return (
+    <div className="flex flex-col items-center gap-1 py-2">
+      <div className="text-[9px] tracking-widest text-stone-500">OPPONENT NET ↑</div>
+      <div
+        className="relative rounded-md overflow-hidden border border-emerald-200/20"
+        style={{ width: 132, aspectRatio: `${cols} / ${rows}`, background: 'linear-gradient(180deg,#14532d,#0b3d22)' }}
+      >
+        {/* pitch markings */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute left-0 right-0 top-1/2 h-px bg-white/25" />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border border-white/25" />
+          <div className="absolute left-[30%] right-[30%] top-0 h-[10%] border-x border-b border-white/20" />
+          <div className="absolute left-[30%] right-[30%] bottom-0 h-[10%] border-x border-t border-white/20" />
+        </div>
+        {/* heat cells */}
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols},1fr)`, gridTemplateRows: `repeat(${rows},1fr)` }}>
+          {displayRows.flatMap((cells, ri) => cells.map((v, ci) => (
+            <div key={`${ri}-${ci}`} style={{ background: heat(v) }} />
+          )))}
+        </div>
+      </div>
+      <div className="text-[9px] tracking-widest text-lime-400">OUR NET ↓</div>
+    </div>
+  );
+}
+
 function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) {
   const [doc, setDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [clips, setClips] = useState([]);
   const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
+  const [openHeatmap, setOpenHeatmap] = useState(null); // player_id whose heatmap is expanded
 
   // Push a history entry so swipe-back closes the panel instead of leaving the app.
   // Also lock body scroll so the page underneath keeps its scroll position
@@ -7426,8 +7482,15 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
                     {[...(doc.player_stats || [])]
                       .sort((a, b) => (b.distance_m || 0) - (a.distance_m || 0))
                       .map(s => (
-                        <tr key={s.player_id} className="border-b border-stone-800/50">
-                          <td className="py-1 pr-2 truncate max-w-[140px]">{playerName(s.player_id)}</td>
+                        <React.Fragment key={s.player_id}>
+                        <tr
+                          className="border-b border-stone-800/50 cursor-pointer active:bg-stone-800/40"
+                          onClick={() => setOpenHeatmap(openHeatmap === s.player_id ? null : s.player_id)}
+                        >
+                          <td className="py-1 pr-2 truncate max-w-[140px]">
+                            <span className="text-stone-500 mr-1">{openHeatmap === s.player_id ? '▾' : '▸'}</span>
+                            {playerName(s.player_id)}
+                          </td>
                           <td className="text-right px-2">{(s.minutes_played || 0).toFixed(0)}</td>
                           <td className="text-right px-2">{(s.distance_m || 0).toFixed(0)}</td>
                           <td className="text-right px-2">{((s.top_speed_ms || 0) * 3.6).toFixed(1)}</td>
@@ -7436,6 +7499,14 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos }) 
                           <td className="text-right px-2">{(s.pct_middle_third || 0).toFixed(0)}</td>
                           <td className="text-right px-2">{(s.pct_defensive_third || 0).toFixed(0)}</td>
                         </tr>
+                        {openHeatmap === s.player_id && (
+                          <tr className="bg-stone-950/60 border-b border-stone-800/50">
+                            <td colSpan={8} className="px-2">
+                              <PlayerHeatmap grid={s.heatmap_grid} rows={s.heatmap_grid_rows} cols={s.heatmap_grid_cols} />
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -7866,7 +7937,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
             className="w-full bg-stone-900 border border-stone-800 rounded-xl px-4 py-3 flex items-center justify-between active:scale-[0.98] transition"
           >
             <span className="text-sm font-bold">📊 ANALYTICS</span>
-            <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION · GK</span>
+            <span className="text-xs text-stone-400">DISTANCE · HEATMAPS · FORMATION</span>
           </button>
           <button
             onClick={async () => {
@@ -10914,6 +10985,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
