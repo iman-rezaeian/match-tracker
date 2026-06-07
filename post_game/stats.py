@@ -57,6 +57,7 @@ def compute_player_stats(
     heatmap_grid_shape: tuple[int, int] = (12, 8),
     periods: Optional[list[tuple[float, float]]] = None,
     gk_player_id: Optional[str] = None,
+    played_minutes: Optional[dict[str, float]] = None,
 ) -> list[PlayerStats]:
     per_player = _per_player_trajectory(tracks_field_df, identity_by_track)
     third_low, third_high = config.THIRDS_FRACTIONS
@@ -159,7 +160,9 @@ def compute_player_stats(
 
         out.append(PlayerStats(
             player_id=str(pid),
-            minutes_played=float((t[-1] - t[0]) / 60.0),
+            # Minutes from the coach log (ground truth) when available, else the
+            # track time span. Track spans over-count when identity is imperfect.
+            minutes_played=float((played_minutes or {}).get(str(pid), (t[-1] - t[0]) / 60.0)),
             distance_m=float(seg_dist.sum()),
             top_speed_ms=float(np.percentile(speed_s, 99)) if len(speed_s) else 0.0,
             avg_speed_ms=float(np.mean(speed_s)) if len(speed_s) else 0.0,

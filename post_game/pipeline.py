@@ -22,7 +22,7 @@ from .calibration import (
 from .detection import Detector
 from .formation import compute_formation
 from .highlights import extract_clips
-from .identity import assign_identities, half_windows, period_clock_to_video_time_factory
+from .identity import assign_identities, half_windows, period_clock_to_video_time_factory, _onfield_intervals
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
@@ -455,6 +455,18 @@ def run(
     # 6. Stats + Formation + GK positioning
     log.info("Stage 6/6: stats, formation, GK positioning...")
     attack_dir = _attack_direction(game, tracks_df, identity_by_track, field_cal.length_m)
+    # Coach-logged minutes per player (ground truth) = on-field intervals
+    # (lineup + subs) clipped to the play windows. Used for minutes_played.
+    _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video)
+    played_minutes: dict[str, float] = {}
+    for _pid, _ivs in _onf.items():
+        _tot = 0.0
+        for (_a, _b) in _ivs:
+            for (_pa, _pb) in play_windows:
+                _lo, _hi = max(_a, _pa), min(_b, _pb)
+                if _hi > _lo:
+                    _tot += _hi - _lo
+        played_minutes[str(_pid)] = _tot / 60.0
     player_stats = compute_player_stats(
         tracks_field_df=tracks_df,
         identity_by_track=identity_by_track,
@@ -464,6 +476,7 @@ def run(
         we_attack_right=attack_dir.get(1, True),
         periods=play_windows,
         gk_player_id=game.gk_player_id,
+        played_minutes=played_minutes,
     )
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,
