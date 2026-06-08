@@ -275,9 +275,17 @@ def assign_identities_v2(
                                                     span[1] + ONFIELD_TOLERANCE_S)}
         if votes:
             ordered = sorted(votes.values(), reverse=True)
-            share = ordered[0] / max(sum(ordered), 1.0)
+            total = sum(ordered)  # # of windows (≈WINDOW_S each) that matched this tracklet
+            share = ordered[0] / max(total, 1.0)
             margin = (ordered[0] - ordered[1]) / ordered[0] if len(ordered) > 1 and ordered[0] > 0 else 1.0
-            conf = float(min(1.0, 0.6 * share + 0.4 * margin))
+            # Evidence floor: confidence must reflect HOW MUCH on-field positional
+            # agreement accumulated, not just its cleanliness. A 1-window fluke
+            # (share=margin=1) used to read 100%; now it saturates toward full
+            # confidence only with sustained support across many windows. This kills
+            # the "false 100%" on 1-second fragments and orders the greedy pass so
+            # well-evidenced tracklets win budget slots first.
+            evidence = 1.0 - np.exp(-total / float(config.ID_CONFIDENCE_EVIDENCE_VOTES))
+            conf = float(min(1.0, evidence * (0.6 * share + 0.4 * margin)))
         else:
             conf = 0.0
         tl_rank[tl] = {

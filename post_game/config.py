@@ -116,6 +116,10 @@ ID_WEIGHTS = {
 
 ID_CONFIDENCE_AUTO = 0.80      # auto-assign if fused score >= this
 ID_CONFIDENCE_REVIEW = 0.50    # 0.50..0.80 → flag for coach review
+# Confidence saturates toward 1 only with this many supporting match windows
+# (each ≈ WINDOW_S=5s). Stops a 1-window positional fluke from reading 100% on a
+# 1-second fragment; ~this many windows of agreement ≈ 63% confidence.
+ID_CONFIDENCE_EVIDENCE_VOTES = 8
 
 MIN_BBOX_H_FOR_OCR = 80        # px; smaller → don't bother running OCR
 MIN_BBOX_H_FOR_FACE = 90       # px
