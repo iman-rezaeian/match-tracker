@@ -7949,6 +7949,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const p = rosterById[s.player_id];
                 const conf = playerConf(s.player_id);
                 const confColor = conf == null ? 'text-stone-500' : conf >= 0.8 ? 'text-lime-400' : conf >= 0.5 ? 'text-amber-400' : 'text-red-400';
+                // Under-tracked: played real minutes but the assigned tracks carry
+                // almost no movement (the pipeline only captured a sliver of their
+                // play). Their distance/speed/sprints aren't real — flag, don't lie.
+                const distPerMin = (s.distance_m || 0) / Math.max(s.minutes_played || 1, 1);
+                const lowTrack = (s.minutes_played || 0) >= 5 && distPerMin < 15;
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -7965,16 +7970,22 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                       <div className="text-right shrink-0 pl-2">
                         <div className="text-[9px] text-stone-500">IDENTITY</div>
                         <div className={`text-xs font-bold ${confColor}`}>{conf == null ? '—' : `● ${(conf * 100).toFixed(0)}%`}</div>
+                        {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
                       </div>
                     </div>
-                    <div className="grid grid-cols-4 gap-2 mb-3">
-                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN'], [(s.distance_m || 0).toFixed(0), 'DIST m'], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h'], [s.sprint_count || 0, 'SPRINTS']].map(([v, l]) => (
-                        <div key={l} className="rounded-xl border border-stone-700/60 p-2 text-center" style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
-                          <div className="text-white font-display text-base leading-none">{v}</div>
+                    <div className="grid grid-cols-4 gap-2 mb-1">
+                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [(s.distance_m || 0).toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [s.sprint_count || 0, 'SPRINTS', true]].map(([v, l, movement]) => (
+                        <div key={l} className={`rounded-xl border border-stone-700/60 p-2 text-center ${lowTrack && movement ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
+                          <div className="text-white font-display text-base leading-none">{lowTrack && movement ? '—' : v}</div>
                           <div className="text-[9px] text-stone-400 mt-1">{l}</div>
                         </div>
                       ))}
                     </div>
+                    {lowTrack && (
+                      <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
+                        Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.
+                      </div>
+                    )}
                     <div className="mb-2">
                       <div className="flex h-2 rounded-full overflow-hidden">
                         <div style={{ width: `${s.pct_defensive_third || 0}%`, background: '#ef4444' }} />
