@@ -27,8 +27,27 @@ few readable-and-facing instances for actual players → low, unreliable yield f
 a high build cost (OCR model + per-detection crop/infer over ~460k boxes +
 integration). It would not dependably fix the outfield swaps.
 
+## Update 2026-06 — per-PLAYER best-frame probe (`tracking/jersey_ocr_probe.py`)
+Re-tested the coach's "but the numbers ARE readable" point properly: for each
+assigned player in Windsor, took their largest/sharpest crops and looked.
+- **Digit SIZE is fine** on best frames: ~26–40 px for 11/12 players (only the GK,
+  small/far, fell short). Size is no longer the blocker on the best frames.
+- **But readability is killed by ORIENTATION.** Of 8 players' best crops, **only 1
+  (#19) was readable** — the rest front/side-facing, showing the chest **crest, not
+  the back number.** Geometry: number is on the BACK; the largest/closest frames to
+  a touchline cam are players facing the field (front). Back-facing frames happen
+  when running toward the FAR goal → farther → smaller digit. Inherent
+  **orientation × distance tension** a single touchline cam can't escape.
+- **Net yield ceiling ≈ low** (~1 in 8 best frames). OCR would tag a handful of
+  lucky close-AND-back tracklets per game (like #19), not reliably ID the team.
+
+**Cheapest real fix = FRONT numbers** (jersey front or shorts). The frames we
+already get in abundance — close, front-facing — become readable, sidestepping
+orientation entirely. No hardware, one kit decision. Recommend for next season's
+kit before spending on 8K/OCR.
+
 ## Why 8K likely flips this
-Resolution is the whole game. At 8K (7680×3840) players/digits scale ~1.3–1.8×,
+Resolution helps but does NOT remove the orientation tension above. At 8K (7680×3840) players/digits scale ~1.3–1.8×,
 putting near-side players' digits in the **~15–45 px** range where OCR starts
 working. Plan OCR as a **strong tiebreaker layered on the coach-log prior**
 (resolving near-side / camera-facing tracklets), not a standalone fix.
