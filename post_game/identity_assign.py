@@ -341,9 +341,19 @@ def assign_identities_v2(
             tracklet_assign[tl] = (None, conf, "unknown")  # over budget / no candidate → drop
             continue
         assigned_min[chosen] = assigned_min.get(chosen, 0.0) + tl_min
-        status = ("auto" if conf >= config.ID_CONFIDENCE_AUTO
-                  else "review" if conf >= config.ID_CONFIDENCE_REVIEW
-                  else "unknown")
+        # RECALL: assign the best-guess player down to a low floor (not just the
+        # REVIEW tier), so a player's distance/heatmap aren't starved when most of
+        # their play is low-confidence. The minute budget still caps over-assignment,
+        # and the confidence stays honest (shown low). Only truly weak (< STATS_MIN)
+        # tracklets are dropped. 'lowconf' tracklets surface in FIX IDS "All segments".
+        if conf >= config.ID_CONFIDENCE_AUTO:
+            status = "auto"
+        elif conf >= config.ID_CONFIDENCE_REVIEW:
+            status = "review"
+        elif conf >= config.ID_CONFIDENCE_STATS_MIN:
+            status = "lowconf"
+        else:
+            status = "unknown"
         tracklet_assign[tl] = (chosen if status != "unknown" else None, conf, status)
 
     # --- emit per original track ---
