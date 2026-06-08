@@ -7953,7 +7953,8 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 // almost no movement (the pipeline only captured a sliver of their
                 // play). Their distance/speed/sprints aren't real — flag, don't lie.
                 const distPerMin = (s.distance_m || 0) / Math.max(s.minutes_played || 1, 1);
-                const lowTrack = (s.minutes_played || 0) >= 5 && distPerMin < 15;
+                const isGK = game.gkPlayerId && s.player_id === game.gkPlayerId; // keepers legitimately cover little
+                const lowTrack = !isGK && (s.minutes_played || 0) >= 5 && distPerMin < 12;
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
