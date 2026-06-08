@@ -128,17 +128,30 @@ def sample_jersey_hsv(crop: np.ndarray, bbox_crop: tuple[float, float, float, fl
     # silently dropped — which is what caused all tracks to get team_id=-1.
     if h_box < 14:
         return np.empty((0, 3), dtype=np.float32)
-    jy1 = y1
-    jy2 = y1 + h_box // 2
+    # CENTRAL torso ROI (upper-chest/back, central width): below the head, above
+    # the shorts, away from the arms — so the jersey dominates and grass/skin is
+    # minimal. Tighter than before precisely so we DON'T need an aggressive pixel
+    # filter that erased the defining colors of white/black/green kits.
     w_box = x2 - x1
-    jx1 = x1 + w_box // 5
-    jx2 = x2 - w_box // 5
+    jy1 = y1 + int(0.18 * h_box)
+    jy2 = y1 + int(0.50 * h_box)
+    jx1 = x1 + int(0.28 * w_box)
+    jx2 = x2 - int(0.28 * w_box)
     jx1 = max(0, jx1); jy1 = max(0, jy1)
     jx2 = min(crop.shape[1], jx2); jy2 = min(crop.shape[0], jy2)
     if jx2 <= jx1 or jy2 <= jy1:
         return np.empty((0, 3), dtype=np.float32)
     roi = crop[jy1:jy2, jx1:jx2]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float32)
-    h, s, _v = hsv[:, 0], hsv[:, 1], hsv[:, 2]
-    keep = ~((h >= 35) & (h <= 85) & (s > 40)) & (s >= 25)
-    return hsv[keep]
+    # Drop ONLY clearly-grass pixels (saturated green) so a small player's grass
+    # background can't dominate. Do NOT drop low-saturation pixels — that erased
+    # WHITE and BLACK kits (their defining pixels are low-S), the bug that pushed
+    # white opponents onto our (green) team and vice-versa. A green kit shares
+    # grass's hue, so some of its pixels are dropped too, but the tight central
+    # ROI keeps the jersey dominant in what remains.
+    h, s, v = hsv[:, 0], hsv[:, 1], hsv[:, 2]
+    grass = (h >= 35) & (h <= 85) & (s > 60) & (v > 50)
+    kept = hsv[~grass]
+    # If grass removal nuked almost everything (e.g. a green kit), fall back to
+    # the full ROI rather than returning noise.
+    return kept if len(kept) >= max(8, len(hsv) // 5) else hsv
