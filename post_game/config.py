@@ -120,6 +120,11 @@ ID_CONFIDENCE_REVIEW = 0.50    # 0.50..0.80 → flag for coach review
 # (each ≈ WINDOW_S=5s). Stops a 1-window positional fluke from reading 100% on a
 # 1-second fragment; ~this many windows of agreement ≈ 63% confidence.
 ID_CONFIDENCE_EVIDENCE_VOTES = 8
+# RECALL floor: assign a tracklet to its best-guess player (so it feeds the
+# player's distance/heatmap) down to this confidence, not just the REVIEW tier.
+# Below this it's too weak and is dropped. Keeps under-tracked players from
+# collapsing to near-zero distance; the minute budget still caps over-assignment.
+ID_CONFIDENCE_STATS_MIN = 0.20
 
 MIN_BBOX_H_FOR_OCR = 80        # px; smaller → don't bother running OCR
 MIN_BBOX_H_FOR_FACE = 90       # px
