@@ -7556,10 +7556,15 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(null);
   const [zoom, setZoom] = useState(null); // thumb_url shown full-screen for recognition
-  // Tracklets the coach has already decided (saved). They drop off the list so
-  // only the remaining work shows. Seeded from the saved overrides on the game.
-  const [savedSet, setSavedSet] = useState(() => new Set(Object.keys(game.identityOverrides || {})));
+  // Snapshot of the last-saved overrides. Decided+saved tracklets drop off the
+  // list, and "unsaved" = how many differ from this snapshot (→ 0 right after Save).
+  const [savedOverrides, setSavedOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
   const [showAll, setShowAll] = useState(false); // false = only unassigned to do
+  const savedSet = new Set(Object.keys(savedOverrides));
+  const unsavedCount = (() => {
+    const ids = new Set([...Object.keys(overrides), ...Object.keys(savedOverrides)]);
+    let n = 0; ids.forEach(id => { if (overrides[id] !== savedOverrides[id]) n++; }); return n;
+  })();
 
   // Review priority: most IMPORTANT first = uncertain AND high player-time.
   // A confidently-assigned tracklet scores ~0 (nothing to do); a long unassigned
@@ -7574,14 +7579,15 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     .sort((a, b) => importance(b) - importance(a));
   const remainingUnassigned = allTracklets.filter(t => !t.player_id && !savedSet.has(String(t.tracklet_id))).length;
 
+  // No own history entry: this is a sub-modal of AnalyticsPanel. Pushing/popping
+  // here fired a popstate that AnalyticsPanel's listener also caught, cascading
+  // both closed and kicking the coach out to the dugout. CLOSE just unmounts it
+  // (stays on the Analytics panel); swipe-back falls through to close Analytics.
+  // Esc still closes it for desktop.
   useEffect(() => {
-    window.history.pushState({ modal: 'idfix' }, '');
-    const onPop = () => onClose();
-    window.addEventListener('popstate', onPop);
-    return () => {
-      window.removeEventListener('popstate', onPop);
-      if (window.history.state && window.history.state.modal === 'idfix') window.history.back();
-    };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
@@ -7620,14 +7626,13 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     });
   };
 
-  const pendingCount = Object.keys(overrides).length;
   const doSave = async () => {
     setSaving(true);
     try {
       await onSave(overrides);
-      // Drop everything decided so far off the list — coach now sees only what's left.
-      setSavedSet(new Set(Object.keys(overrides)));
-      setSavedMsg('✓ Saved. Re-run analytics on the Mac to apply.');
+      // Snapshot what we just saved → "unsaved" resets to 0 and decided rows drop off.
+      setSavedOverrides({ ...overrides });
+      setSavedMsg('✓ Saved — re-run analytics on the Mac to apply.');
     }
     catch (e) { setSavedMsg('Save failed: ' + e); }
     setSaving(false);
@@ -7665,7 +7670,7 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
 
       <div className="sticky top-[3.5rem] z-10 px-4 py-2 bg-stone-900/95 backdrop-blur border-b border-stone-800 flex items-center justify-between gap-2">
         <span className="text-xs text-stone-300 shrink-0">
-          {remainingUnassigned} to identify{pendingCount ? ` · ${pendingCount} pending` : ''}
+          {remainingUnassigned} to identify{unsavedCount ? ` · ${unsavedCount} unsaved` : ''}
         </span>
         <button
           onClick={() => setShowAll(v => !v)}
@@ -7781,6 +7786,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   // Push a history entry so swipe-back closes the panel instead of leaving the app.
   // Also lock body scroll so the page underneath keeps its scroll position
   // when the modal closes (otherwise iOS resets to top).
+  // IMPORTANT: run ONCE (empty deps) via a ref — keying on [onClose] re-ran the
+  // cleanup (history.back) on every re-render (e.g. after Save → setGames), which
+  // cascaded through the history stack and kicked the coach out to the dugout.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -7789,7 +7799,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
     window.history.pushState({ modal: 'analytics' }, '');
-    const onPop = () => onClose();
+    const onPop = () => onCloseRef.current();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -7801,7 +7811,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
         window.history.back();
       }
     };
-  }, [onClose]);
+  }, []);
 
   useEffect(() => {
     if (!window.fbDb || !game?.id) { setLoading(false); return; }
@@ -11572,6 +11582,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
