@@ -175,24 +175,32 @@ def _field_lonlat_bounds(
     projector: FieldProjector,
     field_length_m: float, field_width_m: float,
 ) -> tuple[float, float, float, float]:
-    """Project the four field corners (slightly padded) into (lon, lat) and
-    return (lon_min, lon_max, lat_min, lat_max). Used to clamp the virtual
-    camera aim so it can never point outside the pitch — the camera will
-    still see grass beyond the lines because of FOV, but the *center* stays
-    inside.
+    """Project a DENSE grid over the field into (lon, lat) and return
+    (lon_min, lon_max, lat_min, lat_max). Used to clamp the virtual camera aim
+    so it can never point outside the pitch — the camera will still see grass
+    beyond the lines because of FOV, but the *center* stays inside.
+
+    CRITICAL: sample a grid, NOT just the 4 corners. On a low sideline pole the
+    steepest-DOWN point of the field is the NEAR-touchline at MID-length (right
+    under the camera), which is not a corner — the corners sit at extreme
+    longitude where the view angle is shallow. A 4-corner box clamps lat_min
+    far too shallow (e.g. -9° when the near touchline is actually at -59°),
+    which PREVENTS the aim from ever tilting down to near-side / under-the-pole
+    play (throw-ins, the near sideline). With a 360 equirect input there is no
+    coverage limit — only this clamp was throwing the lower hemisphere away.
     """
     pad = TV_ONFIELD_PAD_M
-    corners_m = [
-        (-pad, -pad),
-        (field_length_m + pad, -pad),
-        (field_length_m + pad, field_width_m + pad),
-        (-pad, field_width_m + pad),
-    ]
+    xs = np.linspace(-pad, field_length_m + pad, 25)
+    ys = np.linspace(-pad, field_width_m + pad, 25)
     lons, lats = [], []
-    for x_m, y_m in corners_m:
-        lon, lat = projector.field_to_lonlat(x_m, y_m)
-        lons.append(lon)
-        lats.append(lat)
+    for x_m in xs:
+        for y_m in ys:
+            lon, lat = projector.field_to_lonlat(float(x_m), float(y_m))
+            if np.isfinite(lon) and np.isfinite(lat):
+                lons.append(lon)
+                lats.append(lat)
+    if not lons:
+        return -180.0, 180.0, -90.0, 90.0
     # Unwrap lons so we don't get a 360° span across the seam.
     lons_uw = np.degrees(np.unwrap(np.radians(np.array(lons))))
     return float(lons_uw.min()), float(lons_uw.max()), float(min(lats)), float(max(lats))
@@ -303,6 +311,69 @@ def _aim_for_time(
     return projector.field_to_lonlat(cx, cy), True
 
 
+def _coverage_halffov_for_time(
+    tracks_field_df: pd.DataFrame,
+    t_video: float,
+    projector: FieldProjector,
+    aim: tuple[float, float],
+    field_length_m: float,
+    field_width_m: float,
+    cfg: AimConfig,
+) -> float:
+    """Required HORIZONTAL half-FOV (deg) to keep the ACTION in frame.
+
+    Sizes the zoom to the action CLUSTER, not the whole team. In U10 play a
+    keeper/defender often sits ~40 m back at the far end; fitting EVERY on-field
+    player would keep the camera zoomed out the whole game even when the actual
+    action is compact (the user's exact complaint). So we first restrict to the
+    densest play window in field-X (`cover_window_m` wide, centered on the
+    densest cluster — the same group the aim targets) and only then measure how
+    far those players spread from the aim center. A lone far player is excluded
+    and no longer forces a zoom-out.
+
+    Returns 0.0 when there are too few on-field tracks (caller falls back to the
+    base FOV).
+    """
+    x, y = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
+    if x.size < 2:
+        return 0.0
+    # Restrict to the action cluster: densest `cover_window_m`-wide window in
+    # field-X, centered on the densest bin. Players outside it (e.g. the lone
+    # far-end keeper) are dropped so they can't inflate the FOV.
+    cover_w = cfg.cover_window_m
+    if x.size >= 3 and cover_w > 0:
+        bin_w = TV_DENSITY_BIN_M
+        bins_per_window = max(1, int(round(cover_w / bin_w)))
+        edges = np.arange(0.0, field_length_m + bin_w, bin_w)
+        hist, _ = np.histogram(x, bins=edges)
+        if len(hist) >= bins_per_window:
+            sums = np.convolve(hist, np.ones(bins_per_window), mode="valid")
+            peak = int(np.argmax(sums))
+            x_lo, x_hi = edges[peak], edges[peak + bins_per_window]
+            inside = (x >= x_lo) & (x <= x_hi)
+            if inside.sum() >= 2:
+                x, y = x[inside], y[inside]
+    aim_lon, aim_lat = aim
+    lonlat = np.array(
+        [projector.field_to_lonlat(float(xi), float(yi)) for xi, yi in zip(x, y)],
+        dtype=np.float64,
+    )
+    good = np.isfinite(lonlat).all(axis=1)
+    lonlat = lonlat[good]
+    if lonlat.shape[0] < 2:
+        return 0.0
+    # Horizontal angular offset from the aim (unwrap the seam), and the
+    # vertical offset mapped through the aspect ratio so it costs horizontal FOV.
+    dlon = np.abs(((lonlat[:, 0] - aim_lon + 180.0) % 360.0) - 180.0)
+    aspect = cfg.out_w / cfg.out_h
+    dlat = np.abs(lonlat[:, 1] - aim_lat) * aspect
+    need = np.maximum(dlon, dlat)
+    # Use a high percentile (not max) so one stray detection can't force a huge
+    # zoom-out; the dynamic-FOV cap also bounds it.
+    return float(np.percentile(need, cfg.cover_percentile))
+
+
+
 def _build_aim_stream(
     tracks_field_df: pd.DataFrame,
     projector: FieldProjector,
@@ -361,6 +432,7 @@ def _build_aim_stream(
     center_lonlat = projector.field_to_lonlat(field_length_m / 2.0, field_width_m / 2.0)
 
     raw: list[tuple[float, float]] = []
+    raw_cov_halffov: list[float] = []
     last_valid = center_lonlat
     for t in aim_times:
         aim, valid = _aim_for_time(
@@ -370,45 +442,76 @@ def _build_aim_stream(
         if valid:
             last_valid = aim
         raw.append(aim)
+        # Coverage: how wide must the camera be to keep this moment's on-field
+        # action in frame? Measured as the angular spread of the players about
+        # the aim center. Drives the dynamic auto-widen so corner / wide /
+        # end-to-end play is never lost off the edge of a fixed 70° crop.
+        raw_cov_halffov.append(
+            _coverage_halffov_for_time(
+                tracks_field_df, float(t), projector, aim,
+                field_length_m, field_width_m, cfg,
+            )
+        )
 
     # --- smoothing / predictive lead -------------------------------------
+    # --- motion model: per-time aim target → smooth camera motion --------
+    raw_lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in raw]))))
+    raw_lats = np.array([a[1] for a in raw])
+
+    # Back-compat: the legacy use_learned flag still selects the learned model.
+    model = cfg.motion_model
     if cfg.use_learned:
-        # Phase 5: Holt/learned smooth predictor (smoothness + lead in one pass).
-        lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in raw]))))
-        lats = np.array([a[1] for a in raw])
+        model = "learned"
+
+    if model == "broadcast":
+        # DEFAULT: edge-aware safe-zone follow. The camera HOLDS while the
+        # action sits inside a central safe zone and pans (smooth, eased) only
+        # when the action heads toward the frame EDGE — so corner / sideline /
+        # centre-line action is never lost off-frame, yet in-frame jitter
+        # produces no motion (the calm tripod feel). NO predictive lead.
+        safe_lon = cfg.safe_zone_lon_frac * cfg.half_fov_lon_deg
+        safe_lat = cfg.safe_zone_lat_frac * cfg.half_fov_lat_deg
+        lons = tv_aim.broadcast_follow(
+            raw_lons, dt, cfg.smooth_time_s, cfg.max_pan_speed_deg_s, safe_lon,
+        )
+        lats = tv_aim.broadcast_follow(
+            raw_lats, dt, cfg.smooth_time_lat_s, cfg.max_tilt_speed_deg_s, safe_lat,
+        )
+    elif model == "smooth_damp":
+        # Continuous critically-damped follow. Chases the target at all times —
+        # smooth, but never holds still, so it can feel restless on jittery
+        # cluster centroids. A gentle velocity-smoothed lead anticipates play.
+        tgt_lons = tv_aim.velocity_lead(raw_lons, dt, cfg.lead_s)
+        tgt_lats = tv_aim.velocity_lead(raw_lats, dt, cfg.lead_s)
+        lons = tv_aim.smooth_damp(tgt_lons, dt, cfg.smooth_time_s, cfg.max_pan_speed_deg_s)
+        lats = tv_aim.smooth_damp(tgt_lats, dt, cfg.smooth_time_lat_s, cfg.max_tilt_speed_deg_s)
+    elif model == "learned":
+        # Holt/learned smooth predictor (smoothness + lead in one pass).
         predictor = tv_aim.LearnedSmoothPredictor(cfg)
-        lons = predictor.smooth(lons, dt)
-        lats = predictor.smooth(lats, dt)
-    elif cfg.use_kalman:
-        # Phase 2: constant-velocity Kalman filter replaces the boxcar AND adds
-        # predictive lead so the camera anticipates rather than trails.
-        lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in raw]))))
-        lats = np.array([a[1] for a in raw])
-        lons = tv_aim.kalman_lead(lons, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
-        lats = tv_aim.kalman_lead(lats, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
+        lons = predictor.smooth(raw_lons, dt)
+        lats = predictor.smooth(raw_lats, dt)
+    elif model == "kalman_deadzone":
+        # Kalman lead + Schmitt dead-zone (the stop-and-go model — kept for A/B).
+        lons, lats = raw_lons, raw_lats
+        if cfg.use_kalman:
+            lons = tv_aim.kalman_lead(lons, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
+            lats = tv_aim.kalman_lead(lats, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
+        if cfg.use_dead_zone:
+            lons = tv_aim.apply_dead_zone(
+                lons, cfg.half_fov_lon_deg, cfg.dead_zone_frac, cfg.max_pan_deg_s, dt,
+            )
+            lats = tv_aim.apply_dead_zone(
+                lats, cfg.half_fov_lat_deg, cfg.dead_zone_lat_frac, cfg.max_pan_deg_s, dt,
+            )
+        lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
+        lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
     else:
-        # Legacy boxcar moving average.
+        # Legacy boxcar moving average + reversal suppressor.
         smoothed = _smooth_aim_stream(raw, window=TV_SMOOTH_WINDOW)
         lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in smoothed]))))
         lats = np.array([a[1] for a in smoothed])
-
-    # --- Phase 1: dead-zone / Schmitt-trigger hysteresis -----------------
-    # Hold the camera fixed until the action nears the frame edge, then glide.
-    # Kills micro-pan wobble without adding lag. Lat gets a wider dead zone
-    # (vertical play spread is small).
-    if cfg.use_dead_zone:
-        lons = tv_aim.apply_dead_zone(
-            lons, cfg.half_fov_lon_deg, cfg.dead_zone_frac, cfg.max_pan_deg_s, dt,
-        )
-        lats = tv_aim.apply_dead_zone(
-            lats, cfg.half_fov_lat_deg, cfg.dead_zone_lat_frac, cfg.max_pan_deg_s, dt,
-        )
-
-    # Sub-second reversal suppressor (safety net): flatten any reversal that
-    # completes in less than TV_REVERSAL_MIN_DUR_S. Long pans keep their full
-    # rate — only short wobble that survived the stages above is removed.
-    lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
-    lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
+        lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
+        lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
 
     # Tilt the camera DOWN so the horizon sits at the top of the frame and
     # the field fills the bottom 70–80% — broadcast-style. Without this, on a
@@ -425,11 +528,28 @@ def _build_aim_stream(
     lons = np.clip(lons, lon_min, lon_max)
     lats = np.clip(lats, lat_min + TV_LAT_TILT_DEG, lat_max)
 
+    # --- Dynamic FOV: auto-widen to keep wide / corner / end-to-end play
+    # framed (the no-ball fix for "misses the ball at corners"). FOV is driven
+    # by how far the action spreads from the aim center, smoothed so the zoom
+    # breathes slowly, and bounded by [base, dynamic_fov_max_deg].
+    fovs = np.full(aim_times.shape, cfg.base_fov_deg, dtype=np.float64)
+    if cfg.use_dynamic_fov and len(raw_cov_halffov) == len(aim_times):
+        cover = np.array(raw_cov_halffov, dtype=np.float64)
+        # Required full FOV = 2 * half-spread * margin (only where we have data).
+        need_fov = 2.0 * cover * cfg.dynamic_fov_margin
+        need_fov = np.where(cover > 0.0, need_fov, cfg.base_fov_deg)
+        dyn = np.clip(need_fov, cfg.base_fov_deg, cfg.dynamic_fov_max_deg)
+        # Smooth so the zoom eases instead of pumping frame-to-frame.
+        win = max(1, int(round(cfg.dynamic_fov_smooth_s * TV_AIM_HZ)))
+        if win > 1:
+            ker = np.ones(win) / win
+            dyn = np.convolve(dyn, ker, mode="same")
+        fovs = np.maximum(fovs, dyn)
+
     # --- Phase 4: event-aware FOV framing --------------------------------
     # Widen the virtual camera around coach-logged dead balls so the restart
     # (corner / throw-in / goal-kick) is framed. The coach's event stream is
     # the free edge no commercial system has.
-    fovs = np.full(aim_times.shape, cfg.base_fov_deg, dtype=np.float64)
     if cfg.use_event_framing and events and clock_to_video is not None:
         events_vt: list[tuple[float, str]] = []
         for ev in events:

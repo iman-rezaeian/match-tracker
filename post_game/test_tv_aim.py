@@ -14,11 +14,14 @@ import numpy as np
 from .tv_aim import (
     AimConfig,
     apply_dead_zone,
+    broadcast_follow,
     densest_lonlat,
     event_framing,
     holt_lead,
     kalman_lead,
+    smooth_damp,
     summarize_aim,
+    velocity_lead,
 )
 
 
@@ -159,6 +162,91 @@ def test_holt_lead_smooths_and_leads():
 def test_half_fov_lat_smaller_than_lon():
     cfg = AimConfig(base_fov_deg=70.0, out_w=1920, out_h=1080)
     assert cfg.half_fov_lat_deg < cfg.half_fov_lon_deg
+
+
+# --- Motion model: smooth_damp (the stop-and-go fix) ---------------------
+
+def test_smooth_damp_no_stop_and_go_on_step():
+    # A step target: the camera must ease over smoothly (monotonic, no holds,
+    # no overshoot) — the opposite of the dead-zone's hold-then-lurch.
+    dt = 0.2
+    x = np.concatenate([np.zeros(5), np.full(80, 40.0)])
+    out = smooth_damp(x, dt, smooth_time_s=1.3, max_speed_deg_s=16.0)
+    seg = out[5:]                              # the response to the step
+    d = np.diff(seg)
+    assert np.all(d >= -1e-9)                  # monotonic — never reverses
+    assert out.max() <= 40.0 + 1e-6            # no overshoot past the goal
+    # "No stop-and-go": once moving, it doesn't freeze for long stretches while
+    # still far from the goal. Check it makes continuous progress early on.
+    assert seg[10] > seg[1] > seg[0]
+    assert abs(out[-1] - 40.0) < 0.5           # converges
+
+
+def test_smooth_damp_respects_max_speed():
+    dt = 0.2
+    x = np.concatenate([np.zeros(2), np.full(60, 200.0)])
+    out = smooth_damp(x, dt, smooth_time_s=1.0, max_speed_deg_s=10.0)
+    # Per-step change capped near max_speed*dt (=2.0 deg) with a small margin
+    # for the damped recurrence.
+    assert np.abs(np.diff(out)).max() <= 2.0 + 0.5
+
+
+def test_smooth_damp_settles_flat_input():
+    out = smooth_damp(np.full(40, 7.0), 0.2, 1.3, 16.0)
+    assert np.allclose(out, 7.0)               # nothing to chase → no motion
+
+
+def test_velocity_lead_leads_constant_velocity():
+    dt = 0.2
+    t = np.arange(0, 20, dt)
+    truth = 2.5 * t
+    out = velocity_lead(truth, dt, lead_s=0.3)
+    mid = t.size // 2
+    assert np.mean(out[mid:] - truth[mid:]) > 0.0   # ahead of the present
+
+
+# --- Broadcast motion: edge-aware safe-zone follow -----------------------
+
+def test_broadcast_holds_inside_safe_zone():
+    # Target jitters +/-4 deg around 0 with safe=8 -> camera must stay still.
+    rng = np.random.default_rng(7)
+    x = rng.uniform(-4.0, 4.0, size=300)
+    out = broadcast_follow(x, 0.2, smooth_time_s=1.0, max_speed_deg_s=24.0, safe_deg=8.0)
+    assert np.ptp(out) < 2.0                     # essentially still
+
+
+def test_broadcast_keeps_action_within_safe_zone():
+    # A ramp toward an edge: the camera must never let the action get further
+    # than ~safe_deg from frame centre (so a corner is never lost off-frame).
+    dt = 0.2
+    t = np.arange(0, 30, dt)
+    target = 1.5 * t                              # steady drift toward the edge
+    safe = 8.0
+    out = broadcast_follow(target, dt, smooth_time_s=1.0, max_speed_deg_s=24.0, safe_deg=safe)
+    # After the initial catch-up, the action stays within safe+margin of centre.
+    err = np.abs(target - out)[t > 4]
+    assert err.max() <= safe + 4.0                # never drifts to the true edge
+
+
+def test_broadcast_commit_is_smooth_monotonic():
+    dt = 0.2
+    rng = np.random.default_rng(9)
+    jit = rng.uniform(-3.0, 3.0, size=30)
+    x = np.concatenate([jit, np.full(80, 30.0)])
+    out = broadcast_follow(x, dt, smooth_time_s=1.0, max_speed_deg_s=24.0, safe_deg=8.0)
+    seg = out[30:]
+    assert np.all(np.diff(seg) >= -1e-6)          # no back-and-forth on the commit
+
+
+def test_broadcast_far_fewer_reversals_than_raw():
+    rng = np.random.default_rng(11)
+    t = np.arange(0, 40, 0.2)
+    raw = 10.0 * np.sin(t / 6.0) + rng.normal(0, 3.0, size=t.size)
+    out = broadcast_follow(raw, 0.2, smooth_time_s=1.0, max_speed_deg_s=24.0, safe_deg=8.0)
+    def reversals(d):
+        s = np.sign(np.diff(d)); s[s == 0] = 1
+        return int(np.sum(s[1:] != s[:-1]))
+    assert reversals(out) < reversals(raw) / 3
 
 
 if __name__ == "__main__":

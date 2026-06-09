@@ -33,8 +33,8 @@ from post_game.identity import period_clock_to_video_time_factory
 from post_game.tv_aim import AimConfig
 from post_game.video import H264PipeWriter, render_perspective
 
-OLD_LABEL = "OLD: density-x + boxcar"
-NEW_LABEL = "NEW: sphere + Kalman + dead-zone + events"
+OLD_LABEL = "OLD: density-x + boxcar (fixed 70 FOV)"
+NEW_LABEL = "NEW: same motion + auto zoom-out"
 
 
 def _label(frame, text):
@@ -78,15 +78,15 @@ def main():
     clk = period_clock_to_video_time_factory(game)
 
     legacy = AimConfig(
-        aim_mode="density_x", use_kalman=False, use_dead_zone=False,
-        use_event_framing=False, use_learned=False,
+        aim_mode="density_x", motion_model="legacy_boxcar",
+        use_event_framing=False, use_learned=False, use_dynamic_fov=False,
         base_fov_deg=tv_view.TV_FOV_DEG, out_w=tv_view.TV_RESOLUTION[0],
         out_h=tv_view.TV_RESOLUTION[1], aim_hz=tv_view.TV_AIM_HZ,
         boxcar_window=tv_view.TV_SMOOTH_WINDOW,
     )
     new = AimConfig(
-        aim_mode="sphere_heatmap", use_kalman=True, use_dead_zone=True,
-        use_event_framing=True, use_learned=False,
+        aim_mode="density_x", motion_model="legacy_boxcar",
+        use_event_framing=True, use_learned=False, use_dynamic_fov=True,
         base_fov_deg=tv_view.TV_FOV_DEG, out_w=tv_view.TV_RESOLUTION[0],
         out_h=tv_view.TV_RESOLUTION[1], aim_hz=tv_view.TV_AIM_HZ,
         boxcar_window=tv_view.TV_SMOOTH_WINDOW,

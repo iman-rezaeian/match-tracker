@@ -37,9 +37,10 @@ import numpy as np
 
 # Event types that warrant a wide "establish the restart" framing. These are
 # the dead-ball restarts the coach logs from the touchline — the free edge no
-# commercial system has (EIGHT_K_RETEST.md §2).
+# commercial system has (EIGHT_K_RETEST.md §2). KICK_OUT is this team's
+# goal-kick / keeper-distribution tag (a dead-ball restart).
 EVENT_FRAMING_TYPES: frozenset[str] = frozenset(
-    {"CORNER", "GOAL_KICK", "THROW_IN", "FREE_KICK", "GOAL", "SHOT_ON"}
+    {"CORNER", "GOAL_KICK", "KICK_OUT", "THROW_IN", "FREE_KICK", "GOAL", "SHOT_ON"}
 )
 
 
@@ -52,17 +53,57 @@ class AimConfig:
     """
 
     # --- stage selectors -------------------------------------------------
-    aim_mode: str = "density_x"        # "density_x" (legacy) | "sphere_heatmap"
-    use_kalman: bool = True            # Phase 2: KF lead replaces the boxcar
-    use_dead_zone: bool = True         # Phase 1: hysteresis hold
+    aim_mode: str = "density_x"        # "density_x" | "sphere_heatmap".
+                                       # density_x tracks which END of the field
+                                       # play is in (the dominant broadcast
+                                       # variable) and is laterally STABLE, so it
+                                       # pairs best with the broadcast motion for
+                                       # a calm tripod feel. sphere_heatmap is
+                                       # more responsive but jitters side-to-side.
+    # Camera MOTION model — how the per-time aim target becomes smooth camera
+    # motion. NOTE: the original 3 s moving average ("legacy_boxcar") is the
+    # DEFAULT on purpose — in side-by-side review it read as the most
+    # broadcast-like. The fancier models below (dead-zone, smooth_damp,
+    # edge-aware "broadcast") each tested WORSE (restless / stop-and-go) and are
+    # kept only as opt-in experiments. Do not switch the default without a fresh
+    # side-by-side that the user signs off on.
+    #   "legacy_boxcar"   original 3 s moving average (DEFAULT — preferred).
+    #   "broadcast"       edge-aware hold-then-pan (tested worse: too stationary).
+    #   "smooth_damp"     continuous critically-damped follow (tested restless).
+    #   "kalman_deadzone" Kalman lead + Schmitt dead-zone (abrupt stop-and-go).
+    #   "learned"         Holt/learned smooth predictor.
+    motion_model: str = "legacy_boxcar"
+    use_kalman: bool = True            # used only by "kalman_deadzone" model
+    use_dead_zone: bool = True         # used only by "kalman_deadzone" model
     use_event_framing: bool = True     # Phase 4: widen FOV on dead balls
-    use_learned: bool = False          # Phase 5: Holt/learned smooth predictor
+    use_learned: bool = False          # legacy flag → maps to "learned" model
+    use_dynamic_fov: bool = True       # auto-widen the FOV to keep wide / corner
+                                       # / end-to-end play framed (no-ball fix)
 
     # --- geometry (mirrors tv_view constants; injected, not imported) ----
     base_fov_deg: float = 70.0         # TV_FOV_DEG
     out_w: int = 1920
     out_h: int = 1080
     aim_hz: float = 5.0
+
+    # --- Motion: critically-damped follow + safe-zone (broadcast model) --
+    smooth_time_s: float = 1.0         # approx time to commit a pan (lon). Lower
+                                       # = snappier / less sluggish. This is the
+                                       # "how slow are the pans" knob.
+    smooth_time_lat_s: float = 1.6     # tilt damped a bit more (vertical moves
+                                       # are more jarring) but no longer sluggish.
+    max_pan_speed_deg_s: float = 24.0  # hard cap on horizontal pan rate
+    max_tilt_speed_deg_s: float = 12.0 # hard cap on vertical (tilt) rate
+
+    # --- Motion: edge-aware safe zone (the "broadcast" model) ------------
+    # Half-width of the central HOLD zone, as a FRACTION of the half-FOV. While
+    # the action stays within this central band the camera holds still; once it
+    # heads past it (toward the frame edge) the camera pans to keep it in. THE
+    # knob for "holds still vs never misses edge/corner action":
+    #   smaller → follows sooner, never loses the ball at edges, moves more
+    #   larger  → holds longer, calmer, but can let edge action slip
+    safe_zone_lon_frac: float = 0.16   # ~0.16*35° ≈ 5.6° before it commits a pan
+    safe_zone_lat_frac: float = 0.20   # vertical safe band (×~21.5° half-FOV)
 
     # --- Phase 1: dead-zone / Schmitt hysteresis -------------------------
     dead_zone_frac: float = 0.33       # fraction of the HALF-FOV the action may
@@ -72,8 +113,10 @@ class AimConfig:
     max_pan_deg_s: float = 25.0        # slew ceiling on the catch-up move so the
                                        # re-centre still glides, never snaps
 
-    # --- Phase 2: Kalman predictive lead ---------------------------------
-    lead_s: float = 0.4                # seconds to extrapolate ahead of `now`
+    # --- Phase 2: predictive lead (gentle; used by smooth_damp + kalman) -
+    lead_s: float = 0.25               # seconds to extrapolate ahead of `now`.
+                                       # Kept small: a big lead is what made the
+                                       # camera feel like it "moves around a lot".
     kf_q: float = 4.0                  # process noise (deg²/s³-ish) — higher =
                                        # trust motion more, snappier, more overshoot
     kf_r: float = 6.0                  # measurement noise (deg²) — higher =
@@ -83,11 +126,32 @@ class AimConfig:
     # --- Phase 3: spherical heat-map -------------------------------------
     heat_sigma_deg: float = 3.5        # gaussian influence radius on the sphere
 
+    # --- Dynamic FOV: auto-widen to keep wide / corner play framed -------
+    # The single most effective lever for "misses the ball at corners" without
+    # a ball track: when players spread toward the ends / a corner, widen the
+    # virtual camera so it all stays in frame; tighten back when play is compact
+    # (so players stay large). FOV = clamp(2*cover_halffov*margin, base, max).
+    cover_window_m: float = 26.0       # only fit the ACTION: players within this
+                                       # field-X window of the densest cluster.
+                                       # Excludes the lone far-end keeper so it
+                                       # doesn't pin the camera zoomed-out during
+                                       # compact play (an attacking phase is
+                                       # ~16-22 m; 26 m gives a little headroom).
+    cover_percentile: float = 80.0     # percentile of player angular spread used
+                                       # (not max → one stray det can't zoom out)
+    dynamic_fov_margin: float = 1.15   # headroom multiplier on the measured spread
+    dynamic_fov_max_deg: float = 110.0 # never zoom out past this (keeps players
+                                       # recognisable; field spans ~165° here)
+    dynamic_fov_smooth_s: float = 2.0  # smooth the FOV track so zoom breathes
+                                       # slowly instead of pumping frame-to-frame
+
     # --- Phase 4: event framing ------------------------------------------
-    event_widen_fov_deg: float = 92.0  # zoom OUT to this FOV around a restart
-    event_pre_s: float = 2.0           # widen this long BEFORE the logged event
-    event_post_s: float = 4.0          # …and this long after
-    event_ramp_s: float = 1.0          # raised-cosine in/out ramp duration
+    event_widen_fov_deg: float = 84.0  # zoom OUT to this FOV around a restart.
+                                       # Gentler than before so it doesn't read
+                                       # as the camera lurching.
+    event_pre_s: float = 1.5           # widen this long BEFORE the logged event
+    event_post_s: float = 3.0          # …and this long after
+    event_ramp_s: float = 1.2          # raised-cosine in/out ramp duration
 
     # --- Phase 5: learned predictor --------------------------------------
     learned_model_path: Optional[str] = None  # optional pickled regressor
@@ -188,6 +252,173 @@ def apply_dead_zone(
             c += step
         out[i] = c
     return out
+
+
+# --- Motion model: critically-damped continuous follow (smooth_damp) ------
+
+def smooth_damp(
+    target: np.ndarray, dt: float, smooth_time_s: float, max_speed_deg_s: float,
+) -> np.ndarray:
+    """Critically-damped follow (Unity-style SmoothDamp) over a 1-D aim series.
+
+    Produces buttery, CONTINUOUS camera motion that eases into and out of
+    movement with no overshoot and — crucially — no dead-zone "stop-and-go".
+    At every sample the camera is either smoothly accelerating toward the play
+    or smoothly decelerating to a rest as the play settles, exactly like a good
+    gimbal / Steadicam operator. This is the fix for "it stops and goes too
+    much": there is no hold-then-lurch, only one smooth velocity that changes
+    gradually.
+
+    `smooth_time_s` is roughly the time to converge on the target (larger =
+    calmer/slower). `max_speed_deg_s` caps the pan rate so a far target can't
+    cause a violent whip. Standard critically-damped recurrence (no tuning
+    beyond those two knobs).
+    """
+    z = np.asarray(target, dtype=np.float64)
+    n = z.size
+    if n == 0:
+        return z
+    st = max(1e-4, smooth_time_s)
+    omega = 2.0 / st
+    out = np.empty(n, dtype=np.float64)
+    x = float(z[0])      # current camera position
+    v = 0.0              # current camera velocity
+    out[0] = x
+    a = omega * dt
+    exp = 1.0 / (1.0 + a + 0.48 * a * a + 0.235 * a * a * a)
+    max_change = max_speed_deg_s * st
+    for k in range(1, n):
+        goal = float(z[k])
+        change = x - goal
+        if change > max_change:
+            change = max_change
+        elif change < -max_change:
+            change = -max_change
+        goal_adj = x - change
+        temp = (v + omega * change) * dt
+        v = (v - omega * temp) * exp
+        new = goal_adj + (change + temp) * exp
+        # Anti-overshoot: never cross the (un-clamped) goal.
+        if (z[k] - x > 0.0) == (new > z[k]):
+            new = float(z[k])
+            v = (new - z[k]) / dt
+        x = new
+        out[k] = x
+    return out
+
+
+def hold_band(target: np.ndarray, band_deg: float) -> np.ndarray:
+    """Latch the aim during small jitter; only let it move once the play has
+    travelled beyond `band_deg` from the held point (Schmitt hysteresis).
+
+    This is the "broadcast camera holds still" behaviour. A real operator does
+    NOT chase every step a cluster centroid takes — they hold a framing and
+    only re-frame when the action has clearly moved. Feeding the RESULT of this
+    into `smooth_damp` gives the best of both: the camera HOLDS during the small
+    back-and-forth wobble (no restless motion), and when play genuinely shifts
+    it commits with a single smooth, eased pan (no lurch). The held series is
+    piecewise-constant, so `smooth_damp` sits perfectly still between commits.
+    """
+    z = np.asarray(target, dtype=np.float64)
+    n = z.size
+    if n == 0:
+        return z
+    band = max(0.0, band_deg)
+    held = float(z[0])
+    out = np.empty(n, dtype=np.float64)
+    for k in range(n):
+        e = float(z[k]) - held
+        if abs(e) > band:
+            held = float(z[k]) - math.copysign(band, e)
+        out[k] = held
+    return out
+
+
+def broadcast_follow(
+    target: np.ndarray, dt: float, smooth_time_s: float, max_speed_deg_s: float,
+    safe_deg: float,
+) -> np.ndarray:
+    """Edge-aware (safe-zone) broadcast camera motion.
+
+    A real broadcast operator HOLDS a framing while the action sits comfortably
+    inside the frame, and pans only when the action approaches the FRAME EDGE —
+    so the action is NEVER lost off-frame (the corner / sideline / centre-line
+    cases), yet the camera is still most of the time.
+
+    `safe_deg` is the half-width of a central "safe zone" measured from the
+    CURRENT camera centre (typically a fraction of the half-FOV). While the
+    target stays within `safe_deg` of where the camera points, the camera holds
+    perfectly still. The instant the target moves beyond the safe zone — i.e.
+    heads toward the edge — the camera eases over (critically-damped) just
+    enough to bring the action back to the safe-zone boundary, then settles.
+
+    This is strictly better than a latch-to-a-point hold: because the trigger
+    is relative to the camera and scaled to the FOV, action can never drift to
+    the true frame edge unnoticed (fixes "misses the ball at corners / near the
+    centre line"), while in-frame jitter still produces zero motion (keeps the
+    calm tripod feel). `smooth_damp`-style integration keeps every commit smooth
+    with no overshoot and no lurch.
+    """
+    z = np.asarray(target, dtype=np.float64)
+    n = z.size
+    if n == 0:
+        return z
+    st = max(1e-4, smooth_time_s)
+    omega = 2.0 / st
+    a = omega * dt
+    exp = 1.0 / (1.0 + a + 0.48 * a * a + 0.235 * a * a * a)
+    max_change = max_speed_deg_s * st
+    safe = max(0.0, safe_deg)
+    out = np.empty(n, dtype=np.float64)
+    x = float(z[0])     # camera position
+    v = 0.0             # camera velocity
+    out[0] = x
+    for k in range(1, n):
+        tgt = float(z[k])
+        e = tgt - x
+        # Edge-aware goal: hold while inside the safe zone, else bring the
+        # action back to the safe-zone boundary (never let it reach the edge).
+        if abs(e) <= safe:
+            goal = x
+        else:
+            goal = tgt - math.copysign(safe, e)
+        # Critically-damped step toward goal (smooth, eased, no lurch).
+        change = x - goal
+        if change > max_change:
+            change = max_change
+        elif change < -max_change:
+            change = -max_change
+        goal_adj = x - change
+        temp = (v + omega * change) * dt
+        v = (v - omega * temp) * exp
+        new = goal_adj + (change + temp) * exp
+        if (goal - x > 0.0) == (new > goal):     # anti-overshoot
+            new = goal
+            v = (new - goal) / dt
+        x = new
+        out[k] = x
+    return out
+
+
+def velocity_lead(x: np.ndarray, dt: float, lead_s: float, vel_smooth: int = 5) -> np.ndarray:
+    """Gentle predictive lead: extrapolate `lead_s` ahead using a SMOOTHED
+    velocity estimate, so the smooth follow anticipates the play without the
+    jitter a high-gain Kalman lead produced.
+
+    The velocity is low-pass filtered before extrapolation precisely so that
+    the discrete jumps in the per-time aim don't get amplified into the kind of
+    restless motion the user objected to.
+    """
+    z = np.asarray(x, dtype=np.float64)
+    n = z.size
+    if n < 3 or lead_s <= 0:
+        return z
+    v = np.gradient(z, dt)
+    k = max(1, int(vel_smooth))
+    if k > 1:
+        ker = np.ones(k) / k
+        v = np.convolve(v, ker, mode="same")
+    return z + v * lead_s
 
 
 # --- Phase 2: constant-velocity Kalman filter + predictive lead ----------
