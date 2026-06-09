@@ -541,6 +541,8 @@ def run(
                     field_width_m=field_cal.width_m,
                     upload=not skip_upload,
                     play_windows=play_windows,
+                    events=game.events,
+                    clock_to_video=clock_to_video,
                 )
         except Exception as e:
             log.warning("TV reel failed: %s", e)

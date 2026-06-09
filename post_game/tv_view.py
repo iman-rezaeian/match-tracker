@@ -33,10 +33,11 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from . import config, firestore_io
+from . import config, firestore_io, tv_aim
 from .firestore_io import CoachEvent
 from .calibration import FieldProjector
 from .highlights import _smooth_aim_stream
+from .tv_aim import AimConfig
 from .video import H264PipeWriter, render_perspective
 
 log = logging.getLogger(__name__)
@@ -119,6 +120,23 @@ class TvViewMeta:
 
 # --- aim stream ----------------------------------------------------------
 
+def _default_aim_cfg() -> AimConfig:
+    """Build an AimConfig seeded from this module's render constants.
+
+    Keeps the aim-quality knobs (tv_aim.AimConfig) in sync with the geometry
+    constants that live here (FOV, resolution, sample rate, legacy boxcar
+    window) so callers that don't pass an explicit config get sensible,
+    self-consistent defaults.
+    """
+    return AimConfig(
+        base_fov_deg=TV_FOV_DEG,
+        out_w=TV_RESOLUTION[0],
+        out_h=TV_RESOLUTION[1],
+        aim_hz=TV_AIM_HZ,
+        boxcar_window=TV_SMOOTH_WINDOW,
+    )
+
+
 def _suppress_short_reversals(x: np.ndarray, aim_hz: float, min_dur_s: float) -> np.ndarray:
     """Median-filter a 1D aim series to flatten reversals shorter than `min_dur_s`.
 
@@ -180,37 +198,21 @@ def _field_lonlat_bounds(
     return float(lons_uw.min()), float(lons_uw.max()), float(min(lats)), float(max(lats))
 
 
-def _play_centroid_aim_for_time(
+def _window_track_xy(
     tracks_field_df: pd.DataFrame,
     t_video: float,
-    projector: FieldProjector,
-    fallback: tuple[float, float],
     field_length_m: float,
     field_width_m: float,
-) -> tuple[tuple[float, float], bool]:
-    """DENSITY-based aim of ON-FIELD tracks in a ±1s window → (lon, lat).
+) -> tuple[np.ndarray, np.ndarray]:
+    """On-field, static-filtered, per-track (x_m, y_m) in the ±TV_AGG_WINDOW_S
+    window around `t_video`. One point per track (median of its rows), so a
+    coach detected in 8 consecutive frames votes once, not eight times.
 
-    Returns ((lon, lat), valid). `valid=False` means there were no
-    on-field tracks at this time — caller should hold the previous aim.
-
-    Mean/median centroid was the wrong primitive: when 9 attackers are at
-    one goal and 1 GK is at the other, the mean lands in the empty middle.
-    Instead: find the densest cluster along the field-X axis (where play
-    actually moves end-to-end), then take the mean of just those players.
-
-    Algorithm:
-      1. Filter to on-field tracks (inside touch+end lines by TV_ONFIELD_PAD_M).
-      2. DEDUPE by track_id (one (x,y) per track via median of its rows in
-         the window). A static coach standing inside the lines must NOT vote
-         8 times just because he was detected in 8 consecutive frames.
-      3. Drop tracks pre-flagged as static (`_track_static`) at the
-         `_build_aim_stream` level (see total-movement filter there).
-      4. Build a 1D histogram of x positions with TV_DENSITY_BIN_M bins.
-      5. Find the densest TV_DENSITY_WINDOW_M-wide window of x.
-      6. Take mean of (x, y) for tracks inside that window.
+    Returns two equal-length arrays (x, y). Empty arrays => no on-field tracks.
+    Shared by both aim modes (`density_x` and `sphere_heatmap`).
     """
     if "x_m" not in tracks_field_df.columns or tracks_field_df.empty:
-        return fallback, False
+        return np.empty(0), np.empty(0)
     pad = TV_ONFIELD_PAD_M
     half_w = TV_AGG_WINDOW_S
     mask = (
@@ -226,16 +228,20 @@ def _play_centroid_aim_for_time(
         mask = mask & (~tracks_field_df["_track_static"])
     win = tracks_field_df[mask]
     if win.empty:
-        return fallback, False
-
-    # Dedupe by track_id — one point per player.
+        return np.empty(0), np.empty(0)
     per_track = win.groupby("track_id").agg(x_m=("x_m", "median"), y_m=("y_m", "median"))
-    if len(per_track) < TV_MIN_ONFIELD_TRACKS:
-        return fallback, False
-    x = per_track["x_m"].to_numpy(dtype=np.float64)
-    y = per_track["y_m"].to_numpy(dtype=np.float64)
+    return (
+        per_track["x_m"].to_numpy(dtype=np.float64),
+        per_track["y_m"].to_numpy(dtype=np.float64),
+    )
 
-    # Densest-window on x. With only a handful of tracks, fall back to mean.
+
+def _density_x_centroid(
+    x: np.ndarray, y: np.ndarray, field_length_m: float,
+) -> tuple[float, float]:
+    """Legacy density-along-X aim: densest TV_DENSITY_WINDOW_M window of x,
+    then mean of (x, y) for tracks inside it. Falls back to plain mean with
+    few tracks."""
     if len(x) >= 4:
         bin_w = TV_DENSITY_BIN_M
         win_w = TV_DENSITY_WINDOW_M
@@ -250,18 +256,50 @@ def _play_centroid_aim_for_time(
             x_hi = edges[peak + bins_per_window]
             inside = (x >= x_lo) & (x <= x_hi)
             if inside.sum() >= 2:
-                cx = float(np.mean(x[inside]))
-                cy = float(np.mean(y[inside]))
-            else:
-                cx = float(np.mean(x))
-                cy = float(np.mean(y))
-        else:
-            cx = float(np.mean(x))
-            cy = float(np.mean(y))
-    else:
-        cx = float(np.mean(x))
-        cy = float(np.mean(y))
+                return float(np.mean(x[inside])), float(np.mean(y[inside]))
+    return float(np.mean(x)), float(np.mean(y))
 
+
+def _aim_for_time(
+    tracks_field_df: pd.DataFrame,
+    t_video: float,
+    projector: FieldProjector,
+    fallback: tuple[float, float],
+    field_length_m: float,
+    field_width_m: float,
+    cfg: AimConfig,
+) -> tuple[tuple[float, float], bool]:
+    """Per-time virtual-camera aim in (lon, lat). Dispatches on `cfg.aim_mode`.
+
+    Returns ((lon, lat), valid). `valid=False` means no on-field tracks at this
+    time — caller should hold the previous aim.
+
+    Modes:
+      - "density_x"      legacy: densest window along field-X, then centroid.
+      - "sphere_heatmap" project players onto the camera sphere and mean-shift
+                         to the densest (lon, lat) cell — native to the equirect
+                         geometry, frames width/corners correctly.
+    """
+    x, y = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
+    if x.size < TV_MIN_ONFIELD_TRACKS:
+        return fallback, False
+
+    if cfg.aim_mode == "sphere_heatmap":
+        lonlat = np.array(
+            [projector.field_to_lonlat(float(xi), float(yi)) for xi, yi in zip(x, y)],
+            dtype=np.float64,
+        )
+        good = np.isfinite(lonlat).all(axis=1)
+        lonlat = lonlat[good]
+        if lonlat.shape[0] < TV_MIN_ONFIELD_TRACKS:
+            return fallback, False
+        aim = tv_aim.densest_lonlat(lonlat[:, 0], lonlat[:, 1], cfg.heat_sigma_deg)
+        if aim is None:
+            return fallback, False
+        return aim, True
+
+    # Default: density-along-X centroid.
+    cx, cy = _density_x_centroid(x, y, field_length_m)
     return projector.field_to_lonlat(cx, cy), True
 
 
@@ -272,14 +310,28 @@ def _build_aim_stream(
     end_s: float,
     field_length_m: float,
     field_width_m: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (aim_times, lons_unwrapped_deg, lats_deg) sampled at TV_AIM_HZ.
+    *,
+    aim_cfg: Optional[AimConfig] = None,
+    events: Optional[list[CoachEvent]] = None,
+    clock_to_video: Optional[Callable[[int, int], float]] = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return (aim_times, lons_unwrapped_deg, lats_deg, fovs_deg) sampled at TV_AIM_HZ.
 
     Aim is held at the last valid on-field centroid when no players are
-    detected on the pitch (between halves, restarts, deadballs). Final
-    aims are clamped to the projected field bounding box so the camera
-    center never points off the pitch.
+    detected on the pitch (between halves, restarts, deadballs). The aim-quality
+    chain (gated by `aim_cfg`) is, in order:
+
+        per-time aim (density_x | sphere_heatmap)
+          → smoother / predictive lead (Kalman or Holt or legacy boxcar)
+          → dead-zone hysteresis hold
+          → short-reversal median safety net
+          → downward tilt + clamp to the projected field box
+          → event-aware FOV widening around coach-logged dead balls
+
+    `fovs` is a per-sample horizontal FOV array; it is constant
+    `aim_cfg.base_fov_deg` unless event framing is active.
     """
+    cfg = aim_cfg or _default_aim_cfg()
     dt = 1.0 / TV_AIM_HZ
     aim_times = np.arange(start_s, end_s, dt)
 
@@ -297,15 +349,12 @@ def _build_aim_stream(
         static_ids = set(span[span < TV_STATIC_TRACK_MVMT_M].index.tolist())
         tracks_field_df = tracks_field_df.copy()
         tracks_field_df["_track_static"] = tracks_field_df["track_id"].isin(static_ids)
-        n_static = int(tracks_field_df["_track_static"].sum())
         n_total_ids = tracks_field_df["track_id"].nunique()
         log.info(
             "  tv-view: dropping %d/%d static tracks (lifetime mvmt < %.1f m) "
             "as non-players (coaches/refs/standing kids).",
             len(static_ids), n_total_ids, TV_STATIC_TRACK_MVMT_M,
         )
-    else:
-        n_static = 0
 
     # Default fallback = field center projected to (lon, lat). Far better
     # than (0, 0) which can land in the sky or behind the camera.
@@ -314,23 +363,50 @@ def _build_aim_stream(
     raw: list[tuple[float, float]] = []
     last_valid = center_lonlat
     for t in aim_times:
-        aim, valid = _play_centroid_aim_for_time(
+        aim, valid = _aim_for_time(
             tracks_field_df, float(t), projector,
-            last_valid, field_length_m, field_width_m,
+            last_valid, field_length_m, field_width_m, cfg,
         )
         if valid:
             last_valid = aim
         raw.append(aim)
 
-    smoothed = _smooth_aim_stream(raw, window=TV_SMOOTH_WINDOW)
-    lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in smoothed]))))
-    lats = np.array([a[1] for a in smoothed])
+    # --- smoothing / predictive lead -------------------------------------
+    if cfg.use_learned:
+        # Phase 5: Holt/learned smooth predictor (smoothness + lead in one pass).
+        lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in raw]))))
+        lats = np.array([a[1] for a in raw])
+        predictor = tv_aim.LearnedSmoothPredictor(cfg)
+        lons = predictor.smooth(lons, dt)
+        lats = predictor.smooth(lats, dt)
+    elif cfg.use_kalman:
+        # Phase 2: constant-velocity Kalman filter replaces the boxcar AND adds
+        # predictive lead so the camera anticipates rather than trails.
+        lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in raw]))))
+        lats = np.array([a[1] for a in raw])
+        lons = tv_aim.kalman_lead(lons, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
+        lats = tv_aim.kalman_lead(lats, dt, cfg.lead_s, cfg.kf_q, cfg.kf_r)
+    else:
+        # Legacy boxcar moving average.
+        smoothed = _smooth_aim_stream(raw, window=TV_SMOOTH_WINDOW)
+        lons = np.degrees(np.unwrap(np.radians(np.array([a[0] for a in smoothed]))))
+        lats = np.array([a[1] for a in smoothed])
 
-    # Sub-second reversal suppressor (the user complaint): the smoothed aim
-    # still has small back-and-forth bumps when a player briefly drifts into
-    # then out of the densest cluster. Flatten any reversal that completes
-    # in less than TV_REVERSAL_MIN_DUR_S. Long pans are preserved at their
-    # full rate — only short wobble is removed.
+    # --- Phase 1: dead-zone / Schmitt-trigger hysteresis -----------------
+    # Hold the camera fixed until the action nears the frame edge, then glide.
+    # Kills micro-pan wobble without adding lag. Lat gets a wider dead zone
+    # (vertical play spread is small).
+    if cfg.use_dead_zone:
+        lons = tv_aim.apply_dead_zone(
+            lons, cfg.half_fov_lon_deg, cfg.dead_zone_frac, cfg.max_pan_deg_s, dt,
+        )
+        lats = tv_aim.apply_dead_zone(
+            lats, cfg.half_fov_lat_deg, cfg.dead_zone_lat_frac, cfg.max_pan_deg_s, dt,
+        )
+
+    # Sub-second reversal suppressor (safety net): flatten any reversal that
+    # completes in less than TV_REVERSAL_MIN_DUR_S. Long pans keep their full
+    # rate — only short wobble that survived the stages above is removed.
     lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
     lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
 
@@ -348,7 +424,99 @@ def _build_aim_stream(
     )
     lons = np.clip(lons, lon_min, lon_max)
     lats = np.clip(lats, lat_min + TV_LAT_TILT_DEG, lat_max)
-    return aim_times, lons, lats
+
+    # --- Phase 4: event-aware FOV framing --------------------------------
+    # Widen the virtual camera around coach-logged dead balls so the restart
+    # (corner / throw-in / goal-kick) is framed. The coach's event stream is
+    # the free edge no commercial system has.
+    fovs = np.full(aim_times.shape, cfg.base_fov_deg, dtype=np.float64)
+    if cfg.use_event_framing and events and clock_to_video is not None:
+        events_vt: list[tuple[float, str]] = []
+        for ev in events:
+            try:
+                t_ev = float(clock_to_video(ev.period, ev.elapsed))
+            except Exception:
+                continue
+            if t_ev >= 0:
+                events_vt.append((t_ev, ev.type))
+        fovs = tv_aim.event_framing(aim_times, fovs, events_vt, cfg)
+
+    return aim_times, lons, lats, fovs
+
+
+def load_tracks_field_df(
+    game_id: str,
+    projector: FieldProjector,
+    field_length_m: float,
+    field_width_m: float,
+    smoke: bool = False,
+) -> pd.DataFrame:
+    """Load a cached tracks parquet and reproduce the field-meter projection.
+
+    The Stage-2 checkpoint (`tracks_raw.parquet`) only has pixel-space columns;
+    `x_m`/`y_m` are added later in `pipeline.py` AFTER the parquet is written
+    (see `/memories/repo/tv-view-aim-stream.md`). Any standalone caller of the
+    aim stream — like the `aim-diagnose` harness — MUST redo that projection or
+    every aim sample silently falls back to field-center. This helper does it.
+    """
+    suffix = ".smoke" if smoke else ""
+    ckpt = config.OUTPUTS_DIR / game_id / f"tracks_raw{suffix}.parquet"
+    if not ckpt.exists():
+        raise FileNotFoundError(
+            f"No cached tracks at {ckpt}. Run the pipeline (or pass smoke={not smoke})."
+        )
+    df = pd.read_parquet(ckpt)
+    if df.empty:
+        return df
+    foot_px = df[["foot_x_eq", "foot_y_eq"]].to_numpy()
+    xy = projector.pixel_to_field_batch(foot_px)
+    df["x_m"] = xy[:, 0]
+    df["y_m"] = xy[:, 1]
+    on_field = (
+        (df["x_m"] >= -1.5) & (df["x_m"] <= field_length_m + 1.5)
+        & (df["y_m"] >= -1.5) & (df["y_m"] <= field_width_m + 1.5)
+    )
+    return df.loc[on_field].reset_index(drop=True)
+
+
+def diagnose_aim(
+    tracks_field_df: pd.DataFrame,
+    projector: FieldProjector,
+    start_s: float,
+    end_s: float,
+    field_length_m: float,
+    field_width_m: float,
+    *,
+    aim_cfg: Optional[AimConfig] = None,
+    events: Optional[list[CoachEvent]] = None,
+    clock_to_video: Optional[Callable[[int, int], float]] = None,
+    csv_path: Optional[str] = None,
+) -> dict:
+    """Build an aim stream and return health stats WITHOUT rendering.
+
+    Phase 0 harness: run this before committing a multi-hour render to confirm
+    the aim actually follows play (span ≥ ~30°, mean|v| ≥ ~2°/s over an active
+    window) rather than silently holding the field-center fallback. Optionally
+    dumps the per-sample stream to `csv_path` for offline A/B comparison.
+    """
+    aim_times, lons, lats, fovs = _build_aim_stream(
+        tracks_field_df, projector, start_s, end_s,
+        field_length_m, field_width_m,
+        aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
+    )
+    center_lon, _ = projector.field_to_lonlat(field_length_m / 2.0, field_width_m / 2.0)
+    stats = tv_aim.summarize_aim(aim_times, lons, lats, fallback_lon=center_lon)
+    stats["fov_min_deg"] = float(np.min(fovs))
+    stats["fov_max_deg"] = float(np.max(fovs))
+    stats["window_s"] = float(end_s - start_s)
+    if csv_path:
+        import csv as _csv
+        with open(csv_path, "w", newline="") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["t_s", "lon_deg", "lat_deg", "fov_deg"])
+            for t, lo, la, fv in zip(aim_times, lons, lats, fovs):
+                w.writerow([f"{t:.3f}", f"{lo:.4f}", f"{la:.4f}", f"{fv:.3f}"])
+    return stats
 
 
 # --- segment render ------------------------------------------------------
@@ -364,6 +532,7 @@ def _render_segment(
     aim_lats: np.ndarray,
     out_w: int,
     out_h: int,
+    aim_fovs: Optional[np.ndarray] = None,
 ) -> int:
     start_f = max(0, int(round(start_s * fps)))
     end_f = int(round(end_s * fps))
@@ -377,10 +546,13 @@ def _render_segment(
         lon_uw = float(np.interp(t, aim_times, aim_lons_uw))
         lat = float(np.interp(t, aim_times, aim_lats))
         lon = ((lon_uw + 180.0) % 360.0) - 180.0
+        # Per-frame FOV: constant TV_FOV_DEG unless event framing widened it
+        # around a coach-logged dead ball.
+        fov = TV_FOV_DEG if aim_fovs is None else float(np.interp(t, aim_times, aim_fovs))
         # Lanczos gives a sharper upscale than bilinear — the TV crop is
         # enlarged from a ~70° slice of the sphere, so the resample quality
         # is one of the few real levers on perceived sharpness.
-        crop = render_perspective(frame, lon, lat, TV_FOV_DEG, out_w, out_h, interp=cv2.INTER_LANCZOS4)
+        crop = render_perspective(frame, lon, lat, fov, out_w, out_h, interp=cv2.INTER_LANCZOS4)
         writer.write(crop)
         written += 1
     return written
@@ -481,10 +653,17 @@ def render_tv_reel(
     field_width_m: float,
     upload: bool = True,
     play_windows: Optional[list[tuple[float, float]]] = None,
+    events: Optional[list[CoachEvent]] = None,
+    clock_to_video: Optional[Callable[[int, int], float]] = None,
+    aim_cfg: Optional[AimConfig] = None,
 ) -> Optional[TvViewMeta]:
     """Render the broadcast view. If `play_windows` is given, only those
     segments (typically 1st + 2nd half) are rendered and concatenated —
-    halftime + warmup are skipped."""
+    halftime + warmup are skipped.
+
+    `events` + `clock_to_video` enable Phase 4 event-aware FOV framing (widen
+    around coach-logged dead balls); pass both or neither. `aim_cfg` overrides
+    the default aim-quality configuration."""
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -512,9 +691,10 @@ def render_tv_reel(
         tmp_dir = Path(td)
         part_paths: list[Path] = []
         for i, (a, b) in enumerate(windows):
-            aim_times, aim_lons_uw, aim_lats = _build_aim_stream(
+            aim_times, aim_lons_uw, aim_lats, aim_fovs = _build_aim_stream(
                 tracks_field_df, projector, a, b,
                 field_length_m, field_width_m,
+                aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
             )
             part_path = tmp_dir / f"half_{i + 1}.mp4"
             # High-quality reel encode: CRF 18 + slow preset (vs default 23/veryfast).
@@ -523,7 +703,7 @@ def render_tv_reel(
             log.info("TV reel half %d: [%.1fs - %.1fs] (%.0fs)", i + 1, a, b, b - a)
             _render_segment(
                 cap, writer, fps, a, b,
-                aim_times, aim_lons_uw, aim_lats, out_w, out_h,
+                aim_times, aim_lons_uw, aim_lats, out_w, out_h, aim_fovs,
             )
             writer.close()
             part_paths.append(part_path)
@@ -596,6 +776,7 @@ def extract_auto_highlights(
     window_s: float = AUTO_HIGHLIGHT_WINDOW_S,
     upload: bool = True,
     analyzed_windows: Optional[list[tuple[float, float]]] = None,
+    aim_cfg: Optional[AimConfig] = None,
 ) -> Optional[TvViewMeta]:
     """Render only segments around scoring-adjacent events, concatenated.
 
@@ -648,9 +829,11 @@ def extract_auto_highlights(
         tmp_dir = Path(td)
         part_paths: list[Path] = []
         for i, (a, b) in enumerate(windows):
-            aim_times, aim_lons_uw, aim_lats = _build_aim_stream(
+            aim_times, aim_lons_uw, aim_lats, aim_fovs = _build_aim_stream(
                 tracks_field_df, projector, a, b,
                 field_length_m, field_width_m,
+                aim_cfg=aim_cfg, events=events,
+                clock_to_video=period_clock_to_video_time,
             )
             part_path = tmp_dir / f"part_{i:03d}.mp4"
             # High-quality highlight encode: CRF 18 + slow preset.
@@ -658,7 +841,7 @@ def extract_auto_highlights(
                                     audio_source=video_path, audio_start_s=a)
             _render_segment(
                 cap, writer, fps, a, b,
-                aim_times, aim_lons_uw, aim_lats, out_w, out_h,
+                aim_times, aim_lons_uw, aim_lats, out_w, out_h, aim_fovs,
             )
             writer.close()
             part_paths.append(part_path)

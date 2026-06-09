@@ -235,6 +235,91 @@ def calibrate(
     }))
 
 
+@app.command("aim-diagnose")
+def aim_diagnose(
+    game_id: str = typer.Option(..., "--game-id"),
+    start: float = typer.Option(None, "--start", help="Window start in source-video seconds. Default: middle 30s of the 1st half."),
+    end: float = typer.Option(None, "--end", help="Window end in source-video seconds."),
+    aim_mode: str = typer.Option("density_x", "--aim-mode", help="density_x | sphere_heatmap"),
+    no_kalman: bool = typer.Option(False, "--no-kalman", help="Disable the Kalman predictive-lead stage."),
+    no_dead_zone: bool = typer.Option(False, "--no-dead-zone", help="Disable the dead-zone hysteresis stage."),
+    no_events: bool = typer.Option(False, "--no-events", help="Disable event-aware FOV framing."),
+    learned: bool = typer.Option(False, "--learned", help="Use the Holt/learned smooth predictor instead of Kalman."),
+    smoke: bool = typer.Option(False, "--smoke", help="Use the .smoke tracks checkpoint instead of the full-game one."),
+    csv_out: str = typer.Option(None, "--csv-out", help="Dump the per-sample aim stream to this CSV for offline A/B."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Phase-0 aim harness: build the TV-reel aim stream and print health stats
+    WITHOUT rendering (the multi-hour part).
+
+    Confirms the aim actually follows play — span >= ~30 deg and mean|v| >= ~2
+    deg/s over an active 30s window — instead of silently holding the
+    field-center fallback. Sweep `--aim-mode` / `--no-*` flags to A/B the
+    aim-quality stages in milliseconds before committing a render.
+    """
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(message)s",
+        handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
+    )
+    from . import firestore_io, tv_view
+    from .calibration import FieldProjector
+    from .identity import half_windows, period_clock_to_video_time_factory
+    from .tv_aim import AimConfig
+
+    game = firestore_io.get_game(game_id)
+    field_cal = firestore_io.get_game_calibration(game_id)
+    if field_cal is None:
+        raise typer.BadParameter(f"Game {game_id} has no calibration.")
+    projector = FieldProjector(field_cal)
+    L, W = field_cal.length_m, field_cal.width_m
+
+    tracks_df = tv_view.load_tracks_field_df(game_id, projector, L, W, smoke=smoke)
+
+    # Default window: middle 30s of the 1st half.
+    if start is None or end is None:
+        from .video import open_video
+        video_path = pipeline._ensure_local_video(game.video_url, game_id)
+        meta = open_video(str(video_path))
+        windows = half_windows(game, meta["duration_s"])
+        h1a, h1b = windows[0]
+        mid = h1a + (h1b - h1a) / 2.0
+        start = start if start is not None else max(h1a, mid - 15.0)
+        end = end if end is not None else min(h1b, start + 30.0)
+
+    cfg = AimConfig(
+        aim_mode=aim_mode,
+        use_kalman=not no_kalman and not learned,
+        use_dead_zone=not no_dead_zone,
+        use_event_framing=not no_events,
+        use_learned=learned,
+        base_fov_deg=tv_view.TV_FOV_DEG,
+        out_w=tv_view.TV_RESOLUTION[0],
+        out_h=tv_view.TV_RESOLUTION[1],
+        aim_hz=tv_view.TV_AIM_HZ,
+        boxcar_window=tv_view.TV_SMOOTH_WINDOW,
+    )
+    clock_to_video = period_clock_to_video_time_factory(game)
+    stats = tv_view.diagnose_aim(
+        tracks_df, projector, float(start), float(end), L, W,
+        aim_cfg=cfg, events=game.events, clock_to_video=clock_to_video,
+        csv_path=csv_out,
+    )
+    healthy = stats["lon_span_deg"] >= 30.0 and stats["mean_abs_v_deg_s"] >= 2.0
+    console.print_json(json.dumps({
+        "game_id": game_id,
+        "window_s": [round(float(start), 1), round(float(end), 1)],
+        "aim_mode": aim_mode,
+        "stages": {
+            "kalman": cfg.use_kalman, "dead_zone": cfg.use_dead_zone,
+            "event_framing": cfg.use_event_framing, "learned": cfg.use_learned,
+        },
+        **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()},
+        "verdict": "HEALTHY" if healthy else "CHECK (fallback-only?)",
+        "csv_out": csv_out,
+    }))
+
+
 @app.command("list")
 def list_games(
     limit: int = typer.Option(15, "--limit", "-n", help="How many recent games to show."),

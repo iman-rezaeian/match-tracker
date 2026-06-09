@@ -1,0 +1,172 @@
+"""Unit tests for the TV-reel aim-quality transforms (`post_game.tv_aim`).
+
+Pure-function tests — no video, no Firestore, no rendering. Runnable either
+under pytest or directly (`python -m post_game.test_tv_aim`) so they validate
+even where pytest isn't installed.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+from .tv_aim import (
+    AimConfig,
+    apply_dead_zone,
+    densest_lonlat,
+    event_framing,
+    holt_lead,
+    kalman_lead,
+    summarize_aim,
+)
+
+
+# --- Phase 0: summarize_aim ----------------------------------------------
+
+def test_summarize_aim_monotonic_ramp():
+    t = np.arange(0, 30, 0.2)
+    lons = 0.5 * t            # 0.5 deg/s ramp, 15 deg total span over 30s
+    lats = np.zeros_like(t)
+    s = summarize_aim(t, lons, lats)
+    assert s["reversals"] == 0
+    assert abs(s["lon_span_deg"] - np.ptp(lons)) < 1e-6
+    assert abs(s["mean_abs_v_deg_s"] - 0.5) < 1e-6  # the ramp rate
+
+
+def test_summarize_aim_detects_fallback():
+    t = np.arange(0, 10, 0.2)
+    lons = np.full_like(t, 12.0)   # held at the fallback the whole time
+    lats = np.zeros_like(t)
+    s = summarize_aim(t, lons, lats, fallback_lon=12.0)
+    assert s["fallback_frac"] == 1.0
+    assert s["lon_span_deg"] == 0.0
+
+
+# --- Phase 1: dead-zone hysteresis ---------------------------------------
+
+def test_dead_zone_holds_inside_band():
+    # Target jitters ±2 deg around 0; half-FOV=35, frac=0.33 → band ±11.5 deg.
+    rng = np.random.default_rng(0)
+    x = rng.uniform(-2.0, 2.0, size=200)
+    out = apply_dead_zone(x, half_fov_deg=35.0, dead_zone_frac=0.33,
+                          max_pan_deg_s=25.0, dt=0.2)
+    # Camera should never move: every sample stays at the initial commit.
+    assert np.allclose(out, out[0])
+
+
+def test_dead_zone_follows_large_move_to_band_edge():
+    # Step the target far past the band; camera must catch up but leave the
+    # target sitting on the band EDGE (hysteresis), not dead-centre.
+    half_fov, frac = 35.0, 0.33
+    dz = frac * half_fov
+    x = np.concatenate([np.zeros(5), np.full(200, 100.0)])
+    out = apply_dead_zone(x, half_fov_deg=half_fov, dead_zone_frac=frac,
+                          max_pan_deg_s=1000.0, dt=0.2)  # high slew → settles fast
+    # After settling, committed aim trails the target by exactly the dead zone.
+    assert abs((x[-1] - out[-1]) - dz) < 1e-6
+
+
+def test_dead_zone_respects_slew_limit():
+    x = np.concatenate([np.zeros(2), np.full(50, 100.0)])
+    out = apply_dead_zone(x, half_fov_deg=35.0, dead_zone_frac=0.33,
+                          max_pan_deg_s=10.0, dt=0.2)  # max 2 deg/step
+    steps = np.abs(np.diff(out))
+    assert steps.max() <= 2.0 + 1e-9
+
+
+# --- Phase 2: Kalman lead -------------------------------------------------
+
+def test_kalman_lead_tracks_constant_velocity():
+    dt = 0.2
+    t = np.arange(0, 20, dt)
+    truth = 3.0 * t                      # 3 deg/s
+    noisy = truth + np.random.default_rng(1).normal(0, 0.5, size=t.size)
+    out = kalman_lead(noisy, dt=dt, lead_s=0.4, q=4.0, r=6.0)
+    # On a constant-velocity track the lead output should sit AHEAD of truth by
+    # ~v*lead once converged (second half of the series).
+    half = t.size // 2
+    lead_gap = np.mean(out[half:] - truth[half:])
+    assert lead_gap > 0.0                # genuinely leading, not trailing
+    assert abs(lead_gap - 3.0 * 0.4) < 0.8
+
+
+def test_kalman_lead_denoises():
+    dt = 0.2
+    t = np.arange(0, 20, dt)
+    truth = np.zeros_like(t)
+    noisy = truth + np.random.default_rng(2).normal(0, 1.0, size=t.size)
+    out = kalman_lead(noisy, dt=dt, lead_s=0.0, q=1.0, r=10.0)
+    assert np.std(out[10:]) < np.std(noisy)   # output is smoother than input
+
+
+# --- Phase 3: spherical heat-map -----------------------------------------
+
+def test_densest_lonlat_ignores_far_outlier():
+    # 5 players clustered near (10, 2) + a lone keeper at (-40, 0). Mode must
+    # land on the cluster, not the midpoint.
+    lons = np.array([9.0, 10.0, 11.0, 10.5, 9.5, -40.0])
+    lats = np.array([2.0, 2.0, 1.5, 2.5, 2.0, 0.0])
+    aim = densest_lonlat(lons, lats, sigma_deg=3.5)
+    assert aim is not None
+    assert abs(aim[0] - 10.0) < 2.0       # near the cluster centre
+    assert aim[0] > 0.0                    # NOT dragged toward the keeper
+
+
+def test_densest_lonlat_empty():
+    assert densest_lonlat(np.array([]), np.array([]), 3.5) is None
+
+
+# --- Phase 4: event framing ----------------------------------------------
+
+def test_event_framing_widens_inside_window_only():
+    cfg = AimConfig(base_fov_deg=70.0, event_widen_fov_deg=92.0,
+                    event_pre_s=2.0, event_post_s=4.0, event_ramp_s=1.0)
+    t = np.arange(0, 30, 0.2)
+    fovs = np.full_like(t, cfg.base_fov_deg)
+    out = event_framing(t, fovs, [(15.0, "CORNER")], cfg)
+    # Far from the event: untouched.
+    assert math.isclose(out[0], 70.0)
+    # At the event centre: fully widened.
+    centre = int(round(15.0 / 0.2))
+    assert math.isclose(out[centre], 92.0, abs_tol=1e-6)
+    # Never narrower than base, never wider than widen.
+    assert out.min() >= 70.0 - 1e-9
+    assert out.max() <= 92.0 + 1e-9
+
+
+def test_event_framing_ignores_non_dead_ball_events():
+    cfg = AimConfig()
+    t = np.arange(0, 10, 0.2)
+    fovs = np.full_like(t, cfg.base_fov_deg)
+    out = event_framing(t, fovs, [(5.0, "SUB")], cfg)
+    assert np.allclose(out, cfg.base_fov_deg)
+
+
+# --- Phase 5: Holt lead ---------------------------------------------------
+
+def test_holt_lead_smooths_and_leads():
+    dt = 0.2
+    t = np.arange(0, 20, dt)
+    truth = 2.0 * t
+    noisy = truth + np.random.default_rng(3).normal(0, 0.4, size=t.size)
+    out = holt_lead(noisy, alpha=0.4, beta=0.2, lead_s=0.4, dt=dt)
+    half = t.size // 2
+    assert np.std(np.diff(out[half:])) < np.std(np.diff(noisy[half:]))  # smoother
+    assert np.mean(out[half:] - truth[half:]) > 0.0                     # leading
+
+
+def test_half_fov_lat_smaller_than_lon():
+    cfg = AimConfig(base_fov_deg=70.0, out_w=1920, out_h=1080)
+    assert cfg.half_fov_lat_deg < cfg.half_fov_lon_deg
+
+
+if __name__ == "__main__":
+    fns = [v for k, v in sorted(globals().items())
+           if k.startswith("test_") and callable(v)]
+    passed = 0
+    for fn in fns:
+        fn()
+        print(f"  ok  {fn.__name__}")
+        passed += 1
+    print(f"\n{passed}/{len(fns)} aim-transform tests passed.")
