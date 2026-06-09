@@ -45,7 +45,9 @@ class H264PipeWriter:
     """
 
     def __init__(self, path: str | Path, fps: float, width: int, height: int,
-                 crf: int = 23, preset: str = "veryfast") -> None:
+                 crf: int = 23, preset: str = "veryfast",
+                 audio_source: "str | Path | None" = None,
+                 audio_start_s: float = 0.0) -> None:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
             raise RuntimeError("ffmpeg not on PATH — required for H.264 encoding.")
@@ -61,14 +63,31 @@ class H264PipeWriter:
             "-s", f"{self._w}x{self._h}",
             "-r", f"{fps}",
             "-i", "-",
-            "-an",
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-crf", str(crf),
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
-            self._path,
         ]
+        if audio_source is not None:
+            cmd += ["-ss", str(audio_start_s), "-i", str(audio_source)]
+            cmd += [
+                "-map", "0:v",
+                "-map", "1:a?",
+                "-c:v", "libx264",
+                "-preset", preset,
+                "-crf", str(crf),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-c:a", "aac",
+                "-shortest",
+                self._path,
+            ]
+        else:
+            cmd += [
+                "-an",
+                "-c:v", "libx264",
+                "-preset", preset,
+                "-crf", str(crf),
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                self._path,
+            ]
         self._proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
