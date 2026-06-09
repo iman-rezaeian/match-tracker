@@ -33,13 +33,29 @@ to work through this. Context for each item is in the linked files / memory.
 - See `[[ball-detection-gate]]` memory + `JERSEY_OCR_FEASIBILITY.md` style writeup.
 
 ## 2. Reel camera aiming (software-only, can do even without ball)
-- **Predictive lead:** Kalman/velocity-extrapolate the aim so it ANTICIPATES the play
-  instead of trailing (fixes "left behind"). Shorten `TV_SMOOTH_WINDOW` (currently 15
-  = 3 s) to cut lag.
+Today: player-centroid density-aim (`TV_DENSITY_BIN_M`) + 3 s moving average
+(`TV_SMOOTH_WINDOW=15`) + fixed −7° tilt. SOTA upgrades (ranked cheapest first):
+- **Schmitt-trigger / dead-zone hysteresis** — only pan when the action nears the
+  frame EDGE, hold otherwise → kills micro-pan wobble WITHOUT adding lag.
+- **Predictive lead** — Kalman/velocity-extrapolate the aim so it ANTICIPATES the
+  play instead of trailing (fixes "left behind"). Also shorten `TV_SMOOTH_WINDOW`.
+- **Spherical heat-map aim** — project players/ball onto the camera unit sphere, bin,
+  aim at densest cell. Native to our 360 EQUIRECT geometry; principled version of the
+  current density-aim; frames edges/corners correctly.
+- **Learned smooth predictor** — replace the moving average: OHMM (overlapped HMM for
+  soccer) or recurrent-decision-tree "smooth online predictor" (Disney "money shot")
+  → smoothness without lag. Or a Markov-chain trajectory (smoothness vs optimal state).
+- **Trained human-operator regressor** — regress pan/tilt/zoom from player+ball+action
+  features (needs human-operated training footage). Highest quality, biggest build.
 - **Event-aware framing from the COACH LOG (free edge):** we already log corners /
-  throw-ins / goal-kicks → zoom-out + tilt-to-corner on those events.
+  throw-ins / goal-kicks → zoom-out + tilt-to-corner on those events. No commercial
+  system has the coach's event stream — our equivalent of the coach-log identity prior.
+- We are already structurally aligned with SOTA: two-tier wide-capture (equirect) +
+  virtual-follow crop (Pixellot/Veo-style). Missing piece is the aim-quality layer.
 - Caveat: aim math is cheap but the reel RENDER is multi-hour → bake changes into a
   game's run, don't iterate by re-rendering.
+- Refs: OHMM soccer (sciencedirect S1077314216301709); mimic-human-operator
+  (US10812686); learned smooth predictors / recurrent decision trees (Disney Research).
 
 ## 3. Jersey-number OCR → identity tiebreaker
 - Re-run `python tracking/jersey_ocr_probe.py --game <8k-game> --video <mp4> --out /tmp/jersey_probe`.
