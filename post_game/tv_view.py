@@ -518,7 +518,8 @@ def render_tv_reel(
             )
             part_path = tmp_dir / f"half_{i + 1}.mp4"
             # High-quality reel encode: CRF 18 + slow preset (vs default 23/veryfast).
-            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow")
+            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow",
+                                    audio_source=video_path, audio_start_s=a)
             log.info("TV reel half %d: [%.1fs - %.1fs] (%.0fs)", i + 1, a, b, b - a)
             _render_segment(
                 cap, writer, fps, a, b,
@@ -653,7 +654,8 @@ def extract_auto_highlights(
             )
             part_path = tmp_dir / f"part_{i:03d}.mp4"
             # High-quality highlight encode: CRF 18 + slow preset.
-            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow")
+            writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow",
+                                    audio_source=video_path, audio_start_s=a)
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h,

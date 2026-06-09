@@ -6,8 +6,8 @@ For each coach-logged event of interest (GOAL/ASSIST/SAVE/SHOT_ON/KEY_PASS):
      meters at that timestamp, mapped back to equirectangular pixels via the
      inverse homography, then to (lon_deg, lat_deg) for the perspective camera.
      Smoothed across the clip window so the camera glides instead of jitters.
-  3. Render a 1920×1080 perspective MP4 with cv2 (no audio — these are short
-     review clips). FOV widens slightly (CLIP_FOV_DEG) so context is visible.
+  3. Render a 1920×1080 perspective MP4 with audio muxed from the source.
+     FOV widens slightly (CLIP_FOV_DEG) so context is visible.
   4. Upload to R2 under `clips/<gameId>/<eventId>.mp4`.
   5. Write metadata to Firestore under `teams/main/games/<gameId>/clips/<eventId>`.
 """
@@ -152,7 +152,8 @@ def _render_clip(
 
     out_w, out_h = config.CLIP_RESOLUTION
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = H264PipeWriter(out_path, fps, out_w, out_h)
+    writer = H264PipeWriter(out_path, fps, out_w, out_h,
+                            audio_source=video_path, audio_start_s=start_s)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     for f in range(start_f, end_f):
