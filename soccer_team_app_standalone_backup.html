@@ -7338,6 +7338,8 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
             oppScore={oppScore}
             scorers={goalScorers}
             scoringSide={activePopup.ev.team === 'them' ? 'them' : 'us'}
+            assistFirst={activePopup.ev.assistFirstName || null}
+            assistNum={activePopup.ev.assistJerseyNumber ?? null}
           />
         )}
         {activePopup && activePopup.kind === 'sub' && (
@@ -7361,7 +7363,7 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
  *
  * Holds ~7s, fades out.
  */
-function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide }) {
+function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide, assistFirst, assistNum }) {
   let opacity = 1;
   let scale = 1;
   if (elapsed < 0.4) {
@@ -7375,7 +7377,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
   const renderLine = (s, side) => {
     const label = s.first ? `#${s.num ?? '?'} ${s.first.toUpperCase()}` : 'OPPONENT';
     return (
-      <div key={`${side}-${label}`} className={`flex ${side === 'us' ? 'justify-start' : 'justify-end'} items-baseline gap-3 text-sm`}>
+      <div key={`${side}-${label}`} className={`flex ${side === 'us' ? 'justify-start' : 'justify-end'} items-baseline gap-2 text-[11px]`}>
         {side === 'us' && <span className="font-display tracking-wide text-white">{label}</span>}
         <span className="tabular-nums text-stone-300">{s.minutes.join(", ")}</span>
         {side === 'them' && <span className="font-display tracking-wide text-white">{label}</span>}
@@ -7383,51 +7385,63 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
     );
   };
 
+  // Assist only known for OUR goals (opponent scorer/assist unknown).
+  const assistLabel = (scoringSide === 'us' && assistFirst)
+    ? `🅰 ${assistFirst.toUpperCase()}${assistNum != null ? ` #${assistNum}` : ''}`
+    : null;
+
   return (
     <div
-      className="absolute inset-0 pointer-events-none select-none flex items-center justify-center"
+      className="absolute inset-0 pointer-events-none select-none flex items-end justify-center pb-[7%]"
       style={{ opacity, transition: 'opacity 80ms linear' }}
     >
       <div
-        className="rounded-xl border border-black/60 shadow-2xl overflow-hidden"
+        className="rounded-lg border border-black/60 shadow-2xl overflow-hidden"
         style={{
           background: 'rgba(0,0,0,0.82)',
           backdropFilter: 'blur(8px)',
-          width: 'min(92vw, 720px)',
+          width: 'min(78vw, 440px)',
           transform: `scale(${scale})`,
-          transformOrigin: 'center',
+          transformOrigin: 'center bottom',
           transition: 'transform 80ms linear',
         }}
       >
         {/* Top banner */}
-        <div className="px-4 py-2 text-center text-[11px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: readableTextOn(scoringSide === 'us' ? homeColor : awayColor) }}>
+        <div className="px-3 py-1 text-center text-[9px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: readableTextOn(scoringSide === 'us' ? homeColor : awayColor) }}>
           ⚽ GOAL
         </div>
 
         {/* Score line */}
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-4 text-white">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: homeColor }} />
-            <span className="font-display text-lg sm:text-2xl tracking-wider leading-tight break-words">{homeName}</span>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2 text-white">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="inline-block w-1.5 h-5 rounded-sm shrink-0" style={{ background: homeColor }} />
+            <span className="font-display text-sm sm:text-base tracking-wide leading-tight break-words">{homeName}</span>
           </div>
-          <div className="font-display text-3xl sm:text-5xl tabular-nums text-center px-2">
+          <div className="font-display text-xl sm:text-2xl tabular-nums text-center px-1">
             <span className={scoringSide === 'us' ? 'text-lime-300' : ''}>{ourScore}</span>
-            <span className="mx-2 text-stone-500">—</span>
+            <span className="mx-1.5 text-stone-500">—</span>
             <span className={scoringSide === 'them' ? 'text-red-300' : ''}>{oppScore}</span>
           </div>
-          <div className="flex items-center gap-2 min-w-0 justify-end">
-            <span className="font-display text-lg sm:text-2xl tracking-wider leading-tight break-words text-right">{awayName}</span>
-            <span className="inline-block w-2 h-8 rounded-sm shrink-0" style={{ background: awayColor }} />
+          <div className="flex items-center gap-1.5 min-w-0 justify-end">
+            <span className="font-display text-sm sm:text-base tracking-wide leading-tight break-words text-right">{awayName}</span>
+            <span className="inline-block w-1.5 h-5 rounded-sm shrink-0" style={{ background: awayColor }} />
           </div>
         </div>
 
+        {/* Assist line for the just-scored goal */}
+        {assistLabel && (
+          <div className="px-3 pb-1.5 -mt-1 text-center text-[10px] tracking-wide text-lime-200/90 font-display">
+            {assistLabel}
+          </div>
+        )}
+
         {/* Scorers lists */}
         {(scorers.us.length > 0 || scorers.them.length > 0) && (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-5 pb-4 border-t border-white/10 pt-3">
-            <div className="space-y-1">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 px-3 pb-2.5 border-t border-white/10 pt-2">
+            <div className="space-y-0.5">
               {scorers.us.map(s => renderLine(s, 'us'))}
             </div>
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {scorers.them.map(s => renderLine(s, 'them'))}
             </div>
           </div>
@@ -11607,6 +11621,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
