@@ -61,24 +61,33 @@ class AimConfig:
                                        # a calm tripod feel. sphere_heatmap is
                                        # more responsive but jitters side-to-side.
     # Camera MOTION model — how the per-time aim target becomes smooth camera
-    # motion. NOTE: the original 3 s moving average ("legacy_boxcar") is the
-    # DEFAULT on purpose — in side-by-side review it read as the most
-    # broadcast-like. The fancier models below (dead-zone, smooth_damp,
-    # edge-aware "broadcast") each tested WORSE (restless / stop-and-go) and are
-    # kept only as opt-in experiments. Do not switch the default without a fresh
-    # side-by-side that the user signs off on.
-    #   "legacy_boxcar"   original 3 s moving average (DEFAULT — preferred).
-    #   "broadcast"       edge-aware hold-then-pan (tested worse: too stationary).
-    #   "smooth_damp"     continuous critically-damped follow (tested restless).
+    # motion. The density-X aim is a STAIRCASE (snaps between cluster windows),
+    # so a plain moving average reads as "stop-and-go". A critically-damped
+    # follower ("smooth_damp") turns that staircase into a smooth, slow, eased
+    # pan with no overshoot — the DEFAULT. (The earlier "restless" smooth_damp
+    # was paired with the jittery sphere aim + a double lead; on the stable
+    # density-X aim with no extra lead it is the smoothest option — measured
+    # jerk 0.08 vs the boxcar's 0.48.)
+    #   "smooth_damp"     critically-damped slow pan (DEFAULT).
+    #   "legacy_boxcar"   3 s moving average (stop-and-go on the staircase aim).
+    #   "broadcast"       edge-aware hold-then-pan (tested: too stationary).
     #   "kalman_deadzone" Kalman lead + Schmitt dead-zone (abrupt stop-and-go).
     #   "learned"         Holt/learned smooth predictor.
-    motion_model: str = "legacy_boxcar"
+    motion_model: str = "smooth_damp"
     use_kalman: bool = True            # used only by "kalman_deadzone" model
     use_dead_zone: bool = True         # used only by "kalman_deadzone" model
     use_event_framing: bool = True     # Phase 4: widen FOV on dead balls
     use_learned: bool = False          # legacy flag → maps to "learned" model
     use_dynamic_fov: bool = True       # auto-widen the FOV to keep wide / corner
                                        # / end-to-end play framed (no-ball fix)
+    use_distance_fov: bool = True      # scale FOV by the action's DISTANCE so
+                                       # far-side (small) players zoom IN and
+                                       # near-side (big) players zoom OUT — keeps
+                                       # players ~the same on-screen pixel size
+    use_consensus_lead: bool = True    # anticipate transitions by leading the aim
+                                       # along players' COLLECTIVE run direction
+    use_leading_room: bool = True      # broadcast "nose room": frame the action
+                                       # toward the trailing edge, space ahead
 
     # --- geometry (mirrors tv_view constants; injected, not imported) ----
     base_fov_deg: float = 70.0         # TV_FOV_DEG
@@ -87,11 +96,10 @@ class AimConfig:
     aim_hz: float = 5.0
 
     # --- Motion: critically-damped follow + safe-zone (broadcast model) --
-    smooth_time_s: float = 1.0         # approx time to commit a pan (lon). Lower
-                                       # = snappier / less sluggish. This is the
-                                       # "how slow are the pans" knob.
-    smooth_time_lat_s: float = 1.6     # tilt damped a bit more (vertical moves
-                                       # are more jarring) but no longer sluggish.
+    smooth_time_s: float = 2.5         # approx time to commit a pan (lon). Higher
+                                       # = slower, smoother glide. 2.5 reads as a
+                                       # calm broadcast pan on the staircase aim.
+    smooth_time_lat_s: float = 2.5     # tilt damped the same — slow, smooth.
     max_pan_speed_deg_s: float = 24.0  # hard cap on horizontal pan rate
     max_tilt_speed_deg_s: float = 12.0 # hard cap on vertical (tilt) rate
 
@@ -126,24 +134,79 @@ class AimConfig:
     # --- Phase 3: spherical heat-map -------------------------------------
     heat_sigma_deg: float = 3.5        # gaussian influence radius on the sphere
 
+    # --- Consensus-velocity lead (anticipate transitions) ----------------
+    # Lead the aim along the MEAN of per-player velocity vectors. Validated on
+    # real tracks: corr ~0.45 with where play heads 3-4 s out, 81% directional
+    # match on big swings, and naturally near-zero in settled play. (The naive
+    # centroid derivative does NOT work — corr ~ -0.12.)
+    consensus_lead_s: float = 3.0      # seconds of run-direction to project ahead
+    consensus_deadband_ms: float = 0.3 # consensus speed (m/s) below which the
+                                       # lead is ZERO — keeps calm play wobble-free
+    consensus_max_lead_m: float = 6.0  # cap the lead displacement so a sprint
+                                       # can't fling the camera off the play
+
+    # --- Leading-room framing (broadcast "nose room") --------------------
+    # Offset the frame so the action sits toward the trailing edge, with open
+    # space AHEAD in the run direction. Distinct from the lead (which moves the
+    # aim CENTER); this moves where the action sits WITHIN the frame.
+    leading_room_frac: float = 0.22    # fraction of the HALF-FOV to offset at
+                                       # full confidence (0.22 → action ~⅓ from
+                                       # the trailing edge, the broadcast look).
+                                       # Gentler than full broadcast nose room
+                                       # because our run estimate is ~81%, not
+                                       # ground truth — a wrong offset feels bad.
+    lead_full_speed_ms: float = 1.2    # consensus speed (m/s) at which the offset
+                                       # reaches full strength; below the deadband
+                                       # it is zero (settled play → centered).
+    leading_room_smooth_s: float = 2.5 # heavily smooth the offset so it eases in
+                                       # and out — never snaps the framing.
+
     # --- Dynamic FOV: auto-widen to keep wide / corner play framed -------
     # The single most effective lever for "misses the ball at corners" without
     # a ball track: when players spread toward the ends / a corner, widen the
     # virtual camera so it all stays in frame; tighten back when play is compact
     # (so players stay large). FOV = clamp(2*cover_halffov*margin, base, max).
-    cover_window_m: float = 26.0       # only fit the ACTION: players within this
+    # Tuned DOWN after review ("more zoom-out than needed"): holds ~70deg through
+    # calm + normal play (calm windows now ~95% tight) and only widens for real
+    # corner / end-to-end spread, capped at 95deg.
+    cover_window_m: float = 20.0       # only fit the ACTION: players within this
                                        # field-X window of the densest cluster.
                                        # Excludes the lone far-end keeper so it
                                        # doesn't pin the camera zoomed-out during
                                        # compact play (an attacking phase is
-                                       # ~16-22 m; 26 m gives a little headroom).
-    cover_percentile: float = 80.0     # percentile of player angular spread used
+                                       # ~16-22 m).
+    cover_percentile: float = 75.0     # percentile of player angular spread used
                                        # (not max → one stray det can't zoom out)
-    dynamic_fov_margin: float = 1.15   # headroom multiplier on the measured spread
-    dynamic_fov_max_deg: float = 110.0 # never zoom out past this (keeps players
-                                       # recognisable; field spans ~165° here)
-    dynamic_fov_smooth_s: float = 2.0  # smooth the FOV track so zoom breathes
-                                       # slowly instead of pumping frame-to-frame
+    dynamic_fov_margin: float = 1.05   # headroom multiplier on the measured spread
+    dynamic_fov_max_deg: float = 115.0 # never zoom out past this. Near-camera /
+                                       # corner play physically spans 150-166° of
+                                       # longitude (players close = huge angular
+                                       # spread); a low cap REFUSES to capture
+                                       # the whole scene there. 115° is about the
+                                       # widest a rectilinear crop renders before
+                                       # the edges distort badly — beyond that the
+                                       # geometry (low sideline pole) simply can't
+                                       # fit the scene flat; raising the camera
+                                       # (next season) is the real fix.
+    dynamic_fov_smooth_s: float = 2.0  # boxcar pre-smooth (kills single-sample
+                                       # spikes before the slew limiter)
+    fov_max_rate_deg_s: float = 4.0    # hard cap on zoom rate. Low = the lens
+                                       # eases in/out slowly like an operator.
+    fov_deadzone_deg: float = 6.0      # hold the current FOV until the target
+                                       # differs by more than this — stops the
+                                       # "small quick zoom in/out" pumping; the
+                                       # lens only re-zooms on a sustained change.
+
+    # --- Distance/size FOV: equalize on-screen player size ---------------
+    # Drive FOV off the MEASURED median player angular height so far (small) and
+    # near (big) players render at roughly the same pixel size. target_player_frac
+    # is the desired on-screen player height as a fraction of frame height; tuned
+    # so mid-field action (~3.4° angular height here) lands at the 70° base.
+    target_player_frac: float = 0.11   # player ≈ 11% of frame height. Higher =
+                                       # players bigger everywhere, far play in
+                                       # particular zooms IN more (far ang_h~3.2°
+                                       # → ~45° FOV at 0.11 vs ~62° at 0.08).
+    fov_min_deg: float = 45.0          # never zoom in past this (keep context)
 
     # --- Phase 4: event framing ------------------------------------------
     event_widen_fov_deg: float = 84.0  # zoom OUT to this FOV around a restart.
@@ -175,6 +238,69 @@ class AimConfig:
 
 
 # --- Phase 0: diagnostics ------------------------------------------------
+
+def fov_for_player_size(
+    ang_h_deg: float, target_frac: float, out_w: int, out_h: int,
+    fov_min_deg: float, fov_max_deg: float,
+) -> float:
+    """Horizontal FOV that renders a player of angular height `ang_h_deg` at
+    `target_frac` of the frame height — the "same pixel size everywhere" lever.
+
+    On a sideline pole, far-side players subtend ~6× less angle than near-side
+    ones (measured), so a fixed FOV makes far players tiny and near players huge.
+    Driving FOV off the MEASURED median player angular size equalizes apparent
+    size: small (far) players → narrow FOV (zoom IN / magnify); big (near)
+    players → wide FOV (zoom OUT). Clamped to [fov_min, fov_max] so it never
+    goes claustrophobic or loses all field context.
+
+    Math: desired vertical FOV = ang_h / target_frac; convert to horizontal via
+    the frame aspect (render_perspective treats fov as HORIZONTAL).
+    """
+    if ang_h_deg <= 0.0 or target_frac <= 0.0:
+        return float(fov_max_deg)
+    fov_v = ang_h_deg / target_frac
+    fov_v = max(1.0, min(170.0, fov_v))
+    # vertical → horizontal: tan(h/2) = (out_w/out_h) * tan(v/2)
+    half_v = math.radians(fov_v) / 2.0
+    half_h = math.atan((out_w / out_h) * math.tan(half_v))
+    fov_h = math.degrees(2.0 * half_h)
+    return float(max(fov_min_deg, min(fov_max_deg, fov_h)))
+
+
+def slew_limit_fov(
+    target: np.ndarray, dt: float, max_rate_deg_s: float, deadzone_deg: float,
+) -> np.ndarray:
+    """Rate-limit + dead-zone an FOV (zoom) track so it can't pump.
+
+    A boxcar smoother only slows the zoom RATE — it still reverses direction on
+    every small fluctuation ("small quick zoom in/out"). This holds the current
+    FOV until the target differs by more than `deadzone_deg`, then moves toward
+    it no faster than `max_rate_deg_s`. Result: the lens sits still through minor
+    spread changes and eases in/out only on a sustained one — broadcast-style.
+    """
+    z = np.asarray(target, dtype=np.float64)
+    n = z.size
+    if n == 0:
+        return z
+    max_step = max(1e-6, max_rate_deg_s * dt)
+    dz = max(0.0, deadzone_deg)
+    out = np.empty(n, dtype=np.float64)
+    f = float(z[0])
+    out[0] = f
+    for k in range(1, n):
+        e = float(z[k]) - f
+        if abs(e) > dz:
+            # Move toward the dead-zone edge (hysteresis), rate-limited.
+            desired = float(z[k]) - math.copysign(dz, e)
+            step = desired - f
+            if step > max_step:
+                step = max_step
+            elif step < -max_step:
+                step = -max_step
+            f += step
+        out[k] = f
+    return out
+
 
 def summarize_aim(
     times: np.ndarray, lons: np.ndarray, lats: np.ndarray,
@@ -496,6 +622,33 @@ def densest_lonlat(
     cx = float((wk * lons).sum() / wsum)
     cy = float((wk * lats).sum() / wsum)
     return cx, cy
+
+
+# --- Consensus-velocity lead ---------------------------------------------
+
+def consensus_velocity(
+    vx: np.ndarray, vy: np.ndarray, deadband_ms: float,
+) -> tuple[float, float]:
+    """Mean per-player velocity vector, with a magnitude deadband.
+
+    The collective run direction is a real leading indicator of where play is
+    about to go (validated: corr ~0.45 with the future centroid move). Averaging
+    individual velocities cancels random jitter and leaves the net "everyone is
+    sprinting that way" signal. NaNs (tracks with too few samples) are ignored.
+
+    Returns (0.0, 0.0) when the consensus speed is below `deadband_ms` — settled
+    play, where the camera should hold rather than chase noise.
+    """
+    vx = np.asarray(vx, dtype=np.float64)
+    vy = np.asarray(vy, dtype=np.float64)
+    finite = np.isfinite(vx) & np.isfinite(vy)
+    if not np.any(finite):
+        return 0.0, 0.0
+    lvx = float(np.mean(vx[finite]))
+    lvy = float(np.mean(vy[finite]))
+    if math.hypot(lvx, lvy) < max(0.0, deadband_ms):
+        return 0.0, 0.0
+    return lvx, lvy
 
 
 # --- Phase 4: event-aware framing ----------------------------------------

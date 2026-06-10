@@ -34,7 +34,7 @@ from post_game.tv_aim import AimConfig
 from post_game.video import H264PipeWriter, render_perspective
 
 OLD_LABEL = "OLD: density-x + boxcar (fixed 70 FOV)"
-NEW_LABEL = "NEW: same motion + auto zoom-out"
+NEW_LABEL = "NEW: smooth pan + size-FOV + lead + nose-room"
 
 
 def _label(frame, text):
@@ -78,15 +78,17 @@ def main():
     clk = period_clock_to_video_time_factory(game)
 
     legacy = AimConfig(
+        # TRUE original reel: fixed 70° FOV, boxcar pan, no leads/zoom.
         aim_mode="density_x", motion_model="legacy_boxcar",
         use_event_framing=False, use_learned=False, use_dynamic_fov=False,
+        use_consensus_lead=False, use_leading_room=False, use_distance_fov=False,
         base_fov_deg=tv_view.TV_FOV_DEG, out_w=tv_view.TV_RESOLUTION[0],
         out_h=tv_view.TV_RESOLUTION[1], aim_hz=tv_view.TV_AIM_HZ,
         boxcar_window=tv_view.TV_SMOOTH_WINDOW,
     )
+    # NEW = the current production defaults (smooth_damp pan, dynamic+distance
+    # FOV, consensus lead, leading room) — just resized to the render geometry.
     new = AimConfig(
-        aim_mode="density_x", motion_model="legacy_boxcar",
-        use_event_framing=True, use_learned=False, use_dynamic_fov=True,
         base_fov_deg=tv_view.TV_FOV_DEG, out_w=tv_view.TV_RESOLUTION[0],
         out_h=tv_view.TV_RESOLUTION[1], aim_hz=tv_view.TV_AIM_HZ,
         boxcar_window=tv_view.TV_SMOOTH_WINDOW,

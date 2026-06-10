@@ -15,10 +15,13 @@ from .tv_aim import (
     AimConfig,
     apply_dead_zone,
     broadcast_follow,
+    consensus_velocity,
     densest_lonlat,
     event_framing,
+    fov_for_player_size,
     holt_lead,
     kalman_lead,
+    slew_limit_fov,
     smooth_damp,
     summarize_aim,
     velocity_lead,
@@ -248,6 +251,84 @@ def test_broadcast_far_fewer_reversals_than_raw():
         return int(np.sum(s[1:] != s[:-1]))
     assert reversals(out) < reversals(raw) / 3
 
+# --- Consensus-velocity lead --------------------------------------------
+
+def test_consensus_velocity_agrees_on_direction():
+    # All players drifting +x at ~1 m/s with noise → consensus points +x.
+    rng = np.random.default_rng(5)
+    vx = 1.0 + rng.normal(0, 0.3, size=10)
+    vy = rng.normal(0, 0.3, size=10)
+    lvx, lvy = consensus_velocity(vx, vy, deadband_ms=0.3)
+    assert lvx > 0.7
+    assert abs(lvy) < abs(lvx)
+
+
+def test_consensus_velocity_deadband_zeros_calm_play():
+    # Random milling about with no net direction → below deadband → zero.
+    rng = np.random.default_rng(6)
+    vx = rng.normal(0, 0.15, size=12)
+    vy = rng.normal(0, 0.15, size=12)
+    assert consensus_velocity(vx, vy, deadband_ms=0.3) == (0.0, 0.0)
+
+
+def test_consensus_velocity_ignores_nans():
+    vx = np.array([np.nan, 1.0, 1.0, np.nan, 1.0])
+    vy = np.array([np.nan, 0.0, 0.0, np.nan, 0.0])
+    lvx, lvy = consensus_velocity(vx, vy, deadband_ms=0.3)
+    assert abs(lvx - 1.0) < 1e-9 and lvy == 0.0
+
+
+def test_consensus_velocity_all_nan_returns_zero():
+    nan = np.full(4, np.nan)
+    assert consensus_velocity(nan, nan, deadband_ms=0.3) == (0.0, 0.0)
+
+
+# --- FOV slew limiter (anti-pump) ----------------------------------------
+
+def test_slew_limit_fov_caps_rate():
+    x = np.concatenate([np.full(5, 70.0), np.full(40, 100.0)])
+    out = slew_limit_fov(x, dt=0.2, max_rate_deg_s=4.0, deadzone_deg=6.0)
+    assert np.abs(np.diff(out)).max() <= 4.0 * 0.2 + 1e-9
+
+
+def test_slew_limit_fov_deadzone_holds_through_jitter():
+    rng = np.random.default_rng(3)
+    x = 80.0 + rng.uniform(-3.0, 3.0, size=200)
+    out = slew_limit_fov(x, dt=0.2, max_rate_deg_s=4.0, deadzone_deg=6.0)
+    assert np.ptp(out) < 1.0
+
+
+def test_slew_limit_fov_fewer_reversals_than_input():
+    rng = np.random.default_rng(8)
+    t = np.arange(0, 40, 0.2)
+    x = 80.0 + 8.0 * np.sin(t / 5.0) + rng.normal(0, 4.0, size=t.size)
+    out = slew_limit_fov(x, dt=0.2, max_rate_deg_s=4.0, deadzone_deg=6.0)
+    def rev(d):
+        s = np.sign(np.diff(d)); s[s == 0] = 1
+        return int(np.sum(s[1:] != s[:-1]))
+    assert rev(out) < rev(x) / 2
+
+
+# --- Distance/size FOV (equalize on-screen player size) ------------------
+
+def test_fov_for_player_size_far_zooms_in_near_zooms_out():
+    far = fov_for_player_size(1.4, target_frac=0.08, out_w=1920, out_h=1080,
+                              fov_min_deg=50.0, fov_max_deg=95.0)
+    near = fov_for_player_size(8.0, target_frac=0.08, out_w=1920, out_h=1080,
+                               fov_min_deg=50.0, fov_max_deg=95.0)
+    assert far < near
+
+
+def test_fov_for_player_size_respects_clamps():
+    tiny = fov_for_player_size(0.3, 0.08, 1920, 1080, 50.0, 95.0)
+    huge = fov_for_player_size(40.0, 0.08, 1920, 1080, 50.0, 95.0)
+    assert tiny == 50.0
+    assert huge == 95.0
+
+
+def test_fov_for_player_size_midfield_near_base():
+    fov = fov_for_player_size(3.4, 0.08, 1920, 1080, 50.0, 95.0)
+    assert 64.0 <= fov <= 78.0
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())

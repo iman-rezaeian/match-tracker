@@ -22,6 +22,7 @@ primary aim with player centroid as fallback.
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import subprocess
 import tempfile
@@ -211,16 +212,18 @@ def _window_track_xy(
     t_video: float,
     field_length_m: float,
     field_width_m: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """On-field, static-filtered, per-track (x_m, y_m) in the ±TV_AGG_WINDOW_S
-    window around `t_video`. One point per track (median of its rows), so a
-    coach detected in 8 consecutive frames votes once, not eight times.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """On-field, static-filtered, per-track (x_m, y_m, vx, vy, ang_h) in the
+    ±TV_AGG_WINDOW_S window around `t_video`. One point per track (median of its
+    rows), so a coach detected in 8 consecutive frames votes once, not eight.
 
-    Returns two equal-length arrays (x, y). Empty arrays => no on-field tracks.
-    Shared by both aim modes (`density_x` and `sphere_heatmap`).
+    Returns five equal-length arrays (x, y, vx, vy, ang_h). vx/vy/ang_h are NaN
+    if the source columns are absent. Empty arrays => no on-field tracks. Shared
+    by both aim modes + the coverage/size FOV.
     """
+    empty = (np.empty(0), np.empty(0), np.empty(0), np.empty(0), np.empty(0))
     if "x_m" not in tracks_field_df.columns or tracks_field_df.empty:
-        return np.empty(0), np.empty(0)
+        return empty
     pad = TV_ONFIELD_PAD_M
     half_w = TV_AGG_WINDOW_S
     mask = (
@@ -236,12 +239,22 @@ def _window_track_xy(
         mask = mask & (~tracks_field_df["_track_static"])
     win = tracks_field_df[mask]
     if win.empty:
-        return np.empty(0), np.empty(0)
-    per_track = win.groupby("track_id").agg(x_m=("x_m", "median"), y_m=("y_m", "median"))
-    return (
-        per_track["x_m"].to_numpy(dtype=np.float64),
-        per_track["y_m"].to_numpy(dtype=np.float64),
-    )
+        return empty
+    aggs = {"x_m": ("x_m", "median"), "y_m": ("y_m", "median")}
+    has_v = "_vx" in tracks_field_df.columns and "_vy" in tracks_field_df.columns
+    has_ah = "_ang_h" in tracks_field_df.columns
+    if has_v:
+        aggs["vx"] = ("_vx", "median")
+        aggs["vy"] = ("_vy", "median")
+    if has_ah:
+        aggs["ang_h"] = ("_ang_h", "median")
+    per_track = win.groupby("track_id").agg(**aggs)
+    x = per_track["x_m"].to_numpy(dtype=np.float64)
+    y = per_track["y_m"].to_numpy(dtype=np.float64)
+    vx = per_track["vx"].to_numpy(dtype=np.float64) if has_v else np.full(x.shape, np.nan)
+    vy = per_track["vy"].to_numpy(dtype=np.float64) if has_v else np.full(x.shape, np.nan)
+    ang_h = per_track["ang_h"].to_numpy(dtype=np.float64) if has_ah else np.full(x.shape, np.nan)
+    return x, y, vx, vy, ang_h
 
 
 def _density_x_centroid(
@@ -276,21 +289,31 @@ def _aim_for_time(
     field_length_m: float,
     field_width_m: float,
     cfg: AimConfig,
-) -> tuple[tuple[float, float], bool]:
+) -> tuple[tuple[float, float], bool, tuple[float, float, float]]:
     """Per-time virtual-camera aim in (lon, lat). Dispatches on `cfg.aim_mode`.
 
-    Returns ((lon, lat), valid). `valid=False` means no on-field tracks at this
-    time — caller should hold the previous aim.
+    Returns ((lon, lat), valid, lead_dir). `valid=False` means no on-field tracks
+    at this time — caller should hold the previous aim. `lead_dir` is the
+    (dlon_unit, dlat_unit, speed_m_s) consensus run direction for leading-room
+    framing (consumed after the FOV is known).
 
     Modes:
       - "density_x"      legacy: densest window along field-X, then centroid.
       - "sphere_heatmap" project players onto the camera sphere and mean-shift
                          to the densest (lon, lat) cell — native to the equirect
                          geometry, frames width/corners correctly.
+
+    Consensus-velocity lead (cfg.use_consensus_lead): nudge the aim ahead along
+    the players' COLLECTIVE running direction. Validated on real tracks — the
+    mean of per-player velocities predicts where play heads ~3-4 s out (corr
+    ~0.45; 81% directional match on big transitions) and is naturally quiet in
+    settled play, so it leads the long ball without adding calm-play wobble. The
+    naive centroid derivative does NOT predict (corr ~ -0.12) — the consensus is
+    the signal. Applied as a projected lon/lat delta so it works in both modes.
     """
-    x, y = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
+    x, y, vx, vy, _ah = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
     if x.size < TV_MIN_ONFIELD_TRACKS:
-        return fallback, False
+        return fallback, False, (0.0, 0.0, 0.0)
 
     if cfg.aim_mode == "sphere_heatmap":
         lonlat = np.array(
@@ -300,15 +323,87 @@ def _aim_for_time(
         good = np.isfinite(lonlat).all(axis=1)
         lonlat = lonlat[good]
         if lonlat.shape[0] < TV_MIN_ONFIELD_TRACKS:
-            return fallback, False
+            return fallback, False, (0.0, 0.0, 0.0)
         aim = tv_aim.densest_lonlat(lonlat[:, 0], lonlat[:, 1], cfg.heat_sigma_deg)
         if aim is None:
-            return fallback, False
-        return aim, True
+            return fallback, False, (0.0, 0.0, 0.0)
+    else:
+        # Default: density-along-X centroid.
+        cx, cy = _density_x_centroid(x, y, field_length_m)
+        aim = projector.field_to_lonlat(cx, cy)
 
-    # Default: density-along-X centroid.
-    cx, cy = _density_x_centroid(x, y, field_length_m)
-    return projector.field_to_lonlat(cx, cy), True
+    if cfg.use_consensus_lead:
+        dlon, dlat = _consensus_lead_delta(x, y, vx, vy, projector, cfg)
+        aim = (aim[0] + dlon, aim[1] + dlat)
+
+    # Leading-room screen direction: the unit (lon, lat) direction the action is
+    # running, plus its speed (for confidence gating). Captured here (where the
+    # window tracks are in hand) and consumed AFTER the FOV is known, so the
+    # framing offset can scale with the current zoom.
+    lead_dir = _consensus_screen_dir(x, y, vx, vy, aim, projector, cfg)
+    return aim, True, lead_dir
+
+
+def _consensus_screen_dir(
+    x: np.ndarray, y: np.ndarray, vx: np.ndarray, vy: np.ndarray,
+    aim: tuple[float, float], projector: FieldProjector, cfg: AimConfig,
+) -> tuple[float, float, float]:
+    """Unit screen-direction (dlon, dlat) of the consensus run + its speed (m/s).
+
+    For leading-room framing we need WHERE on screen the action is heading, not
+    just how far. Project the aim point and a small step along the consensus
+    velocity, and return the normalized lon/lat difference. Speed is returned
+    separately so the caller can gate the offset on confidence (a slow/ambiguous
+    consensus → no offset). Returns (0, 0, 0) when below the deadband.
+    """
+    lvx, lvy = tv_aim.consensus_velocity(vx, vy, cfg.consensus_deadband_ms)
+    speed = math.hypot(lvx, lvy)
+    if speed <= 0.0:
+        return 0.0, 0.0, 0.0
+    cx, cy = float(np.mean(x)), float(np.mean(y))
+    step = 2.0  # meters along the run for a stable direction estimate
+    lon0, lat0 = projector.field_to_lonlat(cx, cy)
+    lon1, lat1 = projector.field_to_lonlat(cx + lvx / speed * step, cy + lvy / speed * step)
+    if not (np.isfinite(lon0) and np.isfinite(lon1)):
+        return 0.0, 0.0, 0.0
+    dlon = ((lon1 - lon0 + 180.0) % 360.0) - 180.0
+    dlat = lat1 - lat0
+    n = math.hypot(dlon, dlat)
+    if n < 1e-9:
+        return 0.0, 0.0, 0.0
+    return dlon / n, dlat / n, speed
+
+
+def _consensus_lead_delta(
+    x: np.ndarray, y: np.ndarray, vx: np.ndarray, vy: np.ndarray,
+    projector: FieldProjector, cfg: AimConfig,
+) -> tuple[float, float]:
+    """(lon, lat) offset that leads the aim along the players' consensus run.
+
+    Returns (0, 0) during settled play (consensus speed below the deadband) so
+    the camera only anticipates real transitions. The lead is a small field-
+    space displacement (consensus velocity × lead_s, capped) projected to a
+    lon/lat delta about the cluster's field centroid.
+    """
+    lvx, lvy = tv_aim.consensus_velocity(vx, vy, cfg.consensus_deadband_ms)
+    if lvx == 0.0 and lvy == 0.0:
+        return 0.0, 0.0
+    # Reference field point: the cluster centroid the aim sits near.
+    cx, cy = float(np.mean(x)), float(np.mean(y))
+    # Lead displacement (m), capped so a sprint can't fling the camera.
+    dx = lvx * cfg.consensus_lead_s
+    dy = lvy * cfg.consensus_lead_s
+    mag = float(np.hypot(dx, dy))
+    if mag > cfg.consensus_max_lead_m:
+        s = cfg.consensus_max_lead_m / mag
+        dx *= s
+        dy *= s
+    lon0, lat0 = projector.field_to_lonlat(cx, cy)
+    lon1, lat1 = projector.field_to_lonlat(cx + dx, cy + dy)
+    if not (np.isfinite(lon0) and np.isfinite(lon1)):
+        return 0.0, 0.0
+    dlon = ((lon1 - lon0 + 180.0) % 360.0) - 180.0
+    return float(dlon), float(lat1 - lat0)
 
 
 def _coverage_halffov_for_time(
@@ -319,8 +414,8 @@ def _coverage_halffov_for_time(
     field_length_m: float,
     field_width_m: float,
     cfg: AimConfig,
-) -> float:
-    """Required HORIZONTAL half-FOV (deg) to keep the ACTION in frame.
+) -> tuple[float, float]:
+    """(required HORIZONTAL half-FOV deg, median action-player angular height deg).
 
     Sizes the zoom to the action CLUSTER, not the whole team. In U10 play a
     keeper/defender often sits ~40 m back at the far end; fitting EVERY on-field
@@ -331,12 +426,16 @@ def _coverage_halffov_for_time(
     far those players spread from the aim center. A lone far player is excluded
     and no longer forces a zoom-out.
 
-    Returns 0.0 when there are too few on-field tracks (caller falls back to the
-    base FOV).
+    The second return is the median ANGULAR HEIGHT of those action-cluster
+    players (deg) — the distance signal that drives the same-pixel-size FOV. NaN
+    if bbox-height data is unavailable.
+
+    Returns (0.0, nan) when there are too few on-field tracks (caller falls back
+    to the base FOV).
     """
-    x, y = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
+    x, y, _vx, _vy, ang_h = _window_track_xy(tracks_field_df, t_video, field_length_m, field_width_m)
     if x.size < 2:
-        return 0.0
+        return 0.0, float("nan")
     # Restrict to the action cluster: densest `cover_window_m`-wide window in
     # field-X, centered on the densest bin. Players outside it (e.g. the lone
     # far-end keeper) are dropped so they can't inflate the FOV.
@@ -352,7 +451,8 @@ def _coverage_halffov_for_time(
             x_lo, x_hi = edges[peak], edges[peak + bins_per_window]
             inside = (x >= x_lo) & (x <= x_hi)
             if inside.sum() >= 2:
-                x, y = x[inside], y[inside]
+                x, y, ang_h = x[inside], y[inside], ang_h[inside]
+    med_ang_h = float(np.nanmedian(ang_h)) if np.any(np.isfinite(ang_h)) else float("nan")
     aim_lon, aim_lat = aim
     lonlat = np.array(
         [projector.field_to_lonlat(float(xi), float(yi)) for xi, yi in zip(x, y)],
@@ -361,7 +461,7 @@ def _coverage_halffov_for_time(
     good = np.isfinite(lonlat).all(axis=1)
     lonlat = lonlat[good]
     if lonlat.shape[0] < 2:
-        return 0.0
+        return 0.0, med_ang_h
     # Horizontal angular offset from the aim (unwrap the seam), and the
     # vertical offset mapped through the aspect ratio so it costs horizontal FOV.
     dlon = np.abs(((lonlat[:, 0] - aim_lon + 180.0) % 360.0) - 180.0)
@@ -370,7 +470,7 @@ def _coverage_halffov_for_time(
     need = np.maximum(dlon, dlat)
     # Use a high percentile (not max) so one stray detection can't force a huge
     # zoom-out; the dynamic-FOV cap also bounds it.
-    return float(np.percentile(need, cfg.cover_percentile))
+    return float(np.percentile(need, cfg.cover_percentile)), med_ang_h
 
 
 
@@ -427,31 +527,64 @@ def _build_aim_stream(
             len(static_ids), n_total_ids, TV_STATIC_TRACK_MVMT_M,
         )
 
+        # Per-track velocity (m/s) for the consensus-velocity lead. Sort by
+        # (track, time), take first differences, and clip absurd inter-frame
+        # jumps (>8 m/s = a track-id swap, not a sprint) so a glitch can't fling
+        # the lead. NaN where a track has <2 samples — handled downstream.
+        if cfg.use_consensus_lead:
+            tracks_field_df = tracks_field_df.sort_values(["track_id", "time_s"])
+            grp = tracks_field_df.groupby("track_id")
+            dt_track = grp["time_s"].diff()
+            vx = grp["x_m"].diff() / dt_track
+            vy = grp["y_m"].diff() / dt_track
+            bad = (vx.abs() > 8.0) | (vy.abs() > 8.0)
+            tracks_field_df["_vx"] = vx.mask(bad)
+            tracks_field_df["_vy"] = vy.mask(bad)
+
+        # Per-detection angular height (deg) for the same-pixel-size FOV. A
+        # player's equirect-pixel bbox height IS its angular size (equirect maps
+        # 180° vertically onto eq_h pixels), so this is a direct distance signal
+        # — far-side players are small, near-side large (measured ~6× range).
+        if cfg.use_distance_fov and {"y1_eq", "y2_eq"}.issubset(tracks_field_df.columns):
+            eq_h = float(getattr(projector, "eq_h", 0) or 0)
+            if not eq_h:
+                vfs = getattr(projector.cal, "video_frame_size", None)
+                eq_h = float(vfs[1]) if vfs and len(vfs) == 2 else 0.0
+            if eq_h > 0:
+                if "_ang_h" not in tracks_field_df.columns:
+                    tracks_field_df = tracks_field_df.copy()
+                tracks_field_df["_ang_h"] = (
+                    (tracks_field_df["y2_eq"] - tracks_field_df["y1_eq"]).abs()
+                    * 180.0 / eq_h
+                )
+
     # Default fallback = field center projected to (lon, lat). Far better
     # than (0, 0) which can land in the sky or behind the camera.
     center_lonlat = projector.field_to_lonlat(field_length_m / 2.0, field_width_m / 2.0)
 
     raw: list[tuple[float, float]] = []
     raw_cov_halffov: list[float] = []
+    raw_ang_h: list[float] = []
+    raw_lead_dir: list[tuple[float, float, float]] = []
     last_valid = center_lonlat
     for t in aim_times:
-        aim, valid = _aim_for_time(
+        aim, valid, lead_dir = _aim_for_time(
             tracks_field_df, float(t), projector,
             last_valid, field_length_m, field_width_m, cfg,
         )
         if valid:
             last_valid = aim
         raw.append(aim)
+        raw_lead_dir.append(lead_dir)
         # Coverage: how wide must the camera be to keep this moment's on-field
-        # action in frame? Measured as the angular spread of the players about
-        # the aim center. Drives the dynamic auto-widen so corner / wide /
-        # end-to-end play is never lost off the edge of a fixed 70° crop.
-        raw_cov_halffov.append(
-            _coverage_halffov_for_time(
-                tracks_field_df, float(t), projector, aim,
-                field_length_m, field_width_m, cfg,
-            )
+        # action in frame (angular spread), AND the action players' median
+        # angular height (the distance signal for the same-pixel-size FOV).
+        cov, ang = _coverage_halffov_for_time(
+            tracks_field_df, float(t), projector, aim,
+            field_length_m, field_width_m, cfg,
         )
+        raw_cov_halffov.append(cov)
+        raw_ang_h.append(ang)
 
     # --- smoothing / predictive lead -------------------------------------
     # --- motion model: per-time aim target → smooth camera motion --------
@@ -478,13 +611,14 @@ def _build_aim_stream(
             raw_lats, dt, cfg.smooth_time_lat_s, cfg.max_tilt_speed_deg_s, safe_lat,
         )
     elif model == "smooth_damp":
-        # Continuous critically-damped follow. Chases the target at all times —
-        # smooth, but never holds still, so it can feel restless on jittery
-        # cluster centroids. A gentle velocity-smoothed lead anticipates play.
-        tgt_lons = tv_aim.velocity_lead(raw_lons, dt, cfg.lead_s)
-        tgt_lats = tv_aim.velocity_lead(raw_lats, dt, cfg.lead_s)
-        lons = tv_aim.smooth_damp(tgt_lons, dt, cfg.smooth_time_s, cfg.max_pan_speed_deg_s)
-        lats = tv_aim.smooth_damp(tgt_lats, dt, cfg.smooth_time_lat_s, cfg.max_tilt_speed_deg_s)
+        # DEFAULT: critically-damped follow. Converts the discrete density-X aim
+        # (which snaps between cluster windows → stop-and-go under a boxcar) into
+        # a smooth, slow, continuously-eased pan with no overshoot. The
+        # consensus-velocity lead is already folded into `raw` by _aim_for_time,
+        # so we do NOT apply the centroid-derivative velocity_lead here (that
+        # signal is anti-predictive, corr ~ -0.12, and would double-lead).
+        lons = tv_aim.smooth_damp(raw_lons, dt, cfg.smooth_time_s, cfg.max_pan_speed_deg_s)
+        lats = tv_aim.smooth_damp(raw_lats, dt, cfg.smooth_time_lat_s, cfg.max_tilt_speed_deg_s)
     elif model == "learned":
         # Holt/learned smooth predictor (smoothness + lead in one pass).
         predictor = tv_aim.LearnedSmoothPredictor(cfg)
@@ -529,22 +663,60 @@ def _build_aim_stream(
     lats = np.clip(lats, lat_min + TV_LAT_TILT_DEG, lat_max)
 
     # --- Dynamic FOV: auto-widen to keep wide / corner / end-to-end play
-    # framed (the no-ball fix for "misses the ball at corners"). FOV is driven
-    # by how far the action spreads from the aim center, smoothed so the zoom
-    # breathes slowly, and bounded by [base, dynamic_fov_max_deg].
+    # framed (the no-ball fix for "misses the ball at corners"), AND scale by
+    # the action's DISTANCE so far-side (small) players zoom IN and near-side
+    # (big) players zoom OUT — keeping on-screen player size ~constant. FOV is
+    # then RATE-LIMITED so the zoom eases in/out instead of pumping.
     fovs = np.full(aim_times.shape, cfg.base_fov_deg, dtype=np.float64)
     if cfg.use_dynamic_fov and len(raw_cov_halffov) == len(aim_times):
         cover = np.array(raw_cov_halffov, dtype=np.float64)
-        # Required full FOV = 2 * half-spread * margin (only where we have data).
-        need_fov = 2.0 * cover * cfg.dynamic_fov_margin
-        need_fov = np.where(cover > 0.0, need_fov, cfg.base_fov_deg)
-        dyn = np.clip(need_fov, cfg.base_fov_deg, cfg.dynamic_fov_max_deg)
-        # Smooth so the zoom eases instead of pumping frame-to-frame.
+        # Spread requirement: full FOV to keep the action cluster in frame.
+        spread_fov = 2.0 * cover * cfg.dynamic_fov_margin
+        spread_fov = np.where(cover > 0.0, spread_fov, cfg.base_fov_deg)
+
+        # Distance/size target: FOV that renders the median action player at the
+        # desired on-screen fraction. Far (small ang_h) → narrow (zoom in);
+        # near (big ang_h) → wide (zoom out). Falls back to base where unknown.
+        ang = np.array(raw_ang_h, dtype=np.float64)
+        if cfg.use_distance_fov and np.any(np.isfinite(ang)):
+            size_fov = np.array([
+                tv_aim.fov_for_player_size(
+                    a, cfg.target_player_frac, cfg.out_w, cfg.out_h,
+                    cfg.fov_min_deg, cfg.dynamic_fov_max_deg,
+                ) if np.isfinite(a) and a > 0 else cfg.base_fov_deg
+                for a in ang
+            ], dtype=np.float64)
+            # Forward/backward fill the occasional NaN gap with base.
+            size_fov = np.where(np.isfinite(size_fov), size_fov, cfg.base_fov_deg)
+            # The shot must satisfy BOTH: never crop the spread, and never make
+            # players too small — so take the wider of the two needs, but allow
+            # the size target to zoom IN below base when play is compact + far.
+            dyn = np.maximum(spread_fov, size_fov)
+            # When the spread alone would fit inside the size target (compact
+            # action), let the size target drive — including below base.
+            compact = spread_fov <= size_fov
+            dyn = np.where(compact, size_fov, dyn)
+        else:
+            dyn = np.maximum(spread_fov, cfg.base_fov_deg)
+
+        dyn = np.clip(dyn, cfg.fov_min_deg, cfg.dynamic_fov_max_deg)
+        # Pre-smooth (boxcar) to kill single-sample spikes…
         win = max(1, int(round(cfg.dynamic_fov_smooth_s * TV_AIM_HZ)))
         if win > 1:
             ker = np.ones(win) / win
             dyn = np.convolve(dyn, ker, mode="same")
-        fovs = np.maximum(fovs, dyn)
+            # Re-clamp: convolve 'same' underweights the array ends, which can
+            # dip the FOV below the floor at the edges.
+            dyn = np.clip(dyn, cfg.fov_min_deg, cfg.dynamic_fov_max_deg)
+        # …then SLEW-LIMIT + dead-zone so the zoom can't pump. A boxcar only
+        # slows the rate; reversals survive (the "small quick zoom in/out" the
+        # user saw). The slew limiter caps deg/s AND ignores changes inside a
+        # dead-zone, so the FOV holds steady and only re-zooms on a sustained
+        # change — broadcast-style, not breathing.
+        dyn = tv_aim.slew_limit_fov(
+            dyn, dt, cfg.fov_max_rate_deg_s, cfg.fov_deadzone_deg,
+        )
+        fovs = dyn
 
     # --- Phase 4: event-aware FOV framing --------------------------------
     # Widen the virtual camera around coach-logged dead balls so the restart
@@ -560,6 +732,41 @@ def _build_aim_stream(
             if t_ev >= 0:
                 events_vt.append((t_ev, ev.type))
         fovs = tv_aim.event_framing(aim_times, fovs, events_vt, cfg)
+
+    # --- Leading-room framing --------------------------------------------
+    # Offset the frame so the action sits toward the TRAILING edge with open
+    # space AHEAD in the run direction (broadcast "nose room"). Distinct from
+    # the consensus LEAD (which moves where the camera POINTS): this moves where
+    # the action sits WITHIN the frame, scaled to the current FOV so it's always
+    # the same fraction of screen. Confidence-gated on the consensus speed and
+    # heavily smoothed so a brief/ambiguous run can't yank the framing.
+    if cfg.use_leading_room and raw_lead_dir and len(raw_lead_dir) == len(aim_times):
+        ld = np.array(raw_lead_dir, dtype=np.float64)  # (N, 3): dlon_u, dlat_u, speed
+        # Confidence ramp: 0 below deadband, →1 at lead_full_speed_ms.
+        conf = np.clip(
+            (ld[:, 2] - cfg.consensus_deadband_ms)
+            / max(1e-6, cfg.lead_full_speed_ms - cfg.consensus_deadband_ms),
+            0.0, 1.0,
+        )
+        # Smooth the direction + confidence so the offset eases in/out (no snap).
+        win = max(1, int(round(cfg.leading_room_smooth_s * TV_AIM_HZ)))
+        if win > 1:
+            ker = np.ones(win) / win
+            conf = np.convolve(conf, ker, mode="same")
+            dlon_u = np.convolve(ld[:, 0], ker, mode="same")
+            dlat_u = np.convolve(ld[:, 1], ker, mode="same")
+        else:
+            dlon_u, dlat_u = ld[:, 0], ld[:, 1]
+        # Offset magnitude = frac of the HALF-FOV (per axis), scaled by zoom and
+        # confidence. half-FOV(lon) = fov/2; half-FOV(lat) via aspect.
+        half_lon = fovs / 2.0
+        f_px = cfg.out_w / (2.0 * np.tan(np.radians(fovs) / 2.0))
+        half_lat = np.degrees(np.arctan((cfg.out_h / 2.0) / f_px))
+        lons = lons + cfg.leading_room_frac * half_lon * conf * dlon_u
+        lats = lats + cfg.leading_room_frac * half_lat * conf * dlat_u
+        # Re-clamp lon to the field box (lat already tilted/clamped; leading room
+        # is mostly horizontal anyway).
+        lons = np.clip(lons, lon_min, lon_max)
 
     return aim_times, lons, lats, fovs
 
