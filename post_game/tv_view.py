@@ -65,13 +65,19 @@ TV_REVERSAL_MIN_DUR_S = 1.0  # Suppress back-and-forth aim reversals shorter
 TV_FOV_DEG = 70.0        # narrower than 100° so the field fills the frame.
                          # On a low sideline pole the field is a thin strip on
                          # the horizon — wider FOV just imports parking lot + sky.
-TV_LAT_TILT_DEG = -7.0   # bias the aim DOWN by this many degrees. Players'
-                         # feet land near the horizon line in equirect, so a
-                         # pure player-centroid aim puts them at the vertical
-                         # center with sky above. -7° with a ~39° vertical FOV
-                         # puts players at ~32% from the top (broadcast-standard
-                         # head-room). Going much past -10° makes the players a
-                         # sliver at the top of the frame with empty foreground.
+TV_LAT_TILT_FRAC = 0.18  # broadcast head-room, as a FRACTION of the per-frame
+                         # VERTICAL FOV (NOT a fixed degree count). The aim is
+                         # biased DOWN by this fraction of the vertical FOV so
+                         # the action sits ~(50% − 18%) = ~32% from the top of
+                         # frame with open space above — broadcast-standard
+                         # head-room. Because it scales with the FINAL FOV, a
+                         # distance-FOV zoom-IN on far-side play keeps the SAME
+                         # fractional head-room instead of shoving the far
+                         # sideline to the very top of the frame (the old fixed
+                         # −7° was ~18% of a 39° frame but ~35% of a zoomed-in
+                         # 20° frame — that is what cut off everything above the
+                         # far sideline). Applied AFTER the per-frame FOV is
+                         # finalized; see the tilt block in _build_aim_stream.
 TV_RESOLUTION = (1920, 1080)
 TV_ONFIELD_PAD_M = -1.0  # NEGATIVE: require tracks to be at least 1m INSIDE
                          # the touchlines. Positive pad lets sideline coaches,
@@ -647,20 +653,16 @@ def _build_aim_stream(
         lons = _suppress_short_reversals(lons, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
         lats = _suppress_short_reversals(lats, TV_AIM_HZ, TV_REVERSAL_MIN_DUR_S)
 
-    # Tilt the camera DOWN so the horizon sits at the top of the frame and
-    # the field fills the bottom 70–80% — broadcast-style. Without this, on a
-    # low sideline pole the field appears as a thin strip near the middle of
-    # the frame and the upper half is sky + parking lot.
-    lats = lats + TV_LAT_TILT_DEG
-
-    # Clamp aim center inside the projected field box (after tilt). The clamp
-    # is mainly a safety net for lon — the tilt offset intentionally pushes
-    # lat below the field, so we relax the lat lower bound by the tilt amount.
+    # Clamp the aim CENTER (the action centroid) inside the projected field
+    # box. The broadcast head-room tilt is applied LATER, scaled to the final
+    # per-frame FOV (see the FOV-proportional tilt block below) so that a
+    # zoomed-in far-side shot keeps the same fractional head-room as a wide
+    # near-side shot instead of being shoved to the top of the frame.
     lon_min, lon_max, lat_min, lat_max = _field_lonlat_bounds(
         projector, field_length_m, field_width_m,
     )
     lons = np.clip(lons, lon_min, lon_max)
-    lats = np.clip(lats, lat_min + TV_LAT_TILT_DEG, lat_max)
+    lats = np.clip(lats, lat_min, lat_max)
 
     # --- Dynamic FOV: auto-widen to keep wide / corner / end-to-end play
     # framed (the no-ball fix for "misses the ball at corners"), AND scale by
@@ -732,6 +734,18 @@ def _build_aim_stream(
             if t_ev >= 0:
                 events_vt.append((t_ev, ev.type))
         fovs = tv_aim.event_framing(aim_times, fovs, events_vt, cfg)
+
+    # --- FOV-proportional broadcast tilt ---------------------------------
+    # Bias the aim DOWN so the action sits ~TV_LAT_TILT_FRAC of the frame above
+    # center (head-room above the players, open space ahead). The offset is a
+    # fraction of the FINAL per-frame VERTICAL FOV — NOT a fixed degree count —
+    # so distance-FOV zoom-IN on far-side play keeps the same fractional
+    # head-room instead of clipping everything above the far sideline. Applied
+    # here because it needs the finalized FOV (after dynamic-FOV + event
+    # framing). Pushes lat below the field box intentionally — no re-clamp.
+    f_px_tilt = cfg.out_w / (2.0 * np.tan(np.radians(fovs) / 2.0))
+    vfov = 2.0 * np.degrees(np.arctan((cfg.out_h / 2.0) / f_px_tilt))
+    lats = lats - TV_LAT_TILT_FRAC * vfov
 
     # --- Leading-room framing --------------------------------------------
     # Offset the frame so the action sits toward the TRAILING edge with open
