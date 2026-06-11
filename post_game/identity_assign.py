@@ -245,6 +245,7 @@ def assign_identities_v2(
     field_width_m: float,
     overrides: Optional[dict] = None,
     squad: Optional[list[str]] = None,
+    resolved_flips_out: Optional[dict] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
     video-second spans per period (half_windows).
@@ -254,6 +255,12 @@ def assign_identities_v2(
     tracklet to that roster player (status="coach", confidence 1.0); None drops
     it (not our team). Coach overrides always win over the auto-assignment and
     consume that player's minute budget before the greedy pass runs.
+
+    `resolved_flips_out`, when given, is filled with the board orientation the
+    Hungarian search resolved per period: {period: (flip_depth, flip_lateral)}.
+    (None, None) when the period had no POSITION board to search. Consumers
+    (tag pre-fill, Phase 3.3) use it to map field meters back to the coach's
+    zone vocabulary.
     """
     # Coach log is ground truth: only players who DRESSED for this game (the
     # logged squad) can be assigned — not the whole team roster. This is a hard
@@ -432,6 +439,8 @@ def assign_identities_v2(
                 _, fd, fl, per_window = best
                 log.info("  identity P%d: board orientation flip_depth=%s flip_lateral=%s "
                          "(%d windows)", pi, fd, fl, len(per_window))
+            if resolved_flips_out is not None:
+                resolved_flips_out[pi] = (fd, fl)
                 for _wmid, matched in per_window:
                     for tl, p in matched:
                         match_count.setdefault(tl, {})[p] = match_count.setdefault(tl, {}).get(p, 0.0) + 1.0

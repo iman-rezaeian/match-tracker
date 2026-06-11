@@ -172,6 +172,9 @@ ASSIGN_GK_BONUS = 3.0          # (legacy) GK now handled separately, not via bon
 ASSIGN_MATCH_MAX_FRAC = 0.55   # reject a tracklet↔player window-match beyond this
                                # fraction of field length (kills far-fetched votes)
 ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
+# Tag pre-fill (Phase 3.3): suggestedPressure = an opponent within this radius
+# of the assigned player at the action moment. ~3 m ≈ closing-down range at U10.
+SUGGEST_PRESSURE_RADIUS_M = 3.0
                                # (a player can't own more track-time than played)
 # Coach IdentityFixView: an UNASSIGNED tracklet shorter than this (span minutes)
 # is a stitching fragment with no meaningful player-time — hidden from review so

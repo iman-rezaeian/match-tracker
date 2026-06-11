@@ -414,6 +414,9 @@ def run(
     # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
+    # Board orientation per period, resolved by the identity search — reused by
+    # the tag pre-fill (3.3) to map field meters back to coach zone vocab.
+    board_flips: dict[int, tuple] = {}
     assignments = assign_identities_v2(
         tracks_df=tracks_df,
         tracklet_of_track=tracklet_of_track,
@@ -428,6 +431,7 @@ def run(
         field_width_m=field_cal.width_m,
         overrides=game.identity_overrides,
         squad=game.squad,
+        resolved_flips_out=board_flips,
     )
     if game.identity_overrides:
         log.info("  -> %d coach identity override(s) loaded from game doc",
@@ -567,12 +571,36 @@ def run(
     # tv_reel or auto_highlights mp4. Done here (post-pipeline) because we
     # need clock_to_video + the reel segment list before we can map each
     # source-video event time into reel-relative time.
+    # Tag pre-fill (Phase 3.3): per-event suggestedZone / suggestedPressure
+    # from the assigned player's tracked position at the action moment. The
+    # PWA confirm queue pre-selects these so tagging is confirm, not create.
+    try:
+        tag_suggestions = _build_tag_suggestions(
+            game=game,
+            tracks_df=tracks_df,
+            identity_by_track=identity_by_track,
+            team_of_track=team_of_track,
+            period_clock_to_video_time=clock_to_video,
+            board_flips=board_flips,
+            field_length_m=field_cal.length_m,
+            field_width_m=field_cal.width_m,
+        )
+        log.info("  tag pre-fill: suggestions for %d/%d events "
+                 "(%d with zone, %d with pressure)",
+                 len(tag_suggestions), len(game.events),
+                 sum(1 for s in tag_suggestions.values() if s.get("zone")),
+                 sum(1 for s in tag_suggestions.values() if s.get("pressure")))
+    except Exception as e:
+        log.warning("Tag pre-fill failed: %s", e)
+        tag_suggestions = {}
+
     events_index = _build_broadcast_events_index(
         game=game,
         roster=roster,
         period_clock_to_video_time=clock_to_video,
         tv_reel_segments=(tv_reel_meta.segments if tv_reel_meta else play_windows),
         auto_highlights_segments=(auto_hl_meta.segments if auto_hl_meta else []),
+        tag_suggestions=tag_suggestions,
     )
 
     # 7d. Per-tracklet records + thumbnails for the coach IdentityFixView. The
@@ -675,6 +703,7 @@ def _build_broadcast_events_index(
     period_clock_to_video_time,
     tv_reel_segments: list[tuple[float, float]],
     auto_highlights_segments: list[tuple[float, float]],
+    tag_suggestions: Optional[dict] = None,
 ) -> list[dict]:
     """Per-event timeline used by the PWA on-screen overlay layer.
 
@@ -687,6 +716,8 @@ def _build_broadcast_events_index(
       - autoHighlightsTimeS: seconds into the auto_highlights mp4 (or None)
       - ourScoreAfter / oppScoreAfter: running team scores AFTER this event
       - team: 'us' | 'them' (for GOAL only)
+      - suggestedZone / suggestedPressure: tag pre-fill from tracking (3.3),
+        consumed by the PWA confirm queue; None when unavailable.
     """
     roster_by_id = {p.id: p for p in roster}
 
@@ -753,6 +784,7 @@ def _build_broadcast_events_index(
         in_first, in_num = _name_pair(sub_in_pid)
         out_first, out_num = _name_pair(sub_out_pid)
 
+        sug = (tag_suggestions or {}).get(ev.id, {})
         out.append({
             "id": ev.id,
             "type": et,
@@ -776,7 +808,136 @@ def _build_broadcast_events_index(
             "ourScoreAfter": our_score,
             "oppScoreAfter": opp_score,
             "team": team,
+            "suggestedZone": sug.get("zone"),
+            "suggestedPressure": sug.get("pressure"),
         })
+    return out
+
+
+# Tag pre-fill scope (Phase 3.4 trimmed sets — mirror the PWA constants):
+# zone only where location is the insight; pressure only on decision events.
+_SUGGEST_ZONE_TYPES = {"GOAL", "SHOT_ON", "SHOT_OFF", "TURNOVER", "BALL_WIN"}
+_SUGGEST_PRESSURE_TYPES = {"KEY_PASS", "GIVE_GO", "GATES", "SHOT_ON", "SHOT_OFF", "TURNOVER"}
+# Shooting events: the action moment is the player's DEEPEST attacking second
+# in the window, not the centroid-nearest one — after a shot/goal everyone
+# regroups at the kickoff circle/goal kick, which IS the centroid, so the
+# centroid pick lands on the restart huddle (measured: shots suggested M-C).
+_SUGGEST_ATTACK_DEPTH_TYPES = {"GOAL", "SHOT_ON", "SHOT_OFF"}
+
+
+def _field_to_zone(x: float, y: float, flip_d, flip_l, L: float, W: float):
+    """Inverse of identity_assign._zone_center: field meters -> coach 3x3 zone
+    id ('A-C', 'D-L', ...) through the period's resolved board orientation.
+    Returns None when the orientation is unknown (no board that period)."""
+    if flip_d is None or flip_l is None:
+        return None
+    depth = min(max(x / max(L, 1e-9), 0.0), 1.0)
+    lat = min(max(y / max(W, 1e-9), 0.0), 1.0)
+    d_own = (1.0 - depth) if flip_d else depth   # depth fraction from OUR goal
+    la = (1.0 - lat) if flip_l else lat          # lateral fraction left->right
+    band = "D" if d_own < 1.0 / 3 else ("M" if d_own < 2.0 / 3 else "A")
+    side = "L" if la < 1.0 / 3 else ("C" if la < 2.0 / 3 else "R")
+    return f"{band}-{side}"
+
+
+def _build_tag_suggestions(
+    game,
+    tracks_df,
+    identity_by_track: dict[int, str],
+    team_of_track: dict[int, int],
+    period_clock_to_video_time,
+    board_flips: dict,
+    field_length_m: float,
+    field_width_m: float,
+) -> dict[str, dict]:
+    """eventId -> {"zone": str|None, "pressure": 'open'|'pressure'|None}.
+
+    The action moment is picked the same way the identity event-votes do: the
+    coach logs late, so search [-ASSIGN_EVENT_BEFORE_S, +ASSIGN_EVENT_AFTER_S]
+    around the logged clock and take the second where the assigned player sits
+    closest to the team centroid (U10 swarm ~= the ball). Zone = the player's
+    position at that second mapped through the period's resolved board
+    orientation; pressure = nearest opponent within SUGGEST_PRESSURE_RADIUS_M.
+    Events without an assigned+tracked player get no suggestion — by design,
+    an absurd suggestion would mean a misassigned identity (free FIX IDS lead).
+    """
+    if tracks_df is None or tracks_df.empty or not {"x_m", "y_m"}.issubset(tracks_df.columns):
+        return {}
+    player_tracks: dict[str, set[int]] = {}
+    for tid, pid in identity_by_track.items():
+        player_tracks.setdefault(pid, set()).add(int(tid))
+    our_tracks = {int(t) for t, tm in team_of_track.items() if tm == 0}
+    opp_tracks = {int(t) for t, tm in team_of_track.items() if tm == 1}
+    df = tracks_df[["track_id", "time_s", "x_m", "y_m"]].copy()
+    df["_sec"] = df["time_s"].astype(int)
+    our_df = df[df["track_id"].isin(our_tracks)]
+    opp_df = df[df["track_id"].isin(opp_tracks)]
+
+    out: dict[str, dict] = {}
+    for ev in game.events:
+        et = (ev.type or "").upper()
+        want_zone = et in _SUGGEST_ZONE_TYPES
+        want_pressure = et in _SUGGEST_PRESSURE_TYPES
+        if not (want_zone or want_pressure):
+            continue
+        pid = ev.player_id
+        tids = player_tracks.get(pid) if pid else None
+        if not tids:
+            continue
+        try:
+            t = float(period_clock_to_video_time(ev.period, ev.elapsed))
+        except Exception:
+            continue
+        w0 = t - config.ASSIGN_EVENT_BEFORE_S
+        w1 = t + config.ASSIGN_EVENT_AFTER_S
+        pdf = df[(df["track_id"].isin(tids)) & (df["time_s"] >= w0) & (df["time_s"] <= w1)]
+        if pdf.empty:
+            continue
+        ppos = pdf.groupby("_sec")[["x_m", "y_m"]].median()
+        fd, fl = board_flips.get(int(ev.period or 1), (None, None))
+
+        best_sec = None
+        if et in _SUGGEST_ATTACK_DEPTH_TYPES and fd is not None:
+            # Shot/goal: deepest attacking second (see _SUGGEST_ATTACK_DEPTH_TYPES).
+            depth = ppos["x_m"] / max(field_length_m, 1e-9)
+            d_own = (1.0 - depth) if fd else depth
+            best_sec = int(d_own.idxmax())
+        else:
+            # Action second = the player's best centroid-proximity moment
+            # (U10 swarm ≈ the ball; turnovers/ball-wins happen in the scrum).
+            wour = our_df[(our_df["time_s"] >= w0) & (our_df["time_s"] <= w1)]
+            cent = wour.groupby("_sec")[["x_m", "y_m"]].median()
+            best_d2 = None
+            for sec, row in ppos.iterrows():
+                if sec not in cent.index:
+                    continue
+                dx = float(row["x_m"]) - float(cent.loc[sec, "x_m"])
+                dy = float(row["y_m"]) - float(cent.loc[sec, "y_m"])
+                d2 = dx * dx + dy * dy
+                if best_d2 is None or d2 < best_d2:
+                    best_sec, best_d2 = sec, d2
+        if best_sec is None:
+            # No team context that window — fall back to the player's median
+            # second nearest the logged time.
+            best_sec = min(ppos.index, key=lambda s: abs(s - t))
+        px = float(ppos.loc[best_sec, "x_m"])
+        py = float(ppos.loc[best_sec, "y_m"])
+
+        sug: dict = {}
+        if want_zone:
+            sug["zone"] = _field_to_zone(px, py, fd, fl, field_length_m, field_width_m)
+        if want_pressure:
+            osec = opp_df[opp_df["_sec"] == best_sec]
+            if not osec.empty:
+                opos = osec.groupby("track_id")[["x_m", "y_m"]].median()
+                dmin = float(np.sqrt(((opos["x_m"] - px) ** 2 + (opos["y_m"] - py) ** 2).min()))
+                sug["pressure"] = "pressure" if dmin <= config.SUGGEST_PRESSURE_RADIUS_M else "open"
+            else:
+                # Zero opponent detections that second = missing data, not
+                # evidence of being open — suggest nothing.
+                sug["pressure"] = None
+        if sug.get("zone") or sug.get("pressure"):
+            out[ev.id] = sug
     return out
 
 
