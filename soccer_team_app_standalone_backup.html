@@ -6753,6 +6753,15 @@ function confirmQueueItemsForGame(game) {
   return items;
 }
 
+// Tracklets still needing an identity decision: unassigned by the pipeline
+// and not yet decided by the coach (identityOverrides is live on the game
+// doc, so this count drains in real time as FIX IDS saves land).
+function identityReviewCount(game, analyticsDoc) {
+  const tl = (analyticsDoc && analyticsDoc.tracklets) || [];
+  const ov = game.identityOverrides || {};
+  return tl.filter(t => !t.player_id && !(String(t.tracklet_id) in ov)).length;
+}
+
 // The pipeline's broadcastEvents entry for an event — by id first (bookmark-
 // confirmed events keep the bookmark's id), then by clock as a fallback.
 function broadcastEntryFor(game, event) {
@@ -6800,6 +6809,47 @@ const BOOKMARK_CLASSIFY_TYPES = [
   'FOUL_ON', 'PEN_AWARDED',
   'TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE', 'FOUL_BY', 'PEN_CONCEDED',
 ];
+
+// Per-game identity summary card: the queue's front door into the FIX IDS
+// grid (the grid stays the tool — batch visual scanning beats card-by-card
+// for dozens of tracklets).
+function IdentityQueueCard({ item, onOpen, onSkip }) {
+  const { game, count } = item;
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-stone-800 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] text-stone-500 tracking-wider truncate">
+            vs {game.opponent} · {formatDate(game.date)}
+          </div>
+          <div className="font-display text-lg leading-tight flex items-center gap-2">
+            <span>🪪</span>
+            <span className="truncate">IDENTITY REVIEW</span>
+          </div>
+          <div className="text-[11px] text-stone-400 tracking-wider">
+            {count} tracked player{count === 1 ? '' : 's'} still unidentified
+          </div>
+        </div>
+        <span className="shrink-0 inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded-full bg-lime-500/15 text-lime-300 border border-lime-700 font-display text-base">{count}</span>
+      </div>
+      <div className="p-4 text-xs text-stone-400 leading-relaxed">
+        The pipeline couldn't assign these tracklets to a player. Fixing them feeds
+        minutes, distance and heatmaps to the right kids — worst-confidence first,
+        with a video crop per tracklet. Saves apply on the next pipeline run.
+      </div>
+      <div className="p-4 pt-0 border-t-0 flex gap-2">
+        <button
+          onClick={onSkip}
+          className="flex-1 py-3 rounded-xl bg-stone-950 text-stone-300 border border-stone-700 font-display text-sm active:scale-[0.97] transition"
+        >SKIP FOR NOW</button>
+        <button
+          onClick={onOpen}
+          className="flex-1 py-3 rounded-xl bg-lime-500 text-stone-950 font-display text-sm active:scale-[0.97] transition"
+        >🪪 OPEN FIX IDS</button>
+      </div>
+    </div>
+  );
+}
 
 function ConfirmQueueCard({ item, roster, onConfirm, onDismiss, onSkip, onCue }) {
   const { game, event, kind } = item;
@@ -6986,15 +7036,30 @@ function ConfirmQueueCard({ item, roster, onConfirm, onDismiss, onSkip, onCue })
   );
 }
 
+// Stable per-card key: event cards key on the event, identity summary cards
+// on their game (they have no single event).
+function queueItemKey(item) {
+  return item.event ? item.event.id : `identity:${item.game.id}`;
+}
+
 function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent, onConfirmBookmark }) {
   // Session-local skips: "ask me again next time", unlike dismiss (persisted).
   const [skippedIds, setSkippedIds] = useState(() => new Set());
   const [cue, setCue] = useState(null); // { game, entry, def }
+  const [fixIds, setFixIds] = useState(null); // identity item whose FIX IDS grid is open
 
   // Swipe-back closes the queue; the cue player nests above it cleanly.
   useModalHistory('confirmQueue', onClose);
 
-  const remaining = items.filter(i => !skippedIds.has(i.event.id));
+  // FIX IDS save path: direct game-doc write (same as AnalyticsPanel's
+  // fallback) — the games snapshot listener syncs local state right back.
+  const saveOverrides = async (gameId, overrides) => {
+    if (!window.fbDb) return;
+    await window.fbDb.collection('teams').doc('main').collection('games')
+      .doc(gameId).update({ identityOverrides: overrides });
+  };
+
+  const remaining = items.filter(i => !skippedIds.has(queueItemKey(i)));
   const current = remaining[0] || null;
 
   return (
@@ -7011,13 +7076,20 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
       </div>
 
       <div className="px-4 pt-4 max-w-2xl mx-auto">
-        {current ? (
+        {current && current.kind === 'identity' ? (
+          <IdentityQueueCard
+            key={queueItemKey(current)}
+            item={current}
+            onOpen={() => setFixIds(current)}
+            onSkip={() => setSkippedIds(prev => new Set([...prev, queueItemKey(current)]))}
+          />
+        ) : current ? (
           <ConfirmQueueCard
-            key={current.event.id + ':' + current.kind}
+            key={queueItemKey(current) + ':' + current.kind}
             item={current}
             roster={roster}
             onCue={(game, entry, def) => setCue({ game, entry, def })}
-            onSkip={() => setSkippedIds(prev => new Set([...prev, current.event.id]))}
+            onSkip={() => setSkippedIds(prev => new Set([...prev, queueItemKey(current)]))}
             onDismiss={() => {
               if (current.kind === 'bookmark') onDeleteEvent(current.game.id, current.event.id);
               else onUpdateEvent(current.game.id, current.event.id, { tagDismissed: true });
@@ -7058,6 +7130,20 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
           onClose={() => setCue(null)}
         />
       )}
+
+      {/* FIX IDS grid hosted by the queue: the batch identity tool stays the
+          grid (card-by-card would be far slower for dozens of tracklets);
+          the queue is just its front door. Saves write identityOverrides on
+          the game doc → the identity card's count drains live. */}
+      {fixIds && (
+        <IdentityFixView
+          doc={fixIds.doc}
+          roster={roster}
+          game={fixIds.game}
+          onSave={(overrides) => saveOverrides(fixIds.game.id, overrides)}
+          onClose={() => setFixIds(null)}
+        />
+      )}
     </div>
   );
 }
@@ -7072,8 +7158,42 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
       .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0))
   ), [games]);
   const openGame = finished.find(g => g.id === openGameId) || null;
-  // Newest game first, match order within a game (finished is newest-first).
-  const queueItems = useMemo(() => finished.flatMap(confirmQueueItemsForGame), [finished]);
+
+  // Analytics docs per game — the queue's identity cards need each game's
+  // tracklet list. Fetched once per game-id set (NOT per games-state change:
+  // confirming a tag re-renders games every time); offline persistence makes
+  // repeat visits cheap.
+  const [analyticsDocs, setAnalyticsDocs] = useState({});
+  const finishedIdsKey = finished.map(g => g.id).join(',');
+  useEffect(() => {
+    if (!window.fbDb || finished.length === 0) return undefined;
+    let cancelled = false;
+    Promise.all(finished.map(g => (
+      window.fbDb.collection('teams').doc('main')
+        .collection('games').doc(g.id)
+        .collection('analytics').doc('v1').get()
+        .then(snap => [g.id, snap.exists ? snap.data() : null])
+        .catch(() => [g.id, null])
+    ))).then(results => {
+      if (cancelled) return;
+      const map = {};
+      results.forEach(([id, d]) => { if (d) map[id] = d; });
+      setAnalyticsDocs(map);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishedIdsKey]);
+
+  // Identity summary cards (one per game with unresolved tracklets) lead the
+  // queue — they're the batch task; the per-event cards follow. The count
+  // updates live as FIX IDS saves land (identityOverrides on the game doc).
+  const queueItems = useMemo(() => {
+    const identity = finished
+      .map(g => ({ game: g, kind: 'identity', doc: analyticsDocs[g.id], count: identityReviewCount(g, analyticsDocs[g.id]) }))
+      .filter(i => i.count > 0);
+    // Newest game first, match order within a game (finished is newest-first).
+    return [...identity, ...finished.flatMap(confirmQueueItemsForGame)];
+  }, [finished, analyticsDocs]);
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
@@ -7104,8 +7224,8 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
             <div className="font-display text-base">CONFIRM QUEUE</div>
             <div className="text-xs text-stone-400">
               {queueItems.length === 0
-                ? 'Nothing to review — bookmarks and untagged events land here'
-                : `${queueItems.length} to review · bookmarks + missing tags`}
+                ? 'Nothing to review — bookmarks, tags and identity land here'
+                : `${queueItems.length} to review · bookmarks · tags · identity`}
             </div>
           </div>
           {queueItems.length > 0 && (
@@ -12295,6 +12415,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
