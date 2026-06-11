@@ -171,6 +171,51 @@ function untrackUsage(docId) {
   }).catch(() => {});
 }
 
+// ---- Modal history coordination -------------------------------------------
+// Every full-screen modal pushes ONE history entry so the OS back gesture
+// closes it instead of leaving the app. Three rules keep nested modals (the
+// cue player inside the confirm queue, the reel player inside Analytics) and
+// the App view stack from cascading each other closed:
+//   1. A modal only closes itself when ITS OWN entry is no longer current —
+//      a child modal popping above it must not close it (mIdx ordering).
+//   2. The App's view-stack popstate handler ignores pops while any modal is
+//      mounted (window.__modalStack) or expected from a modal cleanup
+//      (window.__modalPopGuard) — otherwise closing a modal also popped a view.
+//   3. Cleanup rewinds its own entry exactly once, flagged as expected.
+// Runs ONCE per mount with onClose behind a ref — an [onClose]-keyed effect
+// re-runs cleanup (history.back) on parent re-renders and the popstate closes
+// the modal mid-use (the original confirm-queue bug).
+function useModalHistory(tag, onClose) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const stack = (window.__modalStack = window.__modalStack || []);
+    const myIdx = stack.length;
+    stack.push(tag);
+    window.history.pushState({ modal: tag, mIdx: myIdx }, '');
+    const onPop = () => {
+      const st = window.history.state;
+      // Still current (or a child above us popped) → not our pop.
+      if (st && typeof st.mIdx === 'number' && st.mIdx >= myIdx) return;
+      onCloseRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      const i = stack.lastIndexOf(tag);
+      if (i >= 0) stack.splice(i, 1);
+      const st = window.history.state;
+      // Our entry (or a child's) is still on the browser stack → in-app close
+      // (X button). Rewind it, and flag the pop so the App view handler and
+      // any parent modal ignore it. Closed-by-gesture leaves nothing behind.
+      if (st && typeof st.mIdx === 'number' && st.mIdx >= myIdx) {
+        window.__modalPopGuard = (window.__modalPopGuard || 0) + 1;
+        window.history.back();
+      }
+    };
+  }, []);
+}
+
 // Viewer buckets (owner-assigned): viewerTags/{email} → { email, buckets: [] }
 const VIEWER_BUCKETS = ['coach', 'parent', 'player', 'unknown'];
 const BUCKET_META = {
@@ -739,6 +784,14 @@ export default function App() {
         expectedPopsRef.current -= 1;
         return; // our own history.go(-N) — view already updated
       }
+      // Modal coordination (see useModalHistory): a pop issued by a modal's
+      // cleanup, or arriving while a modal is mounted, belongs to the modal
+      // layer — the view stack must not move underneath it.
+      if ((window.__modalPopGuard || 0) > 0) {
+        window.__modalPopGuard -= 1;
+        return;
+      }
+      if ((window.__modalStack || []).length > 0) return;
       const stack = viewStackRef.current;
       if (stack.length <= 1) return; // already at home; let the browser exit
       stack.pop();
@@ -5990,13 +6043,9 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState(null);
 
-  // Push a history entry so iOS swipe-back / Android back closes the modal
-  // instead of leaving the coach app. Also lock body scroll so the page
-  // underneath retains its scroll position when this modal closes.
-  // Run ONCE via a ref — a [onCancel] dep re-runs the cleanup (history.back)
-  // on parent re-renders and the popstate closes the modal mid-use.
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
+  // Swipe-back closes the modal (coordinated with nested modals + view stack).
+  useModalHistory('calibrate', onCancel);
+  // Lock body scroll so the page underneath keeps its position.
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -6004,18 +6053,11 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
     body.style.position = 'fixed';
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
-    window.history.pushState({ modal: 'calibrate' }, '');
-    const onPop = () => onCancelRef.current();
-    window.addEventListener('popstate', onPop);
     return () => {
-      window.removeEventListener('popstate', onPop);
       body.style.position = prev.position;
       body.style.top = prev.top;
       body.style.width = prev.width;
       window.scrollTo(0, scrollY);
-      if (window.history.state && window.history.state.modal === 'calibrate') {
-        window.history.back();
-      }
     };
   }, []);
 
@@ -6826,24 +6868,8 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
   const [skippedIds, setSkippedIds] = useState(() => new Set());
   const [cue, setCue] = useState(null); // { game, entry, def }
 
-  // Modal history so swipe-back closes the queue. MUST run once (empty deps)
-  // via a ref: keying on [onClose] re-runs the cleanup (history.back) whenever
-  // the parent re-renders — e.g. right after CONFIRM persists the tags — and
-  // the resulting popstate closes the whole queue instead of advancing to the
-  // next card. Same bug class AnalyticsPanel already documents.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    window.history.pushState({ modal: 'confirmQueue' }, '');
-    const onPop = () => onCloseRef.current();
-    window.addEventListener('popstate', onPop);
-    return () => {
-      window.removeEventListener('popstate', onPop);
-      if (window.history.state && window.history.state.modal === 'confirmQueue') {
-        window.history.back();
-      }
-    };
-  }, []);
+  // Swipe-back closes the queue; the cue player nests above it cleanly.
+  useModalHistory('confirmQueue', onClose);
 
   const remaining = items.filter(i => !skippedIds.has(i.event.id));
   const current = remaining[0] || null;
@@ -7066,11 +7092,9 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
   const [sortKey, setSortKey] = useState('distance');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Push history so swipe-back closes modal. Run ONCE via a ref — a [onClose]
-  // dep re-runs the cleanup (history.back) when the parent re-renders (games
-  // listener firing while this is open) and the popstate closes the modal.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // Swipe-back closes the modal (coordinated with nested modals + view stack).
+  useModalHistory('seasonAnalytics', onClose);
+  // Lock body scroll so the page underneath keeps its position.
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -7078,18 +7102,11 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
     body.style.position = 'fixed';
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
-    window.history.pushState({ modal: 'seasonAnalytics' }, '');
-    const onPop = () => onCloseRef.current();
-    window.addEventListener('popstate', onPop);
     return () => {
-      window.removeEventListener('popstate', onPop);
       body.style.position = prev.position;
       body.style.top = prev.top;
       body.style.width = prev.width;
       window.scrollTo(0, scrollY);
-      if (window.history.state && window.history.state.modal === 'seasonAnalytics') {
-        window.history.back();
-      }
     };
   }, []);
 
@@ -7437,22 +7454,9 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
     return undefined;
   }, [url, startAtS]);
 
-  // Push history entry so swipe-back closes the modal. Run ONCE via a ref —
-  // a [onClose] dep re-runs the cleanup (history.back) on parent re-renders
-  // (e.g. a games snapshot while watching) and the popstate closes the player.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    window.history.pushState({ modal: 'broadcast' }, '');
-    const onPop = () => onCloseRef.current();
-    window.addEventListener('popstate', onPop);
-    return () => {
-      window.removeEventListener('popstate', onPop);
-      if (window.history.state && window.history.state.modal === 'broadcast') {
-        window.history.back();
-      }
-    };
-  }, []);
+  // Swipe-back closes the player; nests above the confirm queue / Analytics
+  // without cascading them closed.
+  useModalHistory('broadcast', onClose);
 
   // Index events on the chosen timeline and drop any without a valid time
   // (those events sit outside the rendered reel windows).
@@ -8116,14 +8120,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
     }
   };
 
-  // Push a history entry so swipe-back closes the panel instead of leaving the app.
-  // Also lock body scroll so the page underneath keeps its scroll position
-  // when the modal closes (otherwise iOS resets to top).
-  // IMPORTANT: run ONCE (empty deps) via a ref — keying on [onClose] re-ran the
-  // cleanup (history.back) on every re-render (e.g. after Save → setGames), which
-  // cascaded through the history stack and kicked the coach out to the dugout.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // Swipe-back closes the panel; the reel player nests above it cleanly
+  // (history coordination + run-once details live in useModalHistory).
+  useModalHistory('analytics', onClose);
+  // Lock body scroll so the page underneath keeps its scroll position when
+  // the modal closes (otherwise iOS resets to top).
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -8131,18 +8132,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
     body.style.position = 'fixed';
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
-    window.history.pushState({ modal: 'analytics' }, '');
-    const onPop = () => onCloseRef.current();
-    window.addEventListener('popstate', onPop);
     return () => {
-      window.removeEventListener('popstate', onPop);
       body.style.position = prev.position;
       body.style.top = prev.top;
       body.style.width = prev.width;
       window.scrollTo(0, scrollY);
-      if (window.history.state && window.history.state.modal === 'analytics') {
-        window.history.back();
-      }
     };
   }, []);
 
