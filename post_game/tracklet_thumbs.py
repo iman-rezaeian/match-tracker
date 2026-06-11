@@ -91,12 +91,21 @@ def generate_tracklet_thumbnails(
         cy = max(0, int(row["y1_eq"] - pad))
         cw = int((row["x2_eq"] - row["x1_eq"]) + 2 * pad)
         ch = int(h + 2 * pad)
+        # Outline the tracked player's detection box inside the crop, so when
+        # two kids share the thumbnail the coach can see WHO the tracklet is
+        # (the padding often catches a neighbor). Coordinates are crop-relative.
+        bx = int(row["x1_eq"]) - cx
+        by = int(row["y1_eq"]) - cy
+        bw = int(row["x2_eq"] - row["x1_eq"])
+        bh = int(h)
         dst = tmp / f"{tl}.jpg"
         try:
             subprocess.run(
                 [ff, "-nostdin", "-loglevel", "error", "-ss", f"{float(row['time_s'])}",
                  "-i", video_path,
-                 "-vf", f"crop={cw}:{ch}:{cx}:{cy},scale=iw*{_UPSCALE}:ih*{_UPSCALE}:flags=lanczos",
+                 "-vf", (f"crop={cw}:{ch}:{cx}:{cy},"
+                         f"drawbox=x={bx}:y={by}:w={bw}:h={bh}:color=yellow@0.85:t=2,"
+                         f"scale=iw*{_UPSCALE}:ih*{_UPSCALE}:flags=lanczos"),
                  "-frames:v", "1", "-q:v", "3", str(dst)],
                 check=True, timeout=60,
             )

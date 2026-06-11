@@ -124,7 +124,14 @@ ID_CONFIDENCE_EVIDENCE_VOTES = 8
 # player's distance/heatmap) down to this confidence, not just the REVIEW tier.
 # Below this it's too weak and is dropped. Keeps under-tracked players from
 # collapsing to near-zero distance; the minute budget still caps over-assignment.
-ID_CONFIDENCE_STATS_MIN = 0.20
+# Raised 0.20 → 0.35 (2026-06-10): the minute budget used to charge stitched
+# SPAN (massively over-counted), which silently strangled recall and acted as
+# an accidental precision gate. With the budget fixed to charge real tracked
+# coverage, 0.20 floods stats with junk tracklets (opponents mis-classified
+# into our team by jersey color). 0.35 is the measured middle on the
+# coach-labeled eval set (see tracking/eval_identity.py + the improvement
+# plan); revisit after the Lab-color classifier change lands.
+ID_CONFIDENCE_STATS_MIN = 0.35
 
 MIN_BBOX_H_FOR_OCR = 80        # px; smaller → don't bother running OCR
 MIN_BBOX_H_FOR_FACE = 90       # px
@@ -143,6 +150,23 @@ STITCH_APP_WEIGHT = 5.0        # link-cost weight on (1 - appearance cosine)
 ASSIGN_POS_SIGMA_M = 18.0      # Gaussian width for tracklet↔expected-position distance
 ASSIGN_W_POSITION = 1.0        # weight: agreement with coach board position over time
 ASSIGN_W_VOTES = 1.5           # weight: coach action-event votes (player did X here)
+# Action-event vote window relative to the LOGGED clock time. Coach logs lag
+# the real action, so the action almost always precedes the log: look back
+# far, forward a little.
+ASSIGN_EVENT_BEFORE_S = 25.0
+ASSIGN_EVENT_AFTER_S = 5.0
+# Gaussian widths for event votes. The action's location proxy is the team
+# centroid (U10 swarm ≈ where the ball is); the zone tag (3×3 grid, ~1/3-field
+# cells) is coarser, so it gets a wider sigma and only damps, never zeroes.
+ASSIGN_EVENT_SIGMA_M = 8.0
+ASSIGN_ZONE_SIGMA_M = 12.0
+# SUB anchors: a tracklet that STARTS near a touchline around a logged sub-on
+# is very likely the incoming player (symmetric: ENDS near touchline ↔
+# sub-off). Stronger than a positional vote, weaker than a coach override.
+ASSIGN_SUB_W = 3.0
+ASSIGN_SUB_BEFORE_S = 30.0     # sub logged late → look back
+ASSIGN_SUB_AFTER_S = 45.0      # kid takes a while to actually enter/exit
+ASSIGN_SUB_TOUCHLINE_M = 5.0   # "near the touchline" margin
 ASSIGN_W_ONFIELD = 1.0         # weight: on-field-window overlap (lineup+subs, tolerant)
 ASSIGN_GK_BONUS = 3.0          # (legacy) GK now handled separately, not via bonus
 ASSIGN_MATCH_MAX_FRAC = 0.55   # reject a tracklet↔player window-match beyond this
