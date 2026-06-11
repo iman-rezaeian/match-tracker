@@ -219,9 +219,13 @@ coach; 3.5/3.6 gated on that audio.**
   ZonePicker/PressurePicker/DecisionPicker components (~140 lines).
   Python mirror: `_SUGGEST_*_TYPES` in pipeline.py.
 - ⏳ **3.5 Voice probe (1 day, gate for 3.6).** Whisper (local, M-series) on the
-  3.0 memo. Check: are jersey numbers legible? timestamp drift acceptable?
-  Conventions: cue **jersey numbers not names**; fixed ~6-phrase vocabulary
-  mapping 1:1 to event types (parsing = lookup, not NLP).
+  3.0 memo. Check: are player cues legible? timestamp drift acceptable?
+  Conventions (revised 2026-06-11): coach records via **AirPods Pro 2**
+  (mouth-level mic ≫ pocket phone; one ear + transparency); say "kickoff" at
+  the actual kickoff; cue **first names** — parsing fuzzy-matches a closed
+  16-name roster, so names = lookup too (numbers-only rule dropped). ONLY
+  collisions need last names: Ben (Adam/Hahn), Liam (Gibala/Garland). Fixed
+  ~6-phrase vocabulary mapping 1:1 to event types (parsing = lookup, not NLP).
 - ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Transcript →
   timestamped draft events (`source: 'voice'`) landing in the queue.
   Phone-memo + kickoff offset is fine for season 1; later move recording into
