@@ -175,6 +175,21 @@ bookmark/voice cue. Everything else is created or confirmed from video.
 **STATUS 2026-06-11: 3.1–3.4 SHIPPED (code). 3.0 voice memo still owed by
 coach; 3.5/3.6 gated on that audio.**
 
+**CAPTURE PROTOCOL (decided 2026-06-11, supersedes the line above):** solo
+coach on ALL games — other coaches run the team and do not log. One mode:
+**continuous TV-style narration (AirPods Pro 2) + thumbs do STRUCTURE ONLY**:
+subs, GK swaps, goals/opp-goals, tactical-board refresh 1-2× per period
+(POSITION events are identity's main prior — protect that habit). All
+granular events (KEY_PASS, TURNOVER, BALL_WIN, duels, GATES, GIVE_GO, shots
+when busy) come from voice extraction → confirm queue. Rationale: narration
+is near-real-time (better timestamps than late taps, which is why the vote
+window looks back 25 s) and high-recall; structure can't be reconstructed
+from speech. ⇒ **3.6 hard requirement: MERGE, don't duplicate** — a voice
+draft matching an existing live event (same type, ±30 s) attaches to it and
+enriches its tags. Post-game narration = optional deep-dive channel only
+(gated on the labeled review reel for far-side ID), never a weekly
+obligation.
+
 - ⏳ **3.0 START NOW, ZERO CODE:** record a phone voice memo for the full next
   game, noting the kickoff moment. Narrate naturally. This is the test audio
   (wind, crowd, mid-coaching speech) that the whole voice idea lives or dies
@@ -219,9 +234,13 @@ coach; 3.5/3.6 gated on that audio.**
   ZonePicker/PressurePicker/DecisionPicker components (~140 lines).
   Python mirror: `_SUGGEST_*_TYPES` in pipeline.py.
 - ⏳ **3.5 Voice probe (1 day, gate for 3.6).** Whisper (local, M-series) on the
-  3.0 memo. Check: are jersey numbers legible? timestamp drift acceptable?
-  Conventions: cue **jersey numbers not names**; fixed ~6-phrase vocabulary
-  mapping 1:1 to event types (parsing = lookup, not NLP).
+  3.0 memo. Check: are player cues legible? timestamp drift acceptable?
+  Conventions (revised 2026-06-11): coach records via **AirPods Pro 2**
+  (mouth-level mic ≫ pocket phone; one ear + transparency); say "kickoff" at
+  the actual kickoff; cue **first names** — parsing fuzzy-matches a closed
+  16-name roster, so names = lookup too (numbers-only rule dropped). ONLY
+  collisions need last names: Ben (Adam/Hahn), Liam (Gibala/Garland). Fixed
+  ~6-phrase vocabulary mapping 1:1 to event types (parsing = lookup, not NLP).
 - ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Transcript →
   timestamped draft events (`source: 'voice'`) landing in the queue.
   Phone-memo + kickoff offset is fine for season 1; later move recording into
