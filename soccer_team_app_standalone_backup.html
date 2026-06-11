@@ -6753,6 +6753,69 @@ function confirmQueueItemsForGame(game) {
   return items;
 }
 
+/* ---------- COACH-LOG KICKOFF FORMATION ----------
+ * The formation card's source of truth is the COACH BOARD AT KICKOFF — the
+ * shape the coach set up — never tracked positions, and never the end-of-half
+ * board (in-game drags mirror live play for identity anchoring, so the last
+ * drag of a half is mid-action noise, not a formation). Computed client-side
+ * from game.events so it's correct without a pipeline re-run; the pipeline's
+ * formation.py mirrors the same definition for the analytics doc.
+ */
+
+// Exact 1-D 3-row split: rows are contiguous in depth, so try every pair of
+// split points and keep the minimum within-row variance. Deterministic
+// (no KMeans jitter); rows read defense → attack.
+function formationLabelFromDepths(depths) {
+  const xs = [...depths].sort((a, b) => a - b);
+  const n = xs.length;
+  if (n === 0) return null;
+  if (n < 4) return `(${n} outfield)`;
+  const varSum = (arr) => {
+    const m = arr.reduce((s, v) => s + v, 0) / arr.length;
+    return arr.reduce((s, v) => s + (v - m) * (v - m), 0);
+  };
+  let best = null;
+  for (let i = 1; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const cost = varSum(xs.slice(0, i)) + varSum(xs.slice(i, j)) + varSum(xs.slice(j));
+      if (!best || cost < best.cost) best = { cost, counts: [i, j - i, n - j] };
+    }
+  }
+  return best.counts.join('-');
+}
+
+// Kickoff formation for one period from the coach log, or null when there
+// isn't enough board data. Board position per on-field outfield player:
+// last drag inside the kickoff window (covers pre-kickoff corrections),
+// else first drag of the period, else latest from an earlier period.
+function coachKickoffFormation(game, period, kickoffWindowS = 120) {
+  const events = [...(game.events || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
+  // On-field set at this period's kickoff = starting lineup + earlier subs.
+  const on = new Set(game.startingLineup || []);
+  let gk = game.gkPlayerId || null;
+  for (const e of events) {
+    if ((e.period || 1) >= period) continue;
+    if (e.type === 'SUB') {
+      if (e.playerId) on.delete(e.playerId);
+      if (e.subOnPlayerId) on.add(e.subOnPlayerId);
+    } else if (e.type === 'GK_CHANGE' && e.playerId) {
+      gk = e.playerId;
+    }
+  }
+  const depths = [];
+  for (const pid of on) {
+    if (pid === gk) continue;
+    const mine = events.filter(e => e.type === 'POSITION' && e.playerId === pid && typeof e.y === 'number');
+    const inPeriod = mine.filter(e => (e.period || 1) === period);
+    const early = inPeriod.filter(e => (e.elapsed || 0) <= kickoffWindowS);
+    const prior = mine.filter(e => (e.period || 1) < period);
+    const pos = early[early.length - 1] || inPeriod[0] || prior[prior.length - 1] || null;
+    if (pos) depths.push(1 - pos.y); // board y=1 = own goal → depth from own goal
+  }
+  if (depths.length < 3) return null;
+  return formationLabelFromDepths(depths);
+}
+
 // Tracklets still needing an identity decision: unassigned by the pipeline
 // and not yet decided by the coach (identityOverrides is live on the game
 // doc, so this count drains in real time as FIX IDS saves land).
@@ -8615,8 +8678,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
                 <div className="text-[10px] tracking-widest text-stone-400 mb-2">FORMATION</div>
+                {/* Coach-board kickoff shape (computed from the event log);
+                    the doc snapshot label is only a fallback for games
+                    without POSITION events. */}
                 {(doc.formation_snapshots || []).length ? doc.formation_snapshots.map(f => (
-                  <div key={f.period} className="flex items-center gap-2 text-white"><span className="text-[10px] text-stone-500 w-7">{f.period === 2 ? '2ND' : '1ST'}</span><span className="font-display text-base">{f.label}</span></div>
+                  <div key={f.period} className="flex items-center gap-2 text-white"><span className="text-[10px] text-stone-500 w-7">{f.period === 2 ? '2ND' : '1ST'}</span><span className="font-display text-base">{coachKickoffFormation(game, f.period) || f.label}</span></div>
                 )) : <div className="text-stone-500 text-xs">—</div>}
               </div>
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
@@ -12415,6 +12481,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
