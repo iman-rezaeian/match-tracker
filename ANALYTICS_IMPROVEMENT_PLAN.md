@@ -133,36 +133,39 @@ Run: `set -a; source .env; set +a; .venv-post-game/bin/python -m tracking.eval_i
   verification results in the STATUS block above; snapshots in
   `tracking/outputs/baseline/{pre,post}-phase1/`).
 
-## Phase 2 — Scoring integrity (PWA; ONE coordinated versioned release)
+## Phase 2 — Scoring integrity ✅ SHIPPED (v2, 2026-06-10)
 
-Bump `scoringVersion`; in-app "scores recalibrated" note. Ship together.
+`SCORING_VERSION = 2`; recalibration note shown in the stats help + scoring
+docs. New-reference snapshot: `tracking/outputs/baseline/post-phase2/`.
+Verified: full-minute starters barely move (David 2.9/2.3 per-game, season
+2.6 ≈ v1); Ben Hahn's relief-keeper inflation gone (Leamington 11.3 → 8.6,
+DEF 18.8 → 12.3). Both current games are typed Scrimmage (0.5×) — uniform,
+so relative season standings hold.
 
-- **2.1 Empirical-Bayes shrinkage.** Per-pillar:
-  `(player_points + M × squad_rate) / (minutes + M)`, M ≈ 12 virtual minutes
-  (tunable in ⚙ Scoring). Kills the 6-minute-cameo leaderboard problem.
-- **2.2 Pro-rated clean sheet.** Bonus × `secondsAsGK / gameSeconds`; drop the
-  60 s floor (a 5-min relief keeper in a shutout currently earns ~32 DEF pts).
-- **2.3 Involvement cleanup.** Own goals OUT of INV. Recommended: count
-  TURNOVER/DUEL_LOSE/FOUL_BY at 0 in INV (currently ~12% of every penalty is
-  refunded as "involvement"; DEC/DEF already price the mistakes).
-- **2.4 DECISION POINT — per-pillar z-scoring.** Pillars are mixed units
-  (weighted points vs raw counts), so pillar weights aren't the "percent mix"
-  the UI implies. Option A: z-score per pillar across squad (honest weights,
-  relative scores). Option B: keep raw, document caveat. Lean: z-scored coach
-  view, raw public view.
-- **2.5 Game-type weights.** Season-aggregate multiplier per type (scrimmage
-  0.5×, festival 0.75×, league/tournament 1×; editable). Exclude scrimmages
-  from public leaderboard by default.
-- **2.6 Event provenance field.** `source: 'live' | 'bookmark-confirmed' |
-  'voice-confirmed' | 'video-added'` on every event. Enables per-game
-  completeness visibility + a later option to count negatives only when
-  video-confirmed.
-- **2.7 Update `tracking/pwa_score.py` + in-app scoring docs; re-snapshot
-  Phase 0 baseline as the new reference.**
-- **2.8 Season own-goal fix (found in 0.2).** The season aggregation's event
-  filter (`StatsView` seasonScores) collects only `playerId`/GIVE_GO-partner
-  events, so `OPP_GOAL.ownGoalById` own goals never reach the season score —
-  but they DO count per-game. Make the season path include them.
+- ✅ **2.1 Shrinkage.** `(points + (M/20)·squadRate) / ((minutes+M)/20)`,
+  M = 12 virtual minutes (⚙ Scoring → FAIRNESS). Squad prior = outfield-
+  valued rates over the same game set. Applied per-game AND season.
+- ✅ **2.2 Pro-rated clean sheet.** × `secondsAsGK/gameSeconds`, 60 s floor
+  removed; fractional clean sheets display rounded to 0.1.
+- ✅ **2.3 INV cleanup.** Own goals out of INV; TURNOVER/DUEL_LOSE/FOUL_BY
+  count 0 toward INV (`INV_EXCLUDED`).
+- ⏳ **2.4 DECISION POINT — per-pillar z-scoring. STILL OPEN** (shipped raw;
+  the units caveat is documented in-app). Decide later: z-scored coach view
+  vs raw public view.
+- ✅ **2.5 Game-type weights.** Season aggregate weights games by
+  `tournament` type (scrimmage 0.5 / festival 0.75 / default 1.0; editable
+  in FAIRNESS; 0 excludes a type). Season is now built from per-game pillar
+  POINTS (weighted), not pooled events.
+- ✅ **2.6 Provenance.** `source: 'live'` stamped at logEvent creation;
+  future capture paths (bookmark/voice/video) stamp their own.
+- ✅ **2.7 `tracking/pwa_score.py` mirrored to v2** (audit + snapshot tools
+  updated; per-game shrinkage needs `roster` passed). In-app docs updated
+  (stats help, scoring section, weights section → "Three tabs").
+- ✅ **2.8 Season own-goal fix** — by construction: season now sums per-game
+  `pillarPoints` (full event list incl. `OPP_GOAL.ownGoalById`) instead of
+  the pooled playerId-filtered list that silently dropped own goals.
+- NOT folded in: pressure multiplier (plan 4.3) — still a decision point,
+  pairs with the Phase 3 tagging queue.
 
 ## Phase 3 — Capture & review workflow (the centerpiece)
 
@@ -252,7 +255,7 @@ Ordered by coach value per effort.
 | 1 | ✅ 0.1–0.3 harness + audit fix (done 2026-06-10) | Everything else needs a trustworthy diff |
 | — | 3.0 voice memo at next game | Zero code; de-risks Phase 3 early |
 | 2 | ✅ Phase 1 COMPLETE (1.1–1.4, published 2026-06-10) | Contamination fix proper is 8K-gated (appearance); color-space swaps measured + rejected |
-| 3 | 2.1–2.7 scoring release | One coordinated, versioned change |
+| 3 | ✅ 2.x scoring v2 SHIPPED 2026-06-10 (2.4 z-scoring still open) | One coordinated, versioned change |
 | 4 | 3.1–3.6 capture workflow | Queue → bookmark → voice probe → voice pipeline |
 | 5 | 4.1–4.6 analytics views | Value-add, interleave |
 | 6 | 5.x | Blocked on first 8K game |

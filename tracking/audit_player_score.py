@@ -41,7 +41,7 @@ def main() -> None:
         print(f"\n=== {p.get('name')} #{p.get('number')} (pos='{p.get('position')}') ===")
         print(f"{'game':<22}{'min':>5}{'gk%':>5}{'goals':>7}{'overall':>9}   ATK / DEF / DEC / INV")
         for g in finished:
-            s = pwa_score.per_game_score(pid, g, weights)
+            s = pwa_score.per_game_score(pid, g, weights, roster)
             nm = (g.get("opponent") or "")[:20]
             goals = sum(1 for e in (g.get("events") or [])
                         if e.get("type") == "GOAL" and e.get("playerId") == pid)
@@ -52,7 +52,7 @@ def main() -> None:
             print(f"{nm:<22}{s['_minutes']:>5}{gkpct:>5}{goals:>7}{s['overall']:>9}   "
                   f"{s['attacking']} / {s['defending']} / {s['decisions']} / {s['involvement']}   "
                   f"{s['_counts']}")
-        ss = pwa_score.season_score(pid, finished, p, weights)
+        ss = pwa_score.season_score(pid, finished, p, weights, roster=roster)
         print("-" * 78)
         if ss is None:
             print("SEASON: no minutes recorded")
@@ -62,11 +62,9 @@ def main() -> None:
             if e.get("type") == "GOAL" and e.get("playerId") == pid
         )
         gkpct = f" gk%={round(ss['_gk_fraction'] * 100)}" if ss["_was_gk_any"] else ""
-        print(f"SEASON  min={ss['_minutes']}{gkpct}  goals={goals}  OVERALL={ss['overall']}  "
+        print(f"SEASON (v{pwa_score.SCORING_VERSION}, type-weighted+shrunk)  "
+              f"weighted-min={ss['_weighted_minutes']}{gkpct}  goals={goals}  OVERALL={ss['overall']}  "
               f"(ATK={ss['attacking']} DEF={ss['defending']} DEC={ss['decisions']} INV={ss['involvement']})")
-        print(f"  counts: {ss['_counts']}  give&go-wall-credits={ss['_partner']}")
-        if ss.get("_gk_extras"):
-            print(f"  gk extras: {ss['_gk_extras']}")
 
 
 if __name__ == "__main__":
