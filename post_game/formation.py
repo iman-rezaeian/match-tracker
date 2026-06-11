@@ -33,28 +33,53 @@ class TeamTimeSeries:
 
 
 def _label_formation_outfield(xs: np.ndarray) -> str:
-    if len(xs) == 0:
+    """Row-count label ("2-3-1") from 1-D depth values, defense row first.
+
+    Rows are contiguous in depth, so the optimal 3-way split is found exactly
+    by trying every pair of split points (n is tiny) and keeping the minimum
+    within-row variance — deterministic, unlike the KMeans it replaced.
+    """
+    n = len(xs)
+    if n == 0:
         return "?"
-    from sklearn.cluster import KMeans
-    if len(xs) >= 4:
-        km = KMeans(n_clusters=3, n_init=10, random_state=0).fit(xs.reshape(-1, 1))
-        order = np.argsort(km.cluster_centers_.flatten())
-        counts = np.bincount(km.labels_, minlength=3)[order]
-        return "-".join(str(int(c)) for c in counts)
-    return f"({len(xs)} outfield)"
+    if n < 4:
+        return f"({n} outfield)"
+    v = np.sort(np.asarray(xs, dtype=float))
+
+    def _var_sum(a: np.ndarray) -> float:
+        return float(((a - a.mean()) ** 2).sum()) if len(a) else 0.0
+
+    best: tuple[float, tuple[int, int, int]] | None = None
+    for i in range(1, n - 1):
+        for j in range(i + 1, n):
+            cost = _var_sum(v[:i]) + _var_sum(v[i:j]) + _var_sum(v[j:])
+            if best is None or cost < best[0]:
+                best = (cost, (i, j - i, n - j))
+    return "-".join(str(c) for c in best[1])
+
+
+# Board state at KICKOFF defines the formation — the coach's intended shape.
+# In-game drags mirror live play (they anchor identity), so the LAST drag of
+# a half is mid-action noise, not a formation. Within the kickoff window we
+# take the last drag (pre-kickoff corrections settle); after it, the first.
+# MIRROR: coachKickoffFormation in soccer_team_app.jsx uses the same window.
+FORMATION_KICKOFF_WINDOW_S = 120.0
 
 
 def _coach_positions_for_period(
     coach_events: Iterable[Any],
     period_index_1based: int,
 ) -> dict[str, tuple[float, float]]:
-    """Last POSITION event per player within the given period.
+    """Kickoff-shape POSITION per player within the given period: the last
+    drag inside FORMATION_KICKOFF_WINDOW_S of the period clock, else the
+    player's first drag of the period.
 
     Accepts any iterable of objects with `.type`, `.player_id`, `.period`,
-    `.at`, and `.extras` (dict with optional `x`, `y`). Returns
+    `.elapsed`, `.at`, and `.extras` (dict with optional `x`, `y`). Returns
     {player_id: (x, y)} in normalized [0,1] half-field coords.
     """
-    by_player: dict[str, tuple[int, float, float]] = {}
+    early: dict[str, tuple[int, float, float]] = {}   # last drag in window
+    late: dict[str, tuple[int, float, float]] = {}    # first drag after it
     for e in coach_events or []:
         if getattr(e, "type", None) != "POSITION":
             continue
@@ -75,10 +100,20 @@ def _coach_positions_for_period(
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
             continue
         at = int(getattr(e, "at", 0) or 0)
-        prev = by_player.get(pid)
-        if prev is None or at >= prev[0]:
-            by_player[pid] = (at, x, y)
-    return {pid: (x, y) for pid, (_, x, y) in by_player.items()}
+        try:
+            elapsed = float(getattr(e, "elapsed", 0) or 0)
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        if elapsed <= FORMATION_KICKOFF_WINDOW_S:
+            prev = early.get(pid)
+            if prev is None or at >= prev[0]:
+                early[pid] = (at, x, y)
+        else:
+            prev = late.get(pid)
+            if prev is None or at < prev[0]:
+                late[pid] = (at, x, y)
+    merged = {**late, **early}  # kickoff-window drags win
+    return {pid: (x, y) for pid, (_, x, y) in merged.items()}
 
 
 def _latest_positions(coach_events: Iterable[Any]) -> dict[str, tuple[float, float]]:
