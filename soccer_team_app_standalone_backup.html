@@ -6116,6 +6116,10 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
   // Push a history entry so iOS swipe-back / Android back closes the modal
   // instead of leaving the coach app. Also lock body scroll so the page
   // underneath retains its scroll position when this modal closes.
+  // Run ONCE via a ref — a [onCancel] dep re-runs the cleanup (history.back)
+  // on parent re-renders and the popstate closes the modal mid-use.
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -6124,7 +6128,7 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
     window.history.pushState({ modal: 'calibrate' }, '');
-    const onPop = () => onCancel();
+    const onPop = () => onCancelRef.current();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -6136,7 +6140,7 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
         window.history.back();
       }
     };
-  }, [onCancel]);
+  }, []);
 
   // Front/Back lens toggle snaps camera yaw to that hemisphere.
   useEffect(() => {
@@ -6945,10 +6949,16 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
   const [skippedIds, setSkippedIds] = useState(() => new Set());
   const [cue, setCue] = useState(null); // { game, entry, def }
 
-  // Modal history so swipe-back closes the queue, mirroring the other modals.
+  // Modal history so swipe-back closes the queue. MUST run once (empty deps)
+  // via a ref: keying on [onClose] re-runs the cleanup (history.back) whenever
+  // the parent re-renders — e.g. right after CONFIRM persists the tags — and
+  // the resulting popstate closes the whole queue instead of advancing to the
+  // next card. Same bug class AnalyticsPanel already documents.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     window.history.pushState({ modal: 'confirmQueue' }, '');
-    const onPop = () => onClose();
+    const onPop = () => onCloseRef.current();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -6956,7 +6966,7 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
         window.history.back();
       }
     };
-  }, [onClose]);
+  }, []);
 
   const remaining = items.filter(i => !skippedIds.has(i.event.id));
   const current = remaining[0] || null;
@@ -7179,7 +7189,11 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
   const [sortKey, setSortKey] = useState('distance');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Push history so swipe-back closes modal
+  // Push history so swipe-back closes modal. Run ONCE via a ref — a [onClose]
+  // dep re-runs the cleanup (history.back) when the parent re-renders (games
+  // listener firing while this is open) and the popstate closes the modal.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const scrollY = window.scrollY;
     const body = document.body;
@@ -7188,7 +7202,7 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
     body.style.top = `-${scrollY}px`;
     body.style.width = '100%';
     window.history.pushState({ modal: 'seasonAnalytics' }, '');
-    const onPop = () => onClose();
+    const onPop = () => onCloseRef.current();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -7200,7 +7214,7 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         window.history.back();
       }
     };
-  }, [onClose]);
+  }, []);
 
   // Fetch analytics/v1 for every finished game in parallel.
   useEffect(() => {
@@ -7546,10 +7560,14 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
     return undefined;
   }, [url, startAtS]);
 
-  // Push history entry so swipe-back closes the modal.
+  // Push history entry so swipe-back closes the modal. Run ONCE via a ref —
+  // a [onClose] dep re-runs the cleanup (history.back) on parent re-renders
+  // (e.g. a games snapshot while watching) and the popstate closes the player.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     window.history.pushState({ modal: 'broadcast' }, '');
-    const onPop = () => onClose();
+    const onPop = () => onCloseRef.current();
     window.addEventListener('popstate', onPop);
     return () => {
       window.removeEventListener('popstate', onPop);
@@ -7557,7 +7575,7 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
         window.history.back();
       }
     };
-  }, [onClose]);
+  }, []);
 
   // Index events on the chosen timeline and drop any without a valid time
   // (those events sit outside the rendered reel windows).
@@ -12283,6 +12301,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
