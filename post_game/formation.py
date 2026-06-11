@@ -14,8 +14,9 @@ class FormationSnapshot:
     period: int
     label: str
     avg_positions: dict[str, tuple[float, float]]
-    # Source of `label` and `coach_positions_norm`: "coach" when ≥3 coach
-    # POSITION events were available in the period, else "tracks".
+    # Source of `label`: "coach" (reset boards / last dragged board, see
+    # _coach_formation_reference), "coach-carryover" (no board activity this
+    # period — inherited), or "tracks" (no coach board anywhere).
     label_source: str = "tracks"
     # Per-player coach-board positions in normalized half-field coords
     # (x∈[0,1] left→right from coach POV, y∈[0,1] halfway→own goal). Empty
@@ -58,18 +59,18 @@ def _label_formation_outfield(xs: np.ndarray) -> str:
     return "-".join(str(c) for c in best[1])
 
 
-# Board state at KICKOFF defines the formation — the coach's intended shape.
-# ONLY kickoff-window drags count: they all describe the same instant. Mid-
-# half drags move kids between slots at different moments, so aggregating
-# them mixes snapshots of the rotation and mislabels (measured on real games:
-# 2-3-1 all game read as 2-2-2 / 1-3-1 in 2nd halves). A period with no
-# kickoff board (coach didn't re-set at halftime) INHERITS the previous
-# period's formation — shape changes are explicit acts.
-# MIRROR: coachKickoffFormation in soccer_team_app.jsx uses the same rules.
-FORMATION_KICKOFF_WINDOW_S = 120.0
-# Minimum kickoff-window outfield drags for a period to own a formation
-# (a full board re-set writes everyone; 1-2 stray early drags are not a board).
-FORMATION_MIN_KICKOFF_PLAYERS = 4
+# Formation per period — COACH'S RULE (2026-06-11): RESET batches are THE
+# reference. One reset → that board; several → every reset board votes
+# (majority shape, earliest reset breaks ties); none → the dragged board at
+# the period's last drag instant. Resets are slot-snapped board writes (≥
+# FORMATION_MIN_BATCH near-simultaneous POSITION events), so raw drag coords
+# never dilute them. Boards are always read at a SINGLE instant — mixing
+# drags from different moments was the original mislabeling (2-3-1 all game
+# read as 2-2-2 / 1-3-1). A period with no board activity inherits the
+# previous period's label.
+# MIRROR: coachKickoffFormation/boardLabelAt in soccer_team_app.jsx.
+FORMATION_MIN_BATCH = 4          # near-simultaneous events = a board write
+FORMATION_MIN_OUTFIELD = 4       # min on-field outfield positions to label
 
 
 def _valid_position_events(coach_events: Iterable[Any]) -> list[tuple[int, int, str, float, float, float]]:
@@ -102,68 +103,95 @@ def _valid_position_events(coach_events: Iterable[Any]) -> list[tuple[int, int, 
     return out
 
 
-def _coach_positions_for_period(
+def _board_at(
+    coach_events: Iterable[Any],
+    t_wall_ms: int,
+    starting_lineup: list[str],
+    gk_player_id: Optional[str],
+) -> dict[str, tuple[float, float]]:
+    """Board state at wall-clock instant T: latest drag per player ≤ T (any
+    period — the board persists), restricted to who was ON FIELD at T
+    (lineup + subs ≤ T), GK at T excluded. Returns {pid: (x, y)} normalized."""
+    on = set(starting_lineup or [])
+    gk = gk_player_id
+    rows = []
+    for e in coach_events or []:
+        try:
+            at = int(getattr(e, "at", 0) or 0)
+        except (TypeError, ValueError):
+            at = 0
+        if at <= t_wall_ms:
+            rows.append((at, e))
+    rows.sort(key=lambda r: r[0])
+    pos: dict[str, tuple[float, float]] = {}
+    for _at, e in rows:
+        et = (getattr(e, "type", None) or "").upper()
+        if et == "SUB":
+            if getattr(e, "player_id", None):
+                on.discard(e.player_id)
+            son = (getattr(e, "extras", {}) or {}).get("subOnPlayerId")
+            if son:
+                on.add(son)
+        elif et == "GK_CHANGE" and getattr(e, "player_id", None):
+            gk = e.player_id
+        elif et == "POSITION":
+            pid = getattr(e, "player_id", None)
+            extras = getattr(e, "extras", {}) or {}
+            x, y = extras.get("x"), extras.get("y")
+            if not pid or x is None or y is None:
+                continue
+            try:
+                x = float(x); y = float(y)
+            except (TypeError, ValueError):
+                continue
+            if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0:
+                pos[pid] = (x, y)
+    return {pid: xy for pid, xy in pos.items() if pid in on and pid != gk}
+
+
+def _coach_formation_reference(
     coach_events: Iterable[Any],
     period_index_1based: int,
-) -> dict[str, tuple[float, float]]:
-    """Kickoff-board POSITION per player for the given period.
-
-    Prefers the latest RESET/kickoff BATCH inside FORMATION_KICKOFF_WINDOW_S:
-    ≥FORMATION_MIN_KICKOFF_PLAYERS near-simultaneous events = a board write
-    whose positions are slot-SNAPPED (the coach's "lock it in" act) — the
-    board state at that instant is taken (latest drag per player ≤ batch
-    time, any period; non-movers skipped by the batch dedupe were already on
-    their slot). Without a batch, falls back to the last loose drag per
-    player inside the window. Players only dragged later in the period are
-    EXCLUDED — see the kickoff-only rationale above.
-
-    Returns {player_id: (x, y)} in normalized [0,1] half-field coords.
-    """
-    evs = _valid_position_events(coach_events)
-    win = [r for r in evs
-           if r[1] == period_index_1based and r[3] <= FORMATION_KICKOFF_WINDOW_S]
-    batch_t: Optional[int] = None
+    starting_lineup: list[str],
+    gk_player_id: Optional[str],
+) -> tuple[Optional[str], dict[str, tuple[float, float]]]:
+    """(label, reference board positions) for one period under the coach's
+    rule (see module comment above the FORMATION_* constants), or (None, {})
+    when the period has no usable board."""
+    evs = [r for r in _valid_position_events(coach_events) if r[1] == period_index_1based]
+    # RESET/kickoff batches: runs of near-simultaneous POSITION events.
+    batch_ends: list[int] = []
     run: list[tuple] = []
-    for r in win:
+    for r in evs:
         if run and r[0] - run[-1][0] <= 2:
             run.append(r)
         else:
             run = [r]
-        if len(run) >= FORMATION_MIN_KICKOFF_PLAYERS:
-            batch_t = run[-1][0]
-    out: dict[str, tuple[float, float]] = {}
-    if batch_t is not None:
-        for (at, _p, pid, _el, x, y) in evs:
-            if at <= batch_t:
-                out[pid] = (x, y)
-    else:
-        for (_at, _p, pid, _el, x, y) in win:
-            out[pid] = (x, y)
-    return out
-
-
-def _onfield_at_period_start(
-    starting_lineup: list[str],
-    coach_events: Iterable[Any],
-    period_1based: int,
-) -> set[str]:
-    """Reconstruct the set of players on the field at the kickoff of a period:
-    the starting lineup plus every SUB applied in earlier periods."""
-    on = set(starting_lineup or [])
-    subs = sorted(
-        (e for e in (coach_events or []) if getattr(e, "type", None) == "SUB"),
-        key=lambda e: (int(getattr(e, "period", 0) or 0), int(getattr(e, "elapsed", 0) or 0), int(getattr(e, "at", 0) or 0)),
-    )
-    for e in subs:
-        if int(getattr(e, "period", 0) or 0) >= period_1based:
-            break  # only subs from *earlier* periods affect this kickoff
-        off = getattr(e, "player_id", None)
-        on_pid = (getattr(e, "extras", {}) or {}).get("subOnPlayerId")
-        if off in on:
-            on.discard(off)
-        if on_pid:
-            on.add(on_pid)
-    return on
+        if len(run) == FORMATION_MIN_BATCH:
+            batch_ends.append(run[-1][0])
+        elif len(run) > FORMATION_MIN_BATCH:
+            batch_ends[-1] = run[-1][0]
+    if batch_ends:
+        labeled = []
+        for t in batch_ends:
+            board = _board_at(coach_events, t, starting_lineup, gk_player_id)
+            if len(board) >= FORMATION_MIN_OUTFIELD:
+                depths = np.array([1.0 - xy[1] for xy in board.values()])
+                labeled.append((_label_formation_outfield(depths), board))
+        if labeled:
+            counts: dict[str, int] = {}
+            best = None
+            for lbl, board in labeled:
+                counts[lbl] = counts.get(lbl, 0) + 1
+                if best is None or counts[lbl] > counts[best[0]]:
+                    best = (lbl, board)  # ties keep the EARLIEST reset
+            return best
+    if evs:
+        board = _board_at(coach_events, evs[-1][0], starting_lineup, gk_player_id)
+        if len(board) >= FORMATION_MIN_OUTFIELD:
+            depths = np.array([1.0 - xy[1] for xy in board.values()])
+            return _label_formation_outfield(depths), board
+    return None, {}
 
 
 def compute_formation(
@@ -191,31 +219,18 @@ def compute_formation(
             )
             positions = {str(pid): (float(v["x_m"]), float(v["y_m"])) for pid, v in avg.items()}
 
-        # Coach POSITION events (ground truth): build the formation from the
-        # KICKOFF BOARD of the period, restricted to players actually on the
-        # field at kickoff (lineup + subs from earlier periods). No mid-half
-        # or earlier-period fallback positions — see the kickoff-only
-        # rationale above _coach_positions_for_period.
-        coach_norm = _coach_positions_for_period(coach_events or [], i + 1)
-        onfield = _onfield_at_period_start(starting_lineup or [], coach_events or [], i + 1)
-        onfield_outfield = {p for p in onfield if p != gk_player_id}
-        coach_outfield = {
-            pid: xy for pid, xy in coach_norm.items()
-            if pid != gk_player_id and (not onfield_outfield or pid in onfield_outfield)
-        }
+        # Coach POSITION events (ground truth): label per the coach's rule —
+        # reset boards vote, else the last dragged board, always read at a
+        # single instant (see _coach_formation_reference).
+        coach_label, coach_norm = _coach_formation_reference(
+            coach_events or [], i + 1, starting_lineup or [], gk_player_id)
         prev_coach_label = next(
             (s.label for s in reversed(snaps) if s.label_source.startswith("coach")), None)
-        if len(coach_outfield) >= FORMATION_MIN_KICKOFF_PLAYERS:
-            # Coach board: y=0 is halfway/attacking, y=1 is own goal. Use the
-            # depth axis (1 - y) for row clustering so deeper defenders sit
-            # in the first cluster — matching the tracks-based convention
-            # where label rows are read defense → attack.
-            depth = np.array([1.0 - xy[1] for xy in coach_outfield.values()])
-            label = _label_formation_outfield(depth)
+        if coach_label is not None:
+            label = coach_label
             label_source = "coach"
         elif prev_coach_label is not None:
-            # No kickoff board this period (no halftime re-set) → the shape
-            # carried over from the previous period.
+            # No board activity this period → the shape carried over.
             label = prev_coach_label
             label_source = "coach-carryover"
         else:
