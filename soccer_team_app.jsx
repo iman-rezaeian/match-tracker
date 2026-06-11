@@ -6682,15 +6682,37 @@ function coachKickoffFormation(game, period, kickoffWindowS = 120) {
       gk = e.playerId;
     }
   }
-  // Last early-window drag per on-field outfield player (events are at-sorted).
-  const early = {};
-  for (const e of events) {
-    if (e.type !== 'POSITION' || typeof e.y !== 'number') continue;
-    if ((e.period || 1) !== period || (e.elapsed || 0) > kickoffWindowS) continue;
-    if (!on.has(e.playerId) || e.playerId === gk) continue;
-    early[e.playerId] = 1 - e.y; // board y=1 = own goal → depth from own goal
+  // Prefer the latest RESET/kickoff BATCH in the window: ≥4 near-simultaneous
+  // POSITION events = a board write whose positions are slot-SNAPPED (the
+  // coach's "lock it in" act). Raw fine-tune drags never override a snapped
+  // board. NOTE mid/late-half RESETs are deliberately NOT formation changes:
+  // they snap kids to wherever they physically stand (measured: an end-of-
+  // half reset while defending read 3-2-1 on a 2-3-1 team).
+  const windowEvents = events.filter(e => e.type === 'POSITION' && typeof e.y === 'number'
+    && (e.period || 1) === period && (e.elapsed || 0) <= kickoffWindowS);
+  let batchT = null;
+  let run = [];
+  for (const e of windowEvents) {
+    if (run.length && (e.at || 0) - (run[run.length - 1].at || 0) <= 2) run.push(e);
+    else run = [e];
+    if (run.length >= 4) batchT = run[run.length - 1].at || 0;
   }
-  const depths = Object.values(early);
+  const depthByPid = {};
+  if (batchT != null) {
+    // Board state at the batch instant: latest drag per player ≤ batchT, any
+    // period — the board persists, and non-movers the batch dedupe skipped
+    // were already sitting on their slot.
+    for (const e of events) {
+      if (e.type !== 'POSITION' || typeof e.y !== 'number') continue;
+      if ((e.at || 0) > batchT) continue;
+      depthByPid[e.playerId] = 1 - e.y; // board y=1 = own goal → depth from own goal
+    }
+  } else {
+    for (const e of windowEvents) depthByPid[e.playerId] = 1 - e.y;
+  }
+  const depths = Object.entries(depthByPid)
+    .filter(([pid]) => on.has(pid) && pid !== gk)
+    .map(([, d]) => d);
   if (depths.length >= 4) return formationLabelFromDepths(depths);
   return period > 1 ? coachKickoffFormation(game, period - 1, kickoffWindowS) : null;
 }

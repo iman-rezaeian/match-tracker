@@ -72,24 +72,12 @@ FORMATION_KICKOFF_WINDOW_S = 120.0
 FORMATION_MIN_KICKOFF_PLAYERS = 4
 
 
-def _coach_positions_for_period(
-    coach_events: Iterable[Any],
-    period_index_1based: int,
-) -> dict[str, tuple[float, float]]:
-    """Kickoff-board POSITION per player: the last drag inside
-    FORMATION_KICKOFF_WINDOW_S of the given period's clock (pre-kickoff
-    corrections settle). Players only dragged later in the period are
-    EXCLUDED — see the kickoff-only rationale above.
-
-    Accepts any iterable of objects with `.type`, `.player_id`, `.period`,
-    `.elapsed`, `.at`, and `.extras` (dict with optional `x`, `y`). Returns
-    {player_id: (x, y)} in normalized [0,1] half-field coords.
-    """
-    early: dict[str, tuple[int, float, float]] = {}
+def _valid_position_events(coach_events: Iterable[Any]) -> list[tuple[int, int, str, float, float, float]]:
+    """(at, period, pid, elapsed, x, y) for every well-formed POSITION event,
+    sorted by wall-clock `at`."""
+    out = []
     for e in coach_events or []:
         if getattr(e, "type", None) != "POSITION":
-            continue
-        if int(getattr(e, "period", 0) or 0) != period_index_1based:
             continue
         pid = getattr(e, "player_id", None)
         if not pid:
@@ -109,13 +97,49 @@ def _coach_positions_for_period(
             elapsed = float(getattr(e, "elapsed", 0) or 0)
         except (TypeError, ValueError):
             elapsed = 0.0
-        if elapsed > FORMATION_KICKOFF_WINDOW_S:
-            continue
-        at = int(getattr(e, "at", 0) or 0)
-        prev = early.get(pid)
-        if prev is None or at >= prev[0]:
-            early[pid] = (at, x, y)
-    return {pid: (x, y) for pid, (_, x, y) in early.items()}
+        out.append((int(getattr(e, "at", 0) or 0), int(getattr(e, "period", 0) or 0), pid, elapsed, x, y))
+    out.sort(key=lambda r: r[0])
+    return out
+
+
+def _coach_positions_for_period(
+    coach_events: Iterable[Any],
+    period_index_1based: int,
+) -> dict[str, tuple[float, float]]:
+    """Kickoff-board POSITION per player for the given period.
+
+    Prefers the latest RESET/kickoff BATCH inside FORMATION_KICKOFF_WINDOW_S:
+    ≥FORMATION_MIN_KICKOFF_PLAYERS near-simultaneous events = a board write
+    whose positions are slot-SNAPPED (the coach's "lock it in" act) — the
+    board state at that instant is taken (latest drag per player ≤ batch
+    time, any period; non-movers skipped by the batch dedupe were already on
+    their slot). Without a batch, falls back to the last loose drag per
+    player inside the window. Players only dragged later in the period are
+    EXCLUDED — see the kickoff-only rationale above.
+
+    Returns {player_id: (x, y)} in normalized [0,1] half-field coords.
+    """
+    evs = _valid_position_events(coach_events)
+    win = [r for r in evs
+           if r[1] == period_index_1based and r[3] <= FORMATION_KICKOFF_WINDOW_S]
+    batch_t: Optional[int] = None
+    run: list[tuple] = []
+    for r in win:
+        if run and r[0] - run[-1][0] <= 2:
+            run.append(r)
+        else:
+            run = [r]
+        if len(run) >= FORMATION_MIN_KICKOFF_PLAYERS:
+            batch_t = run[-1][0]
+    out: dict[str, tuple[float, float]] = {}
+    if batch_t is not None:
+        for (at, _p, pid, _el, x, y) in evs:
+            if at <= batch_t:
+                out[pid] = (x, y)
+    else:
+        for (_at, _p, pid, _el, x, y) in win:
+            out[pid] = (x, y)
+    return out
 
 
 def _onfield_at_period_start(
