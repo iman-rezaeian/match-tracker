@@ -18,7 +18,10 @@ Key ideas
   matched to most often.
 * **On-field windows** (lineup + subs) gate candidates, with a generous
   tolerance because subs are logged late.
-* **GK anchor**: the geometric GK track is nudged toward the GK player.
+* **GK windows**: keeper tracklets are detected geometrically per GK window
+  (starting GK + GK_CHANGE events) and assigned to whoever was in goal THEN —
+  mid-game keeper rotations assign correctly, and part-time keepers can still
+  own outfield tracklets outside their stint.
 * **Two-tier confidence**: ≥AUTO confident, AUTO>c≥REVIEW best-guess (both used
   downstream), <REVIEW dropped.
 """
@@ -45,6 +48,155 @@ from .identity import (
 log = logging.getLogger(__name__)
 
 WINDOW_S = 5.0
+
+# Player-attributed real actions usable as identity anchors. Excludes
+# bookkeeping (SUB, GK_CHANGE), silent POSITION, and OPP_GOAL (no playerId).
+ACTION_EVENT_TYPES = frozenset({
+    "GOAL", "ASSIST", "KEY_PASS", "SAVE", "SHOT_ON", "SHOT_OFF", "BLOCK",
+    "BALL_WIN", "CLEAR", "KICK_OUT", "DUEL_WIN", "DUEL_LOSE", "GIVE_GO",
+    "GATES", "TURNOVER", "HOLDS_BALL", "FOUL_BY", "FOUL_ON",
+    "PEN_AWARDED", "PEN_CONCEDED",
+})
+
+# Zone tag (3×3 coach grid, coach POV): depth fraction measured from OUR goal,
+# lateral fraction left→right — mapped to field meters through the same
+# orientation flips the board search resolves.
+_ZONE_DEPTH = {"D": 1.0 / 6, "M": 0.5, "A": 5.0 / 6}
+_ZONE_LAT = {"L": 1.0 / 6, "C": 0.5, "R": 5.0 / 6}
+
+
+def _zone_center(zone, flip_d: bool, flip_l: bool,
+                 L: float, W: float) -> Optional[tuple[float, float]]:
+    parts = str(zone or "").split("-")
+    if len(parts) != 2:
+        return None
+    d_own = _ZONE_DEPTH.get(parts[0])
+    lat = _ZONE_LAT.get(parts[1])
+    if d_own is None or lat is None:
+        return None
+    # Board convention: by=1 = own goal → depth 1 under flip_d, depth 0 without.
+    depth = (1.0 - d_own) if flip_d else d_own
+    la = (1.0 - lat) if flip_l else lat
+    return (depth * L, la * W)
+
+
+def _event_votes(
+    match_count: dict[int, dict[str, float]],
+    pdf: pd.DataFrame,
+    events,
+    period: int,
+    pstart: float,
+    pend: float,
+    clock_to_video: Callable[[int, int], float],
+    valid_ids: set,
+    keeper_tracklets: set[int],
+    is_gk_at: Callable[[str, float], bool],
+    flip_d: Optional[bool],
+    flip_l: Optional[bool],
+    L: float,
+    W: float,
+) -> int:
+    """Coach action events as identity anchors (votes into match_count).
+
+    Each logged action gives (player, ~time, ~place): the coach logs LATE, so
+    the action sits in [-ASSIGN_EVENT_BEFORE_S, +ASSIGN_EVENT_AFTER_S] around
+    the logged clock time. WHERE is proxied by the team centroid at each
+    second (U10 swarm chases the ball, so the scrum ≈ the action), sharpened
+    by the zone tag when present (and when board orientation is known). Each
+    tracklet's vote is its best centroid-proximity moment in the window —
+    board-independent, so periods without POSITION events still get votes.
+    """
+    n = 0
+    cent = (pdf.assign(_sec=pdf["time_s"].astype(int))
+            .groupby("_sec")[["x_m", "y_m"]].median())
+    out = pdf[~pdf["tracklet"].isin(keeper_tracklets)]
+    if out.empty:
+        return 0
+    two_sig_evt = 2.0 * config.ASSIGN_EVENT_SIGMA_M ** 2
+    two_sig_zone = 2.0 * config.ASSIGN_ZONE_SIGMA_M ** 2
+    for e in events or []:
+        if (e.type or "").upper() not in ACTION_EVENT_TYPES:
+            continue
+        if int(e.period or 0) != period:
+            continue
+        pid = e.player_id
+        if not pid or pid not in valid_ids:
+            continue
+        try:
+            t = float(clock_to_video(e.period, e.elapsed))
+        except Exception:
+            continue
+        if not (pstart - config.ASSIGN_EVENT_AFTER_S
+                <= t <= pend + config.ASSIGN_EVENT_BEFORE_S):
+            continue
+        if is_gk_at(pid, t):
+            continue  # keeper actions belong to keeper tracklets (separate path)
+        w0 = t - config.ASSIGN_EVENT_BEFORE_S
+        w1 = t + config.ASSIGN_EVENT_AFTER_S
+        wdf = out[(out["time_s"] >= w0) & (out["time_s"] <= w1)]
+        if wdf.empty:
+            continue
+        zc = None
+        if flip_d is not None and flip_l is not None:
+            zc = _zone_center((e.extras or {}).get("zone"), flip_d, flip_l, L, W)
+        g = (wdf.assign(_sec=wdf["time_s"].astype(int))
+             .groupby(["tracklet", "_sec"])[["x_m", "y_m"]].median())
+        best_by_tl: dict[int, float] = {}
+        for (tl, s), row in g.iterrows():
+            if s not in cent.index:
+                continue
+            dx = float(row["x_m"]) - float(cent.loc[s, "x_m"])
+            dy = float(row["y_m"]) - float(cent.loc[s, "y_m"])
+            sc = float(np.exp(-(dx * dx + dy * dy) / two_sig_evt))
+            if zc is not None:
+                dzx = float(row["x_m"]) - zc[0]
+                dzy = float(row["y_m"]) - zc[1]
+                sc *= 0.25 + 0.75 * float(np.exp(-(dzx * dzx + dzy * dzy) / two_sig_zone))
+            tl = int(tl)
+            if sc > best_by_tl.get(tl, 0.0):
+                best_by_tl[tl] = sc
+        for tl, sc in best_by_tl.items():
+            if sc <= 0.05:
+                continue
+            match_count.setdefault(tl, {})
+            match_count[tl][pid] = match_count[tl].get(pid, 0.0) + config.ASSIGN_W_VOTES * sc
+            n += 1
+    return n
+
+
+def _gk_windows(
+    gk_player_id: Optional[str],
+    events: list,
+    clock_to_video: Callable[[int, int], float],
+    periods_video: list[tuple[float, float]],
+) -> list[tuple[float, float, str]]:
+    """[(t0_video_s, t1_video_s, player_id)] goalkeeper segments over the game.
+
+    Starting keeper = game.gkPlayerId; each GK_CHANGE coach event (game-clock
+    period+elapsed, player_id = incoming keeper) closes the previous segment.
+    The GK_CHANGE events are the reliable source: game.gkChanges entries carry
+    wall-clock `at` ms (no direct video mapping) and are keyed `gkPlayerId`,
+    which identity.py's legacy _gk_segments misreads as `playerId`.
+    """
+    end = max((b for _, b in (periods_video or [])), default=1e12)
+    changes = [e for e in (events or [])
+               if (e.type or "").upper() == "GK_CHANGE" and e.player_id]
+    changes.sort(key=lambda e: (int(e.period or 0), float(e.elapsed or 0)))
+    out: list[tuple[float, float, str]] = []
+    cur = gk_player_id
+    t = 0.0
+    for e in changes:
+        try:
+            tv = float(clock_to_video(e.period, e.elapsed))
+        except Exception:
+            continue
+        if cur and tv > t:
+            out.append((t, tv, cur))
+        cur = e.player_id
+        t = max(t, tv)
+    if cur:
+        out.append((t, end, cur))
+    return out
 
 
 def _board_to_field(bx: float, by: float, flip_d: bool, flip_l: bool,
@@ -133,10 +285,13 @@ def assign_identities_v2(
     # the GK into the per-window outfield Hungarian smeared his identity across
     # the field (an outfield tracklet got labeled GK whenever the keeper wasn't
     # detected that window). Instead: identify keeper tracklet(s) geometrically,
-    # assign them to the GK player, and EXCLUDE both the GK player and the keeper
-    # tracklets from the outfield matching.
-    keeper_tracklets: set[int] = set()
-    if has_xy and gk_player_id:
+    # assign each to WHOEVER WAS IN GOAL during its time window (mid-game GK
+    # rotations are common — Leamington ran 5 keepers), and EXCLUDE keeper
+    # tracklets + the on-duty keeper from the outfield matching.
+    gk_windows = _gk_windows(gk_player_id, events, period_clock_to_video_time,
+                             periods_video)
+    keeper_votes: dict[int, dict[str, int]] = {}  # tracklet -> {gk_pid: n_samples}
+    if has_xy and gk_windows:
         L = field_length_m
         _dft = tracks_df[tracks_df["track_id"].isin(our_tracks)].copy()
         _dft["tracklet"] = _dft["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t)))
@@ -160,17 +315,51 @@ def assign_identities_v2(
             near0 = sum(n for _t, mx, n in cands if mx < L / 2)
             nearL = sum(n for _t, mx, n in cands if mx >= L / 2)
             our_end_is_0 = near0 >= nearL  # our goal = end with more keeper presence
-            # There's exactly ONE keeper — take only the single most-present
-            # deep tracklet on our end (flagging all of them swept in deep
-            # defenders and ballooned the GK's distance).
-            our_cands = [c for c in cands if (c[1] < L / 2) == our_end_is_0]
-            if our_cands:
-                keeper_tracklets.add(max(our_cands, key=lambda c: c[2])[0])
-        # Fallback: if geometry found nothing, use the single closest-to-goal track.
-        if not keeper_tracklets:
+            # Per GK window overlapping this period: there's exactly ONE keeper
+            # at a time, so take the single most-present deep+stationary
+            # tracklet on our end WITHIN the window and credit it to that
+            # window's keeper. (Taking all candidates swept in deep defenders;
+            # taking one per PERIOD broke mid-half rotations.)
+            for (w0, w1, wpid) in gk_windows:
+                lo, hi = max(w0, pstart), min(w1, pend)
+                if hi - lo < 30.0:  # sub-30s sliver: no reliable geometry
+                    continue
+                wdf = pdf[(pdf["time_s"] >= lo) & (pdf["time_s"] <= hi)]
+                wc = []  # (tracklet, n_samples)
+                for tl, sub in wdf.groupby("tracklet"):
+                    if len(sub) < 8:
+                        continue
+                    medx = float(sub["x_m"].median())
+                    xspread = float(sub["x_m"].quantile(0.9) - sub["x_m"].quantile(0.1))
+                    if (min(medx, L - medx) < L * 0.12 and xspread < L * 0.25
+                            and (medx < L / 2) == our_end_is_0):
+                        wc.append((int(tl), len(sub)))
+                if wc:
+                    tl_best, n = max(wc, key=lambda c: c[1])
+                    keeper_votes.setdefault(tl_best, {})
+                    keeper_votes[tl_best][wpid] = keeper_votes[tl_best].get(wpid, 0) + n
+        # Fallback: if geometry found nothing, use the single closest-to-goal
+        # track, credited to the starting keeper.
+        if not keeper_votes and gk_player_id:
             gkt = _find_gk_track(tracks_df, team_of_track, field_length_m, field_width_m)
             if gkt is not None:
-                keeper_tracklets.add(tracklet_of_track.get(gkt, gkt))
+                keeper_votes[tracklet_of_track.get(gkt, gkt)] = {gk_player_id: 1}
+    # A stitched tracklet that straddles a swap gets the keeper it overlaps most.
+    keeper_assign: dict[int, str] = {tl: max(v, key=v.get) for tl, v in keeper_votes.items()}
+    keeper_tracklets: set[int] = set(keeper_assign)
+    if gk_windows and len({p for *_ , p in gk_windows}) > 1:
+        log.info("  identity: %d GK window(s) across %d keeper(s); %d keeper tracklet(s) flagged",
+                 len(gk_windows), len({p for *_, p in gk_windows}), len(keeper_tracklets))
+
+    def _is_gk_at(pid: str, t: float) -> bool:
+        return any(w0 <= t <= w1 and p == pid for (w0, w1, p) in gk_windows)
+
+    def _gk_overlap_frac(pid: str, span: tuple[float, float]) -> float:
+        s0, s1 = span
+        tot = max(s1 - s0, 1e-9)
+        ov = sum(max(0.0, min(s1, w1) - max(s0, w0))
+                 for (w0, w1, p) in gk_windows if p == pid)
+        return ov / tot
 
     # match_count[tracklet][player] accumulated over windows
     match_count: dict[int, dict[str, float]] = {}
@@ -182,8 +371,6 @@ def assign_identities_v2(
 
         for pi, (pstart, pend) in enumerate(periods_video, start=1):
             board = _player_board_positions(events, pi)
-            if not board:
-                continue
             pdf = df[(df["time_s"] >= pstart) & (df["time_s"] <= pend)]
             if pdf.empty:
                 continue
@@ -191,7 +378,9 @@ def assign_identities_v2(
 
             # Try 4 board orientations; keep the cheapest total matched cost.
             best = None
-            for flip_d in (False, True):
+            if not board:
+                win_edges = ()  # no template → skip Hungarian, keep event votes
+            for flip_d in ((False, True) if board else ()):
                 for flip_l in (False, True):
                     exp = {p: _board_to_field(x, y, flip_d, flip_l, field_length_m, field_width_m)
                            for p, (x, y) in board.items() if p in valid_ids}
@@ -205,10 +394,12 @@ def assign_identities_v2(
                         # median pos per OUTFIELD tracklet present (keeper handled separately)
                         tl_pos = wdf.groupby("tracklet")[["x_m", "y_m"]].median()
                         tls = [int(t) for t in tl_pos.index if int(t) not in keeper_tracklets]
-                        # on-field OUTFIELD players (exclude GK), tolerant window
+                        # on-field OUTFIELD players (exclude whoever is in
+                        # goal RIGHT NOW — not the whole-game starting GK,
+                        # who may be outfield after a swap), tolerant window
                         wmid = 0.5 * (w0 + w1)
                         cand = [p for p in exp
-                                if p != gk_player_id
+                                if not _is_gk_at(p, wmid)
                                 and _is_onfield(onfield, p, wmid - ONFIELD_TOLERANCE_S,
                                                 wmid + ONFIELD_TOLERANCE_S)]
                         if not tls or not cand:
@@ -236,14 +427,61 @@ def assign_identities_v2(
                     if best is None or total_cost < best[0]:
                         best = (total_cost, flip_d, flip_l, per_window)
 
-            if best is None:
+            fd = fl = None
+            if best is not None:
+                _, fd, fl, per_window = best
+                log.info("  identity P%d: board orientation flip_depth=%s flip_lateral=%s "
+                         "(%d windows)", pi, fd, fl, len(per_window))
+                for _wmid, matched in per_window:
+                    for tl, p in matched:
+                        match_count.setdefault(tl, {})[p] = match_count.setdefault(tl, {}).get(p, 0.0) + 1.0
+
+            # --- coach ACTION-EVENT votes (sharper anchors than the board;
+            # board-independent except for the optional zone term) ---------
+            n_ev = _event_votes(
+                match_count, pdf, events, pi, pstart, pend,
+                period_clock_to_video_time, valid_ids, keeper_tracklets,
+                _is_gk_at, fd, fl, field_length_m, field_width_m,
+            )
+            log.info("  identity P%d: action-event votes added for %d (tracklet, player) pairs", pi, n_ev)
+
+        # --- SUB anchors (1.2b): a tracklet whose FIRST detection appears
+        # near a touchline around a logged sub-on is very likely the incoming
+        # player; symmetric for LAST detection ↔ the player going off. ------
+        srt = df.sort_values("time_s")
+        g = srt.groupby("tracklet")
+        tl_first = g[["time_s", "y_m"]].first()
+        tl_last = g[["time_s", "y_m"]].last()
+        n_sub = 0
+        for e in events or []:
+            if (e.type or "").upper() != "SUB":
                 continue
-            _, fd, fl, per_window = best
-            log.info("  identity P%d: board orientation flip_depth=%s flip_lateral=%s "
-                     "(%d windows)", pi, fd, fl, len(per_window))
-            for _wmid, matched in per_window:
-                for tl, p in matched:
-                    match_count.setdefault(tl, {})[p] = match_count.setdefault(tl, {}).get(p, 0.0) + 1.0
+            try:
+                t = float(period_clock_to_video_time(e.period, e.elapsed))
+            except Exception:
+                continue
+            w0 = t - config.ASSIGN_SUB_BEFORE_S
+            w1 = t + config.ASSIGN_SUB_AFTER_S
+            off_pid = e.player_id
+            on_pid = (e.extras or {}).get("subOnPlayerId")
+            for tl in tl_first.index:
+                tl = int(tl)
+                if tl in keeper_tracklets:
+                    continue
+                if on_pid and on_pid in valid_ids:
+                    ft, fy = float(tl_first.loc[tl, "time_s"]), float(tl_first.loc[tl, "y_m"])
+                    if w0 <= ft <= w1 and min(fy, field_width_m - fy) <= config.ASSIGN_SUB_TOUCHLINE_M:
+                        match_count.setdefault(tl, {})
+                        match_count[tl][on_pid] = match_count[tl].get(on_pid, 0.0) + config.ASSIGN_SUB_W
+                        n_sub += 1
+                if off_pid and off_pid in valid_ids:
+                    lt, ly = float(tl_last.loc[tl, "time_s"]), float(tl_last.loc[tl, "y_m"])
+                    if w0 <= lt <= w1 and min(ly, field_width_m - ly) <= config.ASSIGN_SUB_TOUCHLINE_M:
+                        match_count.setdefault(tl, {})
+                        match_count[tl][off_pid] = match_count[tl].get(off_pid, 0.0) + config.ASSIGN_SUB_W
+                        n_sub += 1
+        if n_sub:
+            log.info("  identity: SUB anchors added %d (tracklet, player) votes", n_sub)
 
     # --- per-player minute BUDGET from the coach log (ground truth) ----------
     # A player can't own more track-time than the coach logged them on the field
@@ -259,10 +497,21 @@ def assign_identities_v2(
         return tot / 60.0
     budget = {p: _played_minutes(p) + config.ASSIGN_MINUTE_SLACK for p in valid_ids}
 
+    # ACTUAL tracked coverage = detection count × sample interval. Both the
+    # stitched span (end-start) and even per-fragment spans over-count badly:
+    # BoT-SORT keeps a track id alive across ≤TRACK_BUFFER_S gaps, so one
+    # "fragment" can span minutes while holding seconds of detections. Charging
+    # span against the per-player minute budget exhausted every budget after a
+    # couple of tracklets and dropped the rest to status=unknown (same trap
+    # pipeline._build_tracklet_index documents). The budget still caps
+    # pathological smear; it just charges real track-time now.
+    _counts = tracks_df.groupby("track_id").size()
+    _dts = (tracks_df.sort_values(["track_id", "time_s"])
+            .groupby("track_id")["time_s"].diff().dropna())
+    _dt_med = float(_dts[_dts > 0].median()) if len(_dts) else 0.1
+
     def _tl_minutes(members: list[int]) -> float:
-        lo = min(lifetimes.get(m, (0, 0))[0] for m in members)
-        hi = max(lifetimes.get(m, (0, 0))[1] for m in members)
-        return max(0.0, (hi - lo) / 60.0)
+        return sum(int(_counts.get(m, 0)) for m in members) * _dt_med / 60.0
 
     # Pre-compute each tracklet's candidate ranking + confidence.
     tl_rank: dict[int, dict] = {}
@@ -292,6 +541,7 @@ def assign_identities_v2(
             "ranked": sorted(votes, key=votes.get, reverse=True),
             "conf": conf,
             "minutes": _tl_minutes(members),
+            "span": span,
         }
 
     # --- greedy capacity assignment, highest-confidence tracklets first -------
@@ -317,12 +567,15 @@ def assign_identities_v2(
     if forced:
         log.info("  identity: applied %d coach override(s)", len(forced))
 
-    # 1. Keeper tracklets → GK unconditionally (don't let the cap drop them).
-    if gk_player_id:
-        for tl in keeper_tracklets:
-            if tl in tracklet_members and tl not in forced:
-                tracklet_assign[tl] = (gk_player_id, 0.95, "auto")
-                assigned_min[gk_player_id] = assigned_min.get(gk_player_id, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
+    # 1. Keeper tracklets → their window's keeper unconditionally (don't let
+    #    the cap drop them). With mid-game GK rotations each keeper tracklet
+    #    goes to whoever was actually in goal during its span.
+    for tl in keeper_tracklets:
+        if tl in tracklet_members and tl not in forced:
+            kpid = keeper_assign.get(tl)
+            if kpid and kpid in valid_ids:
+                tracklet_assign[tl] = (kpid, 0.95, "auto")
+                assigned_min[kpid] = assigned_min.get(kpid, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
 
     # 2. Everyone else by descending confidence, respecting per-player budgets.
     remaining = [tl for tl in tracklet_members
@@ -332,8 +585,11 @@ def assign_identities_v2(
         conf, tl_min = info["conf"], info["minutes"]
         chosen = None
         for p in info["ranked"]:
-            if p == gk_player_id:
-                continue  # GK only gets keeper tracklets
+            # While p is in goal they only get keeper tracklets — but they CAN
+            # own outfield tracklets outside their GK windows (part-time
+            # keepers play the rest of the game outfield).
+            if _gk_overlap_frac(p, info["span"]) > 0.5:
+                continue
             if assigned_min.get(p, 0.0) + tl_min <= budget.get(p, 1e9):
                 chosen = p
                 break
