@@ -175,6 +175,21 @@ bookmark/voice cue. Everything else is created or confirmed from video.
 **STATUS 2026-06-11: 3.1–3.4 SHIPPED (code). 3.0 voice memo still owed by
 coach; 3.5/3.6 gated on that audio.**
 
+**CAPTURE PROTOCOL (decided 2026-06-11, supersedes the line above):** solo
+coach on ALL games — other coaches run the team and do not log. One mode:
+**continuous TV-style narration (AirPods Pro 2) + thumbs do STRUCTURE ONLY**:
+subs, GK swaps, goals/opp-goals, tactical-board refresh 1-2× per period
+(POSITION events are identity's main prior — protect that habit). All
+granular events (KEY_PASS, TURNOVER, BALL_WIN, duels, GATES, GIVE_GO, shots
+when busy) come from voice extraction → confirm queue. Rationale: narration
+is near-real-time (better timestamps than late taps, which is why the vote
+window looks back 25 s) and high-recall; structure can't be reconstructed
+from speech. ⇒ **3.6 hard requirement: MERGE, don't duplicate** — a voice
+draft matching an existing live event (same type, ±30 s) attaches to it and
+enriches its tags. Post-game narration = optional deep-dive channel only
+(gated on the labeled review reel for far-side ID), never a weekly
+obligation.
+
 - ⏳ **3.0 START NOW, ZERO CODE:** record a phone voice memo for the full next
   game, noting the kickoff moment. Narrate naturally. This is the test audio
   (wind, crowd, mid-coaching speech) that the whole voice idea lives or dies
