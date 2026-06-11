@@ -50,12 +50,19 @@ service cloud.firestore {
     }
 
     // --- viewerLog: public can append/update their own session row ---
-    // The PWA writes anonymous viewer presence here for the live page.
-    // Keep it open (writes only, no sensitive data).
+    // The PWA writes usage pings here (app opens, section visits, video
+    // watches with endTs). Keep it open (writes only, no sensitive data).
     match /viewerLog/{doc} {
       allow read: if isCoach();
       allow create, update: if true;
       allow delete: if isCoach();
+    }
+
+    // --- viewerTags: owner-assigned audience buckets ------------------
+    // { email, buckets: ['coach'|'parent'|'player'|'unknown'] } written
+    // from the owner-only VIEWERS page; coach-gated like analytics.
+    match /viewerTags/{doc} {
+      allow read, write: if isCoach();
     }
 
     // --- teams/main ---------------------------------------------------
