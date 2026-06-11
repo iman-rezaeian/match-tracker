@@ -38,22 +38,27 @@ const EVENT_TYPES = {
   // Carries { playerId, x, y } where x,y ∈ [0,1] over a half-field portrait
   // (own goal bottom, halfway line top). Filtered out of RECENT and stats.
   POSITION:  { id: 'POSITION',  label: 'POSITION',  emoji: '📍', tone: 'neutral',    requiresPlayer: true,  silent: true },
+  // BOOKMARK is the live "something just happened" reflex tap: timestamp only,
+  // no player, classified later from video in the Film Room confirm queue
+  // (confirm replaces it with a real event stamped source:'bookmark-confirmed').
+  // silent ⇒ never feeds scoring/involvement; it IS shown in RECENT/TIMELINE.
+  BOOKMARK:  { id: 'BOOKMARK',  label: 'BOOKMARK',  emoji: '🔖', tone: 'yellow',     requiresPlayer: false, silent: true },
 };
 
-// Events that get an optional zone tag (where on the field it happened).
-// Skip continuous/ambient events (HOLDS_BALL) and events with implicit location (ASSIST, OPP_GOAL).
+// Events that get an optional zone tag — trimmed (Phase 3.4) to the events
+// where LOCATION is the insight: shots feed the shot map, turnovers show where
+// we lose the ball, ball wins show pressing height. Everything else was tag
+// noise the coach never filled in.
 const EVENT_NEEDS_ZONE = new Set([
-  'GOAL', 'SHOT_ON', 'SHOT_OFF', 'BALL_WIN', 'TURNOVER',
-  'DUEL_WIN', 'DUEL_LOSE', 'KEY_PASS', 'GIVE_GO', 'GATES',
-  'SAVE', 'BLOCK', 'CLEAR', 'KICK_OUT',
-  'FOUL_BY', 'FOUL_ON', 'PEN_AWARDED', 'PEN_CONCEDED',
+  'GOAL', 'SHOT_ON', 'SHOT_OFF', 'TURNOVER', 'BALL_WIN',
 ]);
 
-// Events that get an optional pressure modifier (was the player under pressure when they did this?).
-// Limited to decision-bearing events where pressure changes the meaning a lot.
+// Events that get an optional pressure modifier — trimmed (Phase 3.4) to the
+// decision-bearing events only (same set as EVENT_NEEDS_DECISION): pressure
+// changes what a choice means, not what an outcome is worth.
 const EVENT_NEEDS_PRESSURE = new Set([
-  'KEY_PASS', 'GIVE_GO', 'GATES', 'BALL_WIN',
-  'SHOT_ON', 'SHOT_OFF', 'DUEL_WIN', 'CLEAR', 'KICK_OUT',
+  'KEY_PASS', 'GIVE_GO', 'GATES',
+  'SHOT_ON', 'SHOT_OFF', 'TURNOVER',
 ]);
 
 // Events that get an optional decision-quality flag (was this the right choice?).
@@ -965,13 +970,16 @@ export default function App() {
 
   // Post-game tagging: patch zone/pressure/decision on an existing event.
   // Pass null/undefined for a field to remove that tag.
+  // tagsConfirmed/tagDismissed are confirm-queue bookkeeping flags: confirmed
+  // = coach reviewed the tags (even if left empty), dismissed = coach said
+  // "don't ask about this event again". Both drain the queue permanently.
   const updateEvent = (gameId, eventId, patch) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
     const events = game.events.map(e => {
       if (e.id !== eventId) return e;
       const next = { ...e };
-      for (const k of ['zone', 'pressure', 'decision']) {
+      for (const k of ['zone', 'pressure', 'decision', 'tagsConfirmed', 'tagDismissed']) {
         if (k in patch) {
           if (patch[k] == null) delete next[k];
           else next[k] = patch[k];
@@ -980,6 +988,39 @@ export default function App() {
       return next;
     });
     persistGames(games.map(g => g.id === gameId ? { ...g, events } : g));
+  };
+
+  // Confirm-queue: turn a live BOOKMARK (timestamp-only reflex tap) into a
+  // real event. Replaces the bookmark in place, keeping its clock position
+  // (period/elapsed/at) so the video index still lines up, and stamps the
+  // provenance the bookmark channel earns. Score deltas mirror logEvent.
+  const confirmBookmark = (gameId, bookmarkId, { type, playerId = null, extras = {} }) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const bm = game.events.find(e => e.id === bookmarkId && e.type === 'BOOKMARK');
+    const ev = EVENT_TYPES[type];
+    if (!bm || !ev) return;
+    const confirmed = {
+      // Keep the bookmark's id: the pipeline's broadcastEvents index is keyed
+      // by event id, so the confirmed event stays cueable in the reel without
+      // waiting for a pipeline re-run.
+      id: bm.id,
+      type,
+      playerId: playerId || null,
+      period: bm.period,
+      elapsed: bm.elapsed,
+      at: bm.at,
+      source: 'bookmark-confirmed',
+      ...extras,
+    };
+    const updated = {
+      ...game,
+      events: game.events.map(e => e.id === bookmarkId ? confirmed : e),
+      ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
+      oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
+    };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+    showToast(`${ev.emoji} ${ev.label} confirmed from 🔖`);
   };
 
   const endGame = (gameId) => {
@@ -1754,7 +1795,14 @@ export default function App() {
       )}
 
       {view === 'filmRoom' && (
-        <FilmRoomView games={games} roster={roster} onBack={() => setView('home')} />
+        <FilmRoomView
+          games={games}
+          roster={roster}
+          onBack={() => setView('home')}
+          onUpdateEvent={updateEvent}
+          onDeleteEvent={deleteEvent}
+          onConfirmBookmark={confirmBookmark}
+        />
       )}
 
       {view === 'training' && (
@@ -3957,6 +4005,19 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               <span>MINS</span>
             </button>
           )}
+          {/* Reflex bookmark — one tap stamps the clock; classify it later
+              from video in the Film Room confirm queue. Insurance channel
+              for moments the coach can't break down live. */}
+          {!inHalfTimeBreak && (
+            <button
+              onClick={() => onSelectEvent('BOOKMARK')}
+              className="shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 bg-amber-500/15 text-amber-300 border-amber-600/60 active:scale-95 transition flex items-center gap-1"
+              title="Bookmark this moment — classify it later from video"
+            >
+              <span>🔖</span>
+              <span>MARK</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -4572,148 +4633,6 @@ function PlayerPicker({ event, players, gameGKId, secondsByPlayer, skippable, on
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function ZonePicker({ event, onPick, onSkip, onCancel }) {
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between mb-4 shrink-0">
-        <div>
-          <div className="text-xs text-stone-400 font-bold tracking-widest">WHERE?</div>
-          <div className="font-display text-3xl flex items-center gap-2">
-            <span>{event.emoji}</span>
-            <span>{event.label}</span>
-          </div>
-        </div>
-        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      <div className="mb-2 text-[11px] text-stone-400 tracking-wider font-bold flex items-center justify-between">
-        <span>⬆ OUR ATTACK</span>
-        <span className="text-stone-500">(tap a third)</span>
-      </div>
-
-      <div className="grid grid-cols-3 grid-rows-3 gap-2 mb-3 aspect-[3/4]" style={{ direction: 'ltr' }}>
-        {/* Render top row first = attacking third (row 2 in ZONES) so the field reads goal-up. */}
-        {['A', 'M', 'D'].flatMap(band =>
-          ['L', 'C', 'R'].map(side => {
-            const id = `${band}-${side}`;
-            const tone = band === 'A'
-              ? 'bg-lime-900/40 border-lime-700 text-lime-200 hover:border-lime-500'
-              : band === 'M'
-              ? 'bg-stone-800 border-stone-700 text-stone-200 hover:border-stone-500'
-              : 'bg-red-950/40 border-red-900 text-red-200 hover:border-red-700';
-            return (
-              <button
-                key={id}
-                onClick={() => onPick(id)}
-                className={`rounded-xl border-2 ${tone} active:scale-[0.97] transition flex flex-col items-center justify-center font-display`}
-              >
-                <div className="text-2xl">{band === 'A' ? '🥅' : band === 'M' ? '•' : '🛡️'}</div>
-                <div className="text-[11px] tracking-widest font-bold">{ZONE_LABEL[id]}</div>
-              </button>
-            );
-          })
-        )}
-      </div>
-
-      <button
-        onClick={onSkip}
-        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
-      >
-        SKIP ZONE
-      </button>
-    </div>
-  );
-}
-
-function PressurePicker({ event, onPick, onSkip, onCancel }) {
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between mb-4 shrink-0">
-        <div>
-          <div className="text-xs text-stone-400 font-bold tracking-widest">PRESSURE?</div>
-          <div className="font-display text-3xl flex items-center gap-2">
-            <span>{event.emoji}</span>
-            <span>{event.label}</span>
-          </div>
-        </div>
-        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      <button
-        onClick={() => onPick('open')}
-        className="mb-2 w-full bg-lime-900/40 text-lime-200 border-2 border-lime-700 font-display text-2xl py-6 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
-      >
-        <span className="text-3xl">🆓</span>
-        <span>OPEN</span>
-      </button>
-      <button
-        onClick={() => onPick('pressure')}
-        className="mb-3 w-full bg-orange-900/40 text-orange-200 border-2 border-orange-700 font-display text-2xl py-6 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
-      >
-        <span className="text-3xl">⚡</span>
-        <span>UNDER PRESSURE</span>
-      </button>
-      <button
-        onClick={onSkip}
-        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
-      >
-        SKIP
-      </button>
-    </div>
-  );
-}
-
-function DecisionPicker({ event, onPick, onSkip, onCancel }) {
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between mb-4 shrink-0">
-        <div>
-          <div className="text-xs text-stone-400 font-bold tracking-widest">RIGHT CHOICE?</div>
-          <div className="font-display text-3xl flex items-center gap-2">
-            <span>{event.emoji}</span>
-            <span>{event.label}</span>
-          </div>
-        </div>
-        <button onClick={onCancel} className="w-11 h-11 rounded-full bg-stone-800 flex items-center justify-center active:scale-95">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      <button
-        onClick={() => onPick('good')}
-        className="mb-2 w-full bg-lime-900/40 text-lime-200 border-2 border-lime-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
-      >
-        <span className="text-3xl">🎯</span>
-        <span>GOOD CALL</span>
-      </button>
-      <button
-        onClick={() => onPick('forced')}
-        className="mb-2 w-full bg-amber-900/40 text-amber-200 border-2 border-amber-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
-      >
-        <span className="text-3xl">🤔</span>
-        <span>FORCED / 50–50</span>
-      </button>
-      <button
-        onClick={() => onPick('bad')}
-        className="mb-3 w-full bg-red-900/40 text-red-200 border-2 border-red-700 font-display text-2xl py-5 rounded-2xl active:scale-[0.98] transition flex items-center justify-center gap-3"
-      >
-        <span className="text-3xl">❌</span>
-        <span>POOR CHOICE</span>
-      </button>
-      <button
-        onClick={onSkip}
-        className="w-full bg-stone-900 text-stone-300 border border-stone-700 font-display text-sm py-3 rounded-xl active:scale-[0.98] transition"
-      >
-        SKIP
-      </button>
     </div>
   );
 }
@@ -6595,15 +6514,366 @@ function TrainingVideosView({ onBack }) {
   return <TrainingHub onBack={onBack} />;
 }
 
-function FilmRoomView({ games, roster, onBack }) {
+/* ---------- CONFIRM QUEUE (Phase 3.1) ----------
+ * Shared post-game landing zone for everything that still needs a coach
+ * decision: live BOOKMARKs (classify into a real event) and taggable events
+ * missing zone / pressure / decision. Voice drafts (Phase 3.6) will land here
+ * too once the voice pipeline exists. Each card cues the TV reel at the event
+ * (via the pipeline's broadcastEvents index) and pre-selects the pipeline's
+ * suggestedZone / suggestedPressure, so confirming is usually one tap.
+ */
+
+// Everything in one finished game that still needs a coach decision, in match
+// order. tagsConfirmed/tagDismissed (set by the queue) drain it permanently.
+function confirmQueueItemsForGame(game) {
+  const items = [];
+  for (const e of game.events || []) {
+    if (e.type === 'BOOKMARK') { items.push({ game, event: e, kind: 'bookmark' }); continue; }
+    const def = EVENT_TYPES[e.type];
+    if (!def || def.silent) continue;
+    if (e.tagsConfirmed || e.tagDismissed) continue;
+    const needZone = EVENT_NEEDS_ZONE.has(e.type) && !e.zone;
+    const needPressure = EVENT_NEEDS_PRESSURE.has(e.type) && !e.pressure;
+    const needDecision = EVENT_NEEDS_DECISION.has(e.type) && !e.decision;
+    if (needZone || needPressure || needDecision) items.push({ game, event: e, kind: 'tags' });
+  }
+  items.sort((a, b) => (a.event.period - b.event.period)
+    || (a.event.elapsed - b.event.elapsed)
+    || ((a.event.at || 0) - (b.event.at || 0)));
+  return items;
+}
+
+// The pipeline's broadcastEvents entry for an event — by id first (bookmark-
+// confirmed events keep the bookmark's id), then by clock as a fallback.
+function broadcastEntryFor(game, event) {
+  const idx = game.broadcastEvents || [];
+  return idx.find(b => b.id === event.id)
+    || idx.find(b => b.period === event.period
+        && b.elapsed != null && Math.abs(b.elapsed - event.elapsed) <= 2)
+    || null;
+}
+
+// 3×3 zone selector (same field-reads-goal-up convention as TagSheet).
+function ZoneGridMini({ value, onChange }) {
+  return (
+    <div className="grid grid-cols-3 grid-rows-3 gap-1.5">
+      {['A', 'M', 'D'].flatMap(band =>
+        ['L', 'C', 'R'].map(side => {
+          const id = `${band}-${side}`;
+          const isSel = value === id;
+          const baseTone = band === 'A'
+            ? 'bg-lime-900/40 border-lime-800 text-lime-200'
+            : band === 'M'
+            ? 'bg-stone-800 border-stone-700 text-stone-200'
+            : 'bg-red-950/40 border-red-900 text-red-200';
+          return (
+            <button
+              key={id}
+              onClick={() => onChange(isSel ? null : id)}
+              className={`rounded-lg border-2 ${baseTone}${isSel ? ' ring-2 ring-amber-400 ring-offset-2 ring-offset-stone-950' : ''} active:scale-[0.97] transition flex items-center justify-center py-2`}
+            >
+              <span className="text-[10px] tracking-widest font-bold">{ZONE_LABEL[id]}</span>
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+// Event types a bookmark can become. OPP_GOAL is excluded on purpose — its
+// fault/own-goal sub-flow only exists live; a missed opponent goal is an
+// edit-the-score situation, not a queue classification.
+const BOOKMARK_CLASSIFY_TYPES = [
+  'GOAL', 'ASSIST', 'SHOT_ON', 'SHOT_OFF', 'KEY_PASS', 'GIVE_GO', 'GATES',
+  'BALL_WIN', 'DUEL_WIN', 'SAVE', 'BLOCK', 'CLEAR', 'KICK_OUT',
+  'FOUL_ON', 'PEN_AWARDED',
+  'TURNOVER', 'HOLDS_BALL', 'DUEL_LOSE', 'FOUL_BY', 'PEN_CONCEDED',
+];
+
+function ConfirmQueueCard({ item, roster, onConfirm, onDismiss, onSkip, onCue }) {
+  const { game, event, kind } = item;
+  const def = EVENT_TYPES[event.type] || { emoji: '•', label: event.type };
+  const player = roster.find(p => p.id === event.playerId);
+  const entry = broadcastEntryFor(game, event);
+  const canCue = !!(game.videoFullGameUrl && entry && entry.tvReelTimeS != null);
+
+  // Bookmark classification state.
+  const [type, setType] = useState(null);
+  const [pickPlayerId, setPickPlayerId] = useState(null);
+
+  // Tag state — pipeline suggestions pre-selected where the coach hasn't
+  // tagged yet (the whole point of 3.3: confirm beats create).
+  const needZone = EVENT_NEEDS_ZONE.has(event.type);
+  const needPressure = EVENT_NEEDS_PRESSURE.has(event.type);
+  const needDecision = EVENT_NEEDS_DECISION.has(event.type);
+  const suggestedZone = (!event.zone && entry?.suggestedZone) || null;
+  const suggestedPressure = (!event.pressure && entry?.suggestedPressure) || null;
+  const [zone, setZone] = useState(event.zone || suggestedZone);
+  const [pressure, setPressure] = useState(event.pressure || suggestedPressure);
+  const [decision, setDecision] = useState(event.decision || null);
+
+  const squadSet = game.squad && game.squad.length > 0 ? new Set(game.squad) : null;
+  const squad = (squadSet ? roster.filter(p => squadSet.has(p.id)) : roster)
+    .sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+
+  const confirmDisabled = kind === 'bookmark' && !type;
+  const handleConfirm = () => {
+    if (kind === 'bookmark') onConfirm({ type, playerId: pickPlayerId });
+    else onConfirm({
+      ...(needZone ? { zone: zone || null } : {}),
+      ...(needPressure ? { pressure: pressure || null } : {}),
+      ...(needDecision ? { decision: decision || null } : {}),
+      tagsConfirmed: true,
+    });
+  };
+
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+      {/* Header: which game, which moment */}
+      <div className="px-4 py-3 border-b border-stone-800 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] text-stone-500 tracking-wider truncate">
+            vs {game.opponent} · {formatDate(game.date)}
+          </div>
+          <div className="font-display text-lg leading-tight flex items-center gap-2">
+            <span>{def.emoji}</span>
+            <span className="truncate">{def.label}</span>
+          </div>
+          <div className="text-[11px] text-stone-400 tracking-wider truncate">
+            {player ? `${player.name} #${player.number}` : kind === 'bookmark' ? 'Tap-and-run bookmark' : 'No player'}
+            {' · '}{formatClock(event.elapsed)} P{event.period}
+          </div>
+        </div>
+        <span className={`shrink-0 text-[10px] font-extrabold tracking-wider px-2 py-1 rounded-full border ${kind === 'bookmark' ? 'bg-amber-500/15 text-amber-300 border-amber-700' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>
+          {kind === 'bookmark' ? '🔖 CLASSIFY' : '🏷 TAG'}
+        </span>
+      </div>
+
+      {/* Cue the moment in the TV reel */}
+      <div className="px-4 pt-3">
+        <button
+          onClick={canCue ? () => onCue(game, entry, def) : undefined}
+          disabled={!canCue}
+          className={`w-full flex items-center justify-center gap-2 font-display rounded-xl px-4 py-3 border-2 active:scale-[0.98] transition ${canCue ? 'bg-stone-800 border-stone-600 text-white' : 'bg-stone-900 border-stone-800 text-stone-600 cursor-not-allowed'}`}
+        >
+          <span>▶</span>
+          <span>{canCue ? 'CUE VIDEO AT THIS MOMENT' : 'NO REEL FOR THIS MOMENT'}</span>
+        </button>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {kind === 'bookmark' ? (
+          <>
+            <div>
+              <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2">WHAT HAPPENED?</div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {BOOKMARK_CLASSIFY_TYPES.map(id => {
+                  const ev = EVENT_TYPES[id];
+                  const isSel = type === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setType(isSel ? null : id)}
+                      className={`${TONE_CLASSES[ev.tone]} border-2 rounded-xl py-2 flex flex-col items-center justify-center gap-0.5 active:scale-[0.97] transition ${isSel ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-stone-950' : ''}`}
+                    >
+                      <span className="text-lg leading-none">{ev.emoji}</span>
+                      <span className="font-sans-pro font-extrabold tracking-tight text-[9px] leading-none text-center">{ev.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2">WHO? <span className="text-stone-600">(optional)</span></div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {squad.map(p => {
+                  const isSel = pickPlayerId === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setPickPlayerId(isSel ? null : p.id)}
+                      className={`rounded-xl border-2 py-1.5 px-1 text-center active:scale-[0.97] transition ${isSel ? 'bg-lime-900/60 border-lime-500 text-lime-100' : 'bg-stone-950 border-stone-800 text-stone-300'}`}
+                    >
+                      <div className="font-display text-sm leading-none">#{p.number}</div>
+                      <div className="text-[9px] truncate">{p.name.split(' ')[0]}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {needZone && (
+              <div>
+                <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2 flex items-center justify-between">
+                  <span>📍 ZONE</span>
+                  {suggestedZone && zone === suggestedZone && (
+                    <span className="text-[9px] text-sky-400 tracking-wider font-bold">✦ SUGGESTED FROM TRACKING</span>
+                  )}
+                </div>
+                <ZoneGridMini value={zone} onChange={setZone} />
+              </div>
+            )}
+            {needPressure && (
+              <div>
+                <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2 flex items-center justify-between">
+                  <span>⚡ PRESSURE</span>
+                  {suggestedPressure && pressure === suggestedPressure && (
+                    <span className="text-[9px] text-sky-400 tracking-wider font-bold">✦ SUGGESTED FROM TRACKING</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setPressure(pressure === 'open' ? null : 'open')}
+                    className={`rounded-xl border-2 py-3 font-display text-base active:scale-[0.97] transition ${pressure === 'open' ? 'bg-lime-900/60 border-lime-500 text-lime-100' : 'bg-stone-950 border-stone-800 text-stone-300'}`}
+                  >🆓 OPEN</button>
+                  <button
+                    onClick={() => setPressure(pressure === 'pressure' ? null : 'pressure')}
+                    className={`rounded-xl border-2 py-3 font-display text-base active:scale-[0.97] transition ${pressure === 'pressure' ? 'bg-orange-900/60 border-orange-500 text-orange-100' : 'bg-stone-950 border-stone-800 text-stone-300'}`}
+                  >⚡ PRESSURE</button>
+                </div>
+              </div>
+            )}
+            {needDecision && (
+              <div>
+                <div className="text-[11px] tracking-widest font-bold text-stone-400 mb-2">🎯 DECISION</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[['good', '🎯 GOOD', 'bg-lime-900/60 border-lime-500 text-lime-100'],
+                    ['forced', '🤔 FORCED', 'bg-amber-900/60 border-amber-500 text-amber-100'],
+                    ['bad', '❌ POOR', 'bg-red-900/60 border-red-500 text-red-100']].map(([id, lbl, sel]) => (
+                    <button
+                      key={id}
+                      onClick={() => setDecision(decision === id ? null : id)}
+                      className={`rounded-xl border-2 py-3 font-display text-sm active:scale-[0.97] transition ${decision === id ? sel : 'bg-stone-950 border-stone-800 text-stone-300'}`}
+                    >{lbl}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="p-4 border-t border-stone-800 flex gap-2">
+        <button
+          onClick={onDismiss}
+          className="px-4 py-3 rounded-xl bg-red-950/40 text-red-300 border border-red-900 font-display text-sm active:scale-[0.97] transition"
+          title={kind === 'bookmark' ? 'Delete this bookmark' : "Don't ask about this event again"}
+        >🗑</button>
+        <button
+          onClick={onSkip}
+          className="flex-1 py-3 rounded-xl bg-stone-950 text-stone-300 border border-stone-700 font-display text-sm active:scale-[0.97] transition"
+        >SKIP FOR NOW</button>
+        <button
+          onClick={handleConfirm}
+          disabled={confirmDisabled}
+          className={`flex-1 py-3 rounded-xl font-display text-sm active:scale-[0.97] transition ${confirmDisabled ? 'bg-stone-800 text-stone-500 cursor-not-allowed' : 'bg-lime-500 text-stone-950'}`}
+        >✓ CONFIRM</button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent, onConfirmBookmark }) {
+  // Session-local skips: "ask me again next time", unlike dismiss (persisted).
+  const [skippedIds, setSkippedIds] = useState(() => new Set());
+  const [cue, setCue] = useState(null); // { game, entry, def }
+
+  // Modal history so swipe-back closes the queue, mirroring the other modals.
+  useEffect(() => {
+    window.history.pushState({ modal: 'confirmQueue' }, '');
+    const onPop = () => onClose();
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (window.history.state && window.history.state.modal === 'confirmQueue') {
+        window.history.back();
+      }
+    };
+  }, [onClose]);
+
+  const remaining = items.filter(i => !skippedIds.has(i.event.id));
+  const current = remaining[0] || null;
+
+  return (
+    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto pb-10">
+      <div
+        className="stripes-bg text-white px-4 pb-3 flex items-center justify-between sticky top-0 z-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+      >
+        <button onClick={onClose} aria-label="Close" className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center active:scale-95">
+          <X className="w-5 h-5" />
+        </button>
+        <h2 className="font-display text-lg">✅ CONFIRM QUEUE</h2>
+        <div className="w-9 text-right font-display text-sm tabular-nums text-white/80">{remaining.length}</div>
+      </div>
+
+      <div className="px-4 pt-4 max-w-2xl mx-auto">
+        {current ? (
+          <ConfirmQueueCard
+            key={current.event.id + ':' + current.kind}
+            item={current}
+            roster={roster}
+            onCue={(game, entry, def) => setCue({ game, entry, def })}
+            onSkip={() => setSkippedIds(prev => new Set([...prev, current.event.id]))}
+            onDismiss={() => {
+              if (current.kind === 'bookmark') onDeleteEvent(current.game.id, current.event.id);
+              else onUpdateEvent(current.game.id, current.event.id, { tagDismissed: true });
+            }}
+            onConfirm={(sel) => {
+              if (current.kind === 'bookmark') onConfirmBookmark(current.game.id, current.event.id, sel);
+              else onUpdateEvent(current.game.id, current.event.id, sel);
+            }}
+          />
+        ) : (
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-8 text-center">
+            <div className="text-3xl mb-2">🎉</div>
+            <div className="font-display text-xl mb-1">QUEUE CLEAR</div>
+            <div className="text-sm text-stone-400">
+              {skippedIds.size > 0
+                ? `${skippedIds.size} skipped — they'll be back next visit.`
+                : 'Every bookmark and tag is handled.'}
+            </div>
+            <button onClick={onClose} className="mt-4 px-6 py-2.5 rounded-xl bg-lime-500 text-stone-950 font-display active:scale-[0.97]">DONE</button>
+          </div>
+        )}
+      </div>
+
+      {cue && (
+        <BroadcastVideoPlayer
+          url={cue.game.videoFullGameUrl}
+          doc={{
+            broadcast_events: cue.game.broadcastEvents || [],
+            halfLengthMin: cue.game.halfLengthMin,
+            home_name: cue.game.broadcastHomeName || 'Stompers',
+            away_name: cue.game.broadcastAwayName || (cue.game.opponent || 'OPP'),
+            home_color: cue.game.broadcastHomeColor || cue.game.homeColor,
+            away_color: cue.game.broadcastAwayColor || cue.game.awayColor,
+          }}
+          label={`CUE — ${cue.def.label}`}
+          timeKey="tvReelTimeS"
+          startAtS={Math.max(0, (cue.entry.tvReelTimeS || 0) - 6)}
+          onClose={() => setCue(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onConfirmBookmark }) {
   const [openGameId, setOpenGameId] = useState(null);
   const [showSeason, setShowSeason] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   const finished = useMemo(() => (
     (games || [])
       .filter(g => g.status === 'finished')
       .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0))
   ), [games]);
   const openGame = finished.find(g => g.id === openGameId) || null;
+  // Newest game first, match order within a game (finished is newest-first).
+  const queueItems = useMemo(() => finished.flatMap(confirmQueueItemsForGame), [finished]);
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
@@ -6622,6 +6892,26 @@ function FilmRoomView({ games, roster, onBack }) {
         <div className="text-xs text-stone-500 uppercase tracking-wider">
           {finished.length} finished game{finished.length === 1 ? '' : 's'}
         </div>
+
+        {/* CONFIRM QUEUE — bookmarks + untagged events across all games */}
+        <button
+          onClick={() => setQueueOpen(true)}
+          disabled={queueItems.length === 0}
+          className={`w-full bg-stone-900 border rounded-2xl p-4 flex items-center gap-3 transition ${queueItems.length === 0 ? 'border-stone-800 opacity-60 cursor-not-allowed' : 'border-amber-600/50 hover:border-amber-400/70 active:scale-[0.99]'}`}
+        >
+          <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-300 flex items-center justify-center text-xl">✅</div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-base">CONFIRM QUEUE</div>
+            <div className="text-xs text-stone-400">
+              {queueItems.length === 0
+                ? 'Nothing to review — bookmarks and untagged events land here'
+                : `${queueItems.length} to review · bookmarks + missing tags`}
+            </div>
+          </div>
+          {queueItems.length > 0 && (
+            <span className="shrink-0 inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded-full bg-amber-500 text-stone-950 font-display text-base">{queueItems.length}</span>
+          )}
+        </button>
 
         {/* SEASON AGGREGATE — opens season-wide rollup */}
         <button
@@ -6648,6 +6938,7 @@ function FilmRoomView({ games, roster, onBack }) {
               const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
                                : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
                                                 : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+              const pendingCount = queueItems.filter(i => i.game.id === g.id).length;
               return (
                 <button
                   key={g.id}
@@ -6660,6 +6951,11 @@ function FilmRoomView({ games, roster, onBack }) {
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
                       {g.tournament && <TournamentChip value={g.tournament} />}
                       <span>{formatDate(g.date)}</span>
+                      {pendingCount > 0 && (
+                        <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-700">
+                          ✅ {pendingCount} to review
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
@@ -6687,6 +6983,17 @@ function FilmRoomView({ games, roster, onBack }) {
           games={finished}
           roster={roster}
           onClose={() => setShowSeason(false)}
+        />
+      )}
+
+      {queueOpen && (
+        <ConfirmQueueView
+          items={queueItems}
+          roster={roster}
+          onClose={() => setQueueOpen(false)}
+          onUpdateEvent={onUpdateEvent}
+          onDeleteEvent={onDeleteEvent}
+          onConfirmBookmark={onConfirmBookmark}
         />
       )}
     </div>
@@ -7042,7 +7349,7 @@ function readableTextOn(hex) {
   return lum > 0.5 ? '#0a0a0a' : '#ffffff';
 }
 
-function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
+function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = null }) {
   const videoRef = useRef(null);
   const [now, setNow] = useState(0);
   // Fit (letterbox, whole frame) vs Fill (crop to fill the screen). The reel is
@@ -7060,6 +7367,20 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey }) {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [url]);
+
+  // Cue mode (confirm queue): open the reel already seeked to the event.
+  // Seek as soon as metadata is in; harmless no-op when startAtS is null.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || startAtS == null) return undefined;
+    const seek = () => { try { v.currentTime = Math.max(0, startAtS); } catch (e) {} };
+    if (v.readyState >= 1) seek();
+    else {
+      v.addEventListener('loadedmetadata', seek, { once: true });
+      return () => v.removeEventListener('loadedmetadata', seek);
+    }
+    return undefined;
+  }, [url, startAtS]);
 
   // Push history entry so swipe-back closes the modal.
   useEffect(() => {
@@ -10652,6 +10973,7 @@ function HelpView({ onBack }) {
           <Step n={4}>For <Pill tone="lime">🔄 GIVE &amp; GO</Pill> you're asked for the <strong>wall-pass partner</strong> — the teammate who returned the ball. Initiator gets full credit, partner gets half. Tap <em>SKIP</em> if you didn't catch who.</Step>
           <Step n={5}>For <Pill tone="red">OPP GOAL</Pill> you'll be asked whose fault it was: <em>GK</em>, <em>UNSTOPPABLE</em>, or <em>NEUTRAL</em>. Affects the keeper's score.</Step>
           <p className="text-xs text-stone-400">Tapped the wrong thing? Use <Pill>↶ UNDO</Pill> in the RECENT panel to remove the last event.</p>
+          <p>Saw something but can't break it down right now? Tap <Pill tone="amber">🔖 MARK</Pill> — one tap stamps the moment with no player or type. After the game, the <strong>Film Room → Confirm Queue</strong> cues the video at each bookmark so you can classify it calmly.</p>
         </Section>
 
         <Section id="subs" emoji="🔄" title="4 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
@@ -10694,6 +11016,7 @@ function HelpView({ onBack }) {
           <p><strong>PAST GAMES</strong> list on Home shows every finished match with the result. Tap any game to see the timeline of every event, per-player scores, and minutes.</p>
           <p>Tap <Pill>STATS</Pill> for season-aggregate per-player numbers — total minutes, goals, season performance score, etc.</p>
           <p>To delete a game tap into it and use the trash button (top-right) — that wipes the videos from R2, the analytics from Firestore, and removes the game from the public list. To delete <em>just</em> the videos (and keep the stats so you can re-run the pipeline later), open <strong>Analytics</strong> and tap "🗑 DELETE VIDEOS ONLY". To remove a single mis-logged event, tap the trash next to it in the event list.</p>
+          <p><strong>FILM ROOM → ✅ CONFIRM QUEUE</strong> gathers everything that still needs a decision after the final whistle: 🔖 bookmarks to classify, plus shots/turnovers/ball-wins missing a zone and decision events missing pressure. Each card can cue the TV reel at that exact moment, and the tracking pipeline pre-fills its best guess for zone and pressure — confirm or correct, one tap each.</p>
         </Section>
 
         <Section id="tips" emoji="💡" title="9 · Tips for coaches" summary="Get the most out of the app">
