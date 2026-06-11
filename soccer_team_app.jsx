@@ -361,7 +361,13 @@ function gkExtrasForGame(playerId, game) {
     }
   }
   const secondsAsGK = gkTimeline.reduce((sum, seg) => sum + Math.max(0, (seg.to - seg.from) / 1000), 0);
-  const cleanSheets = (conceded === 0 && secondsAsGK >= 60 && game.status === 'finished') ? 1 : 0;
+  // v2: clean-sheet credit is PRO-RATED by the share of the game spent in
+  // goal. The old 60s floor handed a 5-minute relief keeper the full bonus —
+  // in a 5-keeper rotation, four partial keepers each banked a whole clean
+  // sheet. Fractions also sum sensibly across the season.
+  const gameSeconds = Math.max(1, (endTs - startTs) / 1000);
+  const cleanSheets = (conceded === 0 && game.status === 'finished')
+    ? Math.min(1, secondsAsGK / gameSeconds) : 0;
   return { oppGoalsConceded: conceded, concededPenalty, cleanSheets, secondsAsGK };
 }
 
@@ -401,7 +407,14 @@ const DEFAULT_WEIGHTS = {
     outfield: { atk: 30, def: 25, dec: 30, inv: 15 },
     gk:       { atk: 10, def: 55, dec: 25, inv: 10 },
   },
+  // v2 fairness knobs: empirical-Bayes shrinkage prior (virtual minutes of
+  // squad-average production added to every player's rate) and per-game-type
+  // weights on the season aggregate (scrimmages count half by default).
+  shrinkMinutes: 12,
+  gameTypes: { scrimmage: 0.5, festival: 0.75, default: 1.0 },
 };
+
+const SCORING_VERSION = 2; // bumped 2026-06: shrinkage, INV cleanup, pro-rated clean sheet, game-type weights, season own-goal fix
 
 function mergeWeights(w) {
   return {
@@ -411,20 +424,26 @@ function mergeWeights(w) {
       outfield: { ...DEFAULT_WEIGHTS.pillars.outfield, ...(w?.pillars?.outfield || {}) },
       gk:       { ...DEFAULT_WEIGHTS.pillars.gk,       ...(w?.pillars?.gk       || {}) },
     },
+    shrinkMinutes: (w?.shrinkMinutes != null && !Number.isNaN(Number(w.shrinkMinutes)))
+      ? Number(w.shrinkMinutes) : DEFAULT_WEIGHTS.shrinkMinutes,
+    gameTypes: { ...DEFAULT_WEIGHTS.gameTypes, ...(w?.gameTypes || {}) },
   };
 }
 
-function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gkExtras = {}, weights) {
-  if (minutesPlayed <= 0) return { overall: 0, attacking: 0, defending: 0, decisions: 0, involvement: 0 };
-  const W = mergeWeights(weights);
-  // gkFraction ∈ [0,1] = share of minutes this player spent in goal. Point values
-  // AND pillar weights are blended outfield↔GK by it, so a part-time keeper is
-  // scored by their actual role mix (not 100% keeper for a brief stint).
-  const f = Math.max(0, Math.min(1, Number(gkFraction) || 0));
-  const perHalf = minutesPlayed / 20;
+// Mistake events that already cost points in DEF/DEC. They no longer count
+// toward Involvement (v2): at 15% INV weight they refunded ~12% of every
+// penalty as "activity". Own goals are likewise excluded from INV.
+const INV_EXCLUDED = new Set(['TURNOVER', 'DUEL_LOSE', 'FOUL_BY']);
+
+// Raw pillar POINTS (not rates) for one player over an event list, with
+// outfield↔GK point values blended by f. Shared by the per-game score, the
+// season aggregate (which weights per-game points by game type), and the
+// squad-average prior used for shrinkage.
+function pillarPoints(playerId, events, f, gkExtras, W) {
   const c = {};
   let partnerCount = 0; // give & go wall-pass credits earned by this player
-  let ownGoals = 0;     // own goals attributed to this player via OPP_GOAL.ownGoalById
+  let ownGoals = 0;     // own goals attributed via OPP_GOAL.ownGoalById
+  let invCount = 0;     // involvement = positive/neutral actions only (v2)
   for (const e of events) {
     // Only real play events feed the score. Skip anything that isn't a known,
     // non-silent EVENT_TYPE — this excludes bookkeeping events that aren't in
@@ -434,18 +453,20 @@ function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gk
     if (!def || def.silent) continue;
     if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
+      if (!INV_EXCLUDED.has(e.type)) invCount++;
     }
     if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
       partnerCount++;
+      invCount++;
     }
     if (e.type === 'OPP_GOAL' && e.ownGoalById === playerId) {
-      ownGoals++;
+      ownGoals++; // costs DEF points; deliberately NOT involvement
     }
   }
   // Blended point value for a key: outfield (W.points) at f=0, GK (W.gkPoints) at f=1.
   const po = W.points, pg = W.gkPoints;
   const pt = (k) => { const a = po[k] || 0; return a + f * ((pg[k] || 0) - a); };
-  const attacking = (
+  const atk = (
     (c.GOAL || 0)        * pt('GOAL_atk') +
     (c.ASSIST || 0)      * pt('ASSIST_atk') +
     (c.KEY_PASS || 0)    * pt('KEY_PASS_atk') +
@@ -453,11 +474,11 @@ function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gk
     (c.SHOT_OFF || 0)    * pt('SHOT_OFF_atk') +
     (c.FOUL_ON || 0)     * pt('FOUL_ON_atk') +
     (c.PEN_AWARDED || 0) * pt('PEN_AWARDED_atk')
-  ) / perHalf;
+  );
   // Clean-sheet / conceded credit applies only to actual GK time (f > 0).
-  const concededPenalty = f > 0 ? (gkExtras.concededPenalty || 0) : 0;
-  const cleanSheets = f > 0 ? (gkExtras.cleanSheets || 0) : 0;
-  const defending = (
+  const concededPenalty = f > 0 ? ((gkExtras && gkExtras.concededPenalty) || 0) : 0;
+  const cleanSheets = f > 0 ? ((gkExtras && gkExtras.cleanSheets) || 0) : 0;
+  const dfn = (
     (c.SAVE || 0)         * pt('SAVE_def') +
     (c.BLOCK || 0)        * pt('BLOCK_def') +
     (c.BALL_WIN || 0)     * pt('BALL_WIN_def') +
@@ -469,8 +490,8 @@ function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gk
     (c.PEN_CONCEDED || 0) * pt('PEN_CONCEDED_def') +
     ownGoals              * pt('OWN_GOAL_def') +
     (f > 0 ? (-concededPenalty + cleanSheets * pt('CLEAN_SHEET_def')) : 0)
-  ) / perHalf;
-  const decisions = (
+  );
+  const dec = (
     (c.GIVE_GO || 0)    * pt('GIVE_GO_dec') +
     partnerCount        * pt('GIVE_GO_PARTNER_dec') +
     (c.GATES || 0)      * pt('GATES_dec') +
@@ -478,9 +499,46 @@ function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gk
     (c.ASSIST || 0)     * pt('ASSIST_dec') +
     (c.HOLDS_BALL || 0) * pt('HOLDS_BALL_dec') +
     (c.TURNOVER || 0)   * pt('TURNOVER_dec')
-  ) / perHalf;
-  const totalEvents = Object.values(c).reduce((a, b) => a + b, 0) + partnerCount + ownGoals;
-  const involvement = totalEvents / perHalf;
+  );
+  return { atk, def: dfn, dec, inv: invCount };
+}
+
+// Squad-average per-20-min pillar rates — the shrinkage prior. Computed with
+// outfield point values for everyone (it's a prior, not a per-player score).
+// `perPlayer` = [{ playerId, minutes }] for everyone who played.
+function computeSquadRates(perPlayer, events, W) {
+  const tot = { atk: 0, def: 0, dec: 0, inv: 0 };
+  let totMin = 0;
+  for (const { playerId, minutes } of perPlayer) {
+    if (!minutes || minutes <= 0) continue;
+    const p = pillarPoints(playerId, events, 0, null, W);
+    tot.atk += p.atk; tot.def += p.def; tot.dec += p.dec; tot.inv += p.inv;
+    totMin += minutes;
+  }
+  const ph = Math.max(totMin, 1) / 20;
+  return { atk: tot.atk / ph, def: tot.def / ph, dec: tot.dec / ph, inv: tot.inv / ph };
+}
+
+function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gkExtras = {}, weights, squadRates = null) {
+  if (minutesPlayed <= 0) return { overall: 0, attacking: 0, defending: 0, decisions: 0, involvement: 0 };
+  const W = mergeWeights(weights);
+  // gkFraction ∈ [0,1] = share of minutes this player spent in goal. Point values
+  // AND pillar weights are blended outfield↔GK by it, so a part-time keeper is
+  // scored by their actual role mix (not 100% keeper for a brief stint).
+  const f = Math.max(0, Math.min(1, Number(gkFraction) || 0));
+  const pts = pillarPoints(playerId, events, f, gkExtras, W);
+  // v2 shrinkage (empirical Bayes): every player gets `shrinkMinutes` virtual
+  // minutes of squad-average production blended in, so a 6-minute cameo with
+  // one lucky goal can't top a 40-minute starter. Converges to the raw rate
+  // as real minutes accumulate. Skipped when no squadRates are provided.
+  const M = squadRates ? Math.max(0, Number(W.shrinkMinutes) || 0) : 0;
+  const rate = (p, sq) => M > 0
+    ? (p + (M / 20) * (sq || 0)) / ((minutesPlayed + M) / 20)
+    : p / (minutesPlayed / 20);
+  const attacking = rate(pts.atk, squadRates && squadRates.atk);
+  const defending = rate(pts.def, squadRates && squadRates.def);
+  const decisions = rate(pts.dec, squadRates && squadRates.dec);
+  const involvement = rate(pts.inv, squadRates && squadRates.inv);
   // Blend pillar weights outfield↔GK by the same fraction.
   const PO = W.pillars.outfield, PG = W.pillars.gk;
   const pil = {
@@ -836,6 +894,10 @@ export default function App() {
       period: game.period,
       elapsed,
       at: Date.now(),
+      // Provenance (v2): how this event was captured. 'live' = sideline tap;
+      // future capture paths (bookmark-confirmed, voice-confirmed,
+      // video-added) stamp their own value via extras.
+      source: 'live',
       ...extras,
     };
     const updated = {
@@ -8512,7 +8574,16 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
         <div className="px-4 pt-5">
           <h3 className="font-display text-xl mb-2">PERFORMANCE SCORES</h3>
           <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800">
-            {Object.entries(tally)
+            {(() => {
+              // Squad-average pillar rates for this game — the shrinkage prior
+              // (v2): short-minute cameos get pulled toward the squad mean.
+              const squadRates = computeSquadRates(
+                Object.entries(tally)
+                  .filter(([, s]) => (s.seconds || 0) > 0)
+                  .map(([pid, s]) => ({ playerId: pid, minutes: (s.seconds || 0) / 60 })),
+                events, mergeWeights(weights),
+              );
+              return Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
                 const player = roster.find(p => p.id === pid);
@@ -8521,7 +8592,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                 const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
                 // Blend GK vs outfield scoring by the share of this game's minutes spent in goal.
                 const gkFraction = (wasGKThisGame && stats.seconds > 0) ? (gkExtras.secondsAsGK || 0) / stats.seconds : 0;
-                const score = computePerformanceScore(pid, events, min, gkFraction, gkExtras, weights);
+                const score = computePerformanceScore(pid, events, min, gkFraction, gkExtras, weights, squadRates);
                 return { pid, stats, min, score, gkExtras };
               })
               .sort((a, b) => b.score.overall - a.score.overall)
@@ -8565,7 +8636,8 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                     </div>
                   </div>
                 );
-              })}
+              });
+            })()}
           </div>
         </div>
       )}
@@ -8884,42 +8956,76 @@ function StatsView({ roster, games, weights, onBack }) {
     return map;
   }, [roster, finished]);
 
-  // Season performance score per player
+  // Season performance score per player (v2): per-game pillar POINTS weighted
+  // by game type (scrimmage 0.5× etc. — tunable in ⚙ Scoring), summed and
+  // divided by weighted minutes, then shrunk toward the squad-average rate.
+  // Building from per-game points (instead of pooling all events) also means
+  // per-game gk blending and own goals are handled exactly like the game view
+  // — the old pooled filter silently dropped OPP_GOAL.ownGoalById events.
   const seasonScores = useMemo(() => {
-    const map = {};
-    for (const p of roster) {
-      const s = stats[p.id];
-      if (!s) continue;
-      const min = Math.round((s.totalSeconds || 0) / 60);
-      const allEvents = [];
-      for (const g of finished) {
-        for (const e of g.events) {
-          if (e.type === 'SUB') continue;
-          if (e.playerId === p.id) allEvents.push(e);
-          else if (e.type === 'GIVE_GO' && e.partnerId === p.id) allEvents.push(e);
-        }
-      }
-      // GK = roster position OR any game where they served as GK.
-      let wasGKAnyGame = p.position === 'GK';
-      let gkExtras;
-      gkExtras = { oppGoalsConceded: 0, concededPenalty: 0, cleanSheets: 0 };
-      for (const g of finished) {
+    const W = mergeWeights(weights);
+    const M = Math.max(0, Number(W.shrinkMinutes) || 0);
+    const typeWeight = (g) => {
+      const t = String(g.tournament || '').toLowerCase();
+      return (W.gameTypes[t] != null) ? Number(W.gameTypes[t]) : Number(W.gameTypes.default);
+    };
+    // Weighted per-player sums + the squad prior in one pass.
+    const sums = {};  // pid -> { atk, def, dec, inv, wmin, wgkmin }
+    const squadTot = { atk: 0, def: 0, dec: 0, inv: 0 };
+    let squadMin = 0;
+    for (const g of finished) {
+      const w = typeWeight(g);
+      if (!(w > 0)) continue;
+      const ev = g.events || [];
+      for (const p of roster) {
+        const sec = playerSeconds(p.id, g);
+        if (sec <= 0) continue;
+        const min = sec / 60;
         const servedAsGK = (g.gkPlayerId === p.id) || (g.gkChanges || []).some(c => c.gkPlayerId === p.id);
-        if (servedAsGK) wasGKAnyGame = true;
-        if (servedAsGK) {
-          const gx = gkExtrasForGame(p.id, g);
-          gkExtras.oppGoalsConceded += gx.oppGoalsConceded;
-          gkExtras.concededPenalty += gx.concededPenalty;
-          gkExtras.cleanSheets += gx.cleanSheets;
-        }
+        const gx = servedAsGK ? gkExtrasForGame(p.id, g) : null;
+        const f = (servedAsGK && sec > 0) ? Math.min(1, (gx.secondsAsGK || 0) / sec) : 0;
+        const pts = pillarPoints(p.id, ev, f, gx, W);
+        const row = sums[p.id] || (sums[p.id] = { atk: 0, def: 0, dec: 0, inv: 0, wmin: 0, wgkmin: 0 });
+        row.atk += w * pts.atk; row.def += w * pts.def;
+        row.dec += w * pts.dec; row.inv += w * pts.inv;
+        row.wmin += w * min;
+        row.wgkmin += w * min * f;
+        // Squad prior: outfield values for everyone (it's a prior, not a score).
+        const pop = pillarPoints(p.id, ev, 0, null, W);
+        squadTot.atk += w * pop.atk; squadTot.def += w * pop.def;
+        squadTot.dec += w * pop.dec; squadTot.inv += w * pop.inv;
+        squadMin += w * min;
       }
-      // Blend by the share of season minutes spent in goal (part-time keepers
-      // are scored proportionally, not as a full-season keeper).
-      const gkFraction = (s.totalSeconds > 0) ? (s.gkSeconds || 0) / s.totalSeconds : (p.position === 'GK' ? 1 : 0);
-      map[p.id] = computePerformanceScore(p.id, allEvents, min, gkFraction, wasGKAnyGame ? gkExtras : undefined, weights);
+    }
+    const sqPh = Math.max(squadMin, 1) / 20;
+    const squadRates = {
+      atk: squadTot.atk / sqPh, def: squadTot.def / sqPh,
+      dec: squadTot.dec / sqPh, inv: squadTot.inv / sqPh,
+    };
+    const map = {};
+    const r = (n) => Math.round(n * 10) / 10;
+    for (const p of roster) {
+      const row = sums[p.id];
+      if (!row || row.wmin <= 0) continue;
+      const rate = (pts, sq) => (pts + (M / 20) * sq) / ((row.wmin + M) / 20);
+      const attacking = rate(row.atk, squadRates.atk);
+      const defending = rate(row.def, squadRates.def);
+      const decisions = rate(row.dec, squadRates.dec);
+      const involvement = rate(row.inv, squadRates.inv);
+      // Pillar mix blended by the weighted share of season minutes in goal.
+      const f = Math.min(1, row.wgkmin / row.wmin);
+      const PO = W.pillars.outfield, PG = W.pillars.gk;
+      const pil = {
+        atk: PO.atk + f * (PG.atk - PO.atk),
+        def: PO.def + f * (PG.def - PO.def),
+        dec: PO.dec + f * (PG.dec - PO.dec),
+        inv: PO.inv + f * (PG.inv - PO.inv),
+      };
+      const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
+      map[p.id] = { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
     }
     return map;
-  }, [roster, finished, stats]);
+  }, [roster, finished, stats, weights]);
 
   const sorted = [...roster].sort((a, b) => (seasonScores[b.id]?.overall || 0) - (seasonScores[a.id]?.overall || 0));
   const detailPlayer = roster.find(p => p.id === detailPlayerId);
@@ -8937,6 +9043,7 @@ function StatsView({ roster, games, weights, onBack }) {
             <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
             <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
             <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
+            <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
           </div>
         </details>
 
@@ -9011,7 +9118,8 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
     ...(isGK ? [
       { label: 'Minutes as GK', value: gkMin, accent: 'text-sky-400' },
       { label: 'Games as GK', value: stats.gamesAsGK || 0, accent: 'text-sky-400' },
-      { label: 'Clean sheets', value: stats.cleanSheets || 0, accent: 'text-lime-500' },
+      // v2: clean sheets are pro-rated by GK stint share, so they can be fractional.
+      { label: 'Clean sheets', value: Math.round((stats.cleanSheets || 0) * 10) / 10, accent: 'text-lime-500' },
       { label: 'Goals conceded (as GK)', value: stats.oppGoalsConceded || 0, accent: 'text-red-400' },
     ] : []),
     { label: 'Goals', value: stats.GOAL || 0, accent: 'text-lime-700' },
@@ -9107,7 +9215,16 @@ function WeightsView({ weights, onSave, onBack }) {
       points: fix(w.points),
       gkPoints: fix(w.gkPoints),
       pillars: { outfield: fix(w.pillars.outfield), gk: fix(w.pillars.gk) },
+      shrinkMinutes: Math.max(0, Number(w.shrinkMinutes) || 0),
+      gameTypes: fix(w.gameTypes),
     };
+  };
+
+  const setFairness = (key, raw) => {
+    const v = raw === '' ? '' : Number(raw);
+    setDraft(d => key === 'shrinkMinutes'
+      ? { ...d, shrinkMinutes: v }
+      : { ...d, gameTypes: { ...d.gameTypes, [key]: v } });
   };
 
   const saveAndExit = async () => {
@@ -9228,6 +9345,44 @@ function WeightsView({ weights, onSave, onBack }) {
     );
   };
 
+  const FairnessSection = () => (
+    <div className="space-y-4">
+      <div className="bg-stone-900 rounded-2xl border-2 border-violet-500/30 px-4 py-3">
+        <div className="font-display text-sm text-violet-400 mb-1">SHRINKAGE (small-sample fairness)</div>
+        <div className="flex items-center justify-between gap-3 py-2">
+          <span className="text-sm text-stone-200">Virtual minutes of squad-average play</span>
+          <input
+            type="number" step="1" min="0" inputMode="numeric"
+            value={draft.shrinkMinutes}
+            onChange={(e) => setFairness('shrinkMinutes', e.target.value)}
+            className="w-20 text-center font-display text-lg py-1 rounded-lg border-2 border-stone-800 bg-stone-900 text-stone-100 focus:outline-none focus:border-stone-500"
+          />
+        </div>
+        <p className="text-xs text-stone-400">
+          Every player's rate is blended with this many minutes of squad-average production, so a 6-minute cameo with one lucky goal can't top a 40-minute starter. 0 disables it. Scores converge to the raw rate as real minutes accumulate.
+        </p>
+      </div>
+      <div className="bg-stone-900 rounded-2xl border-2 border-teal-500/30 px-4 py-3">
+        <div className="font-display text-sm text-teal-400 mb-1">GAME-TYPE WEIGHT (season score)</div>
+        {[['scrimmage', 'Scrimmage'], ['festival', 'Festival'], ['default', 'Everything else (league / tournament)']].map(([k, label]) => (
+          <div key={k} className="flex items-center justify-between gap-3 py-2 border-b border-stone-800 last:border-b-0">
+            <span className="text-sm text-stone-200">{label}</span>
+            <input
+              type="number" step="0.05" min="0" max="1" inputMode="decimal"
+              value={draft.gameTypes[k]}
+              onChange={(e) => setFairness(k, e.target.value)}
+              className="w-20 text-center font-display text-lg py-1 rounded-lg border-2 border-stone-800 bg-stone-900 text-stone-100 focus:outline-none focus:border-stone-500"
+            />
+          </div>
+        ))}
+        <p className="text-xs text-stone-400 mt-1">
+          How much each game type counts toward the SEASON score (per-game scores are unaffected). 0 excludes a type entirely.
+        </p>
+      </div>
+      <p className="text-[10px] text-stone-500 px-1">Scoring v{SCORING_VERSION} · recalibrated Jun 2026</p>
+    </div>
+  );
+
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
@@ -9255,11 +9410,13 @@ function WeightsView({ weights, onSave, onBack }) {
       <div className="px-4 pt-3 flex items-center gap-2">
         <TabBtn id="actions" label="ACTIONS" />
         <TabBtn id="pillars" label="PILLARS" />
+        <TabBtn id="fairness" label="FAIRNESS" />
       </div>
 
       <div className="px-4 pt-4">
         {tab === 'actions' && <PointsSection group="points" />}
         {tab === 'pillars' && <PillarsSection />}
+        {tab === 'fairness' && <FairnessSection />}
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 bg-stone-900 border-t border-stone-800 px-4 py-3 flex gap-2">
@@ -10519,15 +10676,16 @@ function HelpView({ onBack }) {
             <li><Pill tone="amber">DEC</Pill> Decisions — give &amp; go, gates, holds-ball/turnover penalties.</li>
             <li><Pill>INV</Pill> Involvement — sheer number of actions per minute on the pitch.</li>
           </ul>
-          <p>Each pillar is normalized to a "per 20 minutes" rate so a substitute who plays 10 minutes is compared fairly against a starter who plays 40.</p>
+          <p>Each pillar is normalized to a "per 20 minutes" rate so a substitute who plays 10 minutes is compared fairly against a starter who plays 40. Since v{SCORING_VERSION} (Jun 2026), rates are also <strong>shrunk toward the squad average</strong> with a few virtual minutes, so tiny samples can't dominate; mistakes no longer count as Involvement; clean sheets are pro-rated by GK time; and the season score weights games by type (scrimmages count half by default).</p>
           <p>Outfield players use a balanced blend; goalkeepers use a defence-heavy blend (DEF counts ~55%, ATK only ~10%).</p>
         </Section>
 
         <Section id="weights" emoji="⚙" title="7 · Tuning scoring weights" summary="Adjust how much each action is worth">
-          <p>From Home tap <Pill>⚙ SCORING</Pill>. Two tabs:</p>
+          <p>From Home tap <Pill>⚙ SCORING</Pill>. Three tabs:</p>
           <ul className="list-disc pl-5 space-y-1">
             <li><strong>ACTIONS</strong> — points per action. The same values apply to outfield players and the keeper.</li>
             <li><strong>PILLARS</strong> — how much each pillar (ATK · DEF · DEC · INV) contributes to the overall score. Outfield and GK have separate mixes — the GK row is DEF-heavy because that's where keepers earn their rating. Each row should sum to 100% — the header turns red if it doesn't.</li>
+            <li><strong>FAIRNESS</strong> — the shrinkage prior (virtual minutes of squad-average play) and per-game-type season weights (scrimmage / festival / everything else).</li>
           </ul>
           <p>Negative numbers (red boxes) penalize the score. Tap <Pill>RESET</Pill> in the top-right to restore defaults. All past games re-score live with the new weights — nothing is baked in.</p>
         </Section>

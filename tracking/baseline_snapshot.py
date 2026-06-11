@@ -126,7 +126,7 @@ def main() -> None:
         overrides = g.get("identityOverrides") or {}
         scores = {}
         for p in roster:
-            s = pwa_score.per_game_score(p["id"], g, weights)
+            s = pwa_score.per_game_score(p["id"], g, weights, roster)
             if s is not None:
                 scores[p["id"]] = s
         entry = {
@@ -162,7 +162,7 @@ def main() -> None:
 
     season = {}
     for p in roster:
-        s = pwa_score.season_score(p["id"], finished, p, weights)
+        s = pwa_score.season_score(p["id"], finished, p, weights, roster=roster)
         if s is not None:
             season[p["id"]] = s
 
