@@ -6662,9 +6662,12 @@ function formationLabelFromDepths(depths) {
 }
 
 // Kickoff formation for one period from the coach log, or null when there
-// isn't enough board data. Board position per on-field outfield player:
-// last drag inside the kickoff window (covers pre-kickoff corrections),
-// else first drag of the period, else latest from an earlier period.
+// isn't enough board data. ONLY the kickoff-window board counts: all those
+// drags describe the same instant. Mid-half drags move kids between slots at
+// different moments — aggregating them mixes snapshots of the rotation and
+// mislabels (measured: 2-3-1 all game read as 2-2-2 / 1-3-1 in 2nd halves).
+// A period with no kickoff board (coach didn't re-set at halftime) inherits
+// the previous period's formation — shape changes are explicit acts.
 function coachKickoffFormation(game, period, kickoffWindowS = 120) {
   const events = [...(game.events || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
   // On-field set at this period's kickoff = starting lineup + earlier subs.
@@ -6679,18 +6682,17 @@ function coachKickoffFormation(game, period, kickoffWindowS = 120) {
       gk = e.playerId;
     }
   }
-  const depths = [];
-  for (const pid of on) {
-    if (pid === gk) continue;
-    const mine = events.filter(e => e.type === 'POSITION' && e.playerId === pid && typeof e.y === 'number');
-    const inPeriod = mine.filter(e => (e.period || 1) === period);
-    const early = inPeriod.filter(e => (e.elapsed || 0) <= kickoffWindowS);
-    const prior = mine.filter(e => (e.period || 1) < period);
-    const pos = early[early.length - 1] || inPeriod[0] || prior[prior.length - 1] || null;
-    if (pos) depths.push(1 - pos.y); // board y=1 = own goal → depth from own goal
+  // Last early-window drag per on-field outfield player (events are at-sorted).
+  const early = {};
+  for (const e of events) {
+    if (e.type !== 'POSITION' || typeof e.y !== 'number') continue;
+    if ((e.period || 1) !== period || (e.elapsed || 0) > kickoffWindowS) continue;
+    if (!on.has(e.playerId) || e.playerId === gk) continue;
+    early[e.playerId] = 1 - e.y; // board y=1 = own goal → depth from own goal
   }
-  if (depths.length < 3) return null;
-  return formationLabelFromDepths(depths);
+  const depths = Object.values(early);
+  if (depths.length >= 4) return formationLabelFromDepths(depths);
+  return period > 1 ? coachKickoffFormation(game, period - 1, kickoffWindowS) : null;
 }
 
 // Tracklets still needing an identity decision: unassigned by the pipeline
