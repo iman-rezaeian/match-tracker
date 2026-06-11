@@ -8438,6 +8438,60 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   );
 }
 
+/* ---------- FORMATION EDIT SHEET ----------
+ * Per-half manual correction for the formation label. The computed value
+ * (coach's resets-first rule) stays the default; a coach pick is stored in
+ * game.formationOverrides = { "<period>": "2-3-1" } and always wins on
+ * display. AUTO clears the override back to the computed label.
+ */
+function FormationEditSheet({ period, current, computed, onSave, onClose }) {
+  // All ways to split this many outfield players into 3 positive rows.
+  const n = (current || computed || '').split('-').reduce((s, v) => s + (parseInt(v) || 0), 0) || 6;
+  const shapes = [];
+  for (let d = 1; d <= n - 2; d++) {
+    for (let m = 1; m <= n - d - 1; m++) shapes.push(`${d}-${m}-${n - d - m}`);
+  }
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-stone-950 border-t-2 sm:border-2 border-stone-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md"
+      >
+        <div className="flex items-center justify-between p-4 border-b border-stone-800">
+          <div>
+            <div className="font-display text-lg leading-none">FORMATION — {period === 2 ? '2ND' : '1ST'} HALF</div>
+            <div className="text-[11px] text-stone-400 tracking-wider mt-1">
+              Computed: {computed || '—'}{current && current !== computed ? ` · your pick: ${current}` : ''}
+            </div>
+          </div>
+          <button onClick={onClose} className="w-10 h-10 rounded-full bg-stone-800 flex items-center justify-center active:scale-95 shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-4 gap-2">
+            {shapes.map(s => (
+              <button
+                key={s}
+                onClick={() => { onSave(s); onClose(); }}
+                className={`rounded-xl border-2 py-3 font-display text-base active:scale-[0.97] transition ${s === (current || computed) ? 'bg-lime-900/60 border-lime-500 text-lime-100' : 'bg-stone-900 border-stone-800 text-stone-300'}`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => { onSave(null); onClose(); }}
+            className={`mt-3 w-full py-3 rounded-xl font-display text-sm active:scale-[0.97] transition ${current ? 'bg-stone-900 text-stone-300 border border-stone-700' : 'bg-lime-500/15 text-lime-300 border border-lime-700'}`}
+          >
+            ↺ AUTO — use the computed label
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, onUpdateGame }) {
   const [doc, setDoc] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -8446,6 +8500,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   const [broadcastOpen, setBroadcastOpen] = useState(null); // 'tv_reel' | 'auto_highlights' | null
   const [openHeatmap, setOpenHeatmap] = useState(null); // player_id whose heatmap is expanded
   const [showFix, setShowFix] = useState(false); // IdentityFixView open?
+  const [editFormation, setEditFormation] = useState(null); // period being edited
 
   // Persist coach identity corrections. Prefer the app's updateGame path (keeps
   // local state synced + writes teams/main/games/<id> where the pipeline reads);
@@ -8456,6 +8511,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
     if (window.fbDb && game?.id) {
       await window.fbDb.collection('teams').doc('main').collection('games')
         .doc(game.id).update({ identityOverrides: overrides });
+    }
+  };
+
+  // Per-half manual formation correction (null label clears back to AUTO).
+  // Same persistence pattern as identity overrides.
+  const saveFormationOverride = async (period, label) => {
+    const cur = { ...(game.formationOverrides || {}) };
+    if (label) cur[String(period)] = label;
+    else delete cur[String(period)];
+    if (onUpdateGame) { onUpdateGame({ formationOverrides: cur }); return; }
+    if (window.fbDb && game?.id) {
+      await window.fbDb.collection('teams').doc('main').collection('games')
+        .doc(game.id).update({ formationOverrides: cur });
     }
   };
 
@@ -8710,13 +8778,24 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             )}
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
-                <div className="text-[10px] tracking-widest text-stone-400 mb-2">FORMATION</div>
-                {/* Coach-board kickoff shape (computed from the event log);
-                    the doc snapshot label is only a fallback for games
-                    without POSITION events. */}
-                {(doc.formation_snapshots || []).length ? doc.formation_snapshots.map(f => (
-                  <div key={f.period} className="flex items-center gap-2 text-white"><span className="text-[10px] text-stone-500 w-7">{f.period === 2 ? '2ND' : '1ST'}</span><span className="font-display text-base">{coachKickoffFormation(game, f.period) || f.label}</span></div>
-                )) : <div className="text-stone-500 text-xs">—</div>}
+                <div className="text-[10px] tracking-widest text-stone-400 mb-2">FORMATION <span className="text-stone-600">· tap to edit</span></div>
+                {/* Coach override > coach-board computation > doc snapshot
+                    fallback (games without POSITION events). */}
+                {(doc.formation_snapshots || []).length ? doc.formation_snapshots.map(f => {
+                  const override = (game.formationOverrides || {})[String(f.period)];
+                  const computed = coachKickoffFormation(game, f.period) || f.label;
+                  return (
+                    <button
+                      key={f.period}
+                      onClick={() => setEditFormation(f.period)}
+                      className="w-full flex items-center gap-2 text-white active:scale-[0.98] transition text-left"
+                    >
+                      <span className="text-[10px] text-stone-500 w-7">{f.period === 2 ? '2ND' : '1ST'}</span>
+                      <span className="font-display text-base">{override || computed}</span>
+                      {override && <span className="text-[9px] font-bold tracking-wider text-amber-400">✎</span>}
+                    </button>
+                  );
+                }) : <div className="text-stone-500 text-xs">—</div>}
               </div>
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
                 <div className="text-[10px] tracking-widest text-stone-400 mb-2">TIME BY THIRD</div>
@@ -8830,6 +8909,17 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
           label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
           timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
           onClose={() => setBroadcastOpen(null)}
+        />
+      )}
+      {editFormation != null && (
+        <FormationEditSheet
+          period={editFormation}
+          current={(game.formationOverrides || {})[String(editFormation)] || null}
+          computed={coachKickoffFormation(game, editFormation)
+            || (doc?.formation_snapshots || []).find(f => f.period === editFormation)?.label
+            || null}
+          onSave={(label) => saveFormationOverride(editFormation, label)}
+          onClose={() => setEditFormation(null)}
         />
       )}
     </div>
@@ -12514,6 +12604,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
