@@ -172,31 +172,76 @@ so relative season standings hold.
 Live job shrinks to: goals, subs, shots, saves, pens + one reflex
 bookmark/voice cue. Everything else is created or confirmed from video.
 
-- **3.0 START NOW, ZERO CODE:** record a phone voice memo for the full next
+**STATUS 2026-06-11: 3.1–3.4 SHIPPED (code). 3.0 voice memo still owed by
+coach; 3.5/3.6 gated on that audio.**
+
+**CAPTURE PROTOCOL (decided 2026-06-11, supersedes the line above):** solo
+coach on ALL games — other coaches run the team and do not log. One mode:
+**continuous TV-style narration (AirPods Pro 2) + thumbs do STRUCTURE ONLY**:
+subs, GK swaps, goals/opp-goals, tactical-board refresh 1-2× per period
+(POSITION events are identity's main prior — protect that habit). All
+granular events (KEY_PASS, TURNOVER, BALL_WIN, duels, GATES, GIVE_GO, shots
+when busy) come from voice extraction → confirm queue. Rationale: narration
+is near-real-time (better timestamps than late taps, which is why the vote
+window looks back 25 s) and high-recall; structure can't be reconstructed
+from speech. ⇒ **3.6 hard requirement: MERGE, don't duplicate** — a voice
+draft matching an existing live event (same type, ±30 s) attaches to it and
+enriches its tags. Post-game narration = optional deep-dive channel only
+(gated on the labeled review reel for far-side ID), never a weekly
+obligation.
+
+- ⏳ **3.0 START NOW, ZERO CODE:** record a phone voice memo for the full next
   game, noting the kickoff moment. Narrate naturally. This is the test audio
   (wind, crowd, mid-coaching speech) that the whole voice idea lives or dies
   on — get it before building anything.
-- **3.1 Confirm-queue UI** in the film room — shared landing zone for
-  untagged events, bookmarks, voice drafts. Each card: event cued in the reel
-  via the existing `videoTimeS`/`tvReelTimeS` index, suggested tags
-  pre-selected, one-tap confirm/correct → next.
-- **3.2 BOOKMARK button** in live flow (1 hour of work; ships with 3.1).
-  Single tap, timestamp only, player optional. Insurance channel for when
-  speaking isn't possible.
-- **3.3 Tag pre-fill from the pipeline.** Write `suggestedZone` (assigned
-  player's tracked field position at event time → zone vocab) and
-  `suggestedPressure` (nearest-opponent distance < ~3 m) into the
-  analytics/broadcast events index. Absurd suggested zone ⇒ free identity
-  check feeding FIX IDS.
-- **3.4 Trim tag scope.** Zone tags ONLY where location is the insight:
-  shots (shot map), turnovers (where we lose it), ball wins (pressing
-  height). Pressure on decision events only. Zone/pressure REMOVED from live
-  flow entirely — tags happen in the queue.
-- **3.5 Voice probe (1 day, gate for 3.6).** Whisper (local, M-series) on the
-  3.0 memo. Check: are jersey numbers legible? timestamp drift acceptable?
-  Conventions: cue **jersey numbers not names**; fixed ~6-phrase vocabulary
-  mapping 1:1 to event types (parsing = lookup, not NLP).
-- **3.6 Voice → drafts pipeline (only if 3.5 passes).** Transcript →
+- ✅ **3.1 Confirm-queue UI — shipped 2026-06-11.** Film Room → "✅ CONFIRM
+  QUEUE" tile (+ per-game badge): one card at a time, all finished games
+  merged (newest game first, match order within a game). Two card kinds:
+  🔖 CLASSIFY (bookmark → type grid + optional player → real event via
+  `confirmBookmark`, which KEEPS the bookmark's event id so the pipeline's
+  broadcastEvents index still cues it) and 🏷 TAG (zone/pressure/decision,
+  pipeline suggestions pre-selected with a "✦ suggested from tracking" chip).
+  Each card cues the TV reel at t−6s (`BroadcastVideoPlayer` grew a
+  `startAtS` prop; index lookup by event id with ±2 s clock fallback).
+  Queue drains via two persisted flags on the event — `tagsConfirmed`
+  (reviewed, even if left empty) / `tagDismissed` (never ask again) — and
+  SKIP is session-local. Voice drafts (3.6) land here later.
+- ✅ **3.2 BOOKMARK button — shipped 2026-06-11.** 🔖 MARK pill in the live
+  control row (next to MINS): single tap, timestamp only, no player. New
+  `BOOKMARK` event type is `silent` ⇒ excluded from scoring/INV in both the
+  PWA and `tracking/pwa_score.py` (allowlist already excluded it); visible
+  in RECENT/TIMELINE. Classified post-game in the queue
+  (`source: 'bookmark-confirmed'`, score deltas applied like logEvent).
+- ✅ **3.3 Tag pre-fill — shipped 2026-06-11.** `_build_tag_suggestions` in
+  `post_game/pipeline.py` writes `suggestedZone`/`suggestedPressure` into
+  `broadcast_events` (+ public `broadcastEvents`). Zone = assigned player's
+  position at the action moment mapped through the per-period board flips
+  that `assign_identities_v2` now exposes (`resolved_flips_out`; inverse of
+  `_zone_center`). Pressure = nearest opponent ≤ `SUGGEST_PRESSURE_RADIUS_M`
+  (3 m, config). Action moment: same −25/+5 s window as event votes, BUT
+  shots/goals use the player's DEEPEST-attacking second — the centroid pick
+  landed on the post-goal kickoff huddle (measured: all shots suggested M-C).
+  Smoke-tested read-only on Leamington stage-4 cache: 18 suggestions/47
+  eligible events, shots now A-C where coverage allows. Suggestions are
+  coverage-limited (player untracked at the moment ⇒ none or shallow zone) —
+  absurd ones are the FIX IDS lead the plan predicted. NOTE: existing games
+  get suggestions on their next pipeline re-run; queue works without them.
+- ✅ **3.4 Trim tag scope — shipped 2026-06-11.** `EVENT_NEEDS_ZONE` →
+  {GOAL, SHOT_ON, SHOT_OFF, TURNOVER, BALL_WIN}; `EVENT_NEEDS_PRESSURE` →
+  the decision set {KEY_PASS, GIVE_GO, GATES, SHOT_ON, SHOT_OFF, TURNOVER}.
+  Live flow was ALREADY single-tap (zone/pressure pickers were dead code
+  since the post-game TAG flow landed) — deleted the unused
+  ZonePicker/PressurePicker/DecisionPicker components (~140 lines).
+  Python mirror: `_SUGGEST_*_TYPES` in pipeline.py.
+- ⏳ **3.5 Voice probe (1 day, gate for 3.6).** Whisper (local, M-series) on the
+  3.0 memo. Check: are player cues legible? timestamp drift acceptable?
+  Conventions (revised 2026-06-11): coach records via **AirPods Pro 2**
+  (mouth-level mic ≫ pocket phone; one ear + transparency); say "kickoff" at
+  the actual kickoff; cue **first names** — parsing fuzzy-matches a closed
+  16-name roster, so names = lookup too (numbers-only rule dropped). ONLY
+  collisions need last names: Ben (Adam/Hahn), Liam (Gibala/Garland). Fixed
+  ~6-phrase vocabulary mapping 1:1 to event types (parsing = lookup, not NLP).
+- ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Transcript →
   timestamped draft events (`source: 'voice'`) landing in the queue.
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
@@ -256,6 +301,6 @@ Ordered by coach value per effort.
 | — | 3.0 voice memo at next game | Zero code; de-risks Phase 3 early |
 | 2 | ✅ Phase 1 COMPLETE (1.1–1.4, published 2026-06-10) | Contamination fix proper is 8K-gated (appearance); color-space swaps measured + rejected |
 | 3 | ✅ 2.x scoring v2 SHIPPED 2026-06-10 (2.4 z-scoring still open) | One coordinated, versioned change |
-| 4 | 3.1–3.6 capture workflow | Queue → bookmark → voice probe → voice pipeline |
+| 4 | ✅ 3.1–3.4 SHIPPED 2026-06-11 · 3.5/3.6 wait on the 3.0 memo | Queue → bookmark → voice probe → voice pipeline |
 | 5 | 4.1–4.6 analytics views | Value-add, interleave |
 | 6 | 5.x | Blocked on first 8K game |
