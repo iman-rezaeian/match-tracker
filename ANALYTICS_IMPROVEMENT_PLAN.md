@@ -283,11 +283,14 @@ obligation.
 
 Ordered by coach value per effort.
 
-- **4.1 Momentum chart.** 5-min buckets of shots/ball-wins/turnovers
-  for-vs-against from `game.events`, goal/sub markers. Pure client-side.
-- **4.2 Shot map from zone tags.** Per-game + season half-field shot chart
-  (reuse tactical-board rendering); SHOT_ON/SHOT_OFF/GOAL by zone. Doubles as
-  the zone-tagging audit surface.
+- ✅ **4.1 Momentum chart — shipped 2026-06-11.** 5-min buckets above/below
+  a midline (us/them) in AnalyticsPanel; "against" proxied from our log
+  (SAVE/BLOCK/CLEAR = opponent attacking, TURNOVER = ball handed over);
+  goal markers. Pure client-side.
+- ✅ **4.2 Shot map — shipped 2026-06-11.** 3×3 attack-up grid of
+  GOAL/SHOT_ON/SHOT_OFF by zone tag, per game (AnalyticsPanel) and per
+  window (SeasonAnalyticsView); untagged-shot count is the audit line
+  pointing at the confirm queue. Fills in as the queue drains zone tags.
 - **4.3 Pressure multiplier.** DEC points × ~1.5 when `pressure==='pressure'`
   (one line; fold into Phase 2 release if timing aligns). Viable now that
   tags are cheap via the queue.
