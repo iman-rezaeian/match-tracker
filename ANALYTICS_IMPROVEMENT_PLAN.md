@@ -312,9 +312,9 @@ Ordered by coach value per effort.
   p99s, cap-pinned games dropped as swap pollution — deviation from the
   plan's raw p99, deliberate); fallback 4.5 m/s; `sprint_threshold_ms`
   recorded per player.
-- **4.6 Field tilt.** Team-centroid third-occupancy % from existing
-  `TeamTimeSeries` — best no-ball possession proxy; gives compactness/width a
-  narrative home.
+- ✅ **4.6 Field tilt — shipped 2026-06-11.** Team-centroid third occupancy,
+  attack-normalized per half (pipeline → `field_tilt` on the doc; Analytics
+  bar card). Lands per game on its next pipeline run.
 - **4.7 LLM enrichment layer (direction set 2026-06-11; builds on 3.6).**
   Coach explicitly wants LLMs across the stack, all gated through the
   confirm queue (drafts + provenance, never straight into stats):
@@ -337,8 +337,8 @@ Ordered by coach value per effort.
 - Bookmark/voice classification largely replaces the monthly
   "recount-from-video" audit; keep an eye on per-event-type miss rates via
   the provenance field.
-- POSITION-staleness nudge in PWA (banner when an on-field player has no
-  POSITION event this period) — protects identity v2's main prior.
+- ✅ POSITION-staleness nudge — shipped 2026-06-11 (live banner above the
+  tactical board, 3+ min into a half).
 
 ## Open decision points (owner: coach)
 
