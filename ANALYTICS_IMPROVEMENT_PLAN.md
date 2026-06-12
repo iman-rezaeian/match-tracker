@@ -257,13 +257,17 @@ obligation.
   matching a live event, same type ±30 s, attaches and enriches its tags).
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
-- ⏳ **3.7 Labeled review reel (NEW 2026-06-11).** tv_view variant drawing
-  name tags over our tracked players (pipeline knows identity + position per
-  frame + the reel crop). Unlocks: post-game narration (far-side IDs become
-  readable) and full-roster post-game marking; doubles as a visible FIX IDS
-  error surface (wrong on-screen name = identity swap you can SEE).
-  Independent of the voice gate — can be built any time. Coach-only render,
-  not the parent-facing reel.
+- 🔨 **3.7 Labeled review reel — IN PROGRESS 2026-06-11.** DESIGN DECISION:
+  NOT a second video render — the pipeline exports a per-second label track
+  (player name + position in reel-crop coords) as JSON to R2 next to the
+  reel, and the PWA draws toggleable name chips as a DOM overlay synced to
+  playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
+  toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
+  narration far-side IDs, full-roster marking, visible identity errors.
+  Steps: (a) ✅ pipeline build_review_label_track (inverse-perspective
+  projection of foot coords through the re-derived aim stream, 1 Hz keyframe
+  JSON → R2, review_labels_url on analytics doc) — committed;
+  (b) 🔨 PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
 
 **Also shipped 2026-06-11 (outside the phase plan):**
 - Owner-only VIEWERS usage analytics (per-section tracking, watch time,
@@ -294,14 +298,17 @@ Ordered by coach value per effort.
 - **4.3 Pressure multiplier.** DEC points × ~1.5 when `pressure==='pressure'`
   (one line; fold into Phase 2 release if timing aligns). Viable now that
   tags are cheap via the queue.
-- **4.4 Rate-based physical stats.** Headline distance =
-  `distance_per_tracked_min × coach_minutes` with tracked-coverage % shown
-  beside it (coverage is systematically unequal across players — raw sums are
-  biased, not just scaled). Keep raw sum in the doc for the 8K before/after.
-  Sprint rate too.
-- **4.5 Personalized sprint threshold.** Per player:
-  `max(4.0 m/s, 0.8 × own season p99 speed)`, from prior analytics docs;
-  fallback 4.5 for new players. Record threshold used in output.
+- ✅ **4.4 Rate-based physical stats — shipped 2026-06-11.** Doc fields
+  `tracked_seconds` / `distance_est_m` / `sprint_est_count` (rate × coach
+  minutes; raw sums kept for the 8K before/after; raw fallback under 3
+  tracked minutes). Cards + season rollups + team km prefer estimates; cards
+  show "N% of minutes tracked" + the sprint bar used. Fields land per game
+  on its next pipeline run; PWA falls back cleanly on old docs.
+- ✅ **4.5 Personalized sprint threshold — shipped 2026-06-11.** Per player
+  `max(4.0, 0.8 × median of prior games' top_speed_ms)` (median of per-game
+  p99s, cap-pinned games dropped as swap pollution — deviation from the
+  plan's raw p99, deliberate); fallback 4.5 m/s; `sprint_threshold_ms`
+  recorded per player.
 - **4.6 Field tilt.** Team-centroid third-occupancy % from existing
   `TeamTimeSeries` — best no-ball possession proxy; gives compactness/width a
   narrative home.
@@ -337,7 +344,7 @@ Ordered by coach value per effort.
    partial re-watch).
 3. **4.3** pressure multiplier (×~1.5 on DEC under pressure) — viable now
    that pressure tags accumulate via the queue; one-line change, coach call.
-4. **Windsor Fury 2ND formation** — tap to 2-3-1 in Analytics (two taps).
+4. ✅ **Windsor Fury 2ND formation** — coach set 2-3-1 manually 2026-06-11.
 
 ## Sequencing summary
 

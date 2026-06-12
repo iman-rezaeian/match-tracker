@@ -26,7 +26,8 @@ from .identity import assign_identities, half_windows, period_clock_to_video_tim
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tracklet_thumbs import generate_tracklet_thumbnails
-from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
+from .tv_view import (build_review_label_track, extract_auto_highlights,
+                      render_tv_reel, tv_reel_meta_from_existing)
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
 from .tracking import Tracker, TrackedDetection, to_dataframe
@@ -626,6 +627,27 @@ def run(
         tag_suggestions=tag_suggestions,
     )
 
+    # 7c2. Review label track (plan 3.7): per-second name-chip keyframes for
+    # the coach reel overlay. Derived from the same aim stream as the reel —
+    # no video re-render. Coach-only consumer (analytics doc, not public).
+    review_labels_url = None
+    if tv_reel_meta is not None:
+        try:
+            review_labels_url = build_review_label_track(
+                tracks_field_df=tracks_df,
+                identity_by_track=identity_by_track,
+                projector=projector,
+                game_id=game_id,
+                field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m,
+                tv_meta=tv_reel_meta,
+                events=game.events,
+                clock_to_video=clock_to_video,
+                upload=not skip_upload,
+            )
+        except Exception as e:
+            log.warning("Review label track failed: %s", e)
+
     # 7d. Per-tracklet records + thumbnails for the coach IdentityFixView. The
     # records let the PWA list each stitched tracklet (worst-confidence first)
     # with its current player + a representative crop so the coach can fix swaps;
@@ -672,6 +694,8 @@ def run(
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
         "auto_highlights_url": (auto_hl_meta.r2_url if auto_hl_meta else None),
+        # Coach-only review overlay (3.7): name-chip keyframes for the reel.
+        "review_labels_url": review_labels_url,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.
