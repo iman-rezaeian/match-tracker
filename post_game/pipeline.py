@@ -479,6 +479,28 @@ def run(
                 if _hi > _lo:
                     _tot += _hi - _lo
         played_minutes[str(_pid)] = _tot / 60.0
+    # Personalized sprint thresholds (plan 4.5): per player,
+    # max(floor, frac × season speed) from prior games' analytics docs.
+    # Median of per-game p99s, dropping cap-pinned (swap-polluted) games.
+    sprint_thresholds: dict[str, float] = {}
+    try:
+        _prior = firestore_io.collect_prior_player_top_speeds(exclude_game_id=game_id)
+        _cap = 0.95 * config.MAX_PLAUSIBLE_SPEED_MS
+        for _pid, _speeds in _prior.items():
+            _clean = [v for v in _speeds if v < _cap]
+            if _clean:
+                sprint_thresholds[_pid] = max(
+                    config.SPRINT_PERSONAL_FLOOR_MS,
+                    config.SPRINT_PERSONAL_FRAC * float(np.median(_clean)),
+                )
+        log.info("  sprint thresholds: %d personalized (%.1f–%.1f m/s), fallback %.1f",
+                 len(sprint_thresholds),
+                 min(sprint_thresholds.values(), default=0.0),
+                 max(sprint_thresholds.values(), default=0.0),
+                 config.SPRINT_THRESHOLD_MS)
+    except Exception as e:
+        log.warning("Personalized sprint thresholds failed (using fixed %.1f): %s",
+                    config.SPRINT_THRESHOLD_MS, e)
     player_stats = compute_player_stats(
         tracks_field_df=tracks_df,
         identity_by_track=identity_by_track,
@@ -489,6 +511,7 @@ def run(
         periods=play_windows,
         gk_player_id=game.gk_player_id,
         played_minutes=played_minutes,
+        sprint_thresholds=sprint_thresholds,
     )
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,

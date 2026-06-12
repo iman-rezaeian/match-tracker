@@ -7379,17 +7379,21 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                   distSeries: [], speedSeries: [], sprintSeries: [] };
           byPid.set(pid, row);
         }
+        // 4.4: rate-based estimates when present (fairer across players with
+        // unequal tracked coverage); raw sums for older docs.
+        const dist = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
+        const sprints = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
         row.games += 1;
         row.minutes += s.minutes_played || 0;
-        row.distance += s.distance_m || 0;
+        row.distance += dist;
         row.topSpeed = Math.max(row.topSpeed, s.top_speed_ms || 0);
-        row.sprints += s.sprint_count || 0;
+        row.sprints += sprints;
         row.attPct += s.pct_attacking_third || 0;
         row.midPct += s.pct_middle_third || 0;
         row.defPct += s.pct_defensive_third || 0;
-        row.distSeries.push(s.distance_m || 0);
+        row.distSeries.push(dist);
         row.speedSeries.push((s.top_speed_ms || 0) * 3.6);
-        row.sprintSeries.push(s.sprint_count || 0);
+        row.sprintSeries.push(sprints);
       });
     });
     return [...byPid.values()].map(r => ({
@@ -8603,7 +8607,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   // ---- derived analytics view-model (team summary + cards) ----
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
-  const teamKm = (pstats.reduce((s, p) => s + (p.distance_m || 0), 0) / 1000);
+  const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
   const teamTopKmh = Math.max(0, ...pstats.map(p => (p.top_speed_ms || 0) * 3.6));
   const teamSprints = pstats.reduce((s, p) => s + (p.sprint_count || 0), 0);
   // minutes-weighted team thirds
@@ -8859,6 +8863,13 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const topKmh = (s.top_speed_ms || 0) * 3.6;
                 const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 && topKmh >= 30;
                 const statsBad = lowTrack || swapPolluted;
+                // 4.4: rate-based estimates (distance/sprints scaled to coach
+                // minutes) when the doc carries them; raw sums for older docs.
+                const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
+                const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
+                const coveragePct = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
+                  ? Math.min(100, Math.round((s.tracked_seconds / 60) / s.minutes_played * 100))
+                  : null;
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -8880,13 +8891,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-2 mb-1">
-                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [(s.distance_m || 0).toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [s.sprint_count || 0, 'SPRINTS', true]].map(([v, l, movement]) => (
+                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [distShown.toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [sprintsShown, 'SPRINTS', true]].map(([v, l, movement]) => (
                         <div key={l} className={`rounded-xl border border-stone-700/60 p-2 text-center ${statsBad && movement ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
                           <div className="text-white font-display text-base leading-none">{statsBad && movement ? '—' : v}</div>
                           <div className="text-[9px] text-stone-400 mt-1">{l}</div>
                         </div>
                       ))}
                     </div>
+                    {coveragePct != null && s.distance_est_m != null && !statsBad && (
+                      <div className="text-[9px] text-stone-500 mb-2 leading-snug">
+                        📡 {coveragePct}% of minutes tracked — distance &amp; sprints are rate-based estimates
+                        {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
+                      </div>
+                    )}
                     {lowTrack && (
                       <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
                         Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.
