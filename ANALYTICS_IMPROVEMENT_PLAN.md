@@ -251,6 +251,15 @@ obligation.
   16-name roster, so names = lookup too (numbers-only rule dropped). ONLY
   collisions need last names: Ben (Adam/Hahn), Liam (Gibala/Garland). Fixed
   ~6-phrase vocabulary mapping 1:1 to event types (parsing = lookup, not NLP).
+- 🔨 **3.6 — capture half SHIPPED 2026-06-12: in-PWA live recorder.** 🎙 REC
+  pill in the live control row: AirPods mic via MediaRecorder, 10s chunks to
+  IndexedDB while recording (+ crash recovery on next open), screen
+  wake-lock, two-tap stop, auto stop+upload on FINAL WHISTLE. Audio → R2
+  `voice/<gameId>/`, segment on the game doc as `voiceSegments
+  [{startedAt,url,durationS,mime}]`. SYNC IS DETERMINISTIC: startedAt +
+  each event's wall-clock `at` = exact audio anchors (no spoken cues).
+  CAVEAT: keep the PWA foregrounded while recording (iOS suspends background
+  web apps). Extraction half still gated on 3.5.
 - ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Natural-commentary
   LLM extraction (not phrase lookup — coach narrates TV-style): transcript →
   timestamped draft events with pre-filled tags (`source: 'voice'`) landing
