@@ -48,7 +48,13 @@
     // ----- Firebase config -----
     const firebaseConfig = {
       apiKey: "AIzaSyBVuOKhxN42ZPSHJDeQbiJlB4LIje99L_U",
-      authDomain: "lasalle-stompers.firebaseapp.com",
+      // SAME-ORIGIN auth (2026-06-12): the redirect handler is served from our
+      // own domain via the /__/auth/* Pages Function proxy, so the sign-in
+      // round-trip survives Safari/iOS storage partitioning (fresh installs
+      // of the home-screen PWA used to hang at sign-in — coaches AND parents).
+      // Requires: the proxy function + the GCP OAuth redirect URI
+      // https://stompers2016.com/__/auth/handler (registered 2026-06-12).
+      authDomain: "stompers2016.com",
       projectId: "lasalle-stompers",
       storageBucket: "lasalle-stompers.firebasestorage.app",
       messagingSenderId: "375552869214",
@@ -13209,6 +13215,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
