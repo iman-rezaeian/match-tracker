@@ -7619,6 +7619,10 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
               <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
               <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
             </div>
+            {/* Season shot map (4.2) — respects the season/rolling window */}
+            <div className="mt-3">
+              <ShotMap games={windowGames} />
+            </div>
           </section>
 
           {/* Per-player rollup */}
@@ -8438,6 +8442,147 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   );
 }
 
+/* ---------- MOMENTUM CHART (4.1) ----------
+ * 5-minute buckets of for-vs-against momentum from the coach log. We only
+ * log OUR team's events, so "against" is proxied by what our log implies
+ * about the opponent: a SAVE/BLOCK/CLEAR means they were attacking; a
+ * TURNOVER hands them the ball. Pure client-side from game.events.
+ */
+const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDED: 1 };
+const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1 };
+const MOMENTUM_BUCKET_S = 300;
+
+function MomentumChart({ game }) {
+  const halfLenS = (game.halfLengthMin || 25) * 60;
+  const totalS = halfLenS * 2;
+  const nBuckets = Math.max(2, Math.ceil(totalS / MOMENTUM_BUCKET_S));
+  const buckets = Array.from({ length: nBuckets }, () => ({ pos: 0, neg: 0, goals: [] }));
+  const tOf = (e) => {
+    // Game-clock seconds across both halves; stoppage clamps into its half.
+    const p = e.period === 2 ? 1 : 0;
+    return p * halfLenS + Math.min(e.elapsed || 0, halfLenS - 1);
+  };
+  let any = false;
+  for (const e of game.events || []) {
+    const idx = Math.min(nBuckets - 1, Math.floor(tOf(e) / MOMENTUM_BUCKET_S));
+    if (e.type === 'GOAL') buckets[idx].goals.push('us');
+    if (e.type === 'OPP_GOAL') buckets[idx].goals.push('them');
+    if (MOMENTUM_FOR[e.type]) { buckets[idx].pos += MOMENTUM_FOR[e.type]; any = true; }
+    else if (MOMENTUM_AGAINST[e.type]) { buckets[idx].neg += MOMENTUM_AGAINST[e.type]; any = true; }
+  }
+  if (!any) return null;
+  const maxV = Math.max(1, ...buckets.map(b => Math.max(b.pos, b.neg)));
+  const halfIdx = Math.floor(nBuckets / 2);
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] tracking-widest text-stone-400">MOMENTUM</div>
+        <div className="flex gap-3 text-[9px] text-stone-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-lime-500" />US</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500" />THEM</span>
+        </div>
+      </div>
+      <div className="flex items-stretch gap-[3px]" style={{ height: '84px' }}>
+        {buckets.map((b, i) => (
+          <div key={i} className={`flex-1 flex flex-col ${i === halfIdx ? 'border-l border-stone-600/60 pl-[3px]' : ''}`}>
+            {/* top half: us */}
+            <div className="flex-1 flex flex-col justify-end items-center">
+              {b.goals.filter(g => g === 'us').map((_, j) => (
+                <span key={j} className="text-[9px] leading-none">⚽</span>
+              ))}
+              <div
+                className="w-full rounded-t-sm bg-lime-500/80"
+                style={{ height: `${(b.pos / maxV) * 100}%`, minHeight: b.pos > 0 ? '3px' : 0 }}
+              />
+            </div>
+            <div className="h-px bg-stone-600/80" />
+            {/* bottom half: them */}
+            <div className="flex-1 flex flex-col justify-start items-center">
+              <div
+                className="w-full rounded-b-sm bg-red-500/70"
+                style={{ height: `${(b.neg / maxV) * 100}%`, minHeight: b.neg > 0 ? '3px' : 0 }}
+              />
+              {b.goals.filter(g => g === 'them').map((_, j) => (
+                <span key={j} className="text-[9px] leading-none">⚽</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-between mt-1 text-[9px] text-stone-600">
+        <span>KICKOFF</span><span>HALF</span><span>FULL TIME</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- SHOT MAP (4.2) ----------
+ * 3×3 half-field chart of GOAL / SHOT_ON / SHOT_OFF by their coach zone tag,
+ * attack at the top (same convention as the tag grids). Works per game or
+ * across a season (pass any list of games). Untagged shots are surfaced as
+ * the audit line — they're exactly what the confirm queue drains.
+ */
+function ShotMap({ games }) {
+  const cells = {}; // 'A-L' -> { goals, on, off }
+  let untagged = 0;
+  let total = 0;
+  for (const g of games || []) {
+    for (const e of g.events || []) {
+      if (e.type !== 'GOAL' && e.type !== 'SHOT_ON' && e.type !== 'SHOT_OFF') continue;
+      total++;
+      if (!e.zone || !ZONE_LABEL[e.zone]) { untagged++; continue; }
+      const c = cells[e.zone] || (cells[e.zone] = { goals: 0, on: 0, off: 0 });
+      if (e.type === 'GOAL') c.goals++;
+      else if (e.type === 'SHOT_ON') c.on++;
+      else c.off++;
+    }
+  }
+  if (total === 0) return null;
+  const maxN = Math.max(1, ...Object.values(cells).map(c => c.goals + c.on + c.off));
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] tracking-widest text-stone-400">SHOT MAP</div>
+        <div className="text-[9px] text-stone-500">⬆ OUR ATTACK</div>
+      </div>
+      <div className="grid grid-cols-3 grid-rows-3 gap-1" style={{ direction: 'ltr' }}>
+        {['A', 'M', 'D'].flatMap(band =>
+          ['L', 'C', 'R'].map(side => {
+            const id = `${band}-${side}`;
+            const c = cells[id];
+            const n = c ? c.goals + c.on + c.off : 0;
+            const alpha = n ? 0.12 + 0.5 * (n / maxN) : 0;
+            return (
+              <div
+                key={id}
+                className="rounded-lg border border-stone-800 flex flex-col items-center justify-center py-2.5 min-h-[52px]"
+                style={{ background: n ? `rgba(163, 230, 53, ${alpha})` : 'rgba(28,25,23,0.4)' }}
+              >
+                {n > 0 ? (
+                  <>
+                    <div className="font-display text-lg leading-none text-white">{n}</div>
+                    <div className="text-[9px] text-stone-300 mt-0.5">
+                      {c.goals > 0 && <span>⚽{c.goals} </span>}
+                      {c.on > 0 && <span>🎯{c.on} </span>}
+                      {c.off > 0 && <span>❌{c.off}</span>}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[10px] text-stone-700">·</div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="flex justify-between mt-1.5 text-[9px]">
+        <span className="text-stone-600">{total - untagged} of {total} shots zone-tagged</span>
+        {untagged > 0 && <span className="text-amber-400/90">✅ {untagged} untagged — tag them in the confirm queue</span>}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- FORMATION EDIT SHEET ----------
  * Per-half manual correction for the formation label. The computed value
  * (coach's resets-first rule) stays the default; a coach pick is stored in
@@ -8806,6 +8951,10 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 </div>
                 <div className="flex justify-between text-[9px] text-stone-500"><span className="text-lime-300">Att {teamThirds[2].toFixed(0)}</span><span className="text-yellow-300">Mid {teamThirds[1].toFixed(0)}</span><span className="text-red-300">Def {teamThirds[0].toFixed(0)}</span></div>
               </div>
+            </div>
+            <div className="mt-2 space-y-2">
+              <MomentumChart game={game} />
+              <ShotMap games={[game]} />
             </div>
             <div className="text-[9px] text-stone-600 mt-3">Generated {doc.generated_at_ms ? new Date(doc.generated_at_ms).toLocaleString() : '—'}</div>
           </section>
@@ -12604,6 +12753,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
