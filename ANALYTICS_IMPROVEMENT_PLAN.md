@@ -333,6 +333,17 @@ Ordered by coach value per effort.
 - Re-run the Phase 0 baseline on the first 8K game — program-wide
   before/after.
 
+## Known sharp edge — override drift across re-stitching (found 2026-06-12)
+
+Coach identityOverrides are keyed by TRACKLET id, an artifact of stitching:
+stable across plain re-runs, reshuffled by stitch-affecting code changes
+(Phase 1 did this → Windsor has 166 overrides vs 141 current tracklets, and
+a stale override can land on a DIFFERENT kid's tracklet — observed as an
+Alex chip on Issa). FIX: re-key overrides to a representative MEMBER TRACK
+id (raw track ids come from the checkpointed tracking stage → stable
+forever); migrate/flag stale ones at apply time instead of silently
+mis-landing. Build BEFORE the next stitch-affecting change (8K era).
+
 ## Ongoing process
 
 - Bookmark/voice classification largely replaces the monthly

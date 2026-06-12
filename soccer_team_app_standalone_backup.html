@@ -8490,9 +8490,21 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                 : <div className="w-16 h-24 rounded-lg bg-stone-800 shrink-0 flex items-center justify-center text-stone-600 text-2xl">?</div>}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-stone-200 text-sm font-semibold truncate">{pname(tl.player_id)}</span>
+                  {/* Title shows the EFFECTIVE decision: a coach-rejected
+                      tracklet is "not a player", not "unassigned" (the
+                      pipeline drops it, so the record holds no player). */}
+                  {(() => {
+                    const sel = selFor(tl);
+                    if (sel !== '__auto__' && NONPLAYER[sel]) {
+                      return <span className="text-stone-400 text-sm font-semibold truncate">{NONPLAYER[sel]}</span>;
+                    }
+                    return <span className="text-stone-200 text-sm font-semibold truncate">{pname(tl.player_id)}</span>;
+                  })()}
                   {confBadge(tl.confidence)}
                   {tl.status === 'coach' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300">COACH</span>}
+                  {tl.status !== 'coach' && selFor(tl) !== '__auto__' && savedSet.has(String(tl.tracklet_id)) && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300">YOUR CALL</span>
+                  )}
                 </div>
                 <div className="text-[11px] text-stone-500 mt-0.5">
                   {Math.round(tl.minutes || 0)} min · {fmt(tl.t_start_s)}–{fmt(tl.t_end_s)} <span className="text-stone-700">· #{tl.tracklet_id}</span>
@@ -12888,6 +12900,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
