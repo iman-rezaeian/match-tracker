@@ -257,17 +257,20 @@ obligation.
   matching a live event, same type ±30 s, attaches and enriches its tags).
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
-- 🔨 **3.7 Labeled review reel — IN PROGRESS 2026-06-11.** DESIGN DECISION:
+- ✅ **3.7 Labeled review reel — CODE SHIPPED 2026-06-11 (validation pending first label-track run).** DESIGN DECISION:
   NOT a second video render — the pipeline exports a per-second label track
   (player name + position in reel-crop coords) as JSON to R2 next to the
   reel, and the PWA draws toggleable name chips as a DOM overlay synced to
   playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
   toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
   narration far-side IDs, full-roster marking, visible identity errors.
-  Steps: (a) ✅ pipeline build_review_label_track (inverse-perspective
-  projection of foot coords through the re-derived aim stream, 1 Hz keyframe
-  JSON → R2, review_labels_url on analytics doc) — committed;
-  (b) 🔨 PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
+  (a) ✅ pipeline build_review_label_track (inverse-perspective projection
+  through the re-derived deterministic aim stream, 1 Hz keyframes → R2,
+  review_labels_url on analytics doc); (b) ✅ PWA 🏷 LABELS toggle in the
+  full-game reel player (lazy fetch, keyframe lerp, fit/fill letterbox
+  mapping; coach surface only). Label tracks generate on each game's next
+  pipeline run with the new code — the projection math needs eyeballing on
+  the first real reel (chip-on-wrong-kid = aim/inverse bug OR identity swap).
 
 **Also shipped 2026-06-11 (outside the phase plan):**
 - Owner-only VIEWERS usage analytics (per-section tracking, watch time,
