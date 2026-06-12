@@ -4183,12 +4183,18 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
   const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob });
   if (!put.ok) throw new Error(`PUT ${put.status}`);
   // Append the segment on the game doc for the voice pipeline (3.6).
-  if (window.fbDb) {
-    const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId);
-    const snap = await ref.get();
-    const cur = (snap.exists && snap.data().voiceSegments) || [];
-    await ref.update({ voiceSegments: [...cur, { startedAt, url: publicUrl, durationS, mime }] });
-  }
+  // Best effort: if the game was deleted, the audio still lives in R2 and
+  // recovery must not wedge on a missing doc.
+  try {
+    if (window.fbDb) {
+      const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId);
+      const snap = await ref.get();
+      if (snap.exists) {
+        const cur = snap.data().voiceSegments || [];
+        await ref.update({ voiceSegments: [...cur, { startedAt, url: publicUrl, durationS, mime }] });
+      }
+    }
+  } catch (e) { console.warn('voiceSegments doc write failed (audio is in R2):', e); }
   return publicUrl;
 }
 
@@ -4198,25 +4204,29 @@ function VoiceRecorder({ game }) {
   const [armStop, setArmStop] = useState(false); // two-tap stop guard
   const recRef = useRef(null);
 
-  // Recover orphaned chunks from a previous crashed session (best effort).
+  // Recover orphaned chunks from ANY previous crashed/failed session — keys
+  // carry their own gameId, so a take stranded on an already-finished game
+  // still uploads to the right doc the next time any live game is open.
   useEffect(() => {
     (async () => {
       try {
-        const rows = (await _voiceList()).filter(r => r.k.startsWith(`${game.id}|`));
+        const rows = await _voiceList();
         if (!rows.length) return;
         const bySeg = {};
         rows.forEach(r => {
-          const [, seg] = r.k.split('|');
-          (bySeg[seg] = bySeg[seg] || []).push(r);
+          const [gid, seg] = r.k.split('|');
+          if (!gid || !seg) return;
+          (bySeg[`${gid}|${seg}`] = bySeg[`${gid}|${seg}`] || []).push(r);
         });
-        for (const [seg, list] of Object.entries(bySeg)) {
+        for (const [pref, list] of Object.entries(bySeg)) {
+          const [gid, seg] = pref.split('|');
           list.sort((a, b) => Number(a.k.split('|')[2]) - Number(b.k.split('|')[2]));
           const mime = _voiceMime() || 'audio/mp4';
           const blob = new Blob(list.map(r => r.v), { type: mime });
           if (blob.size > 20000) {
-            await _voiceUpload(game.id, Number(seg), blob, mime, Math.round(list.length * 10));
+            await _voiceUpload(gid, Number(seg), blob, mime, Math.round(list.length * 10));
           }
-          await _voiceClear(`${game.id}|${seg}|`);
+          await _voiceClear(`${pref}|`);
         }
       } catch (e) { console.warn('voice recovery failed:', e); }
     })();
@@ -13199,6 +13209,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
