@@ -8352,8 +8352,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const importance = (t) => (1 - (t.confidence || 0)) * ((t.minutes || 0) + 0.2);
   const tracklets = [...allTracklets]
     .filter(t => {
-      if (savedSet.has(String(t.tracklet_id))) return false; // already decided + saved
+      // "All segments" = EVERYTHING, including already-decided tracklets —
+      // it exists to double-check past decisions (a wrong name spotted on
+      // the labeled reel lives in a decided tracklet, not a pending one).
+      // The default view stays the to-do list: undecided + unassigned only.
       if (showAll) return true;
+      if (savedSet.has(String(t.tracklet_id))) return false; // already decided + saved
       return !t.player_id; // default view: only the still-unassigned ones
     })
     .sort((a, b) => importance(b) - importance(a));
@@ -12884,6 +12888,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
