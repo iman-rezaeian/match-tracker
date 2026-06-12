@@ -172,9 +172,10 @@ so relative season standings hold.
 Live job shrinks to: goals, subs, shots, saves, pens + one reflex
 bookmark/voice cue. Everything else is created or confirmed from video.
 
-**STATUS 2026-06-11 (end of day): 3.1–3.4 + 3.1b SHIPPED and PROMOTED TO
-MAIN. 3.0 voice memo still owed by coach; 3.5/3.6 gated on that audio.
-3.7 (labeled review reel) added as the next pipeline item.**
+**STATUS 2026-06-11 (late): 3.1–3.4 + 3.1b + 3.7 SHIPPED (3.1–3.4 on main;
+3.7 + Phase-4 batch on beta). 3.0 voice memo still owed by coach — but 3.6
+is no longer fully blocked: the post-game (quiet, at-home) narration channel
+can validate the extraction pipeline before sideline audio exists.**
 
 **CAPTURE PROTOCOL (decided 2026-06-11, supersedes the line above):** solo
 coach on ALL games — other coaches run the team and do not log. One mode:
@@ -358,10 +359,10 @@ Ordered by coach value per effort.
 | 2 | ✅ Phase 1 COMPLETE (1.1–1.4, published 2026-06-10) | Contamination fix proper is 8K-gated (appearance); color-space swaps measured + rejected |
 | 3 | ✅ 2.x scoring v2 SHIPPED 2026-06-10 (2.4 z-scoring still open) | One coordinated, versioned change |
 | 4 | ✅ 3.1–3.4 + 3.1b SHIPPED + promoted to main 2026-06-11 | Queue → bookmark → tag pre-fill → identity front door |
-| 5 | 4.1 momentum + 4.2 shot map (next code work) | Pure client-side; shot map consumes the new zone tags; no gate |
-| 6 | 3.7 labeled review reel | Unlocks post-game narration + full-roster marking; voice-independent |
-| 7 | 3.5 → 3.6 voice probe → LLM extraction | The moment the 3.0 audio exists |
-| 8 | 4.3–4.7 remaining views + LLM layer | Interleave; 4.7 builds on 3.6 output |
+| 5 | ✅ 4.1 + 4.2 + 4.4 + 4.5 + 4.6 + staleness nudge SHIPPED 2026-06-11 | One-day Phase-4 sweep; doc fields land per game on next pipeline run |
+| 6 | ✅ 3.7 labeled review reel SHIPPED 2026-06-11 (validate chips on first label-track run) | Unlocks post-game narration + full-roster marking |
+| 7 | NEXT BUILD: in-PWA post-game recorder + 3.6 extraction (validate on quiet home audio) | Voice de-risked without waiting for game day |
+| 8 | 3.5 sideline probe when the 3.0 audio exists · suggestion-conflict queue cards · 4.3/2.4 decisions · 4.7 LLM layer | Interleave |
 | 9 | 5.x | Blocked on first 8K game |
 
 **Process note:** re-run the pipeline on both existing games when convenient —
