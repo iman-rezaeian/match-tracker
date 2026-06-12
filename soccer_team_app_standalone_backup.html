@@ -68,41 +68,63 @@
     // no writes — not even telemetry). Long polling is marginally chattier
     // and utterly reliable; at this app's user count that trade is free.
     // MUST run before enablePersistence/any query.
-    try { window.fbDb.settings({ experimentalForceLongPolling: true }); } catch (e) {}
+    try { window.fbDb.settings({ experimentalForceLongPolling: true }); window.__lpForced = true; } catch (e) {}
     // ---- Client error telemetry (remote debugging without a cable) ----
-    // JS errors + a stuck-loading watchdog land in viewerLog (create:true for
-    // everyone), so standalone-PWA failures on devices we can't inspect are
-    // readable from the pipeline side. The app sets window.__appReady once
-    // real content renders; 20s without it = stuck, log the context.
+    // Two channels: viewerLog (Firestore) AND an R2 beacon via the upload
+    // worker — because the bug under investigation IS Firestore connectivity
+    // in iOS standalone mode, telemetry must not depend on it. The beacon
+    // carries a googleapis reachability probe + a new-build marker.
     window.__appReady = false;
+    window.__lpForced = !!window.__lpForced;
     (function () {
       const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
         || window.navigator.standalone === true;
-      function send(entry) {
+      function fsSend(entry) {
         try {
           window.fbDb.collection('viewerLog').add(Object.assign({
-            action: 'jserror',
-            href: String(location.href),
-            standalone,
+            action: 'jserror', href: String(location.href), standalone,
             ua: String(navigator.userAgent || '').slice(0, 120),
             ts: firebase.firestore.FieldValue.serverTimestamp(),
           }, entry)).catch(function () {});
         } catch (e) {}
       }
+      async function beacon(entry) {
+        try {
+          entry.href = String(location.href);
+          entry.standalone = standalone;
+          entry.lpForced = !!window.__lpForced;
+          entry.ua = String(navigator.userAgent || '').slice(0, 140);
+          entry.at = new Date().toISOString();
+          try {
+            const t0 = Date.now();
+            await fetch('https://firestore.googleapis.com/', { method: 'GET', mode: 'no-cors' });
+            entry.gapiProbe = 'ok ' + (Date.now() - t0) + 'ms';
+          } catch (e) { entry.gapiProbe = 'FAIL ' + String(e && e.message || e); }
+          const r = await fetch('https://stompers-upload.rezaian-iman.workers.dev/upload-url', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: 'ManUtd2016', filename: 'debug_' + Date.now() + '.json', contentType: 'application/json' }),
+          });
+          const j = await r.json();
+          await fetch(j.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
+        } catch (e) {}
+      }
       window.addEventListener('error', function (e) {
-        send({ message: String(e.message || e).slice(0, 400), src: String(e.filename || '').slice(-80), line: e.lineno || 0 });
+        const entry = { message: String(e.message || e).slice(0, 400), src: String(e.filename || '').slice(-80), line: e.lineno || 0 };
+        fsSend(entry); beacon(entry);
       });
       window.addEventListener('unhandledrejection', function (e) {
         var r = e.reason;
-        send({ message: ('unhandledrejection: ' + String((r && (r.message || r.code)) || r)).slice(0, 400) });
+        const entry = { message: ('unhandledrejection: ' + String((r && (r.message || r.code)) || r)).slice(0, 400) };
+        fsSend(entry); beacon(entry);
       });
       setTimeout(function () {
         if (window.__appReady) return;
-        send({
+        const entry = {
           message: 'stuckloading',
           user: !!(window.fbAuth && window.fbAuth.currentUser),
           rootKids: (document.getElementById('root') || {}).childElementCount || 0,
-        });
+        };
+        fsSend(entry); beacon(entry);
       }, 20000);
     })();
     window.fbAuth = firebase.auth();
@@ -13265,6 +13287,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
