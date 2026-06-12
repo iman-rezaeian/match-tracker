@@ -129,7 +129,13 @@
     })();
     window.fbAuth = firebase.auth();
     // Offline persistence (so the app survives field wifi)
-    window.fbDb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+    // synchronizeTabs:false (2026-06-12): the multi-tab lease election hangs
+    // Firestore startup in iOS standalone PWAs — dead page instances linger
+    // after in-app navigation and pin the lease, so every query queues forever
+    // (beacon-confirmed on iPadOS 17.7: network + auth fine, SDK stuck).
+    // Single-tab locking fails FAST when contended; the app then just runs
+    // without the offline cache for that load instead of hanging.
+    window.fbDb.enablePersistence({ synchronizeTabs: false }).catch(() => {});
     // Complete any pending signInWithRedirect round-trip BEFORE anything else
     // touches auth. Without this call, iPad PWAs that fall back from popup to
     // redirect can come back to the page with no user and hang forever in the
@@ -13287,6 +13293,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
