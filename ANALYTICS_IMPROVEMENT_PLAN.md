@@ -294,14 +294,17 @@ Ordered by coach value per effort.
 - **4.3 Pressure multiplier.** DEC points × ~1.5 when `pressure==='pressure'`
   (one line; fold into Phase 2 release if timing aligns). Viable now that
   tags are cheap via the queue.
-- **4.4 Rate-based physical stats.** Headline distance =
-  `distance_per_tracked_min × coach_minutes` with tracked-coverage % shown
-  beside it (coverage is systematically unequal across players — raw sums are
-  biased, not just scaled). Keep raw sum in the doc for the 8K before/after.
-  Sprint rate too.
-- **4.5 Personalized sprint threshold.** Per player:
-  `max(4.0 m/s, 0.8 × own season p99 speed)`, from prior analytics docs;
-  fallback 4.5 for new players. Record threshold used in output.
+- ✅ **4.4 Rate-based physical stats — shipped 2026-06-11.** Doc fields
+  `tracked_seconds` / `distance_est_m` / `sprint_est_count` (rate × coach
+  minutes; raw sums kept for the 8K before/after; raw fallback under 3
+  tracked minutes). Cards + season rollups + team km prefer estimates; cards
+  show "N% of minutes tracked" + the sprint bar used. Fields land per game
+  on its next pipeline run; PWA falls back cleanly on old docs.
+- ✅ **4.5 Personalized sprint threshold — shipped 2026-06-11.** Per player
+  `max(4.0, 0.8 × median of prior games' top_speed_ms)` (median of per-game
+  p99s, cap-pinned games dropped as swap pollution — deviation from the
+  plan's raw p99, deliberate); fallback 4.5 m/s; `sprint_threshold_ms`
+  recorded per player.
 - **4.6 Field tilt.** Team-centroid third-occupancy % from existing
   `TeamTimeSeries` — best no-ball possession proxy; gives compactness/width a
   narrative home.
