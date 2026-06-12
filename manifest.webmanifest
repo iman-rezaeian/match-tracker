@@ -2,7 +2,7 @@
   "name": "LaSalle Stompers — Match Tracker",
   "short_name": "Stompers",
   "description": "U10 soccer match-day tracker for the LaSalle Stompers 2016 squad.",
-  "start_url": "./",
+  "start_url": "./?coach",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen", "minimal-ui"],
