@@ -7645,12 +7645,25 @@ function readableTextOn(hex) {
   return lum > 0.5 ? '#0a0a0a' : '#ffffff';
 }
 
-function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = null }) {
+function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = null, labelsUrl = null, roster = [] }) {
   const videoRef = useRef(null);
   const [now, setNow] = useState(0);
   // Fit (letterbox, whole frame) vs Fill (crop to fill the screen). The reel is
   // 16:9 but phones in landscape are wider (~20:9), so Fit leaves side bars.
   const [fillMode, setFillMode] = useState(false);
+
+  // REVIEW LABELS (3.7): name chips over tracked players, from the pipeline's
+  // keyframe JSON (review_labels_url). Coach-only — the prop is simply not
+  // passed on public surfaces. Fetched lazily on first toggle.
+  const [showLabels, setShowLabels] = useState(false);
+  const [labelData, setLabelData] = useState(null); // {players, frames, sampleHz}
+  const labelIdxRef = useRef(0); // last keyframe index (playback is mostly forward)
+  useEffect(() => {
+    if (!showLabels || !labelsUrl || labelData) return;
+    fetch(labelsUrl).then(r => r.json()).then(d => {
+      if (d && Array.isArray(d.frames)) setLabelData(d);
+    }).catch(() => {});
+  }, [showLabels, labelsUrl, labelData]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -7814,12 +7827,68 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
       {/* Soft top scrim so the floating scorebug + buttons stay legible over bright video. */}
       <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/55 to-transparent pointer-events-none z-10" />
 
+      {/* REVIEW LABELS overlay (3.7): lerped name chips above each tracked
+          player's feet, mapped from reel-crop coords through the current
+          fit/fill letterboxing. */}
+      {showLabels && labelData && (() => {
+        const v = videoRef.current;
+        if (!v) return null;
+        const frames = labelData.frames;
+        // Bracketing keyframes around `now` (cached index; rewinds re-scan).
+        let i = Math.min(labelIdxRef.current, frames.length - 1);
+        if (frames[i][0] > now) i = 0;
+        while (i + 1 < frames.length && frames[i + 1][0] <= now) i++;
+        labelIdxRef.current = i;
+        const [t0, e0] = frames[i];
+        const next = frames[i + 1];
+        if (Math.abs(now - t0) > 2.5 && (!next || Math.abs(now - next[0]) > 2.5)) return null;
+        const byIdx1 = next ? Object.fromEntries(next[1].map(e => [e[0], e])) : {};
+        const alpha = next && next[0] > t0 ? Math.min(1, Math.max(0, (now - t0) / (next[0] - t0))) : 0;
+        // Displayed video rect under contain/cover letterboxing.
+        const cw = v.clientWidth, ch = v.clientHeight;
+        const va = (v.videoWidth && v.videoHeight) ? v.videoWidth / v.videoHeight : 16 / 9;
+        const ca = cw / Math.max(ch, 1);
+        let w, h;
+        if (fillMode ? ca <= va : ca > va) { h = ch; w = ch * va; } else { w = cw; h = cw / va; }
+        const ox = (cw - w) / 2, oy = (ch - h) / 2;
+        const nameOf = (pid) => {
+          const p = roster.find(r => r.id === pid);
+          return p ? `${p.name.split(' ')[0]}${p.number != null ? ` ${p.number}` : ''}` : pid.slice(-4);
+        };
+        return (
+          <div className="absolute inset-0 pointer-events-none z-[15] overflow-hidden">
+            {e0.map(([idx, x0, y0]) => {
+              const e1 = byIdx1[idx];
+              const nx = e1 ? x0 + (e1[1] - x0) * alpha : x0;
+              const ny = e1 ? y0 + (e1[2] - y0) * alpha : y0;
+              if (nx < -0.02 || nx > 1.02 || ny < 0 || ny > 1.05) return null;
+              return (
+                <div
+                  key={idx}
+                  className="absolute text-[10px] font-bold text-white bg-black/60 border border-white/30 rounded px-1 leading-tight whitespace-nowrap"
+                  style={{ left: ox + nx * w, top: oy + ny * h, transform: 'translate(-50%, -130%)', textShadow: '0 1px 1px rgba(0,0,0,0.9)' }}
+                >
+                  {nameOf(labelData.players[idx])}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Floating controls — top-right overlay (replaces the old solid band). */}
       <div
         className="absolute z-20 flex items-center gap-2"
         style={{ right: 'max(env(safe-area-inset-right, 0px), 12px)', top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
       >
         <span className="hidden sm:block text-white/85 font-display text-xs truncate max-w-[34vw] pr-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>{label}</span>
+        {labelsUrl && (
+          <button
+            onClick={() => setShowLabels(s => !s)}
+            className={`h-9 px-3 rounded-full font-display text-xs border active:scale-95 backdrop-blur-sm ${showLabels ? 'bg-lime-500/80 text-stone-950 border-lime-300' : 'bg-black/55 hover:bg-black/75 text-white border-white/25'}`}
+            title="Name labels over tracked players (review mode)"
+          >🏷 LABELS</button>
+        )}
         <button
           onClick={() => setFillMode(f => !f)}
           className="h-9 px-3 rounded-full bg-black/55 hover:bg-black/75 text-white font-display text-xs border border-white/25 active:scale-95 backdrop-blur-sm"
@@ -8951,6 +9020,8 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
           doc={doc}
           label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
           timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          labelsUrl={broadcastOpen === 'tv_reel' ? (doc?.review_labels_url || null) : null}
+          roster={roster}
           onClose={() => setBroadcastOpen(null)}
         />
       )}
