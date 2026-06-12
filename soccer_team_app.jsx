@@ -8216,7 +8216,10 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   // Snapshot of the last-saved overrides. Decided+saved tracklets drop off the
   // list, and "unsaved" = how many differ from this snapshot (→ 0 right after Save).
   const [savedOverrides, setSavedOverrides] = useState(() => ({ ...(game.identityOverrides || {}) }));
-  const [showAll, setShowAll] = useState(false); // false = only unassigned to do
+  // View filter: TO-DO (undecided + unassigned) · UNREVIEWED (everything you
+  // haven't decided — hides COACH / YOUR CALL so you can audit the pipeline's
+  // own guesses) · ALL (every segment, decided included).
+  const [viewMode, setViewMode] = useState('todo'); // 'todo' | 'unreviewed' | 'all'
   const savedSet = new Set(Object.keys(savedOverrides));
   const unsavedCount = (() => {
     const ids = new Set([...Object.keys(overrides), ...Object.keys(savedOverrides)]);
@@ -8229,13 +8232,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   const importance = (t) => (1 - (t.confidence || 0)) * ((t.minutes || 0) + 0.2);
   const tracklets = [...allTracklets]
     .filter(t => {
-      // "All segments" = EVERYTHING, including already-decided tracklets —
-      // it exists to double-check past decisions (a wrong name spotted on
+      // ALL exists to double-check past decisions (a wrong name spotted on
       // the labeled reel lives in a decided tracklet, not a pending one).
-      // The default view stays the to-do list: undecided + unassigned only.
-      if (showAll) return true;
-      if (savedSet.has(String(t.tracklet_id))) return false; // already decided + saved
-      return !t.player_id; // default view: only the still-unassigned ones
+      if (viewMode === 'all') return true;
+      if (savedSet.has(String(t.tracklet_id))) return false; // your decided ones
+      if (viewMode === 'unreviewed') return true;            // pipeline guesses + unassigned
+      return !t.player_id; // TO-DO: only the still-unassigned ones
     })
     .sort((a, b) => importance(b) - importance(a));
   const remainingUnassigned = allTracklets.filter(t => !t.player_id && !savedSet.has(String(t.tracklet_id))).length;
@@ -8278,6 +8280,52 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     if (v == null || v === '__none__') return '__other__'; // legacy "not a player"
     return v;
   };
+  // Who was on field vs bench (and their rough board role) around a
+  // tracklet's midpoint — so the picker only makes you choose among kids who
+  // could plausibly be in frame. Video time → game clock is estimated through
+  // the nearest broadcastEvents entry (clock ≈ video during play).
+  const _sortedEvents = useMemo(
+    () => [...(game.events || [])].sort((a, b) => (a.at || 0) - (b.at || 0)),
+    [game.events]);
+  const fieldInfoAt = (tl) => {
+    const idx = game.broadcastEvents || [];
+    if (!idx.length || tl.t_start_s == null) return null;
+    const mid = ((tl.t_start_s || 0) + (tl.t_end_s || 0)) / 2;
+    let near = null;
+    for (const e of idx) {
+      if (e.videoTimeS == null || e.elapsed == null) continue;
+      if (!near || Math.abs(e.videoTimeS - mid) < Math.abs(near.videoTimeS - mid)) near = e;
+    }
+    if (!near) return null;
+    const period = near.period || 1;
+    const elapsed = Math.max(0, (near.elapsed || 0) + (mid - near.videoTimeS));
+    const before = (e) => (e.period || 1) < period
+      || ((e.period || 1) === period && (e.elapsed || 0) <= elapsed);
+    const on = new Set(game.startingLineup || []);
+    let gk = game.gkPlayerId || null;
+    const pos = {};
+    for (const e of _sortedEvents) {
+      if (!before(e)) continue;
+      if (e.type === 'SUB') {
+        if (e.playerId) on.delete(e.playerId);
+        if (e.subOnPlayerId) on.add(e.subOnPlayerId);
+      } else if (e.type === 'GK_CHANGE' && e.playerId) {
+        gk = e.playerId;
+      } else if (e.type === 'POSITION' && typeof e.y === 'number') {
+        pos[e.playerId] = e;
+      }
+    }
+    const roleOf = (pid) => {
+      if (pid === gk) return '🧤 GK';
+      const p = pos[pid];
+      if (!p) return '';
+      const d = 1 - p.y; // board y=1 = own goal
+      const band = d < 1 / 3 ? 'DEF' : d < 2 / 3 ? 'MID' : 'ATT';
+      return band + (p.x < 1 / 3 ? '·L' : p.x < 2 / 3 ? '·C' : '·R');
+    };
+    return { on, roleOf, clock: `${period === 2 ? '2nd' : '1st'} half ${Math.floor(elapsed / 60)}'` };
+  };
+
   const setSel = (tl, val) => {
     const id = String(tl.tracklet_id);
     setSavedMsg(null);
@@ -8335,12 +8383,17 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
         <span className="text-xs text-stone-300 shrink-0">
           {remainingUnassigned} to identify{unsavedCount ? ` · ${unsavedCount} unsaved` : ''}
         </span>
-        <button
-          onClick={() => setShowAll(v => !v)}
-          className={`shrink-0 h-7 px-2.5 rounded-full text-[11px] border active:scale-95 ${showAll ? 'bg-white/15 text-white border-white/25' : 'bg-stone-800 text-stone-400 border-stone-700'}`}
-        >
-          {showAll ? 'All segments' : 'Unassigned only'}
-        </button>
+        <div className="shrink-0 flex rounded-full border border-stone-700 overflow-hidden">
+          {[['todo', 'TO-DO'], ['unreviewed', 'UNREVIEWED'], ['all', 'ALL']].map(([id, lbl]) => (
+            <button
+              key={id}
+              onClick={() => setViewMode(id)}
+              className={`h-7 px-2 text-[10px] font-bold tracking-wider active:scale-95 ${viewMode === id ? 'bg-white/15 text-white' : 'bg-stone-800 text-stone-500'}`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           {savedMsg && <span className="text-[11px] text-lime-300">{savedMsg}</span>}
           <button
@@ -8394,11 +8447,24 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                   className="mt-2 w-full bg-stone-800 border border-stone-700 rounded-lg px-2 py-1.5 text-sm text-stone-100 focus:outline-none focus:border-lime-500"
                 >
                   <option value="__auto__">Auto: {pname(tl.player_id)}</option>
-                  <optgroup label="Our players (this game)">
-                    {sortedRoster.map(p => (
-                      <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}</option>
-                    ))}
-                  </optgroup>
+                  {(() => {
+                    const fi = fieldInfoAt(tl);
+                    const opt = (p) => {
+                      const r = fi ? fi.roleOf(p.id) : '';
+                      return <option key={p.id} value={p.id}>{p.number != null ? `#${p.number} ` : ''}{p.name}{r ? ` · ${r}` : ''}</option>;
+                    };
+                    if (!fi) {
+                      return <optgroup label="Our players (this game)">{sortedRoster.map(opt)}</optgroup>;
+                    }
+                    const onField = sortedRoster.filter(p => fi.on.has(p.id));
+                    const bench = sortedRoster.filter(p => !fi.on.has(p.id));
+                    return (
+                      <>
+                        <optgroup label={`On field around ${fi.clock}`}>{onField.map(opt)}</optgroup>
+                        {bench.length > 0 && <optgroup label="On bench then">{bench.map(opt)}</optgroup>}
+                      </>
+                    );
+                  })()}
                   <optgroup label="Not our player">
                     <option value="__opp__">⚪ Opponent</option>
                     <option value="__ref__">🟨 Referee</option>
@@ -8412,11 +8478,23 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
         {tracklets.length === 0 && (
           <div className="text-center text-stone-400 text-sm py-12">
             <div className="text-3xl mb-2">✅</div>
-            {showAll ? 'Nothing left to review.' : 'All players identified — nothing unassigned left.'}
-            {!showAll && allTracklets.some(t => t.player_id) && (
+            {viewMode === 'all' ? 'No segments in this game.'
+              : viewMode === 'unreviewed' ? 'Nothing unreviewed — every segment carries one of your decisions.'
+              : 'All players identified — nothing unassigned left.'}
+            {viewMode === 'todo' && (
+              <div className="mt-3 space-x-4">
+                <button onClick={() => setViewMode('unreviewed')} className="text-xs text-lime-400 underline">
+                  Audit the pipeline's guesses
+                </button>
+                <button onClick={() => setViewMode('all')} className="text-xs text-lime-400 underline">
+                  Show everything
+                </button>
+              </div>
+            )}
+            {viewMode === 'unreviewed' && (
               <div className="mt-3">
-                <button onClick={() => setShowAll(true)} className="text-xs text-lime-400 underline">
-                  Show all segments to double-check assignments
+                <button onClick={() => setViewMode('all')} className="text-xs text-lime-400 underline">
+                  Show everything incl. your decisions
                 </button>
               </div>
             )}
