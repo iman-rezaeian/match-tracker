@@ -4537,6 +4537,22 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             )}
 
+            {/* POSITION-staleness nudge: the board is identity's main prior
+                AND the formation source — surface drift before it costs data. */}
+            {(() => {
+              if (game.clockRunning === false || elapsed < 180) return null;
+              const placed = new Set((game.events || [])
+                .filter(e => e.type === 'POSITION' && (e.period || 1) === game.period)
+                .map(e => e.playerId));
+              const missing = [...onFieldAt(game)].filter(pid => !placed.has(pid) && pid !== gameGKId);
+              if (missing.length === 0) return null;
+              return (
+                <div className="mt-2 bg-amber-500/10 border border-amber-600/50 rounded-xl px-3 py-2 text-[11px] text-amber-300 leading-snug">
+                  🧭 {missing.length} on-field player{missing.length === 1 ? '' : 's'} not placed on the board this half — drag them (or tap RESET) so tracking knows who's where.
+                </div>
+              );
+            })()}
+
             {tacticalBoard}
 
             <div className="mt-5 flex-1 min-h-0">
@@ -8905,6 +8921,22 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
               <ShotMap games={[game]} />
+              {/* 4.6 — team-centroid third occupancy: where the game lived. */}
+              {doc.field_tilt && (
+                <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+                  <div className="text-[10px] tracking-widest text-stone-400 mb-2">FIELD TILT <span className="text-stone-600">· where the game lived (possession proxy)</span></div>
+                  <div className="flex h-2 rounded-full overflow-hidden mb-1">
+                    <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
+                    <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
+                    <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
+                  </div>
+                  <div className="flex justify-between text-[9px] text-stone-500">
+                    <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
+                    <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
+                    <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="text-[9px] text-stone-600 mt-3">Generated {doc.generated_at_ms ? new Date(doc.generated_at_ms).toLocaleString() : '—'}</div>
           </section>

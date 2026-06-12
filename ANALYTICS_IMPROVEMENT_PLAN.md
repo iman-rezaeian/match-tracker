@@ -257,17 +257,20 @@ obligation.
   matching a live event, same type ±30 s, attaches and enriches its tags).
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
-- 🔨 **3.7 Labeled review reel — IN PROGRESS 2026-06-11.** DESIGN DECISION:
+- ✅ **3.7 Labeled review reel — CODE SHIPPED 2026-06-11 (validation pending first label-track run).** DESIGN DECISION:
   NOT a second video render — the pipeline exports a per-second label track
   (player name + position in reel-crop coords) as JSON to R2 next to the
   reel, and the PWA draws toggleable name chips as a DOM overlay synced to
   playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
   toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
   narration far-side IDs, full-roster marking, visible identity errors.
-  Steps: (a) ✅ pipeline build_review_label_track (inverse-perspective
-  projection of foot coords through the re-derived aim stream, 1 Hz keyframe
-  JSON → R2, review_labels_url on analytics doc) — committed;
-  (b) 🔨 PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
+  (a) ✅ pipeline build_review_label_track (inverse-perspective projection
+  through the re-derived deterministic aim stream, 1 Hz keyframes → R2,
+  review_labels_url on analytics doc); (b) ✅ PWA 🏷 LABELS toggle in the
+  full-game reel player (lazy fetch, keyframe lerp, fit/fill letterbox
+  mapping; coach surface only). Label tracks generate on each game's next
+  pipeline run with the new code — the projection math needs eyeballing on
+  the first real reel (chip-on-wrong-kid = aim/inverse bug OR identity swap).
 
 **Also shipped 2026-06-11 (outside the phase plan):**
 - Owner-only VIEWERS usage analytics (per-section tracking, watch time,
@@ -309,9 +312,9 @@ Ordered by coach value per effort.
   p99s, cap-pinned games dropped as swap pollution — deviation from the
   plan's raw p99, deliberate); fallback 4.5 m/s; `sprint_threshold_ms`
   recorded per player.
-- **4.6 Field tilt.** Team-centroid third-occupancy % from existing
-  `TeamTimeSeries` — best no-ball possession proxy; gives compactness/width a
-  narrative home.
+- ✅ **4.6 Field tilt — shipped 2026-06-11.** Team-centroid third occupancy,
+  attack-normalized per half (pipeline → `field_tilt` on the doc; Analytics
+  bar card). Lands per game on its next pipeline run.
 - **4.7 LLM enrichment layer (direction set 2026-06-11; builds on 3.6).**
   Coach explicitly wants LLMs across the stack, all gated through the
   confirm queue (drafts + provenance, never straight into stats):
@@ -334,8 +337,8 @@ Ordered by coach value per effort.
 - Bookmark/voice classification largely replaces the monthly
   "recount-from-video" audit; keep an eye on per-event-type miss rates via
   the provenance field.
-- POSITION-staleness nudge in PWA (banner when an on-field player has no
-  POSITION event this period) — protects identity v2's main prior.
+- ✅ POSITION-staleness nudge — shipped 2026-06-11 (live banner above the
+  tactical board, 3+ min into a half).
 
 ## Open decision points (owner: coach)
 
