@@ -523,6 +523,28 @@ def run(
     )
     # GK positioning analysis removed — not used in the film room.
 
+    # 4.6 Field tilt: team-centroid third-occupancy %, attack-normalized per
+    # half — the best no-ball possession proxy available pre-8K.
+    field_tilt = None
+    try:
+        ts_t, ts_cx = team_ts.times_s, team_ts.centroid_x_m
+        if ts_t:
+            L = field_cal.length_m
+            counts = [0, 0, 0]  # def / mid / att thirds, our perspective
+            for t, x in zip(ts_t, ts_cx):
+                pi = next((i + 1 for i, (a, b) in enumerate(play_windows) if a <= t <= b), 1)
+                depth = (x / L) if attack_dir.get(pi, True) else (1.0 - x / L)
+                counts[0 if depth < 1.0 / 3 else (1 if depth < 2.0 / 3 else 2)] += 1
+            n = sum(counts)
+            if n:
+                field_tilt = {
+                    "def_pct": 100.0 * counts[0] / n,
+                    "mid_pct": 100.0 * counts[1] / n,
+                    "att_pct": 100.0 * counts[2] / n,
+                }
+    except Exception as e:
+        log.warning("Field tilt failed: %s", e)
+
     # 7. Highlight clips (per-event MP4s). Slow because we re-seek the source
     # video for every tagged event — skip during iteration.
     clips = []
@@ -696,6 +718,8 @@ def run(
         "auto_highlights_url": (auto_hl_meta.r2_url if auto_hl_meta else None),
         # Coach-only review overlay (3.7): name-chip keyframes for the reel.
         "review_labels_url": review_labels_url,
+        # Team-centroid third occupancy (4.6) — no-ball possession proxy.
+        "field_tilt": field_tilt,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.
