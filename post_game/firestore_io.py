@@ -338,6 +338,29 @@ def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
     ).set(analytics)
 
 
+def collect_prior_player_top_speeds(exclude_game_id: str | None = None) -> dict[str, list[float]]:
+    """{player_id: [top_speed_ms per prior game]} from every other game's
+    analytics doc. Feeds the personalized sprint threshold (plan 4.5)."""
+    out: dict[str, list[float]] = {}
+    games = _team_doc().collection("games")
+    for snap in games.stream():
+        if exclude_game_id and snap.id == exclude_game_id:
+            continue
+        try:
+            a = games.document(snap.id).collection("analytics").document(
+                config.ANALYTICS_DOC_VERSION).get()
+        except Exception:
+            continue
+        if not a.exists:
+            continue
+        for ps in (a.to_dict() or {}).get("player_stats", []) or []:
+            pid = ps.get("player_id")
+            ts = ps.get("top_speed_ms")
+            if pid and isinstance(ts, (int, float)) and ts > 0:
+                out.setdefault(str(pid), []).append(float(ts))
+    return out
+
+
 # Public broadcast fields set on the game doc by `set_public_reels` after a
 # pipeline run. Keep this list in sync with the keys written below in
 # `set_public_reels` so `delete_analytics` clears every one of them.

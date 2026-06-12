@@ -25,6 +25,17 @@ class PlayerStats:
     pct_defensive_third: float
     heatmap_grid: list[list[int]]
     work_rate_timeline: list[float]
+    # --- Rate-based estimates (plan 4.4) -------------------------------
+    # Tracked coverage is systematically UNEQUAL across players, so the raw
+    # sums above are biased between players, not just scaled down. Headline
+    # numbers are therefore rate × coach-logged minutes; the raw sums stay
+    # for the 8K before/after comparison. Estimates fall back to the raw
+    # value when tracked time is too thin to trust a rate (< 3 tracked min).
+    tracked_seconds: float = 0.0          # actual time with detections
+    distance_est_m: float = 0.0           # (distance_m / tracked_min) × coach_min
+    sprint_est_count: int = 0             # (sprint_count / tracked_min) × coach_min
+    # Personalized sprint threshold actually used for THIS game (plan 4.5).
+    sprint_threshold_ms: float = 0.0
 
 
 def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
@@ -58,6 +69,7 @@ def compute_player_stats(
     periods: Optional[list[tuple[float, float]]] = None,
     gk_player_id: Optional[str] = None,
     played_minutes: Optional[dict[str, float]] = None,
+    sprint_thresholds: Optional[dict[str, float]] = None,
 ) -> list[PlayerStats]:
     per_player = _per_player_trajectory(tracks_field_df, identity_by_track)
     third_low, third_high = config.THIRDS_FRACTIONS
@@ -106,8 +118,12 @@ def compute_player_stats(
         speed = seg_dist / dt  # inherently <= MAX_PLAUSIBLE_SPEED_MS now
         speed_s = _smooth(speed, config.SPEED_SMOOTH_WINDOW)
 
-        # Sprints: continuous run above threshold for >= 0.5s
-        is_sprint = speed_s >= config.SPRINT_THRESHOLD_MS
+        # Sprints: continuous run above threshold for >= 0.5s. The threshold
+        # is personalized when season history exists (plan 4.5) — a fixed bar
+        # over-counts the fastest kids and ignores max-effort runs by slower
+        # ones. Falls back to the fixed config value for new players.
+        sprint_thr = float((sprint_thresholds or {}).get(str(pid), config.SPRINT_THRESHOLD_MS))
+        is_sprint = speed_s >= sprint_thr
         sprint_count = 0
         sprint_dist = 0.0
         in_run = False
@@ -158,12 +174,27 @@ def compute_player_stats(
             mask = (t[:-1] >= lo) & (t[:-1] < hi)
             rate.append(float(np.mean(speed_s[mask])) if mask.any() else 0.0)
 
+        coach_min = float((played_minutes or {}).get(str(pid), (t[-1] - t[0]) / 60.0))
+        dist_raw = float(seg_dist.sum())
+        tracked_s = float(dt.sum())
+        tracked_min = tracked_s / 60.0
+        # Rate-based estimates (plan 4.4): scale per-tracked-minute rates to
+        # coach-logged minutes. Below 3 tracked minutes a rate is a coin flip
+        # off a sliver — keep the raw value and let the UI's low-tracking
+        # warning carry the message.
+        if tracked_min >= 3.0 and coach_min > 0:
+            dist_est = dist_raw / tracked_min * coach_min
+            sprint_est = int(round(sprint_count / tracked_min * coach_min))
+        else:
+            dist_est = dist_raw
+            sprint_est = int(sprint_count)
+
         out.append(PlayerStats(
             player_id=str(pid),
             # Minutes from the coach log (ground truth) when available, else the
             # track time span. Track spans over-count when identity is imperfect.
-            minutes_played=float((played_minutes or {}).get(str(pid), (t[-1] - t[0]) / 60.0)),
-            distance_m=float(seg_dist.sum()),
+            minutes_played=coach_min,
+            distance_m=dist_raw,
             top_speed_ms=float(np.percentile(speed_s, 99)) if len(speed_s) else 0.0,
             avg_speed_ms=float(np.mean(speed_s)) if len(speed_s) else 0.0,
             sprint_count=int(sprint_count),
@@ -173,5 +204,9 @@ def compute_player_stats(
             pct_defensive_third=float(dfn.mean() * 100),
             heatmap_grid=grid,
             work_rate_timeline=rate,
+            tracked_seconds=tracked_s,
+            distance_est_m=float(dist_est),
+            sprint_est_count=sprint_est,
+            sprint_threshold_ms=sprint_thr,
         ))
     return out
