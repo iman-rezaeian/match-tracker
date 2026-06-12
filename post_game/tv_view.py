@@ -1121,6 +1121,7 @@ def build_review_label_track(
     upload: bool = True,
     team_of_track: Optional[dict[int, int]] = None,
     tracklet_of_track: Optional[dict[int, int]] = None,
+    rejected_tracklets: Optional[set[int]] = None,
 ) -> Optional[str]:
     """Per-second name-label keyframes for the coach REVIEW overlay (plan 3.7).
 
@@ -1154,7 +1155,9 @@ def build_review_label_track(
     # Tracked-but-UNASSIGNED our-team tracklets get "?<tracklet_id>" chips
     # (coach request): the reel becomes a literal FIX IDS worklist — you can
     # see which unnamed kid carries which tracklet id. Substantial tracklets
-    # only (≥50 samples) so junk fragments don't flicker chips.
+    # only (≥50 samples) so junk fragments don't flicker chips, and tracklets
+    # the coach already REJECTED in FIX IDS (not-a-player / opponent) stay
+    # silent — those are decided, not pending.
     if team_of_track and tracklet_of_track is not None:
         unassigned = df["player_id"].isna() & df["track_id"].map(
             lambda t: team_of_track.get(int(t)) == 0)
@@ -1162,7 +1165,7 @@ def build_review_label_track(
             tl = df.loc[unassigned, "track_id"].map(
                 lambda t: int(tracklet_of_track.get(int(t), int(t))))
             counts = tl.value_counts()
-            keep = set(counts[counts >= 50].index)
+            keep = set(counts[counts >= 50].index) - (rejected_tracklets or set())
             mask = unassigned & tl.isin(keep)
             df.loc[mask, "player_id"] = tl[mask].map(lambda x: f"?{x}")
     df = df[df["player_id"].notna()]

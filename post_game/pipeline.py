@@ -668,6 +668,12 @@ def run(
                 upload=not skip_upload,
                 team_of_track=team_of_track,
                 tracklet_of_track=tracklet_of_track,
+                # Coach-rejected tracklets (override = None / "__not_player__"
+                # sentinels) are decided, not pending — no "?" chips for them.
+                rejected_tracklets={
+                    int(k) for k, v in (game.identity_overrides or {}).items()
+                    if (not v or str(v).startswith("__")) and str(k).lstrip("-").isdigit()
+                },
             )
         except Exception as e:
             log.warning("Review label track failed: %s", e)
