@@ -62,6 +62,13 @@
     };
     firebase.initializeApp(firebaseConfig);
     window.fbDb = firebase.firestore();
+    // Force long-polling transport (2026-06-12): in iOS standalone PWAs the
+    // default WebChannel stream can silently fail to connect (observed on
+    // iPadOS 17.7: app renders from offline cache, but no fresh snapshots and
+    // no writes — not even telemetry). Long polling is marginally chattier
+    // and utterly reliable; at this app's user count that trade is free.
+    // MUST run before enablePersistence/any query.
+    try { window.fbDb.settings({ experimentalForceLongPolling: true }); } catch (e) {}
     // ---- Client error telemetry (remote debugging without a cable) ----
     // JS errors + a stuck-loading watchdog land in viewerLog (create:true for
     // everyone), so standalone-PWA failures on devices we can't inspect are
@@ -13258,6 +13265,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
