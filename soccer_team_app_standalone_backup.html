@@ -7980,7 +7980,8 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
         labelIdxRef.current = i;
         const [t0, e0] = frames[i];
         const next = frames[i + 1];
-        if (Math.abs(now - t0) > 2.5 && (!next || Math.abs(now - next[0]) > 2.5)) return null;
+        // Short linger only: a chip outliving its track sails over empty grass.
+        if (Math.abs(now - t0) > 1.2 && (!next || Math.abs(now - next[0]) > 1.2)) return null;
         const byIdx1 = next ? Object.fromEntries(next[1].map(e => [e[0], e])) : {};
         const alpha = next && next[0] > t0 ? Math.min(1, Math.max(0, (now - t0) / (next[0] - t0))) : 0;
         // Displayed video rect under contain/cover letterboxing.
@@ -7997,9 +7998,14 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
         return (
           <div className="absolute inset-0 pointer-events-none z-[15] overflow-hidden">
             {e0.map(([idx, x0, y0]) => {
+              // Lerp only across plausible motion: a big inter-keyframe jump
+              // is a track gap or identity swap, and sweeping the chip across
+              // the field between the two points draws a label on empty grass.
               const e1 = byIdx1[idx];
-              const nx = e1 ? x0 + (e1[1] - x0) * alpha : x0;
-              const ny = e1 ? y0 + (e1[2] - y0) * alpha : y0;
+              const plausible = e1 && Math.hypot(e1[1] - x0, e1[2] - y0) < 0.12;
+              const nx = plausible ? x0 + (e1[1] - x0) * alpha : x0;
+              const ny = plausible ? y0 + (e1[2] - y0) * alpha : y0;
+              if (!plausible && alpha > 0.6) return null; // near the far keyframe: don't show stale spot
               if (nx < -0.02 || nx > 1.02 || ny < 0 || ny > 1.05) return null;
               return (
                 <div
@@ -12873,6 +12879,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
