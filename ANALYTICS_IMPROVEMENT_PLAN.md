@@ -353,6 +353,17 @@ id (raw track ids come from the checkpointed tracking stage → stable
 forever); migrate/flag stale ones at apply time instead of silently
 mis-landing. Build BEFORE the next stitch-affecting change (8K era).
 
+## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
+
+Standalone iOS web apps get isolated, PARTITIONED storage: signInWithPopup
+can't open and the signInWithRedirect round-trip loses its state → fresh
+installs hang at Loading/sign-in (observed on iPadOS 17.7; the coach's
+iPhone app only works because its session predates this). Workaround: use
+Safari on secondary devices. REAL FIX (post-8K-weekend): serve the Firebase
+auth handler from our own origin (authDomain = stompers2016.com + hosting
+rewrite of /__/auth/*) so the redirect handoff is same-origin and survives
+partitioning. Also protects existing installs from future session loss.
+
 ## Ongoing process
 
 - Bookmark/voice classification largely replaces the monthly
