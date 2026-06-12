@@ -4111,6 +4111,215 @@ function TacticalBoard({ game, roster, gameGKId, onMove, onReset }) {
 }
 
 /* ---------- ACTIVE GAME ---------- */
+/* ---------- LIVE VOICE RECORDER (3.6 capture channel) ----------
+ * Records sideline narration inside the PWA while the coach runs the game.
+ * Sync is DETERMINISTIC: we store recordingStartedAt (wall-clock ms) with the
+ * audio, and every logged event already carries `at` — so each goal/sub/period
+ * tap is an exact audio anchor. No "say kickoff" cues, no drift.
+ * Robustness: 10s chunks persisted to IndexedDB as they arrive (a crash loses
+ * seconds, not the game); screen wake-lock while recording; auto-restart into
+ * the same take if iOS hiccups the recorder; auto stop+upload on unmount
+ * (= FINAL WHISTLE). Audio uploads to R2 voice/<gameId>/ and the segment is
+ * recorded on the game doc (voiceSegments) for the extraction pipeline.
+ * NOTE: keep the PWA foregrounded while recording — iOS suspends background
+ * web apps. The wake-lock prevents auto-lock; don't switch apps mid-half.
+ */
+function _voiceDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('voiceRec', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('chunks', { keyPath: 'k' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function _voicePut(k, v) {
+  const db = await _voiceDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('chunks', 'readwrite');
+    tx.objectStore('chunks').put({ k, v });
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function _voiceList() {
+  const db = await _voiceDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('chunks', 'readonly');
+    const rq = tx.objectStore('chunks').getAll();
+    rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error);
+  });
+}
+async function _voiceClear(prefix) {
+  const rows = await _voiceList();
+  const db = await _voiceDb();
+  return new Promise((res) => {
+    const tx = db.transaction('chunks', 'readwrite');
+    rows.filter(r => r.k.startsWith(prefix)).forEach(r => tx.objectStore('chunks').delete(r.k));
+    tx.oncomplete = res; tx.onerror = res;
+  });
+}
+const _voiceMime = () => {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const m of ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']) {
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return '';
+};
+
+async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
+  const ext = (mime || '').includes('mp4') ? 'm4a' : 'webm';
+  const key = `voice/${gameId}/live_${startedAt}.${ext}`;
+  const resp = await fetch(`${R2_UPLOAD_WORKER}/put/${encodeURIComponent(key)}?auth=${encodeURIComponent(R2_WORKER_KEY)}`, {
+    method: 'PUT', body: blob,
+  });
+  if (!resp.ok) throw new Error(`upload ${resp.status}`);
+  const { publicUrl } = await resp.json();
+  // Append the segment on the game doc for the voice pipeline (3.6).
+  if (window.fbDb) {
+    const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId);
+    const snap = await ref.get();
+    const cur = (snap.exists && snap.data().voiceSegments) || [];
+    await ref.update({ voiceSegments: [...cur, { startedAt, url: publicUrl, durationS, mime }] });
+  }
+  return publicUrl;
+}
+
+function VoiceRecorder({ game }) {
+  const [state, setState] = useState('idle'); // idle | rec | uploading | done | err
+  const [secs, setSecs] = useState(0);
+  const [armStop, setArmStop] = useState(false); // two-tap stop guard
+  const recRef = useRef(null);
+
+  // Recover orphaned chunks from a previous crashed session (best effort).
+  useEffect(() => {
+    (async () => {
+      try {
+        const rows = (await _voiceList()).filter(r => r.k.startsWith(`${game.id}|`));
+        if (!rows.length) return;
+        const bySeg = {};
+        rows.forEach(r => {
+          const [, seg] = r.k.split('|');
+          (bySeg[seg] = bySeg[seg] || []).push(r);
+        });
+        for (const [seg, list] of Object.entries(bySeg)) {
+          list.sort((a, b) => Number(a.k.split('|')[2]) - Number(b.k.split('|')[2]));
+          const mime = _voiceMime() || 'audio/mp4';
+          const blob = new Blob(list.map(r => r.v), { type: mime });
+          if (blob.size > 20000) {
+            await _voiceUpload(game.id, Number(seg), blob, mime, Math.round(list.length * 10));
+          }
+          await _voiceClear(`${game.id}|${seg}|`);
+        }
+      } catch (e) { console.warn('voice recovery failed:', e); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.id]);
+
+  const start = async () => {
+    try {
+      const mime = _voiceMime();
+      if (mime == null) { setState('err'); return; }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const startedAt = Date.now();
+      const rec = { stream, startedAt, chunks: [], idx: 0, mime, wakeLock: null, stopping: false };
+      recRef.current = rec;
+      const newMR = () => {
+        const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        rec.mr = mr;
+        mr.ondataavailable = (e) => {
+          if (!e.data || !e.data.size) return;
+          rec.chunks.push(e.data);
+          _voicePut(`${game.id}|${startedAt}|${rec.idx++}`, e.data).catch(() => {});
+        };
+        mr.onerror = () => { if (!rec.stopping) { try { mr.stop(); } catch (e) {} } };
+        mr.onstop = () => {
+          if (!rec.stopping) {
+            // iOS hiccup mid-take: restart into the same take.
+            try { newMR(); } catch (e) { setState('err'); }
+            return;
+          }
+          finalize();
+        };
+        mr.start(10000); // 10s chunks → IndexedDB as we go
+      };
+      const finalize = async () => {
+        try { rec.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+        try { rec.wakeLock && rec.wakeLock.release(); } catch (e) {}
+        setState('uploading');
+        try {
+          const blob = new Blob(rec.chunks, { type: rec.mime || 'audio/mp4' });
+          const durationS = Math.round((Date.now() - rec.startedAt) / 1000);
+          await _voiceUpload(game.id, rec.startedAt, blob, rec.mime, durationS);
+          await _voiceClear(`${game.id}|${rec.startedAt}|`);
+          setState('done');
+        } catch (e) {
+          console.error('voice upload failed (chunks kept on device for recovery):', e);
+          setState('err'); // chunks stay in IndexedDB → recovered next open
+        }
+      };
+      newMR();
+      try { rec.wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+      document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible' && recRef.current && !recRef.current.stopping) {
+          try { recRef.current.wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+        }
+      });
+      setState('rec');
+      setSecs(0);
+    } catch (e) {
+      console.error('mic failed:', e);
+      setState('err');
+    }
+  };
+
+  const stop = () => {
+    const rec = recRef.current;
+    if (!rec) return;
+    rec.stopping = true;
+    try { rec.mr.stop(); } catch (e) { setState('err'); }
+  };
+
+  // Recording timer.
+  useEffect(() => {
+    if (state !== 'rec') return undefined;
+    const id = setInterval(() => setSecs(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [state]);
+
+  // FINAL WHISTLE / leaving the game view stops + uploads automatically.
+  useEffect(() => () => {
+    const rec = recRef.current;
+    if (rec && !rec.stopping) { rec.stopping = true; try { rec.mr.stop(); } catch (e) {} }
+  }, []);
+
+  if (typeof MediaRecorder === 'undefined') return null;
+  const mmss = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  if (state === 'rec') {
+    return (
+      <button
+        onClick={() => {
+          if (!armStop) { setArmStop(true); setTimeout(() => setArmStop(false), 2500); return; }
+          setArmStop(false); stop();
+        }}
+        className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${armStop ? 'bg-red-600 text-white border-red-400' : 'bg-red-500/15 text-red-300 border-red-600/60'}`}
+        title="Recording — tap twice to stop"
+      >
+        <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+        <span>{armStop ? 'TAP TO STOP' : mmss}</span>
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={state === 'idle' || state === 'err' || state === 'done' ? start : undefined}
+      className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${state === 'err' ? 'bg-red-500/15 text-red-400 border-red-700' : state === 'uploading' ? 'bg-stone-800 text-stone-400 border-stone-700' : 'bg-stone-900 text-stone-300 border-stone-800'}`}
+      title="Record sideline narration (synced to the game clock)"
+    >
+      <span>🎙</span>
+      <span>{state === 'uploading' ? 'SAVING…' : state === 'done' ? 'REC ✓' : state === 'err' ? 'REC ⚠' : 'REC'}</span>
+    </button>
+  );
+}
+
 function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
@@ -4236,6 +4445,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               <span>MARK</span>
             </button>
           )}
+          <VoiceRecorder game={game} />
         </div>
       )}
 
@@ -12980,6 +13190,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
