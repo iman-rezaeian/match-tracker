@@ -257,13 +257,16 @@ obligation.
   matching a live event, same type ±30 s, attaches and enriches its tags).
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
-- ⏳ **3.7 Labeled review reel (NEW 2026-06-11).** tv_view variant drawing
-  name tags over our tracked players (pipeline knows identity + position per
-  frame + the reel crop). Unlocks: post-game narration (far-side IDs become
-  readable) and full-roster post-game marking; doubles as a visible FIX IDS
-  error surface (wrong on-screen name = identity swap you can SEE).
-  Independent of the voice gate — can be built any time. Coach-only render,
-  not the parent-facing reel.
+- 🔨 **3.7 Labeled review reel — IN PROGRESS 2026-06-11.** DESIGN DECISION:
+  NOT a second video render — the pipeline exports a per-second label track
+  (player name + position in reel-crop coords) as JSON to R2 next to the
+  reel, and the PWA draws toggleable name chips as a DOM overlay synced to
+  playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
+  toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
+  narration far-side IDs, full-roster marking, visible identity errors.
+  Steps: (a) pipeline: project tracked players into reel-crop coords per
+  sampled frame during render → labels.json to R2 + URL in analytics doc;
+  (b) PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
 
 **Also shipped 2026-06-11 (outside the phase plan):**
 - Owner-only VIEWERS usage analytics (per-section tracking, watch time,
@@ -340,7 +343,7 @@ Ordered by coach value per effort.
    partial re-watch).
 3. **4.3** pressure multiplier (×~1.5 on DEC under pressure) — viable now
    that pressure tags accumulate via the queue; one-line change, coach call.
-4. **Windsor Fury 2ND formation** — tap to 2-3-1 in Analytics (two taps).
+4. ✅ **Windsor Fury 2ND formation** — coach set 2-3-1 manually 2026-06-11.
 
 ## Sequencing summary
 
