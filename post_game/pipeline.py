@@ -666,6 +666,8 @@ def run(
                 events=game.events,
                 clock_to_video=clock_to_video,
                 upload=not skip_upload,
+                team_of_track=team_of_track,
+                tracklet_of_track=tracklet_of_track,
             )
         except Exception as e:
             log.warning("Review label track failed: %s", e)
