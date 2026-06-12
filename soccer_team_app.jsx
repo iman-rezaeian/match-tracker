@@ -4044,12 +4044,21 @@ const _voiceMime = () => {
 
 async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
   const ext = (mime || '').includes('mp4') ? 'm4a' : 'webm';
-  const key = `voice/${gameId}/live_${startedAt}.${ext}`;
-  const resp = await fetch(`${R2_UPLOAD_WORKER}/put/${encodeURIComponent(key)}?auth=${encodeURIComponent(R2_WORKER_KEY)}`, {
-    method: 'PUT', body: blob,
+  const contentType = mime || 'audio/mp4';
+  const filename = `voice_${gameId}_live_${startedAt}.${ext}`;
+  // DEPLOYED worker contract (older than the repo's r2-upload-worker.js,
+  // which has an unpublished /put proxy): /upload-url returns a PRESIGNED
+  // direct-to-R2 PUT. Content-Type is part of the signature — the PUT must
+  // send exactly the type we asked to sign. Mirrors the video upload flow.
+  const r = await fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: R2_WORKER_KEY, filename, contentType }),
   });
-  if (!resp.ok) throw new Error(`upload ${resp.status}`);
-  const { publicUrl } = await resp.json();
+  if (!r.ok) throw new Error(`upload-url ${r.status}`);
+  const { uploadUrl, publicUrl } = await r.json();
+  const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob });
+  if (!put.ok) throw new Error(`PUT ${put.status}`);
   // Append the segment on the game doc for the voice pipeline (3.6).
   if (window.fbDb) {
     const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId);
