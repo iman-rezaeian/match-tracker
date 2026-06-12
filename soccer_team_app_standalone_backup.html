@@ -8386,7 +8386,9 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     if (!p) return pid ? '(unknown)' : 'unassigned';
     return p.number != null ? `#${p.number} ${p.name}` : p.name;
   };
-  const fmt = (s) => { const m = Math.floor((s || 0) / 60), ss = Math.round((s || 0) % 60); return `${m}:${String(ss).padStart(2, '0')}`; };
+  // Round to whole seconds FIRST, then split — rounding the remainder alone
+  // produces "25:60" when the fraction lands on .5+ of the 59th second.
+  const fmt = (s) => { const t = Math.round(s || 0); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 
   // Override value: a player id, or a labelled non-player sentinel. The labels
   // (ref/opp/other) are kept on the game doc so the pipeline can learn from them
@@ -12900,6 +12902,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
