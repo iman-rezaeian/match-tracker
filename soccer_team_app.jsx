@@ -862,6 +862,9 @@ export default function App() {
     return () => clearInterval(id);
   }, [view]);
 
+  // Telemetry watchdog handshake: real content is on screen (see shell).
+  useEffect(() => { if (loaded && typeof window !== 'undefined') window.__appReady = true; }, [loaded]);
+
   // Usage analytics: one ping per coach-app section per session, feeding the
   // owner-only VIEWERS page (the owner himself is excluded inside trackUsage).
   useEffect(() => {
@@ -12352,6 +12355,8 @@ function LiveScorePage({ gameId }) {
 
   // Usage analytics: one ping per game page per session.
   useEffect(() => { trackUsage('public:game', { gameId }); }, [gameId]);
+  // Telemetry watchdog handshake (see shell).
+  useEffect(() => { if ((game || error) && typeof window !== 'undefined') window.__appReady = true; }, [game, error]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
@@ -12563,6 +12568,8 @@ function PublicHomePage() {
 
   // Usage analytics: one ping per session for the public home page.
   useEffect(() => { trackUsage('public:home'); }, []);
+  // Telemetry watchdog handshake (see shell).
+  useEffect(() => { if ((loaded || error) && typeof window !== 'undefined') window.__appReady = true; }, [loaded, error]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
