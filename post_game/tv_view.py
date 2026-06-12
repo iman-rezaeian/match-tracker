@@ -21,6 +21,7 @@ primary aim with player centroid as fallback.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import shutil
@@ -1103,6 +1104,124 @@ def render_tv_reel(
     log.info("TV reel done: %d halves, %.1fs -> %s",
              len(part_paths), final_duration, r2_url or final_path)
     return meta
+
+
+def build_review_label_track(
+    tracks_field_df: pd.DataFrame,
+    identity_by_track: dict[int, str],
+    projector: FieldProjector,
+    game_id: str,
+    field_length_m: float,
+    field_width_m: float,
+    tv_meta: Optional[TvViewMeta],
+    events: Optional[list[CoachEvent]] = None,
+    clock_to_video: Optional[Callable[[int, int], float]] = None,
+    aim_cfg: Optional[AimConfig] = None,
+    sample_hz: float = 1.0,
+    upload: bool = True,
+) -> Optional[str]:
+    """Per-second name-label keyframes for the coach REVIEW overlay (plan 3.7).
+
+    NOT a second video render: re-derives the reel's aim stream (deterministic
+    from tracks, so it matches an already-rendered reel byte-for-byte in aim
+    terms), projects every assigned player's equirect foot position into the
+    reel crop per sample, and writes a compact JSON the PWA draws as toggleable
+    DOM name chips synced to playback (same mechanism as the scorebug).
+
+    Output: {"v":1, "sampleHz":h, "players":[pid,...],
+             "frames":[[reelTimeS, [[playerIdx, nx, ny], ...]], ...]}
+    with nx/ny normalized to the crop (client lerps between keyframes).
+    Returns the R2 URL (or local path string when upload=False/fails)."""
+    if tv_meta is None or not tv_meta.segments:
+        log.info("review labels: no reel segments; skipping.")
+        return None
+    need = {"foot_x_eq", "foot_y_eq", "time_s", "track_id"}
+    if tracks_field_df is None or tracks_field_df.empty or not need.issubset(tracks_field_df.columns):
+        log.info("review labels: tracks missing foot coords; skipping.")
+        return None
+    if not identity_by_track:
+        log.info("review labels: no identity assignments; skipping.")
+        return None
+
+    out_w = int(tv_meta.width or TV_RESOLUTION[0])
+    out_h = int(tv_meta.height or TV_RESOLUTION[1])
+    eq_w, eq_h = projector.cal.video_frame_size
+
+    df = tracks_field_df[["track_id", "time_s", "foot_x_eq", "foot_y_eq"]].copy()
+    df["player_id"] = df["track_id"].map(identity_by_track)
+    df = df[df["player_id"].notna()]
+    if df.empty:
+        return None
+    players = sorted(df["player_id"].unique().tolist())
+    pidx = {pid: i for i, pid in enumerate(players)}
+
+    frames: list = []
+    acc = 0.0
+    for (a, b) in tv_meta.segments:
+        aim_times, aim_lons_uw, aim_lats, aim_fovs = _build_aim_stream(
+            tracks_field_df, projector, a, b,
+            field_length_m, field_width_m,
+            aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
+        )
+        seg = df[(df["time_s"] >= a) & (df["time_s"] <= b)].copy()
+        if seg.empty:
+            acc += (b - a)
+            continue
+        seg["_bin"] = ((seg["time_s"] - a) * sample_hz).astype(int)
+        med = seg.groupby(["_bin", "player_id"])[["foot_x_eq", "foot_y_eq"]].median()
+        n_bins = int((b - a) * sample_hz)
+        for k in range(n_bins):
+            if k not in med.index.get_level_values(0):
+                continue
+            t = a + (k + 0.5) / sample_hz
+            lon0 = ((float(np.interp(t, aim_times, aim_lons_uw)) + 180.0) % 360.0) - 180.0
+            lat0 = float(np.interp(t, aim_times, aim_lats))
+            fov = TV_FOV_DEG if aim_fovs is None else float(np.interp(t, aim_times, aim_fovs))
+            f = out_w / (2.0 * math.tan(math.radians(fov) / 2.0))
+            # Inverse of video.render_perspective's rotations (lon about y,
+            # then lat about x with the same negated-latitude convention).
+            phi = math.radians(lon0)
+            lam = math.radians(-lat0)
+            cphi, sphi = math.cos(phi), math.sin(phi)
+            clam, slam = math.cos(lam), math.sin(lam)
+            entries = []
+            for pid, row in med.loc[k].iterrows():
+                u, v = float(row["foot_x_eq"]), float(row["foot_y_eq"])
+                lon_p = (u / eq_w - 0.5) * 2.0 * math.pi
+                lat_p = (0.5 - v / eq_h) * math.pi
+                yw = math.sin(lat_p)
+                xw = math.sin(lon_p) * math.cos(lat_p)
+                zw = math.cos(lon_p) * math.cos(lat_p)
+                xa = xw * cphi - zw * sphi
+                za = xw * sphi + zw * cphi
+                yv_ = yw * clam + za * slam
+                zv_ = -yw * slam + za * clam
+                if zv_ <= 0.05:
+                    continue  # behind the virtual camera
+                nx = (xa * f / zv_ + out_w / 2.0) / out_w
+                ny = (out_h / 2.0 - yv_ * f / zv_) / out_h
+                if -0.05 <= nx <= 1.05 and -0.05 <= ny <= 1.05:
+                    entries.append([pidx[pid], round(nx, 3), round(ny, 3)])
+            if entries:
+                frames.append([round(acc + (t - a), 1), entries])
+        acc += (b - a)
+
+    if not frames:
+        log.info("review labels: nothing projected into the reel; skipping.")
+        return None
+    payload = {"v": 1, "sampleHz": sample_hz, "players": players, "frames": frames}
+    out_dir = config.OUTPUTS_DIR / game_id / "tv_view"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    local = out_dir / "review_labels.json"
+    local.write_text(json.dumps(payload, separators=(",", ":")))
+    log.info("review labels: %d keyframes, %d players, %.0f KB",
+             len(frames), len(players), local.stat().st_size / 1024)
+    if upload:
+        try:
+            return firestore_io.upload_clip(str(local), f"tv_view/{game_id}/review_labels.json")
+        except Exception as e:
+            log.warning("review labels upload failed: %s", e)
+    return str(local)
 
 
 def extract_auto_highlights(
