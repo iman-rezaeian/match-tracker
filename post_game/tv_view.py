@@ -1119,6 +1119,8 @@ def build_review_label_track(
     aim_cfg: Optional[AimConfig] = None,
     sample_hz: float = 1.0,
     upload: bool = True,
+    team_of_track: Optional[dict[int, int]] = None,
+    tracklet_of_track: Optional[dict[int, int]] = None,
 ) -> Optional[str]:
     """Per-second name-label keyframes for the coach REVIEW overlay (plan 3.7).
 
@@ -1149,6 +1151,20 @@ def build_review_label_track(
 
     df = tracks_field_df[["track_id", "time_s", "foot_x_eq", "foot_y_eq"]].copy()
     df["player_id"] = df["track_id"].map(identity_by_track)
+    # Tracked-but-UNASSIGNED our-team tracklets get "?<tracklet_id>" chips
+    # (coach request): the reel becomes a literal FIX IDS worklist — you can
+    # see which unnamed kid carries which tracklet id. Substantial tracklets
+    # only (≥50 samples) so junk fragments don't flicker chips.
+    if team_of_track and tracklet_of_track is not None:
+        unassigned = df["player_id"].isna() & df["track_id"].map(
+            lambda t: team_of_track.get(int(t)) == 0)
+        if unassigned.any():
+            tl = df.loc[unassigned, "track_id"].map(
+                lambda t: int(tracklet_of_track.get(int(t), int(t))))
+            counts = tl.value_counts()
+            keep = set(counts[counts >= 50].index)
+            mask = unassigned & tl.isin(keep)
+            df.loc[mask, "player_id"] = tl[mask].map(lambda x: f"?{x}")
     df = df[df["player_id"].notna()]
     if df.empty:
         return None
