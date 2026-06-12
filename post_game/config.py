@@ -190,7 +190,13 @@ TRACKLET_REVIEW_ONPITCH_MARGIN_M = 3.0
 
 # --- Stats ---------------------------------------------------------------
 
-SPRINT_THRESHOLD_MS = 4.5                        # m/s; U10 sprint = ~16 km/h
+SPRINT_THRESHOLD_MS = 4.5                        # m/s; U10 sprint = ~16 km/h (fallback for new players)
+# Personalized sprint threshold (plan 4.5): per player,
+# max(FLOOR, FRAC × own season p99 speed) from prior analytics docs. Robust
+# input: MEDIAN of per-game top_speed_ms (each already a p99), dropping
+# cap-pinned games (≥95% of MAX_PLAUSIBLE_SPEED_MS = identity-swap pollution).
+SPRINT_PERSONAL_FLOOR_MS = 4.0
+SPRINT_PERSONAL_FRAC = 0.8
 SPEED_SMOOTH_WINDOW = 5                          # samples (≈0.5s at SAMPLE_RATE=3)
 # Physical sanity ceiling. No U10 outfield player exceeds ~9 m/s (~32 km/h);
 # anything faster is an identity-swap teleport, not real motion. Used to clamp

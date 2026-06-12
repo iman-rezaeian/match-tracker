@@ -26,7 +26,8 @@ from .identity import assign_identities, half_windows, period_clock_to_video_tim
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tracklet_thumbs import generate_tracklet_thumbnails
-from .tv_view import extract_auto_highlights, render_tv_reel, tv_reel_meta_from_existing
+from .tv_view import (build_review_label_track, extract_auto_highlights,
+                      render_tv_reel, tv_reel_meta_from_existing)
 from .stats import compute_player_stats
 from .team_classifier import classify_tracks, sample_jersey_hsv
 from .tracking import Tracker, TrackedDetection, to_dataframe
@@ -479,6 +480,28 @@ def run(
                 if _hi > _lo:
                     _tot += _hi - _lo
         played_minutes[str(_pid)] = _tot / 60.0
+    # Personalized sprint thresholds (plan 4.5): per player,
+    # max(floor, frac × season speed) from prior games' analytics docs.
+    # Median of per-game p99s, dropping cap-pinned (swap-polluted) games.
+    sprint_thresholds: dict[str, float] = {}
+    try:
+        _prior = firestore_io.collect_prior_player_top_speeds(exclude_game_id=game_id)
+        _cap = 0.95 * config.MAX_PLAUSIBLE_SPEED_MS
+        for _pid, _speeds in _prior.items():
+            _clean = [v for v in _speeds if v < _cap]
+            if _clean:
+                sprint_thresholds[_pid] = max(
+                    config.SPRINT_PERSONAL_FLOOR_MS,
+                    config.SPRINT_PERSONAL_FRAC * float(np.median(_clean)),
+                )
+        log.info("  sprint thresholds: %d personalized (%.1f–%.1f m/s), fallback %.1f",
+                 len(sprint_thresholds),
+                 min(sprint_thresholds.values(), default=0.0),
+                 max(sprint_thresholds.values(), default=0.0),
+                 config.SPRINT_THRESHOLD_MS)
+    except Exception as e:
+        log.warning("Personalized sprint thresholds failed (using fixed %.1f): %s",
+                    config.SPRINT_THRESHOLD_MS, e)
     player_stats = compute_player_stats(
         tracks_field_df=tracks_df,
         identity_by_track=identity_by_track,
@@ -489,6 +512,7 @@ def run(
         periods=play_windows,
         gk_player_id=game.gk_player_id,
         played_minutes=played_minutes,
+        sprint_thresholds=sprint_thresholds,
     )
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,
@@ -498,6 +522,28 @@ def run(
         starting_lineup=game.starting_lineup,
     )
     # GK positioning analysis removed — not used in the film room.
+
+    # 4.6 Field tilt: team-centroid third-occupancy %, attack-normalized per
+    # half — the best no-ball possession proxy available pre-8K.
+    field_tilt = None
+    try:
+        ts_t, ts_cx = team_ts.times_s, team_ts.centroid_x_m
+        if ts_t:
+            L = field_cal.length_m
+            counts = [0, 0, 0]  # def / mid / att thirds, our perspective
+            for t, x in zip(ts_t, ts_cx):
+                pi = next((i + 1 for i, (a, b) in enumerate(play_windows) if a <= t <= b), 1)
+                depth = (x / L) if attack_dir.get(pi, True) else (1.0 - x / L)
+                counts[0 if depth < 1.0 / 3 else (1 if depth < 2.0 / 3 else 2)] += 1
+            n = sum(counts)
+            if n:
+                field_tilt = {
+                    "def_pct": 100.0 * counts[0] / n,
+                    "mid_pct": 100.0 * counts[1] / n,
+                    "att_pct": 100.0 * counts[2] / n,
+                }
+    except Exception as e:
+        log.warning("Field tilt failed: %s", e)
 
     # 7. Highlight clips (per-event MP4s). Slow because we re-seek the source
     # video for every tagged event — skip during iteration.
@@ -603,6 +649,27 @@ def run(
         tag_suggestions=tag_suggestions,
     )
 
+    # 7c2. Review label track (plan 3.7): per-second name-chip keyframes for
+    # the coach reel overlay. Derived from the same aim stream as the reel —
+    # no video re-render. Coach-only consumer (analytics doc, not public).
+    review_labels_url = None
+    if tv_reel_meta is not None:
+        try:
+            review_labels_url = build_review_label_track(
+                tracks_field_df=tracks_df,
+                identity_by_track=identity_by_track,
+                projector=projector,
+                game_id=game_id,
+                field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m,
+                tv_meta=tv_reel_meta,
+                events=game.events,
+                clock_to_video=clock_to_video,
+                upload=not skip_upload,
+            )
+        except Exception as e:
+            log.warning("Review label track failed: %s", e)
+
     # 7d. Per-tracklet records + thumbnails for the coach IdentityFixView. The
     # records let the PWA list each stitched tracklet (worst-confidence first)
     # with its current player + a representative crop so the coach can fix swaps;
@@ -649,6 +716,10 @@ def run(
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
         "auto_highlights_url": (auto_hl_meta.r2_url if auto_hl_meta else None),
+        # Coach-only review overlay (3.7): name-chip keyframes for the reel.
+        "review_labels_url": review_labels_url,
+        # Team-centroid third occupancy (4.6) — no-ball possession proxy.
+        "field_tilt": field_tilt,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.

@@ -172,8 +172,10 @@ so relative season standings hold.
 Live job shrinks to: goals, subs, shots, saves, pens + one reflex
 bookmark/voice cue. Everything else is created or confirmed from video.
 
-**STATUS 2026-06-11: 3.1–3.4 SHIPPED (code). 3.0 voice memo still owed by
-coach; 3.5/3.6 gated on that audio.**
+**STATUS 2026-06-11 (late): 3.1–3.4 + 3.1b + 3.7 SHIPPED (3.1–3.4 on main;
+3.7 + Phase-4 batch on beta). 3.0 voice memo still owed by coach — but 3.6
+is no longer fully blocked: the post-game (quiet, at-home) narration channel
+can validate the extraction pipeline before sideline audio exists.**
 
 **CAPTURE PROTOCOL (decided 2026-06-11, supersedes the line above):** solo
 coach on ALL games — other coaches run the team and do not log. One mode:
@@ -233,6 +235,14 @@ obligation.
   since the post-game TAG flow landed) — deleted the unused
   ZonePicker/PressurePicker/DecisionPicker components (~140 lines).
   Python mirror: `_SUGGEST_*_TYPES` in pipeline.py.
+- ✅ **3.1b Identity cards in the queue — shipped 2026-06-11.** One card per
+  game with unresolved tracklets leads the queue (count = unassigned minus
+  saved overrides; drains live via the games listener); OPEN FIX IDS hosts
+  the existing grid directly. The grid stays the bulk tool BY DESIGN — batch
+  visual scanning beats card-by-card for dozens of tracklets; the queue is
+  only its front door. The Analytics header pill remains as a secondary
+  path (remove later if unused). Future: suggestion-conflict cards (absurd
+  suggestedZone ⇒ identity-swap lead) land here natively.
 - ⏳ **3.5 Voice probe (1 day, gate for 3.6).** Whisper (local, M-series) on the
   3.0 memo. Check: are player cues legible? timestamp drift acceptable?
   Conventions (revised 2026-06-11): coach records via **AirPods Pro 2**
@@ -241,34 +251,78 @@ obligation.
   16-name roster, so names = lookup too (numbers-only rule dropped). ONLY
   collisions need last names: Ben (Adam/Hahn), Liam (Gibala/Garland). Fixed
   ~6-phrase vocabulary mapping 1:1 to event types (parsing = lookup, not NLP).
-- ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Transcript →
-  timestamped draft events (`source: 'voice'`) landing in the queue.
+- ⏳ **3.6 Voice → drafts pipeline (only if 3.5 passes).** Natural-commentary
+  LLM extraction (not phrase lookup — coach narrates TV-style): transcript →
+  timestamped draft events with pre-filled tags (`source: 'voice'`) landing
+  in the queue. HARD REQUIREMENT: merge, don't duplicate (voice draft
+  matching a live event, same type ±30 s, attaches and enriches its tags).
   Phone-memo + kickoff offset is fine for season 1; later move recording into
   the PWA (it knows the game clock exactly → sync is free).
+- ✅ **3.7 Labeled review reel — CODE SHIPPED 2026-06-11 (validation pending first label-track run).** DESIGN DECISION:
+  NOT a second video render — the pipeline exports a per-second label track
+  (player name + position in reel-crop coords) as JSON to R2 next to the
+  reel, and the PWA draws toggleable name chips as a DOM overlay synced to
+  playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
+  toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
+  narration far-side IDs, full-roster marking, visible identity errors.
+  (a) ✅ pipeline build_review_label_track (inverse-perspective projection
+  through the re-derived deterministic aim stream, 1 Hz keyframes → R2,
+  review_labels_url on analytics doc); (b) ✅ PWA 🏷 LABELS toggle in the
+  full-game reel player (lazy fetch, keyframe lerp, fit/fill letterbox
+  mapping; coach surface only). Label tracks generate on each game's next
+  pipeline run with the new code — the projection math needs eyeballing on
+  the first real reel (chip-on-wrong-kid = aim/inverse bug OR identity swap).
+
+**Also shipped 2026-06-11 (outside the phase plan):**
+- Owner-only VIEWERS usage analytics (per-section tracking, watch time,
+  audience buckets via `viewerTags`, owner excluded at the source).
+- `useModalHistory` coordination — nested modals (cue player in queue, reel
+  in Analytics) and the App view stack no longer cascade each other closed.
+- Formation labels: COACH'S RULE — reset boards vote (majority, earliest
+  tiebreak); no resets → dragged board at the period's last drag instant;
+  no board → carryover. Boards always read at a single instant; exact 1-D
+  split replaced KMeans. Per-half manual override in Analytics (tap label →
+  pick shape; `game.formationOverrides`; AUTO returns to computed).
+  KNOWN: Windsor Fury 2ND reads 3-2-1 from drags (no reset that half) —
+  coach says 2-3-1; two-tap manual fix pending. Going forward: one RESET at
+  each half's kickoff keeps labels automatic.
 
 ## Phase 4 — New analytics views (no correctness risk; interleave freely)
 
 Ordered by coach value per effort.
 
-- **4.1 Momentum chart.** 5-min buckets of shots/ball-wins/turnovers
-  for-vs-against from `game.events`, goal/sub markers. Pure client-side.
-- **4.2 Shot map from zone tags.** Per-game + season half-field shot chart
-  (reuse tactical-board rendering); SHOT_ON/SHOT_OFF/GOAL by zone. Doubles as
-  the zone-tagging audit surface.
+- ✅ **4.1 Momentum chart — shipped 2026-06-11.** 5-min buckets above/below
+  a midline (us/them) in AnalyticsPanel; "against" proxied from our log
+  (SAVE/BLOCK/CLEAR = opponent attacking, TURNOVER = ball handed over);
+  goal markers. Pure client-side.
+- ✅ **4.2 Shot map — shipped 2026-06-11.** 3×3 attack-up grid of
+  GOAL/SHOT_ON/SHOT_OFF by zone tag, per game (AnalyticsPanel) and per
+  window (SeasonAnalyticsView); untagged-shot count is the audit line
+  pointing at the confirm queue. Fills in as the queue drains zone tags.
 - **4.3 Pressure multiplier.** DEC points × ~1.5 when `pressure==='pressure'`
   (one line; fold into Phase 2 release if timing aligns). Viable now that
   tags are cheap via the queue.
-- **4.4 Rate-based physical stats.** Headline distance =
-  `distance_per_tracked_min × coach_minutes` with tracked-coverage % shown
-  beside it (coverage is systematically unequal across players — raw sums are
-  biased, not just scaled). Keep raw sum in the doc for the 8K before/after.
-  Sprint rate too.
-- **4.5 Personalized sprint threshold.** Per player:
-  `max(4.0 m/s, 0.8 × own season p99 speed)`, from prior analytics docs;
-  fallback 4.5 for new players. Record threshold used in output.
-- **4.6 Field tilt.** Team-centroid third-occupancy % from existing
-  `TeamTimeSeries` — best no-ball possession proxy; gives compactness/width a
-  narrative home.
+- ✅ **4.4 Rate-based physical stats — shipped 2026-06-11.** Doc fields
+  `tracked_seconds` / `distance_est_m` / `sprint_est_count` (rate × coach
+  minutes; raw sums kept for the 8K before/after; raw fallback under 3
+  tracked minutes). Cards + season rollups + team km prefer estimates; cards
+  show "N% of minutes tracked" + the sprint bar used. Fields land per game
+  on its next pipeline run; PWA falls back cleanly on old docs.
+- ✅ **4.5 Personalized sprint threshold — shipped 2026-06-11.** Per player
+  `max(4.0, 0.8 × median of prior games' top_speed_ms)` (median of per-game
+  p99s, cap-pinned games dropped as swap pollution — deviation from the
+  plan's raw p99, deliberate); fallback 4.5 m/s; `sprint_threshold_ms`
+  recorded per player.
+- ✅ **4.6 Field tilt — shipped 2026-06-11.** Team-centroid third occupancy,
+  attack-normalized per half (pipeline → `field_tilt` on the doc; Analytics
+  bar card). Lands per game on its next pipeline run.
+- **4.7 LLM enrichment layer (direction set 2026-06-11; builds on 3.6).**
+  Coach explicitly wants LLMs across the stack, all gated through the
+  confirm queue (drafts + provenance, never straight into stats):
+  multi-stream reconciliation (live log + commentary + tracking), parent-
+  friendly match reports + coach-only development notes (commentary is what
+  makes them non-generic), season Q&A / pattern mining over zone-tagged
+  events.
 
 ## Phase 5 — 8K-gated (see `EIGHT_K_RETEST.md`) + two additions
 
@@ -284,23 +338,34 @@ Ordered by coach value per effort.
 - Bookmark/voice classification largely replaces the monthly
   "recount-from-video" audit; keep an eye on per-event-type miss rates via
   the provenance field.
-- POSITION-staleness nudge in PWA (banner when an on-field player has no
-  POSITION event this period) — protects identity v2's main prior.
+- ✅ POSITION-staleness nudge — shipped 2026-06-11 (live banner above the
+  tactical board, 3+ min into a half).
 
 ## Open decision points (owner: coach)
 
 1. **2.4** z-scored vs raw pillars; coach view vs public view split.
 2. **3.5 gate** voice viability after the probe (fallback: bookmarks +
    partial re-watch).
+3. **4.3** pressure multiplier (×~1.5 on DEC under pressure) — viable now
+   that pressure tags accumulate via the queue; one-line change, coach call.
+4. ✅ **Windsor Fury 2ND formation** — coach set 2-3-1 manually 2026-06-11.
 
 ## Sequencing summary
 
 | Order | Item | Why |
 |---|---|---|
 | 1 | ✅ 0.1–0.3 harness + audit fix (done 2026-06-10) | Everything else needs a trustworthy diff |
-| — | 3.0 voice memo at next game | Zero code; de-risks Phase 3 early |
+| — | ⏳ 3.0 AirPods narration at next game (or practice/dummy this week) | THE gate for 3.5/3.6; zero code |
 | 2 | ✅ Phase 1 COMPLETE (1.1–1.4, published 2026-06-10) | Contamination fix proper is 8K-gated (appearance); color-space swaps measured + rejected |
 | 3 | ✅ 2.x scoring v2 SHIPPED 2026-06-10 (2.4 z-scoring still open) | One coordinated, versioned change |
-| 4 | ✅ 3.1–3.4 SHIPPED 2026-06-11 · 3.5/3.6 wait on the 3.0 memo | Queue → bookmark → voice probe → voice pipeline |
-| 5 | 4.1–4.6 analytics views | Value-add, interleave |
+| 4 | ✅ 3.1–3.4 + 3.1b SHIPPED + promoted to main 2026-06-11 | Queue → bookmark → tag pre-fill → identity front door |
+| 5 | ✅ 4.1 + 4.2 + 4.4 + 4.5 + 4.6 + staleness nudge SHIPPED 2026-06-11 | One-day Phase-4 sweep; doc fields land per game on next pipeline run |
+| 6 | ✅ 3.7 labeled review reel SHIPPED 2026-06-11 (validate chips on first label-track run) | Unlocks post-game narration + full-roster marking |
+| 7 | NEXT BUILD: in-PWA post-game recorder + 3.6 extraction (validate on quiet home audio) | Voice de-risked without waiting for game day |
+| 8 | 3.5 sideline probe when the 3.0 audio exists · suggestion-conflict queue cards · 4.3/2.4 decisions · 4.7 LLM layer | Interleave |
+| 9 | 5.x | Blocked on first 8K game |
+
+**Process note:** re-run the pipeline on both existing games when convenient —
+tag suggestions (3.3) and `coach`-sourced formation snapshots only land in
+docs on a re-run (the PWA computes both client-side meanwhile).
 | 6 | 5.x | Blocked on first 8K game |

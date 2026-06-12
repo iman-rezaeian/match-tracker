@@ -4537,6 +4537,22 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             )}
 
+            {/* POSITION-staleness nudge: the board is identity's main prior
+                AND the formation source — surface drift before it costs data. */}
+            {(() => {
+              if (game.clockRunning === false || elapsed < 180) return null;
+              const placed = new Set((game.events || [])
+                .filter(e => e.type === 'POSITION' && (e.period || 1) === game.period)
+                .map(e => e.playerId));
+              const missing = [...onFieldAt(game)].filter(pid => !placed.has(pid) && pid !== gameGKId);
+              if (missing.length === 0) return null;
+              return (
+                <div className="mt-2 bg-amber-500/10 border border-amber-600/50 rounded-xl px-3 py-2 text-[11px] text-amber-300 leading-snug">
+                  🧭 {missing.length} on-field player{missing.length === 1 ? '' : 's'} not placed on the board this half — drag them (or tap RESET) so tracking knows who's where.
+                </div>
+              );
+            })()}
+
             {tacticalBoard}
 
             <div className="mt-5 flex-1 min-h-0">
@@ -7379,17 +7395,21 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                   distSeries: [], speedSeries: [], sprintSeries: [] };
           byPid.set(pid, row);
         }
+        // 4.4: rate-based estimates when present (fairer across players with
+        // unequal tracked coverage); raw sums for older docs.
+        const dist = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
+        const sprints = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
         row.games += 1;
         row.minutes += s.minutes_played || 0;
-        row.distance += s.distance_m || 0;
+        row.distance += dist;
         row.topSpeed = Math.max(row.topSpeed, s.top_speed_ms || 0);
-        row.sprints += s.sprint_count || 0;
+        row.sprints += sprints;
         row.attPct += s.pct_attacking_third || 0;
         row.midPct += s.pct_middle_third || 0;
         row.defPct += s.pct_defensive_third || 0;
-        row.distSeries.push(s.distance_m || 0);
+        row.distSeries.push(dist);
         row.speedSeries.push((s.top_speed_ms || 0) * 3.6);
-        row.sprintSeries.push(s.sprint_count || 0);
+        row.sprintSeries.push(sprints);
       });
     });
     return [...byPid.values()].map(r => ({
@@ -7495,6 +7515,10 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
               <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
               <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
               <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
+            </div>
+            {/* Season shot map (4.2) — respects the season/rolling window */}
+            <div className="mt-3">
+              <ShotMap games={windowGames} />
             </div>
           </section>
 
@@ -7637,12 +7661,25 @@ function readableTextOn(hex) {
   return lum > 0.5 ? '#0a0a0a' : '#ffffff';
 }
 
-function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = null }) {
+function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = null, labelsUrl = null, roster = [] }) {
   const videoRef = useRef(null);
   const [now, setNow] = useState(0);
   // Fit (letterbox, whole frame) vs Fill (crop to fill the screen). The reel is
   // 16:9 but phones in landscape are wider (~20:9), so Fit leaves side bars.
   const [fillMode, setFillMode] = useState(false);
+
+  // REVIEW LABELS (3.7): name chips over tracked players, from the pipeline's
+  // keyframe JSON (review_labels_url). Coach-only — the prop is simply not
+  // passed on public surfaces. Fetched lazily on first toggle.
+  const [showLabels, setShowLabels] = useState(false);
+  const [labelData, setLabelData] = useState(null); // {players, frames, sampleHz}
+  const labelIdxRef = useRef(0); // last keyframe index (playback is mostly forward)
+  useEffect(() => {
+    if (!showLabels || !labelsUrl || labelData) return;
+    fetch(labelsUrl).then(r => r.json()).then(d => {
+      if (d && Array.isArray(d.frames)) setLabelData(d);
+    }).catch(() => {});
+  }, [showLabels, labelsUrl, labelData]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -7806,12 +7843,68 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
       {/* Soft top scrim so the floating scorebug + buttons stay legible over bright video. */}
       <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/55 to-transparent pointer-events-none z-10" />
 
+      {/* REVIEW LABELS overlay (3.7): lerped name chips above each tracked
+          player's feet, mapped from reel-crop coords through the current
+          fit/fill letterboxing. */}
+      {showLabels && labelData && (() => {
+        const v = videoRef.current;
+        if (!v) return null;
+        const frames = labelData.frames;
+        // Bracketing keyframes around `now` (cached index; rewinds re-scan).
+        let i = Math.min(labelIdxRef.current, frames.length - 1);
+        if (frames[i][0] > now) i = 0;
+        while (i + 1 < frames.length && frames[i + 1][0] <= now) i++;
+        labelIdxRef.current = i;
+        const [t0, e0] = frames[i];
+        const next = frames[i + 1];
+        if (Math.abs(now - t0) > 2.5 && (!next || Math.abs(now - next[0]) > 2.5)) return null;
+        const byIdx1 = next ? Object.fromEntries(next[1].map(e => [e[0], e])) : {};
+        const alpha = next && next[0] > t0 ? Math.min(1, Math.max(0, (now - t0) / (next[0] - t0))) : 0;
+        // Displayed video rect under contain/cover letterboxing.
+        const cw = v.clientWidth, ch = v.clientHeight;
+        const va = (v.videoWidth && v.videoHeight) ? v.videoWidth / v.videoHeight : 16 / 9;
+        const ca = cw / Math.max(ch, 1);
+        let w, h;
+        if (fillMode ? ca <= va : ca > va) { h = ch; w = ch * va; } else { w = cw; h = cw / va; }
+        const ox = (cw - w) / 2, oy = (ch - h) / 2;
+        const nameOf = (pid) => {
+          const p = roster.find(r => r.id === pid);
+          return p ? `${p.name.split(' ')[0]}${p.number != null ? ` ${p.number}` : ''}` : pid.slice(-4);
+        };
+        return (
+          <div className="absolute inset-0 pointer-events-none z-[15] overflow-hidden">
+            {e0.map(([idx, x0, y0]) => {
+              const e1 = byIdx1[idx];
+              const nx = e1 ? x0 + (e1[1] - x0) * alpha : x0;
+              const ny = e1 ? y0 + (e1[2] - y0) * alpha : y0;
+              if (nx < -0.02 || nx > 1.02 || ny < 0 || ny > 1.05) return null;
+              return (
+                <div
+                  key={idx}
+                  className="absolute text-[10px] font-bold text-white bg-black/60 border border-white/30 rounded px-1 leading-tight whitespace-nowrap"
+                  style={{ left: ox + nx * w, top: oy + ny * h, transform: 'translate(-50%, -130%)', textShadow: '0 1px 1px rgba(0,0,0,0.9)' }}
+                >
+                  {nameOf(labelData.players[idx])}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Floating controls — top-right overlay (replaces the old solid band). */}
       <div
         className="absolute z-20 flex items-center gap-2"
         style={{ right: 'max(env(safe-area-inset-right, 0px), 12px)', top: 'max(env(safe-area-inset-top, 0px), 12px)' }}
       >
         <span className="hidden sm:block text-white/85 font-display text-xs truncate max-w-[34vw] pr-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>{label}</span>
+        {labelsUrl && (
+          <button
+            onClick={() => setShowLabels(s => !s)}
+            className={`h-9 px-3 rounded-full font-display text-xs border active:scale-95 backdrop-blur-sm ${showLabels ? 'bg-lime-500/80 text-stone-950 border-lime-300' : 'bg-black/55 hover:bg-black/75 text-white border-white/25'}`}
+            title="Name labels over tracked players (review mode)"
+          >🏷 LABELS</button>
+        )}
         <button
           onClick={() => setFillMode(f => !f)}
           className="h-9 px-3 rounded-full bg-black/55 hover:bg-black/75 text-white font-display text-xs border border-white/25 active:scale-95 backdrop-blur-sm"
@@ -8315,6 +8408,147 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   );
 }
 
+/* ---------- MOMENTUM CHART (4.1) ----------
+ * 5-minute buckets of for-vs-against momentum from the coach log. We only
+ * log OUR team's events, so "against" is proxied by what our log implies
+ * about the opponent: a SAVE/BLOCK/CLEAR means they were attacking; a
+ * TURNOVER hands them the ball. Pure client-side from game.events.
+ */
+const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDED: 1 };
+const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1 };
+const MOMENTUM_BUCKET_S = 300;
+
+function MomentumChart({ game }) {
+  const halfLenS = (game.halfLengthMin || 25) * 60;
+  const totalS = halfLenS * 2;
+  const nBuckets = Math.max(2, Math.ceil(totalS / MOMENTUM_BUCKET_S));
+  const buckets = Array.from({ length: nBuckets }, () => ({ pos: 0, neg: 0, goals: [] }));
+  const tOf = (e) => {
+    // Game-clock seconds across both halves; stoppage clamps into its half.
+    const p = e.period === 2 ? 1 : 0;
+    return p * halfLenS + Math.min(e.elapsed || 0, halfLenS - 1);
+  };
+  let any = false;
+  for (const e of game.events || []) {
+    const idx = Math.min(nBuckets - 1, Math.floor(tOf(e) / MOMENTUM_BUCKET_S));
+    if (e.type === 'GOAL') buckets[idx].goals.push('us');
+    if (e.type === 'OPP_GOAL') buckets[idx].goals.push('them');
+    if (MOMENTUM_FOR[e.type]) { buckets[idx].pos += MOMENTUM_FOR[e.type]; any = true; }
+    else if (MOMENTUM_AGAINST[e.type]) { buckets[idx].neg += MOMENTUM_AGAINST[e.type]; any = true; }
+  }
+  if (!any) return null;
+  const maxV = Math.max(1, ...buckets.map(b => Math.max(b.pos, b.neg)));
+  const halfIdx = Math.floor(nBuckets / 2);
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] tracking-widest text-stone-400">MOMENTUM</div>
+        <div className="flex gap-3 text-[9px] text-stone-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-lime-500" />US</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500" />THEM</span>
+        </div>
+      </div>
+      <div className="flex items-stretch gap-[3px]" style={{ height: '84px' }}>
+        {buckets.map((b, i) => (
+          <div key={i} className={`flex-1 flex flex-col ${i === halfIdx ? 'border-l border-stone-600/60 pl-[3px]' : ''}`}>
+            {/* top half: us */}
+            <div className="flex-1 flex flex-col justify-end items-center">
+              {b.goals.filter(g => g === 'us').map((_, j) => (
+                <span key={j} className="text-[9px] leading-none">⚽</span>
+              ))}
+              <div
+                className="w-full rounded-t-sm bg-lime-500/80"
+                style={{ height: `${(b.pos / maxV) * 100}%`, minHeight: b.pos > 0 ? '3px' : 0 }}
+              />
+            </div>
+            <div className="h-px bg-stone-600/80" />
+            {/* bottom half: them */}
+            <div className="flex-1 flex flex-col justify-start items-center">
+              <div
+                className="w-full rounded-b-sm bg-red-500/70"
+                style={{ height: `${(b.neg / maxV) * 100}%`, minHeight: b.neg > 0 ? '3px' : 0 }}
+              />
+              {b.goals.filter(g => g === 'them').map((_, j) => (
+                <span key={j} className="text-[9px] leading-none">⚽</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-between mt-1 text-[9px] text-stone-600">
+        <span>KICKOFF</span><span>HALF</span><span>FULL TIME</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- SHOT MAP (4.2) ----------
+ * 3×3 half-field chart of GOAL / SHOT_ON / SHOT_OFF by their coach zone tag,
+ * attack at the top (same convention as the tag grids). Works per game or
+ * across a season (pass any list of games). Untagged shots are surfaced as
+ * the audit line — they're exactly what the confirm queue drains.
+ */
+function ShotMap({ games }) {
+  const cells = {}; // 'A-L' -> { goals, on, off }
+  let untagged = 0;
+  let total = 0;
+  for (const g of games || []) {
+    for (const e of g.events || []) {
+      if (e.type !== 'GOAL' && e.type !== 'SHOT_ON' && e.type !== 'SHOT_OFF') continue;
+      total++;
+      if (!e.zone || !ZONE_LABEL[e.zone]) { untagged++; continue; }
+      const c = cells[e.zone] || (cells[e.zone] = { goals: 0, on: 0, off: 0 });
+      if (e.type === 'GOAL') c.goals++;
+      else if (e.type === 'SHOT_ON') c.on++;
+      else c.off++;
+    }
+  }
+  if (total === 0) return null;
+  const maxN = Math.max(1, ...Object.values(cells).map(c => c.goals + c.on + c.off));
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] tracking-widest text-stone-400">SHOT MAP</div>
+        <div className="text-[9px] text-stone-500">⬆ OUR ATTACK</div>
+      </div>
+      <div className="grid grid-cols-3 grid-rows-3 gap-1" style={{ direction: 'ltr' }}>
+        {['A', 'M', 'D'].flatMap(band =>
+          ['L', 'C', 'R'].map(side => {
+            const id = `${band}-${side}`;
+            const c = cells[id];
+            const n = c ? c.goals + c.on + c.off : 0;
+            const alpha = n ? 0.12 + 0.5 * (n / maxN) : 0;
+            return (
+              <div
+                key={id}
+                className="rounded-lg border border-stone-800 flex flex-col items-center justify-center py-2.5 min-h-[52px]"
+                style={{ background: n ? `rgba(163, 230, 53, ${alpha})` : 'rgba(28,25,23,0.4)' }}
+              >
+                {n > 0 ? (
+                  <>
+                    <div className="font-display text-lg leading-none text-white">{n}</div>
+                    <div className="text-[9px] text-stone-300 mt-0.5">
+                      {c.goals > 0 && <span>⚽{c.goals} </span>}
+                      {c.on > 0 && <span>🎯{c.on} </span>}
+                      {c.off > 0 && <span>❌{c.off}</span>}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[10px] text-stone-700">·</div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="flex justify-between mt-1.5 text-[9px]">
+        <span className="text-stone-600">{total - untagged} of {total} shots zone-tagged</span>
+        {untagged > 0 && <span className="text-amber-400/90">✅ {untagged} untagged — tag them in the confirm queue</span>}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- FORMATION EDIT SHEET ----------
  * Per-half manual correction for the formation label. The computed value
  * (coach's resets-first rule) stays the default; a coach pick is stored in
@@ -8458,7 +8692,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   // ---- derived analytics view-model (team summary + cards) ----
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
-  const teamKm = (pstats.reduce((s, p) => s + (p.distance_m || 0), 0) / 1000);
+  const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
   const teamTopKmh = Math.max(0, ...pstats.map(p => (p.top_speed_ms || 0) * 3.6));
   const teamSprints = pstats.reduce((s, p) => s + (p.sprint_count || 0), 0);
   // minutes-weighted team thirds
@@ -8684,6 +8918,26 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 <div className="flex justify-between text-[9px] text-stone-500"><span className="text-lime-300">Att {teamThirds[2].toFixed(0)}</span><span className="text-yellow-300">Mid {teamThirds[1].toFixed(0)}</span><span className="text-red-300">Def {teamThirds[0].toFixed(0)}</span></div>
               </div>
             </div>
+            <div className="mt-2 space-y-2">
+              <MomentumChart game={game} />
+              <ShotMap games={[game]} />
+              {/* 4.6 — team-centroid third occupancy: where the game lived. */}
+              {doc.field_tilt && (
+                <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+                  <div className="text-[10px] tracking-widest text-stone-400 mb-2">FIELD TILT <span className="text-stone-600">· where the game lived (possession proxy)</span></div>
+                  <div className="flex h-2 rounded-full overflow-hidden mb-1">
+                    <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
+                    <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
+                    <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
+                  </div>
+                  <div className="flex justify-between text-[9px] text-stone-500">
+                    <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
+                    <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
+                    <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="text-[9px] text-stone-600 mt-3">Generated {doc.generated_at_ms ? new Date(doc.generated_at_ms).toLocaleString() : '—'}</div>
           </section>
 
@@ -8710,6 +8964,13 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const topKmh = (s.top_speed_ms || 0) * 3.6;
                 const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 && topKmh >= 30;
                 const statsBad = lowTrack || swapPolluted;
+                // 4.4: rate-based estimates (distance/sprints scaled to coach
+                // minutes) when the doc carries them; raw sums for older docs.
+                const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
+                const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
+                const coveragePct = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
+                  ? Math.min(100, Math.round((s.tracked_seconds / 60) / s.minutes_played * 100))
+                  : null;
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -8731,13 +8992,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-2 mb-1">
-                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [(s.distance_m || 0).toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [s.sprint_count || 0, 'SPRINTS', true]].map(([v, l, movement]) => (
+                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [distShown.toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [sprintsShown, 'SPRINTS', true]].map(([v, l, movement]) => (
                         <div key={l} className={`rounded-xl border border-stone-700/60 p-2 text-center ${statsBad && movement ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
                           <div className="text-white font-display text-base leading-none">{statsBad && movement ? '—' : v}</div>
                           <div className="text-[9px] text-stone-400 mt-1">{l}</div>
                         </div>
                       ))}
                     </div>
+                    {coveragePct != null && s.distance_est_m != null && !statsBad && (
+                      <div className="text-[9px] text-stone-500 mb-2 leading-snug">
+                        📡 {coveragePct}% of minutes tracked — distance &amp; sprints are rate-based estimates
+                        {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
+                      </div>
+                    )}
                     {lowTrack && (
                       <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
                         Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.
@@ -8785,6 +9052,8 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
           doc={doc}
           label={broadcastOpen === 'tv_reel' ? `FULL GAME — ${game.opponent}` : `HIGHLIGHTS — ${game.opponent}`}
           timeKey={broadcastOpen === 'tv_reel' ? 'tvReelTimeS' : 'autoHighlightsTimeS'}
+          labelsUrl={broadcastOpen === 'tv_reel' ? (doc?.review_labels_url || null) : null}
+          roster={roster}
           onClose={() => setBroadcastOpen(null)}
         />
       )}
