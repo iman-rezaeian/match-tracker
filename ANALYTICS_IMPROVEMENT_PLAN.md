@@ -264,9 +264,10 @@ obligation.
   playback (same mechanism as the scorebug). Cheaper (no 2nd giant mp4),
   toggleable, and confidence-colorable for FIX IDS use. Unlocks: post-game
   narration far-side IDs, full-roster marking, visible identity errors.
-  Steps: (a) pipeline: project tracked players into reel-crop coords per
-  sampled frame during render → labels.json to R2 + URL in analytics doc;
-  (b) PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
+  Steps: (a) ✅ pipeline build_review_label_track (inverse-perspective
+  projection of foot coords through the re-derived aim stream, 1 Hz keyframe
+  JSON → R2, review_labels_url on analytics doc) — committed;
+  (b) 🔨 PWA: LABELS toggle in BroadcastVideoPlayer (coach view only).
 
 **Also shipped 2026-06-11 (outside the phase plan):**
 - Owner-only VIEWERS usage analytics (per-section tracking, watch time,
