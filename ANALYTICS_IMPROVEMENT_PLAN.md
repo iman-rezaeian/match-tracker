@@ -353,6 +353,21 @@ id (raw track ids come from the checkpointed tracking stage → stable
 forever); migrate/flag stale ones at apply time instead of silently
 mis-landing. Build BEFORE the next stitch-affecting change (8K era).
 
+## Known sharp edge — navigation = full cold restart, zero resilience (found 2026-06-12)
+
+Public game links + DUGOUT navigate via full page loads (?live=, ?coach):
+every tap reboots the bundle → Firebase init → auth restore → Firestore open
+→ first snapshot, with NO timeout/retry/error UI. Any stall in that chain =
+infinite spinner; retry works because the 2nd attempt starts warm. Observed
+on iPad 6th gen (constant) AND a 2-yr-old iPad Air on the PUBLIC page —
+fast iPhones just outrun the chain, so it hid. Evening's mitigations that
+shipped anyway: forced long-polling, single-tab persistence, persistence
+skipped on iPad-class standalone, R2 debug beacons (keep!). PROPER FIX
+(post-8K-weekend, in order): (1) client-side routing for public game pages +
+dugout (same bundle — swap views in place, no reboot per tap); (2) cold-start
+resilience: timeout + auto-retry + visible "retrying…" on the initial
+listeners. Beacons measure before/after.
+
 ## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
 
 Standalone iOS web apps get isolated, PARTITIONED storage: signInWithPopup
