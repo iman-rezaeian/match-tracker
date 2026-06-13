@@ -397,6 +397,19 @@ auth handler from our own origin (authDomain = stompers2016.com + hosting
 rewrite of /__/auth/*) so the redirect handoff is same-origin and survives
 partitioning. Also protects existing installs from future session loss.
 
+## BUG — voice recorder dies on every event tap (found game day 2026-06-13)
+
+VoiceRecorder sits in the live control row, which is wrapped in
+`{!pendingEvent && (...)}` — tapping GOAL/any event sets pendingEvent, the
+row UNMOUNTS, and the recorder's stop+upload-on-unmount fires. Coach had to
+re-tap REC after every logged event; game 1 (Belle River) still salvaged
+~19 min / 10 takes (timestamps make fragments fine), but it's a hard
+usability fail. FIX (with the beta router work, pre-cutover): hoist the
+recorder ABOVE the pendingEvent conditional (or lift its MediaRecorder into
+App/CoachApp state so the control row's mount/unmount can't stop it).
+Game-day audio status: G1 in-PWA ~19min (bug-truncated); G2 PWA empty —
+confirm whether Voice Memos covered G2.
+
 ## Perf backlog — first-load payload (noted 2026-06-12)
 
 Coach-verified post-router: everything snappy except FIRST dugout load —
