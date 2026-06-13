@@ -4596,18 +4596,24 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             <div className="text-[10px] font-bold tracking-widest text-lime-400">LASALLE STOMPERS</div>
             <div className="font-display text-5xl leading-none tabular-nums">{game.ourScore}</div>
           </div>
-          <button
-            onClick={game.clockRunning ? onPauseClock : onResumeClock}
-            className="text-center active:scale-95 transition"
-          >
-            <div className="text-[10px] font-bold tracking-widest text-white/50">
-              {game.clockRunning === false ? '⏸ PAUSED' : '⏱ CLOCK'}
-            </div>
-            <div className={`font-display text-2xl tabular-nums ${game.clockRunning === false ? 'text-white/50' : 'text-white/90'}`}>
-              {formatClock(elapsed)}
-            </div>
-            <div className="text-[9px] text-white/40">tap to {game.clockRunning ? 'pause' : 'resume'}</div>
-          </button>
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              onClick={game.clockRunning ? onPauseClock : onResumeClock}
+              className="text-center active:scale-95 transition"
+            >
+              <div className="text-[10px] font-bold tracking-widest text-white/50">
+                {game.clockRunning === false ? '⏸ PAUSED' : '⏱ CLOCK'}
+              </div>
+              <div className={`font-display text-2xl tabular-nums ${game.clockRunning === false ? 'text-white/50' : 'text-white/90'}`}>
+                {formatClock(elapsed)}
+              </div>
+              <div className="text-[9px] text-white/40">tap to {game.clockRunning ? 'pause' : 'resume'}</div>
+            </button>
+            {/* Recorder lives in the scorebug (always-mounted header) so it
+                survives every event picker — same reason it's not in the
+                control row below. */}
+            <VoiceRecorder game={game} />
+          </div>
           <div className="text-center">
             <div className="text-[10px] font-bold tracking-widest text-red-400 truncate">{game.opponent || 'OPPONENT'}</div>
             <div className="font-display text-5xl leading-none tabular-nums">{game.oppScore}</div>
@@ -4663,16 +4669,6 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
         </div>
       )}
 
-      {/* Voice recorder: ALWAYS mounted (floating), so opening a goal/sub/
-          tag picker — which swaps out the control row above — never unmounts
-          it and stops the recording. Only the final whistle / leaving the
-          game view unmounts it (→ auto stop+upload). */}
-      <div
-        className="fixed z-40"
-        style={{ right: 'max(env(safe-area-inset-right,0px),10px)', bottom: 'max(env(safe-area-inset-bottom,0px),14px)' }}
-      >
-        <VoiceRecorder game={game} />
-      </div>
 
       <div className="flex-1 flex flex-col px-4 pt-2">
         {pendingEvent?.type === 'MINS_VIEW' ? (() => {
@@ -13464,6 +13460,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
