@@ -387,8 +387,10 @@ r2-upload-worker.js into the CF dashboard (env vars persist) — enables
 voice wipe + the /put proxy + retires the presign drift.
 ✅ DONE 2026-06-13 (ahead of cutover, additive/safe): firestore.rules
 PUBLISHED with public read on games/<id>/public/{doc} for the
-broadcastEvents-off-hot-path move. Still pending at cutover: beta→main
-merge + worker paste. Beta now also carries the voice-recorder
+broadcastEvents-off-hot-path move. ✅ CUTOVER COMPLETE 2026-06-13: beta→main merged; canonical worker
+(worker/src/index.ts) deployed via dashboard with videos/delete +
+voice/delete routes + R2 binding resolver (env.BUCKET||env.R2 — fixed the
+old /put 1101). All three routes verified live. Beta now also carries the voice-recorder
 always-mounted fix and the broadcastEvents subcollection move.
 
 ## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
