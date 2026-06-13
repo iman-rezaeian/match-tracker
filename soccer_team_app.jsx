@@ -675,20 +675,71 @@ function TournamentChip({ value }) {
 
 const R2_WORKER_KEY = 'ManUtd2016'; // API key for R2 upload worker auth
 
-export default function App() {
-  // URL-based routing — computed once at mount; the URL doesn't change without
-  // a full reload so this is safe to do before hooks.
-  //   ?live=<gameId>  -> single-game public scoreboard (Share button URL)
-  //   ?coach          -> coach app (password-gated)
-  //   (default)       -> public home: current/latest scoreboard + past games
+/* ---------- ROUTER (client-side, 2026-06-12) ----------
+ * Every surface lives in this one bundle, yet navigation used to go through
+ * full page loads (?live=, ?coach) — each tap re-ran the bundle, re-inited
+ * Firebase, re-restored auth and re-opened Firestore with NO timeout/retry,
+ * so any stall in that chain read as an infinite spinner (constant on iPads,
+ * masked on fast iPhones). Now: routes are state, navigation swaps views
+ * in place, URLs stay shareable (?live= deep links parse on load and
+ * pushState keeps them updated).
+ *
+ * History coordination: route entries carry {route, gameId}. CoachApp's own
+ * view stack pushes {coachView} above the coach route entry, and modals push
+ * {modal} above that — each layer's popstate handler only acts on its own
+ * tagged entries, so the three coexist.
+ */
+function parseRoute() {
   const params = (typeof window !== 'undefined')
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams('');
   const liveGameId = params.get('live');
-  const isCoach = params.has('coach');
-  if (liveGameId) return <LiveScorePage gameId={liveGameId} />;
-  if (!isCoach) return <PublicHomePage />;
+  if (liveGameId) return { kind: 'live', gameId: liveGameId };
+  if (params.has('coach')) return { kind: 'coach' };
+  return { kind: 'home' };
+}
 
+export default function App() {
+  const [route, setRoute] = useState(parseRoute);
+  const navDepthRef = useRef(0);
+
+  useEffect(() => {
+    // Tag the base entry so popstate can route back to it.
+    if (typeof window === 'undefined') return undefined;
+    const st = window.history.state;
+    if (!st || !st.route) {
+      const r = parseRoute();
+      window.history.replaceState({ route: r.kind, gameId: r.gameId || null }, '', window.location.href);
+    }
+    // Global navigation API (used by converted anchors across surfaces).
+    window.__navigate = (r, opts) => {
+      const url = r.kind === 'live' ? `./?live=${r.gameId}` : r.kind === 'coach' ? './?coach' : './';
+      const state = { route: r.kind, gameId: r.gameId || null };
+      if (opts && opts.replace) window.history.replaceState(state, '', url);
+      else { window.history.pushState(state, '', url); navDepthRef.current += 1; }
+      window.scrollTo(0, 0);
+      setRoute(r);
+    };
+    // Back that degrades gracefully on deep links (no in-app history yet).
+    window.__navBack = () => {
+      if (navDepthRef.current > 0) { navDepthRef.current -= 1; window.history.back(); }
+      else window.__navigate({ kind: 'home' }, { replace: true });
+    };
+    const onPop = () => {
+      const s = window.history.state;
+      if (s && s.route) setRoute({ kind: s.route, gameId: s.gameId || undefined });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (route.kind === 'live') return <LiveScorePage key={route.gameId} gameId={route.gameId} />;
+  if (route.kind !== 'coach') return <PublicHomePage />;
+  return <CoachApp />;
+}
+
+function CoachApp() {
   // ---- coach app below ----
   const [unlocked, setUnlocked] = useState(false);
   const [roster, setRoster] = useState([]);
@@ -806,11 +857,32 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
     const email = window.fbUserInfo.email?.toLowerCase();
-    if (!email) { window.location.replace('./'); return; }
-    window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
-      if (doc.exists && doc.data().role === 'coach') setUnlocked(true);
-      else window.location.replace('./');
-    }).catch(() => { window.location.replace('./'); });
+    const toPublic = () => (window.__navigate
+      ? window.__navigate({ kind: 'home' }, { replace: true })
+      : window.location.replace('./'));
+    if (!email) { toPublic(); return; }
+    let cancelled = false;
+    // The role lookup is a single get() with no SDK retry — when the first
+    // attempt stalls ("Checking access…" forever), re-issue it a few times
+    // before concluding anything.
+    let attempts = 0;
+    const tryUnlock = () => {
+      attempts += 1;
+      const timer = setTimeout(() => { if (!cancelled && attempts < 4) tryUnlock(); }, 8000);
+      window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
+        if (cancelled) return;
+        clearTimeout(timer);
+        if (doc.exists && doc.data().role === 'coach') setUnlocked(true);
+        else toPublic();
+      }).catch(() => {
+        if (cancelled) return;
+        clearTimeout(timer);
+        if (attempts >= 4) toPublic();
+        else setTimeout(() => { if (!cancelled) tryUnlock(); }, 2000);
+      });
+    };
+    tryUnlock();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -864,6 +936,25 @@ export default function App() {
 
   // Telemetry watchdog handshake: real content is on screen (see shell).
   useEffect(() => { if (loaded && typeof window !== 'undefined') window.__appReady = true; }, [loaded]);
+
+  // Cold-start watchdog: the production Firestore listeners are injected by
+  // the build with fixed deps and can't be re-armed in place — a wedged first
+  // load gets up to two controlled reloads (sessionStorage-guarded against
+  // loops), then stays on the loading screen for the human to judge.
+  useEffect(() => {
+    if (loaded) {
+      try { sessionStorage.removeItem('coachColdStartReloads'); } catch (e) {}
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      try {
+        const k = 'coachColdStartReloads';
+        const tries = Number(sessionStorage.getItem(k) || 0);
+        if (tries < 2) { sessionStorage.setItem(k, String(tries + 1)); window.location.reload(); }
+      } catch (e) {}
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [loaded]);
 
   // Usage analytics: one ping per coach-app section per session, feeding the
   // owner-only VIEWERS page (the owner himself is excluded inside trackUsage).
@@ -1157,6 +1248,16 @@ export default function App() {
         body: JSON.stringify({ password: R2_WORKER_KEY }),
       });
     } catch (e) { console.warn('R2 wipe failed (continuing):', e); }
+    // Voice recordings die with the game (privacy) — separate route so
+    // "Delete videos only" keeps them. Best-effort until the worker with
+    // this route is deployed.
+    try {
+      await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/voice/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: R2_WORKER_KEY }),
+      });
+    } catch (e) { console.warn('voice wipe failed (continuing):', e); }
 
     try {
       if (window.fbDb) {
@@ -2020,6 +2121,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
           )}
           <a
             href="./"
+            onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'home' }); } }}
             aria-label="Exit coach — back to public scoreboard"
             className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
           >
@@ -12357,6 +12459,17 @@ function LiveScorePage({ gameId }) {
   useEffect(() => { trackUsage('public:game', { gameId }); }, [gameId]);
   // Telemetry watchdog handshake (see shell).
   useEffect(() => { if ((game || error) && typeof window !== 'undefined') window.__appReady = true; }, [game, error]);
+  // Cold-start resilience: re-arm the snapshot listeners when the first
+  // result never lands (see PublicHomePage for the pattern rationale).
+  const [retryNonce, setRetryNonce] = useState(0);
+  useEffect(() => {
+    if (game || error) return undefined;
+    const t = setTimeout(() => {
+      if (retryNonce < 3) setRetryNonce(n => n + 1);
+      else setError('Connection is stuck — go back and tap the game again.');
+    }, 12000);
+    return () => clearTimeout(t);
+  }, [game, error, retryNonce]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
@@ -12386,7 +12499,9 @@ function LiveScorePage({ gameId }) {
       );
     });
     return () => { if (unsubGame) unsubGame(); if (unsubRoster) unsubRoster(); };
-  }, [gameId]);
+    // retryNonce: cold-start watchdog re-arms these listeners when stuck.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId, retryNonce]);
 
   if (error) return <PublicErrorScreen msg={error} />;
   if (!game) return <PublicLoadingScreen />;
@@ -12396,6 +12511,7 @@ function LiveScorePage({ gameId }) {
       <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden pt-[calc(env(safe-area-inset-top,0px)+3.25rem)]">
         <a
           href="./"
+          onClick={(e) => { if (window.__navBack) { e.preventDefault(); window.__navBack(); } }}
           className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-3 z-10 bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg backdrop-blur-sm border border-white/20 flex items-center gap-1"
         >
           <ChevronLeft className="w-4 h-4" /> ALL MATCHES
@@ -12570,6 +12686,18 @@ function PublicHomePage() {
   useEffect(() => { trackUsage('public:home'); }, []);
   // Telemetry watchdog handshake (see shell).
   useEffect(() => { if ((loaded || error) && typeof window !== 'undefined') window.__appReady = true; }, [loaded, error]);
+  // Cold-start resilience: if the first snapshot never arrives, tear down and
+  // re-subscribe (bumping retryNonce re-runs the listener effect) instead of
+  // spinning forever; after 3 tries, say so out loud.
+  const [retryNonce, setRetryNonce] = useState(0);
+  useEffect(() => {
+    if (loaded || error) return undefined;
+    const t = setTimeout(() => {
+      if (retryNonce < 3) setRetryNonce(n => n + 1);
+      else setError('Connection is stuck — close and reopen the app, or check your signal.');
+    }, 12000);
+    return () => clearTimeout(t);
+  }, [loaded, error, retryNonce]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
@@ -12616,7 +12744,9 @@ function PublicHomePage() {
       );
     });
     return () => { if (unsubGames) unsubGames(); if (unsubRoster) unsubRoster(); };
-  }, []);
+    // retryNonce: cold-start watchdog re-arms these listeners when stuck.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryNonce]);
 
   if (error) return <PublicErrorScreen msg={error} />;
   if (!loaded) return <PublicLoadingScreen />;
@@ -12731,7 +12861,7 @@ function PublicHomePage() {
               </div>
             </div>
             {featuredGame ? (
-              <a href={`./?live=${featuredGame.id}`} className="block">
+              <a href={`./?live=${featuredGame.id}`} onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'live', gameId: featuredGame.id }); } }} className="block">
                 <LiveScoreboard game={featuredGame} roster={roster} transparent />
               </a>
             ) : (
@@ -12772,6 +12902,7 @@ function PublicHomePage() {
             )}
             <a
               href="./?coach"
+              onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'coach' }); } }}
               className={`h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95 ${isCoachUser ? '' : 'hidden'}`}
             >
               <span>🪑</span><span>DUGOUT</span>
@@ -12860,7 +12991,7 @@ function PublicHomePage() {
               const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
               const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-700 text-stone-100';
               return (
-                <a key={g.id} href={`./?live=${g.id}`} className="flex items-center gap-3 p-3 active:bg-stone-950">
+                <a key={g.id} href={`./?live=${g.id}`} onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'live', gameId: g.id }); } }} className="flex items-center gap-3 p-3 active:bg-stone-950">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
