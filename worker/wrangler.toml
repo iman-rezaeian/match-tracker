@@ -7,6 +7,13 @@ R2_BUCKET_NAME = "stompers-videos"
 R2_PUBLIC_URL = "https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev"
 COACH_PASS = "ManUtd2016"
 
+# Bind the bucket under BOTH names so the code's r2(env) helper (env.BUCKET
+# || env.R2) resolves whether deployed via wrangler or pasted into a
+# dashboard worker that already has a differently-named binding.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "stompers-videos"
+
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "stompers-videos"

@@ -152,6 +152,33 @@ async function deleteLiveInput(env, uid) {
   return true;
 }
 
+// Delete every R2 object under the given key prefixes (paginated; R2 list
+// caps at 1000). Used by the game-delete wipe routes.
+// Resolve the R2 bucket binding regardless of its configured name. The code
+// has long used env.BUCKET while worker/wrangler.toml bound it as "R2" — that
+// mismatch left env.BUCKET undefined and was the source of the /put 1101.
+// Tolerating both names makes the deploy safe whatever the dashboard has.
+function r2(env) {
+  const b = env.BUCKET || env.R2;
+  if (!b) throw new Error("no R2 bucket binding (expected BUCKET or R2)");
+  return b;
+}
+
+async function wipePrefixes(env, prefixes) {
+  const bucket = r2(env);
+  let deleted = 0;
+  for (const prefix of prefixes) {
+    let cursor = undefined;
+    do {
+      const listed = await bucket.list({ prefix, cursor, limit: 1000 });
+      const keys = (listed.objects || []).map((o) => o.key);
+      if (keys.length) { await bucket.delete(keys); deleted += keys.length; }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+  return deleted;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default {
@@ -202,7 +229,7 @@ export default {
       const key = decodeURIComponent(url.pathname.slice('/put/'.length));
       if (!key) return json({ error: 'no key' }, 400);
       const contentType = request.headers.get('content-type') || 'video/mp4';
-      await env.BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+      await r2(env).put(key, request.body, { httpMetadata: { contentType } });
       return json({ ok: true, publicUrl: `${PUBLIC_BASE}/${key}` });
     }
 
@@ -337,6 +364,39 @@ export default {
         return json({ ok: true });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    // ---- POST /game/:id/videos/delete ----
+    // Wipe R2 reels/clips for a game (coach "Delete game" / "Delete videos").
+    const vidWipe = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/videos\/delete$/);
+    if (request.method === 'POST' && vidWipe) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      try {
+        const deleted = await wipePrefixes(env, [`tv_view/${vidWipe[1]}/`, `clips/${vidWipe[1]}/`]);
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
+      }
+    }
+
+    // ---- POST /game/:id/voice/delete ----
+    // Wipe the coach's voice recordings (flat keys voice_<id>_*) on game
+    // delete. SEPARATE from videos/delete so "Delete videos only" keeps voice.
+    const voiceWipe = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/voice\/delete$/);
+    if (request.method === 'POST' && voiceWipe) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      try {
+        const deleted = await wipePrefixes(env, [`voice_${voiceWipe[1]}_`]);
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
       }
     }
 
