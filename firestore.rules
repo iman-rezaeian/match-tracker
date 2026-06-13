@@ -94,6 +94,15 @@ service cloud.firestore {
           allow read, write: if isCoach();
         }
 
+        // public/: PUBLIC-readable, coach-written. Holds the reel overlay
+        // index (public/broadcast) moved off the game doc so the dugout /
+        // scoreboard list stays lean — parents fetch it only when a reel
+        // opens. Coach-only writes; anyone may read.
+        match /public/{docId} {
+          allow read: if true;
+          allow write: if isCoach();
+        }
+
         // any other future subcollection defaults to coach-only.
         match /{subcoll}/{subdoc} {
           allow read, write: if isCoach();

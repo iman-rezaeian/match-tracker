@@ -194,6 +194,38 @@ export default {
       }
     }
 
+    // ---- POST /game/:id/voice/delete ----
+    // Wipes the coach's voice recordings for a game: flat keys
+    // voice_<gameId>_*.{m4a,webm} (the upload path sanitizes slashes, so
+    // these do NOT live under a folder prefix). Deliberately SEPARATE from
+    // /videos/delete: "Delete game" calls both, "Delete videos only" must
+    // keep the voice — it's source data like the event log, not a render.
+    const voiceMatch = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/voice\/delete$/);
+    if (request.method === 'POST' && voiceMatch) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+
+      const prefix = `voice_${voiceMatch[1]}_`;
+      let deleted = 0;
+      try {
+        let cursor = undefined;
+        do {
+          const listed = await env.BUCKET.list({ prefix, cursor, limit: 1000 });
+          const keys = (listed.objects || []).map(o => o.key);
+          if (keys.length) {
+            await env.BUCKET.delete(keys);
+            deleted += keys.length;
+          }
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } while (cursor);
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
+      }
+    }
+
     return json({ error: 'not found' }, 404);
   },
 };
