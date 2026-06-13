@@ -152,6 +152,22 @@ async function deleteLiveInput(env, uid) {
   return true;
 }
 
+// Delete every R2 object under the given key prefixes (paginated; R2 list
+// caps at 1000). Used by the game-delete wipe routes.
+async function wipePrefixes(env, prefixes) {
+  let deleted = 0;
+  for (const prefix of prefixes) {
+    let cursor = undefined;
+    do {
+      const listed = await env.BUCKET.list({ prefix, cursor, limit: 1000 });
+      const keys = (listed.objects || []).map((o) => o.key);
+      if (keys.length) { await env.BUCKET.delete(keys); deleted += keys.length; }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+  return deleted;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default {
@@ -337,6 +353,39 @@ export default {
         return json({ ok: true });
       } catch (err) {
         return json({ error: String(err.message || err) }, 502);
+      }
+    }
+
+    // ---- POST /game/:id/videos/delete ----
+    // Wipe R2 reels/clips for a game (coach "Delete game" / "Delete videos").
+    const vidWipe = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/videos\/delete$/);
+    if (request.method === 'POST' && vidWipe) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      try {
+        const deleted = await wipePrefixes(env, [`tv_view/${vidWipe[1]}/`, `clips/${vidWipe[1]}/`]);
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
+      }
+    }
+
+    // ---- POST /game/:id/voice/delete ----
+    // Wipe the coach's voice recordings (flat keys voice_<id>_*) on game
+    // delete. SEPARATE from videos/delete so "Delete videos only" keeps voice.
+    const voiceWipe = url.pathname.match(/^\/game\/([a-zA-Z0-9_-]+)\/voice\/delete$/);
+    if (request.method === 'POST' && voiceWipe) {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password } = body || {};
+      if (!password || password !== env.COACH_PASS) return json({ error: 'unauthorized' }, 401);
+      try {
+        const deleted = await wipePrefixes(env, [`voice_${voiceWipe[1]}_`]);
+        return json({ ok: true, deleted });
+      } catch (err) {
+        return json({ error: String(err.message || err) }, 500);
       }
     }
 
