@@ -27,3 +27,7 @@ wipe_all_games.py
 # Local tooling / build cache
 .claude/
 worker/.wrangler/
+
+# Raw game-day audio (large; kept locally, not in history)
+voice memo/
+post_game/raw/voice/
