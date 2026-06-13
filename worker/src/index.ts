@@ -154,14 +154,25 @@ async function deleteLiveInput(env, uid) {
 
 // Delete every R2 object under the given key prefixes (paginated; R2 list
 // caps at 1000). Used by the game-delete wipe routes.
+// Resolve the R2 bucket binding regardless of its configured name. The code
+// has long used env.BUCKET while worker/wrangler.toml bound it as "R2" — that
+// mismatch left env.BUCKET undefined and was the source of the /put 1101.
+// Tolerating both names makes the deploy safe whatever the dashboard has.
+function r2(env) {
+  const b = env.BUCKET || env.R2;
+  if (!b) throw new Error("no R2 bucket binding (expected BUCKET or R2)");
+  return b;
+}
+
 async function wipePrefixes(env, prefixes) {
+  const bucket = r2(env);
   let deleted = 0;
   for (const prefix of prefixes) {
     let cursor = undefined;
     do {
-      const listed = await env.BUCKET.list({ prefix, cursor, limit: 1000 });
+      const listed = await bucket.list({ prefix, cursor, limit: 1000 });
       const keys = (listed.objects || []).map((o) => o.key);
-      if (keys.length) { await env.BUCKET.delete(keys); deleted += keys.length; }
+      if (keys.length) { await bucket.delete(keys); deleted += keys.length; }
       cursor = listed.truncated ? listed.cursor : undefined;
     } while (cursor);
   }
@@ -218,7 +229,7 @@ export default {
       const key = decodeURIComponent(url.pathname.slice('/put/'.length));
       if (!key) return json({ error: 'no key' }, 400);
       const contentType = request.headers.get('content-type') || 'video/mp4';
-      await env.BUCKET.put(key, request.body, { httpMetadata: { contentType } });
+      await r2(env).put(key, request.body, { httpMetadata: { contentType } });
       return json({ ok: true, publicUrl: `${PUBLIC_BASE}/${key}` });
     }
 
