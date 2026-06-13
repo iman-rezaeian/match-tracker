@@ -353,6 +353,16 @@ id (raw track ids come from the checkpointed tracking stage → stable
 forever); migrate/flag stale ones at apply time instead of silently
 mis-landing. Build BEFORE the next stitch-affecting change (8K era).
 
+## Known sharp edge — game deletion orphans voice audio in R2 (found 2026-06-12)
+
+deleteGame wipes tv_view/<id>/ + clips/<id>/ but voice files are flat keys
+(voice_<gameId>_live_*.m4a — deployed worker sanitizes slashes) → audio
+survives game deletion. Coach recordings persisting after deletion is a
+privacy smell. FIX when the repo worker gets redeployed (it's already ahead
+of the deployed one): teach the wipe route the voice_<id> prefix; until
+then, orphan cleanup is manual via R2 creds (done for the 2026-06-12 dummy
+takes).
+
 ## Known sharp edge — navigation = full cold restart, zero resilience (found 2026-06-12)
 
 Public game links + DUGOUT navigate via full page loads (?live=, ?coach):
