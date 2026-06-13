@@ -410,15 +410,19 @@ App/CoachApp state so the control row's mount/unmount can't stop it).
 Game-day audio status: G1 in-PWA ~19min (bug-truncated); G2 PWA empty —
 confirm whether Voice Memos covered G2.
 
-## Perf backlog — first-load payload (noted 2026-06-12)
+## Perf backlog — first dugout load (measured 2026-06-13)
 
-Coach-verified post-router: everything snappy except FIRST dugout load —
-the one legitimate cold start (role check + full games pull). Game docs are
-heavy: full events arrays (hundreds of POSITIONs) + broadcastEvents index
-on every doc, fetched wholesale by BOTH public home and coach app. Real
-fix = slim the hot path (e.g., broadcastEvents → analytics-side or
-subcollection fetched on demand; consider a light games summary index for
-list views). Post-8K-weekend; measure with the usage beacons.
+NOT fixed yet (router work made nav snappy; this is the one legit cold
+start). MEASURED: 4 games = 340 KB pulled on load; broadcastEvents is
+227 KB (67%) of that and the dugout list + public scoreboard NEVER need it
+(it's the reel-overlay index, used only when a video opens) — and it grows
+per analyzed game, so it becomes the dominant cost by mid-season. Today's
+delay is still mostly cold-connection latency (forced long-polling
+handshake + first snapshot; persistence skipped on iPad), not bytes.
+FIX (post-cutover, touches pipeline WRITE path + PWA READ path): move
+broadcastEvents off the game doc to a subcollection/separate doc fetched
+on demand when a reel opens (LiveScorePage scorebug + AnalyticsPanel reel
+are the only readers). Measure before/after with the usage beacons.
 
 ## Ongoing process
 
