@@ -397,6 +397,16 @@ auth handler from our own origin (authDomain = stompers2016.com + hosting
 rewrite of /__/auth/*) so the redirect handoff is same-origin and survives
 partitioning. Also protects existing installs from future session loss.
 
+## Perf backlog — first-load payload (noted 2026-06-12)
+
+Coach-verified post-router: everything snappy except FIRST dugout load —
+the one legitimate cold start (role check + full games pull). Game docs are
+heavy: full events arrays (hundreds of POSITIONs) + broadcastEvents index
+on every doc, fetched wholesale by BOTH public home and coach app. Real
+fix = slim the hot path (e.g., broadcastEvents → analytics-side or
+subcollection fetched on demand; consider a light games summary index for
+list views). Post-8K-weekend; measure with the usage beacons.
+
 ## Ongoing process
 
 - Bookmark/voice classification largely replaces the monthly
