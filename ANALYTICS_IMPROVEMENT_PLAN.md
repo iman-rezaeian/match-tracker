@@ -372,11 +372,19 @@ infinite spinner; retry works because the 2nd attempt starts warm. Observed
 on iPad 6th gen (constant) AND a 2-yr-old iPad Air on the PUBLIC page —
 fast iPhones just outrun the chain, so it hid. Evening's mitigations that
 shipped anyway: forced long-polling, single-tab persistence, persistence
-skipped on iPad-class standalone, R2 debug beacons (keep!). PROPER FIX
-(post-8K-weekend, in order): (1) client-side routing for public game pages +
-dugout (same bundle — swap views in place, no reboot per tap); (2) cold-start
-resilience: timeout + auto-retry + visible "retrying…" on the initial
-listeners. Beacons measure before/after.
+skipped on iPad-class standalone, R2 debug beacons (keep!).
+PROPER FIX BUILT 2026-06-12 late — ON BETA, MAIN HELD until after the
+2026-06-13 doubleheader (no architecture swaps under the game-day device):
+client-side Router (App routes as state; CoachApp extracted intact; tagged
+history entries {route} coexist with {coachView}/{modal}); all 7 anchors
+swap in place (hrefs kept for deep links); cold-start retries on public
+pages + guarded reloads in coach app + role-lookup retry. ALSO: voice wiped
+on game delete (new worker route /game/:id/voice/delete in repo — goes live
+with the worker redeploy; PWA already calls it best-effort; "delete videos
+only" keeps voice intentionally). POST-GAMES CUTOVER: (1) coach smoke-tests
+beta on iPad+iPhone, (2) merge beta→main, (3) coach pastes repo
+r2-upload-worker.js into the CF dashboard (env vars persist) — enables
+voice wipe + the /put proxy + retires the presign drift.
 
 ## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
 
