@@ -1263,7 +1263,7 @@ function CoachApp() {
       if (window.fbDb) {
         const gameRef = window.fbDb.collection('teams').doc('main')
           .collection('games').doc(gameId);
-        for (const sub of ['analytics', 'clips']) {
+        for (const sub of ['analytics', 'clips', 'public']) {
           const qs = await gameRef.collection(sub).get();
           await Promise.all(qs.docs.map(d => d.ref.delete()));
         }
@@ -4446,9 +4446,19 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               <span>MARK</span>
             </button>
           )}
-          <VoiceRecorder game={game} />
         </div>
       )}
+
+      {/* Voice recorder: ALWAYS mounted (floating), so opening a goal/sub/
+          tag picker — which swaps out the control row above — never unmounts
+          it and stops the recording. Only the final whistle / leaving the
+          game view unmounts it (→ auto stop+upload). */}
+      <div
+        className="fixed z-40"
+        style={{ right: 'max(env(safe-area-inset-right,0px),10px)', bottom: 'max(env(safe-area-inset-bottom,0px),14px)' }}
+      >
+        <VoiceRecorder game={game} />
+      </div>
 
       <div className="flex-1 flex flex-col px-4 pt-2">
         {pendingEvent?.type === 'MINS_VIEW' ? (() => {
@@ -12385,6 +12395,22 @@ function PublicAnalyticsCard({ game, roster: _roster }) {
     return () => { untrackUsage(watchDocRef.current); watchDocRef.current = null; };
   }, [broadcastOpen]);
 
+  // Overlay index moved off the game doc (2026-06-13) → games/<id>/public/
+  // broadcast, fetched only when a reel opens so the scoreboard list stays
+  // lean. Fallback to the legacy on-doc field for games not yet re-run.
+  const [bEvents, setBEvents] = useState(null);
+  useEffect(() => {
+    if (!broadcastOpen) return;
+    if (Array.isArray(game?.broadcastEvents) && game.broadcastEvents.length) {
+      setBEvents(game.broadcastEvents); return; // legacy doc, not yet migrated
+    }
+    if (!window.fbDb || !game?.id) return;
+    window.fbDb.collection('teams').doc('main').collection('games').doc(game.id)
+      .collection('public').doc('broadcast').get()
+      .then(s => setBEvents((s.exists && s.data().events) || []))
+      .catch(() => setBEvents([]));
+  }, [broadcastOpen, game?.id]);
+
   const highlightsUrl = game?.videoHighlightsUrl;
   const fullGameUrl = game?.videoFullGameUrl;
   const highlightsDur = game?.videoHighlightsDurationS;
@@ -12394,7 +12420,7 @@ function PublicAnalyticsCard({ game, roster: _roster }) {
   // The broadcast player expects an analytics-shaped "doc" for the overlay.
   // We synthesize a minimal one from the public game-doc fields.
   const broadcastDoc = {
-    broadcast_events: game?.broadcastEvents || [],
+    broadcast_events: bEvents || game?.broadcastEvents || [],
     // Scorebug is us/them-oriented (us always left), matching the live in-game
     // scorebug and the pipeline. Do NOT swap by isHome.
     home_name: game?.broadcastHomeName || 'Stompers',

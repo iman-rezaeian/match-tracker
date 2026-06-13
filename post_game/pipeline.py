@@ -759,12 +759,18 @@ def run(
         public_fields["videoHighlightsUrl"] = auto_hl_meta.r2_url
         public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
     if public_fields or events_index:
-        public_fields["broadcastEvents"] = _sanitize_json(events_index)
+        # broadcastEvents (the big one) now lives in games/<id>/public/broadcast,
+        # fetched on demand when a reel opens — keeps the game doc (pulled for
+        # every game on dugout/public load) lean. Light overlay metadata stays
+        # on the doc; the events index goes to the subcollection.
         public_fields["broadcastHomeName"] = analytics["home_name"]
         public_fields["broadcastAwayName"] = analytics["away_name"]
         public_fields["broadcastHomeColor"] = analytics["home_color"]
         public_fields["broadcastAwayColor"] = analytics["away_color"]
         firestore_io.set_public_reels(game_id, public_fields)
+        firestore_io.set_public_broadcast_events(game_id, _sanitize_json(events_index))
+        # Clear the legacy on-doc field so re-run docs converge to lean.
+        firestore_io.clear_legacy_broadcast_events(game_id)
 
     # Clean up legacy clip docs from older pipeline runs that wrote the
     # tv_reel / auto_highlights records into the per-event clips/ collection.

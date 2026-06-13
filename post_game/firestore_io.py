@@ -406,6 +406,12 @@ def delete_analytics(game_id: str) -> dict[str, int]:
         snap.reference.delete()
         clip_count += 1
 
+    # The on-demand public broadcast doc (events index lives here now).
+    try:
+        game_ref.collection("public").document("broadcast").delete()
+    except Exception as e:
+        log.debug("public/broadcast delete skipped for %s: %s", game_id, e)
+
     # Strip the public broadcast fields. update() with DELETE_FIELD on a
     # missing key is a no-op, so we don't need to read first.
     field_count = 0
@@ -454,6 +460,31 @@ def set_public_reels(game_id: str, fields: dict[str, Any]) -> None:
     if not fields:
         return
     _team_doc().collection("games").document(game_id).set(fields, merge=True)
+
+
+def set_public_broadcast_events(game_id: str, events: list) -> None:
+    """Write the per-event overlay index to games/<id>/public/broadcast.
+
+    Moved OFF the game doc (2026-06-13): broadcastEvents is ~100 KB/analyzed
+    game and the dugout list + public scoreboard pull every game doc on load,
+    but only need this index when a reel actually opens. Parking it in a
+    public-readable subcollection doc (fetched on demand) keeps the list lean
+    as the season grows. Requires the games/<id>/public/{doc} public-read
+    rule (see firestore.rules)."""
+    (_team_doc().collection("games").document(game_id)
+        .collection("public").document("broadcast")
+        .set({"events": events}))
+
+
+def clear_legacy_broadcast_events(game_id: str) -> None:
+    """Delete the obese on-doc `broadcastEvents` field (now in public/broadcast)
+    so re-run game docs shrink. No-op when the field is already absent."""
+    from google.cloud.firestore import DELETE_FIELD  # type: ignore
+    try:
+        _team_doc().collection("games").document(game_id).update(
+            {"broadcastEvents": DELETE_FIELD})
+    except Exception as e:
+        log.debug("clear_legacy_broadcast_events skipped for %s: %s", game_id, e)
 
 
 def set_video_url(game_id: str, url: str) -> None:
