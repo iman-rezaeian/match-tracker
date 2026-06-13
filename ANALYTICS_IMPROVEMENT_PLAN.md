@@ -372,11 +372,19 @@ infinite spinner; retry works because the 2nd attempt starts warm. Observed
 on iPad 6th gen (constant) AND a 2-yr-old iPad Air on the PUBLIC page —
 fast iPhones just outrun the chain, so it hid. Evening's mitigations that
 shipped anyway: forced long-polling, single-tab persistence, persistence
-skipped on iPad-class standalone, R2 debug beacons (keep!). PROPER FIX
-(post-8K-weekend, in order): (1) client-side routing for public game pages +
-dugout (same bundle — swap views in place, no reboot per tap); (2) cold-start
-resilience: timeout + auto-retry + visible "retrying…" on the initial
-listeners. Beacons measure before/after.
+skipped on iPad-class standalone, R2 debug beacons (keep!).
+PROPER FIX BUILT 2026-06-12 late — ON BETA, MAIN HELD until after the
+2026-06-13 doubleheader (no architecture swaps under the game-day device):
+client-side Router (App routes as state; CoachApp extracted intact; tagged
+history entries {route} coexist with {coachView}/{modal}); all 7 anchors
+swap in place (hrefs kept for deep links); cold-start retries on public
+pages + guarded reloads in coach app + role-lookup retry. ALSO: voice wiped
+on game delete (new worker route /game/:id/voice/delete in repo — goes live
+with the worker redeploy; PWA already calls it best-effort; "delete videos
+only" keeps voice intentionally). POST-GAMES CUTOVER: (1) coach smoke-tests
+beta on iPad+iPhone, (2) merge beta→main, (3) coach pastes repo
+r2-upload-worker.js into the CF dashboard (env vars persist) — enables
+voice wipe + the /put proxy + retires the presign drift.
 
 ## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
 
@@ -388,6 +396,33 @@ Safari on secondary devices. REAL FIX (post-8K-weekend): serve the Firebase
 auth handler from our own origin (authDomain = stompers2016.com + hosting
 rewrite of /__/auth/*) so the redirect handoff is same-origin and survives
 partitioning. Also protects existing installs from future session loss.
+
+## BUG — voice recorder dies on every event tap (found game day 2026-06-13)
+
+VoiceRecorder sits in the live control row, which is wrapped in
+`{!pendingEvent && (...)}` — tapping GOAL/any event sets pendingEvent, the
+row UNMOUNTS, and the recorder's stop+upload-on-unmount fires. Coach had to
+re-tap REC after every logged event; game 1 (Belle River) still salvaged
+~19 min / 10 takes (timestamps make fragments fine), but it's a hard
+usability fail. FIX (with the beta router work, pre-cutover): hoist the
+recorder ABOVE the pendingEvent conditional (or lift its MediaRecorder into
+App/CoachApp state so the control row's mount/unmount can't stop it).
+Game-day audio status: G1 in-PWA ~19min (bug-truncated); G2 PWA empty —
+confirm whether Voice Memos covered G2.
+
+## Perf backlog — first dugout load (measured 2026-06-13)
+
+NOT fixed yet (router work made nav snappy; this is the one legit cold
+start). MEASURED: 4 games = 340 KB pulled on load; broadcastEvents is
+227 KB (67%) of that and the dugout list + public scoreboard NEVER need it
+(it's the reel-overlay index, used only when a video opens) — and it grows
+per analyzed game, so it becomes the dominant cost by mid-season. Today's
+delay is still mostly cold-connection latency (forced long-polling
+handshake + first snapshot; persistence skipped on iPad), not bytes.
+FIX (post-cutover, touches pipeline WRITE path + PWA READ path): move
+broadcastEvents off the game doc to a subcollection/separate doc fetched
+on demand when a reel opens (LiveScorePage scorebug + AnalyticsPanel reel
+are the only readers). Measure before/after with the usage beacons.
 
 ## Ongoing process
 
