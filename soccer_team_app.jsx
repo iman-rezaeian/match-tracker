@@ -2056,7 +2056,11 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 
 /* ---------- HOME ---------- */
 function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining }) {
-  const finishedGames = games.filter(g => g.status === 'finished');
+  const finishedGames = games.filter(g => g.status === 'finished')
+    // Newest first by DATE then time-of-day (startedAt) — so two games on the
+    // same festival day order correctly, like the upcoming-games list.
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '')
+      || (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0));
   const wins = finishedGames.filter(g => g.ourScore > g.oppScore).length;
   const losses = finishedGames.filter(g => g.ourScore < g.oppScore).length;
   const draws = finishedGames.filter(g => g.ourScore === g.oppScore).length;
@@ -12842,7 +12846,11 @@ function PublicHomePage() {
   const featuredItem =
     featuredSlot?.kind === 'upcoming' || featuredSlot?.kind === 'cancelled' ? featuredSlot.item : null;
 
-  const past = finished.filter((g) => !featuredGame || g.id !== featuredGame.id);
+  const past = finished
+    .filter((g) => !featuredGame || g.id !== featuredGame.id)
+    // Newest first by DATE then time-of-day (startedAt), matching the dugout.
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '')
+      || (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0));
 
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
