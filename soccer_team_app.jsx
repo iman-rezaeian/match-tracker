@@ -1881,7 +1881,7 @@ function CoachApp() {
           onPauseClock={() => pauseClock(activeGame.id)}
           onResumeClock={() => resumeClock(activeGame.id)}
           onEnd={() => askConfirm('End game and save final score?', () => endGame(activeGame.id))}
-          onBack={() => setView('home')}
+          onBack={() => askConfirm('Leave this game? The clock keeps running — you can resume from Home.', () => setView('home'), { yesLabel: 'LEAVE' })}
           onBulkReplaceLineup={(ids) => bulkReplaceLineup(activeGame.id, ids)}
           tick={tick}
         />
@@ -4367,7 +4367,14 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
     <div className="min-h-screen flex flex-col">
       <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] pb-2">
         <div className="flex items-center justify-between mb-1">
-          <button onClick={onBack} className="text-white/70 active:scale-95">
+          {/* Context-aware back: a tap closes an open picker (sub/goal/MINS/
+              tag) first — only on the bare game screen does it leave (with a
+              confirm via onBack). Stops reflex taps from ejecting mid-game. */}
+          <button
+            onClick={() => { if (pendingEvent) onCancelEvent(); else onBack(); }}
+            className="text-white/70 active:scale-95"
+            aria-label={pendingEvent ? 'Close' : 'Leave game'}
+          >
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="text-center flex-1">
