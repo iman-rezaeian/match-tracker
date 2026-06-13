@@ -385,6 +385,11 @@ only" keeps voice intentionally). POST-GAMES CUTOVER: (1) coach smoke-tests
 beta on iPad+iPhone, (2) merge beta→main, (3) coach pastes repo
 r2-upload-worker.js into the CF dashboard (env vars persist) — enables
 voice wipe + the /put proxy + retires the presign drift.
+✅ DONE 2026-06-13 (ahead of cutover, additive/safe): firestore.rules
+PUBLISHED with public read on games/<id>/public/{doc} for the
+broadcastEvents-off-hot-path move. Still pending at cutover: beta→main
+merge + worker paste. Beta now also carries the voice-recorder
+always-mounted fix and the broadcastEvents subcollection move.
 
 ## Known sharp edge — Google sign-in inside iOS home-screen PWAs (found 2026-06-12)
 
