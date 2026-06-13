@@ -135,7 +135,21 @@
     // (beacon-confirmed on iPadOS 17.7: network + auth fine, SDK stuck).
     // Single-tab locking fails FAST when contended; the app then just runs
     // without the offline cache for that load instead of hanging.
-    window.fbDb.enablePersistence({ synchronizeTabs: false }).catch(() => {});
+    // iPad-class standalone (2026-06-12): skip offline persistence entirely.
+    // Beacons show the hang survives both persistence modes — on iPadOS 17
+    // the IndexedDB OPEN itself can never call back after in-app navigation,
+    // wedging Firestore startup before any lock logic. Memory cache + direct
+    // network (probe-confirmed healthy) instead. iPhone standalone (works,
+    // and needs the offline cache at the field) and Safari keep persistence.
+    // NOTE iPadOS reports a Macintosh UA; touch points are the tell.
+    (function () {
+      const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+      const iPadClass = navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent);
+      if (!(standalone && iPadClass)) {
+        window.fbDb.enablePersistence({ synchronizeTabs: false }).catch(() => {});
+      }
+    })();
     // Complete any pending signInWithRedirect round-trip BEFORE anything else
     // touches auth. Without this call, iPad PWAs that fall back from popup to
     // redirect can come back to the page with no user and hang forever in the
@@ -13293,6 +13307,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
