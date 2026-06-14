@@ -134,7 +134,8 @@ def stitch_tracklets(
             dx = sb["p0"][0] - sa["p1"][0]
             dy = sb["p0"][1] - sa["p1"][1]
             dist = float(np.hypot(dx, dy))
-            max_move = config.MAX_PLAUSIBLE_SPEED_MS * max(gap, 0.0) + slack_m
+            max_move = min(config.MAX_PLAUSIBLE_SPEED_MS * max(gap, 0.0) + slack_m,
+                           config.STITCH_DIST_CAP_M)
             if dist > max_move:
                 continue
             ok, cos = appearance_ok(a, b)

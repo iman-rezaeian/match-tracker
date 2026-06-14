@@ -146,6 +146,27 @@ Further levers (diminishing): action-event anchors (only ~15 events, temporal-on
 marginal); the bigger one is LONGER continuity chains (better tracking) so propagation
 reaches more fragments from each anchor.
 
+## Step 2 PRODUCTIONIZED (gap-split + stitch tuning) + A/B result (2026-06-13)
+
+Implemented behind flags (defaults reproduce current behavior): `config.GAP_SPLIT_ENABLED`,
+`SPLIT_GAP_S`, `STITCH_DIST_CAP_M`, env-overridable `STITCH_APP_WEIGHT`/`ANALYTICS_DOC_VERSION`;
+new `post_game/gap_split.py`; one gated block in `pipeline.py` (before classify) + public-write
+version guard; abs dist cap in `reid_stitch.py`; read-only A/B harness `tracking/eval_stitch_assign.py`.
+
+A/B on Game 1 (overrides WITHHELD = fair auto-assignment test):
+- baseline (flags off): our 1546 frags -> 503 tracklets, **auto named-coverage 5.1%** (32 tracks).
+- gap-split + app_weight 0.5 + dist_cap 12: 3176 frags -> 568 tracklets, **auto coverage 7.5%**
+  (120 tracks) — but over-merge signs (one player 19 auto-min, largest tracklet 34 frags).
+
+KEY FINDING: the win is modest, NOT the prototype's 66%. Reason: production
+`assign_identities_v2` is DELIBERATELY CONSERVATIVE (votes-gated + minute-budget → 3056
+"unknown"); the live run's 344 named comes mostly from COACH OVERRIDES, not auto-assignment.
+=> gap-split/stitch tuning cleans fragments but the EXISTING assignment can't capitalize.
+The real lever is the deferred ASSIGNMENT leftover/budget pass (raise auto recall while
+keeping precision). DECISION: do NOT flip defaults; infra landed behind flags. Next: tune the
+assignment leftover handling (then re-A/B), OR lean into the coach-correction model with
+confidence-gated reporting. Over-merge means loose stitch params need care too.
+
 ## Deep-research summary (foundation/DL/LLM landscape, 2024–2026)
 
 107-agent deep-research pass, 24 sources, 25 claims adversarially verified.

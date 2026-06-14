@@ -377,6 +377,20 @@ def run(
         log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
                  dropped_off, dropped_topn, len(tracks_df))
 
+    # 3.5 Gap-split — break "zombie" tracks (one id kept alive across long gaps,
+    # teleporting between bodies) into clean contiguous sub-tracks BEFORE team
+    # classification, so one id universe flows through stitch/assign/stats. Gated;
+    # rebinds the three names every downstream stage reads. See post_game/gap_split.py.
+    if config.GAP_SPLIT_ENABLED and not tracks_df.empty:
+        from .gap_split import gap_split_tracks
+        _n0 = tracks_df["track_id"].nunique()
+        tracks_df, track_jersey_samples, track_embeddings, _ = gap_split_tracks(
+            tracks_df, track_jersey_samples, track_embeddings,
+            split_gap_s=config.SPLIT_GAP_S,
+        )
+        log.info("  -> gap-split: %d tracks -> %d sub-tracks (gap > %.1fs)",
+                 _n0, tracks_df["track_id"].nunique(), config.SPLIT_GAP_S)
+
     # 4. Team classification
     log.info("Stage 4/6: team classification...")
     our_color = _our_color(game)
@@ -758,7 +772,10 @@ def run(
     if auto_hl_meta and auto_hl_meta.r2_url:
         public_fields["videoHighlightsUrl"] = auto_hl_meta.r2_url
         public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
-    if public_fields or events_index:
+    # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
+    # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never
+    # clobber the live public reel/broadcast docs.
+    if (public_fields or events_index) and config.ANALYTICS_DOC_VERSION == "v1":
         # broadcastEvents (the big one) now lives in games/<id>/public/broadcast,
         # fetched on demand when a reel opens — keeps the game doc (pulled for
         # every game on dugout/public load) lean. Light overlay metadata stays
@@ -775,7 +792,9 @@ def run(
     # Clean up legacy clip docs from older pipeline runs that wrote the
     # tv_reel / auto_highlights records into the per-event clips/ collection.
     # They render as broken "· P 0' · —" rows in the PWA highlight list.
-    _purge_legacy_reel_clip_docs(game_id)
+    # Skipped on shadow runs — touches the live game's clips/ collection.
+    if config.ANALYTICS_DOC_VERSION == "v1":
+        _purge_legacy_reel_clip_docs(game_id)
     log.info("Wrote analytics for game %s - %d players", game_id, len(player_stats))
     return analytics
 
