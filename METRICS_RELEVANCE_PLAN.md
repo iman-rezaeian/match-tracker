@@ -131,6 +131,21 @@ windows + board zone." Result on Game 1:
   through zone-ambiguous stretches the template can't resolve. Validate precision via
   `stitch_review.py`-style crops on a sample + a few hand-labeled players.
 
+ITER 2 DONE (`tracking/coach_assign_anchor_probe.py`): chains(814)+anchors(uniquely-
+closest template margin>=6m, GK geometry)+propagate along continuity. Named time 66%,
+split: ~47% ANCHOR-backed + ~20% PROPAGATION-rescued (template couldn't place, chain-
+mate did = the win) + ~33% still shaky template-fill. GK + distinct roles clean
+(Garland 88% anchor, Hahn 72%, Hassoun 86%); clustered central players stay fuzzy
+(Yaacoub 0% anchor, Zaidan 10%). Residual over-assignment persists (Hassoun 110% cover).
+CONCLUSION: anchor-and-propagate recovers a ~67% CONFIDENT core but ~1/3 of attribution
+is IRREDUCIBLY uncertain with available signals (board template can't separate clustered
+players; no number/appearance tiebreak). => confidence-gated reporting is MANDATORY:
+roll per-fragment anchor-backing into a per-player-metric confidence that drives
+shrinkage + gating (report Garland/Hahn/Hassoun confidently; flag/widen Yaacoub/Zaidan).
+Further levers (diminishing): action-event anchors (only ~15 events, temporal-only,
+marginal); the bigger one is LONGER continuity chains (better tracking) so propagation
+reaches more fragments from each anchor.
+
 ## Deep-research summary (foundation/DL/LLM landscape, 2024–2026)
 
 107-agent deep-research pass, 24 sources, 25 claims adversarially verified.
