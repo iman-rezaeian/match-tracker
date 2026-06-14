@@ -8155,13 +8155,13 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
       const isOppGoal = e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
       if (isOurGoal) {
         const key = e.playerId || `?${e.jerseyNumber || ''}`;
-        const entry = us.get(key) || { num: e.jerseyNumber, first: e.playerFirstName || 'Goal', minutes: [] };
-        entry.minutes.push(minStr);
+        const entry = us.get(key) || { num: e.jerseyNumber, first: e.playerFirstName || 'Goal', goals: [] };
+        entry.goals.push({ min: minStr, aFirst: e.assistFirstName || null, aNum: e.assistJerseyNumber });
         us.set(key, entry);
       } else if (isOppGoal) {
         // Opponent: we don't know scorer name — just collect minutes under "OPP".
-        const entry = them.get('opp') || { num: null, first: null, minutes: [] };
-        entry.minutes.push(minStr);
+        const entry = them.get('opp') || { num: null, first: null, goals: [] };
+        entry.goals.push({ min: minStr });
         them.set('opp', entry);
       }
     }
@@ -8371,11 +8371,26 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
 
   const renderLine = (s, side) => {
     const label = s.first ? `#${s.num ?? '?'} ${s.first.toUpperCase()}` : 'OPPONENT';
+    const goals = s.goals || [];
+    const mins = (
+      <span className="flex flex-wrap gap-x-1.5 gap-y-0.5">
+        {goals.map((g, i) => (
+          <span key={i} className="tabular-nums text-stone-300">
+            {g.min}
+            {/* assist only known for our goals */}
+            {g.aFirst && (
+              <span className="text-lime-300/80 not-italic"> 🅰{g.aFirst.toUpperCase()}{g.aNum != null ? ` #${g.aNum}` : ''}</span>
+            )}
+            {i < goals.length - 1 ? ',' : ''}
+          </span>
+        ))}
+      </span>
+    );
     return (
       <div key={`${side}-${label}`} className={`flex ${side === 'us' ? 'justify-start' : 'justify-end'} items-baseline gap-2 text-[11px]`}>
-        {side === 'us' && <span className="font-display tracking-wide text-white">{label}</span>}
-        <span className="tabular-nums text-stone-300">{s.minutes.join(", ")}</span>
-        {side === 'them' && <span className="font-display tracking-wide text-white">{label}</span>}
+        {side === 'us' && <span className="font-display tracking-wide text-white shrink-0">{label}</span>}
+        {mins}
+        {side === 'them' && <span className="font-display tracking-wide text-white shrink-0">{label}</span>}
       </div>
     );
   };
@@ -8387,7 +8402,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
 
   return (
     <div
-      className="absolute inset-0 pointer-events-none select-none flex items-end justify-center pb-[7%]"
+      className="absolute inset-0 pointer-events-none select-none flex items-end justify-center pb-[7%] sm:pb-[16%]"
       style={{ opacity, transition: 'opacity 80ms linear' }}
     >
       <div
@@ -8410,7 +8425,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2 text-white">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="inline-block w-1.5 h-5 rounded-sm shrink-0" style={{ background: homeColor }} />
-            <span className="font-display text-sm sm:text-base tracking-wide leading-tight break-words">{homeName}</span>
+            <span className="font-display text-sm sm:text-base tracking-wide leading-tight whitespace-nowrap truncate">{homeName}</span>
           </div>
           <div className="font-display text-xl sm:text-2xl tabular-nums text-center px-1">
             <span className={scoringSide === 'us' ? 'text-lime-300' : ''}>{ourScore}</span>
@@ -8418,7 +8433,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
             <span className={scoringSide === 'them' ? 'text-red-300' : ''}>{oppScore}</span>
           </div>
           <div className="flex items-center gap-1.5 min-w-0 justify-end">
-            <span className="font-display text-sm sm:text-base tracking-wide leading-tight break-words text-right">{awayName}</span>
+            <span className="font-display text-sm sm:text-base tracking-wide leading-tight whitespace-nowrap truncate text-right">{awayName}</span>
             <span className="inline-block w-1.5 h-5 rounded-sm shrink-0" style={{ background: awayColor }} />
           </div>
         </div>
@@ -12543,6 +12558,7 @@ function LiveScorePage({ gameId }) {
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
       <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden pt-[calc(env(safe-area-inset-top,0px)+3.25rem)]">
+        {!broadcastOpen && (
         <a
           href="./"
           onClick={(e) => { if (window.__navBack) { e.preventDefault(); window.__navBack(); } }}
@@ -12550,6 +12566,7 @@ function LiveScorePage({ gameId }) {
         >
           <ChevronLeft className="w-4 h-4" /> ALL MATCHES
         </a>
+        )}
         <LiveScoreboard game={game} roster={roster} transparent />
       </div>
       {game.youtubeVideoId && (

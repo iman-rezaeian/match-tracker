@@ -60,7 +60,12 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
     wallclock-derived H2 start — use when the "start 2nd half" button was
     pressed late.
     """
-    offset = max(0.0, float(game.video_offset_h1_kickoff_s))
+    # `offset` may be NEGATIVE when recording started AFTER the kickoff whistle
+    # (the whistle sits before video t=0). The clock mapping uses the raw offset
+    # so events still line up, but the analysis window can't begin before the
+    # footage exists — so the window START is floored at 0.
+    offset = float(game.video_offset_h1_kickoff_s or 0.0)
+    win_start = max(0.0, offset)
     half_len_s = game.half_length_min * 60
 
     halftime_gap_s = _halftime_seconds(game)
@@ -93,7 +98,7 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
     h2_start = min(h2_start, video_duration_s)
     h2_end = min(h2_end, video_duration_s)
 
-    return [(offset, h1_end), (h2_start, h2_end)]
+    return [(win_start, h1_end), (h2_start, h2_end)]
 
 
 def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], float]:
@@ -103,7 +108,8 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     the wallclock-derived halftime gap from `pause_periods`. If no offset was
     set, assumes the video starts at kickoff (legacy behaviour).
     """
-    offset = max(0.0, float(game.video_offset_h1_kickoff_s))
+    # May be negative when recording started after kickoff (see half_windows).
+    offset = float(game.video_offset_h1_kickoff_s or 0.0)
     half_len_s = game.half_length_min * 60
     halftime_gap_s = _halftime_seconds(game)
     # End of 1st half in video (wallclock-derived if present, else half_len)
@@ -120,9 +126,11 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
 
     def f(period: int, elapsed_s: int) -> float:
+        # Clamp to 0: events in the first |offset| s (kickoff before recording
+        # began) map to the earliest available footage, video t=0.
         if period == 1:
-            return offset + float(elapsed_s)
-        return h2_kickoff_in_video + float(elapsed_s)
+            return max(0.0, offset + float(elapsed_s))
+        return max(0.0, h2_kickoff_in_video + float(elapsed_s))
 
     return f
 
