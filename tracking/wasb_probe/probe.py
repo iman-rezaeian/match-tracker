@@ -129,6 +129,7 @@ def main():
     ap.add_argument("--every", type=int, default=5, help="sample every Nth video frame")
     ap.add_argument("--fov", type=float, default=18.0, help="ball-cam crop FOV (deg). Tight: WASB resizes to 512px, so 18deg -> ~28 px/deg (ball ~8-12px, its trained regime). 70deg -> 7px/deg (ball vanishes).")
     ap.add_argument("--save-crops", type=str, default=None, help="dir to dump annotated crops")
+    ap.add_argument("--smoke", action="store_true", help="aim off the smoke-window tracks checkpoint (tracks_raw.smoke.parquet) instead of the full-run one")
     args = ap.parse_args()
 
     # Repo root on path for post_game.
@@ -147,7 +148,7 @@ def main():
     cal = firestore_io.get_game_calibration(args.game_id)
     proj = FieldProjector(cal)
     L, W = cal.length_m, cal.width_m
-    df = tv_view.load_tracks_field_df(args.game_id, proj, L, W)
+    df = tv_view.load_tracks_field_df(args.game_id, proj, L, W, smoke=args.smoke)
     clk = period_clock_to_video_time_factory(game)
     video_path = game.video_url.replace("file://", "")
 
