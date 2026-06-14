@@ -626,6 +626,34 @@ def run(
         except Exception as e:
             log.warning("Auto-highlights failed: %s", e)
 
+    # 7b-pub. Public-reel audio swap: replace the original audio (coach voice /
+    # kids' names / sideline chatter) with a stadium bed + goal roars so the
+    # PUBLIC reel is privacy-safe. The original reels stay the dugout copy. This
+    # is a fast remux (video stream-copied), runs on the just-rendered reels.
+    public_tv_url = None
+    public_hl_url = None
+    if tv_view and config.PUBLIC_AUDIO_ENABLED:
+        from .public_audio import render_public_audio, goal_video_times
+        _gvts = goal_video_times(game, clock_to_video)
+        _tvdir = config.OUTPUTS_DIR / game_id / "tv_view"
+        for _meta, _src, _dst, _key, _slot in (
+            (tv_reel_meta, "tv_reel.mp4", "tv_reel_public.mp4", f"tv_view/{game_id}/tv_reel_public.mp4", "tv"),
+            (auto_hl_meta, "auto_highlights.mp4", "auto_highlights_public.mp4", f"tv_view/{game_id}/auto_highlights_public.mp4", "hl"),
+        ):
+            if not _meta:
+                continue
+            try:
+                _out = render_public_audio(str(_tvdir / _src), str(_tvdir / _dst),
+                                           segments=_meta.segments, goal_video_times=_gvts)
+                if _out and not skip_upload:
+                    _url = firestore_io.upload_clip(_out, _key)
+                    if _slot == "tv":
+                        public_tv_url = _url
+                    else:
+                        public_hl_url = _url
+            except Exception as e:
+                log.warning("public-audio swap (%s) failed: %s", _src, e)
+
     # 7c. Build per-event broadcast index. Used by the PWA overlay layer
     # to draw a live scorebug + goal/sub popups while the user watches the
     # tv_reel or auto_highlights mp4. Done here (post-pipeline) because we
@@ -766,11 +794,15 @@ def run(
     # the analytics subcollection. Firestore rules then lock analytics/
     # to coaches.
     public_fields: dict = {}
+    # Public fields point at the AMBIENCE (stadium-audio) copies when present so
+    # parents never hear the original audio; the coach analytics doc above keeps
+    # the original-audio URLs for the dugout. Falls back to original if the swap
+    # is disabled or failed.
     if tv_reel_meta and tv_reel_meta.r2_url:
-        public_fields["videoFullGameUrl"] = tv_reel_meta.r2_url
+        public_fields["videoFullGameUrl"] = public_tv_url or tv_reel_meta.r2_url
         public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
     if auto_hl_meta and auto_hl_meta.r2_url:
-        public_fields["videoHighlightsUrl"] = auto_hl_meta.r2_url
+        public_fields["videoHighlightsUrl"] = public_hl_url or auto_hl_meta.r2_url
         public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
     # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
     # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never

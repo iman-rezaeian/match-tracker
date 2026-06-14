@@ -151,6 +151,15 @@ STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
 # over-merge when the gap is large. inf = no-op (current behavior).
 STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
 
+# --- Public-reel audio swap (public_audio.py, stage 7b) ---
+# Replace the PUBLIC reel's audio with a stadium-ambience bed + goal roars so the
+# coach voice / kids' names never leave the dugout. Dugout reel keeps original.
+PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "") == "1"
+PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/stadium_ambience.mp3")
+PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
+PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-20"))    # stadium bed level (dB rel. to source)
+PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-6"))   # goal-roar level (louder than bed)
+
 # --- Gap-split pre-pass (pipeline.py, stage 3 -> 4) ---
 # Split each track_id at internal time gaps > SPLIT_GAP_S into clean contiguous
 # sub-tracks, removing "zombie" ids kept alive across long gaps (they teleport
