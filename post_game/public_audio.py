@@ -44,6 +44,8 @@ def render_public_audio(
     roar_path: str = None,
     bed_db: float = None,
     roar_db: float = None,
+    lead_s: float = None,
+    fade_s: float = None,
 ) -> Optional[str]:
     """Write `out_path` = reel video (copied) + stadium bed (looped, ducked) with
     a crowd roar layered at each goal. Returns out_path on success, else None.
@@ -56,6 +58,8 @@ def render_public_audio(
     roar_path = roar_path or config.PUBLIC_ROAR_PATH
     bed_db = config.PUBLIC_BED_DB if bed_db is None else bed_db
     roar_db = config.PUBLIC_ROAR_DB if roar_db is None else roar_db
+    lead_s = config.PUBLIC_ROAR_LEAD_S if lead_s is None else lead_s
+    fade_s = config.PUBLIC_ROAR_FADE_S if fade_s is None else fade_s
 
     if not Path(reel_path).exists():
         log.warning("public-audio: reel %s missing; skipping.", reel_path)
@@ -76,8 +80,10 @@ def render_public_audio(
     idx = 2
     for i, rt in enumerate(goal_rts):
         inputs += ["-i", roar_path]
-        ms = max(0, int(rt * 1000))
-        filt.append(f"[{idx}:a]adelay={ms}|{ms},volume={roar_db}dB[g{i}]")
+        ms = max(0, int((rt - lead_s) * 1000))   # lead: start the roar before the tap
+        # afade=in builds the roar over fade_s so a few seconds of timing slop is
+        # masked (crowd swelling), instead of a sharp hit at the wrong instant.
+        filt.append(f"[{idx}:a]afade=t=in:d={fade_s},adelay={ms}|{ms},volume={roar_db}dB[g{i}]")
         mix_labels.append(f"[g{i}]")
         idx += 1
     # normalize=0 keeps our chosen levels (amix otherwise attenuates each input).
