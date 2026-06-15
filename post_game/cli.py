@@ -191,6 +191,56 @@ def set_offset(
     console.print_json(json.dumps({"game_id": game_id, "videoOffsetH1KickoffS": seconds}))
 
 
+@app.command("public-audio")
+def public_audio_cmd(
+    game_id: str = typer.Option(..., "--game-id"),
+    lead_s: float = typer.Option(None, "--lead-s", help="Roar lead before tap (s). Default config.PUBLIC_ROAR_LEAD_S."),
+    fade_s: float = typer.Option(None, "--fade-s", help="Roar fade-in/build (s)."),
+    bed_db: float = typer.Option(None, "--bed-db", help="Stadium bed level (dB)."),
+    roar_db: float = typer.Option(None, "--roar-db", help="Goal-roar level (dB)."),
+    skip_upload: bool = typer.Option(False, "--skip-upload", help="Build _public files locally, don't upload/publish."),
+) -> None:
+    """Generate + publish the privacy-safe PUBLIC reels (stadium bed + goal roars)
+    from ALREADY-RENDERED reels — no re-render. Reads each reel's rendered windows
+    from the analytics doc, remuxes outputs/<game>/tv_view/{tv_reel,auto_highlights}.mp4
+    into *_public.mp4, uploads them, and points the public game-doc video fields at the
+    _public copies. The coach analytics doc keeps the original-audio URLs for the dugout.
+    Tune levels/timing and re-run cheaply (it's a remux, not a render)."""
+    import os
+    os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+    from . import firestore_io, config
+    from .identity import period_clock_to_video_time_factory
+    from .public_audio import render_public_audio, goal_video_times
+
+    game = firestore_io.get_game(game_id)
+    clk = period_clock_to_video_time_factory(game)
+    gvts = goal_video_times(game, clk)
+    a = (firestore_io._team_doc().collection("games").document(game_id)
+         .collection("analytics").document(config.ANALYTICS_DOC_VERSION).get().to_dict()) or {}
+    tvdir = config.OUTPUTS_DIR / game_id / "tv_view"
+    public_fields: dict = {}
+    for meta_key, src, dst, f_url, f_dur in [
+        ("tv_reel", "tv_reel.mp4", "tv_reel_public.mp4", "videoFullGameUrl", "videoFullGameDurationS"),
+        ("auto_highlights", "auto_highlights.mp4", "auto_highlights_public.mp4", "videoHighlightsUrl", "videoHighlightsDurationS"),
+    ]:
+        meta = a.get(meta_key) or {}
+        segs = [(s["start_s"], s["end_s"]) for s in (meta.get("segments") or [])]
+        local = tvdir / src
+        if not segs or not local.exists():
+            console.print(f"[yellow]skip {meta_key}: segments={len(segs)} local={local.exists()}[/yellow]")
+            continue
+        out = render_public_audio(str(local), str(tvdir / dst), segments=segs, goal_video_times=gvts,
+                                  lead_s=lead_s, fade_s=fade_s, bed_db=bed_db, roar_db=roar_db)
+        if out and not skip_upload:
+            url = firestore_io.upload_clip(out, f"tv_view/{game_id}/{dst}")
+            public_fields[f_url] = url
+            public_fields[f_dur] = float(meta.get("duration_s") or 0.0)
+    if public_fields and not skip_upload and config.ANALYTICS_DOC_VERSION == "v1":
+        firestore_io.set_public_reels(game_id, public_fields)
+    console.print_json(json.dumps({"game_id": game_id, "goals": len(gvts),
+                                   "published": [k for k in public_fields if k.endswith("Url")]}))
+
+
 @app.command("calibrate")
 def calibrate(
     game_id: str = typer.Option(..., "--game-id"),

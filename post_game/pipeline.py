@@ -377,6 +377,20 @@ def run(
         log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
                  dropped_off, dropped_topn, len(tracks_df))
 
+    # 3.5 Gap-split — break "zombie" tracks (one id kept alive across long gaps,
+    # teleporting between bodies) into clean contiguous sub-tracks BEFORE team
+    # classification, so one id universe flows through stitch/assign/stats. Gated;
+    # rebinds the three names every downstream stage reads. See post_game/gap_split.py.
+    if config.GAP_SPLIT_ENABLED and not tracks_df.empty:
+        from .gap_split import gap_split_tracks
+        _n0 = tracks_df["track_id"].nunique()
+        tracks_df, track_jersey_samples, track_embeddings, _ = gap_split_tracks(
+            tracks_df, track_jersey_samples, track_embeddings,
+            split_gap_s=config.SPLIT_GAP_S,
+        )
+        log.info("  -> gap-split: %d tracks -> %d sub-tracks (gap > %.1fs)",
+                 _n0, tracks_df["track_id"].nunique(), config.SPLIT_GAP_S)
+
     # 4. Team classification
     log.info("Stage 4/6: team classification...")
     our_color = _our_color(game)
@@ -612,6 +626,34 @@ def run(
         except Exception as e:
             log.warning("Auto-highlights failed: %s", e)
 
+    # 7b-pub. Public-reel audio swap: replace the original audio (coach voice /
+    # kids' names / sideline chatter) with a stadium bed + goal roars so the
+    # PUBLIC reel is privacy-safe. The original reels stay the dugout copy. This
+    # is a fast remux (video stream-copied), runs on the just-rendered reels.
+    public_tv_url = None
+    public_hl_url = None
+    if tv_view and config.PUBLIC_AUDIO_ENABLED:
+        from .public_audio import render_public_audio, goal_video_times
+        _gvts = goal_video_times(game, clock_to_video)
+        _tvdir = config.OUTPUTS_DIR / game_id / "tv_view"
+        for _meta, _src, _dst, _key, _slot in (
+            (tv_reel_meta, "tv_reel.mp4", "tv_reel_public.mp4", f"tv_view/{game_id}/tv_reel_public.mp4", "tv"),
+            (auto_hl_meta, "auto_highlights.mp4", "auto_highlights_public.mp4", f"tv_view/{game_id}/auto_highlights_public.mp4", "hl"),
+        ):
+            if not _meta:
+                continue
+            try:
+                _out = render_public_audio(str(_tvdir / _src), str(_tvdir / _dst),
+                                           segments=_meta.segments, goal_video_times=_gvts)
+                if _out and not skip_upload:
+                    _url = firestore_io.upload_clip(_out, _key)
+                    if _slot == "tv":
+                        public_tv_url = _url
+                    else:
+                        public_hl_url = _url
+            except Exception as e:
+                log.warning("public-audio swap (%s) failed: %s", _src, e)
+
     # 7c. Build per-event broadcast index. Used by the PWA overlay layer
     # to draw a live scorebug + goal/sub popups while the user watches the
     # tv_reel or auto_highlights mp4. Done here (post-pipeline) because we
@@ -752,13 +794,20 @@ def run(
     # the analytics subcollection. Firestore rules then lock analytics/
     # to coaches.
     public_fields: dict = {}
+    # Public fields point at the AMBIENCE (stadium-audio) copies when present so
+    # parents never hear the original audio; the coach analytics doc above keeps
+    # the original-audio URLs for the dugout. Falls back to original if the swap
+    # is disabled or failed.
     if tv_reel_meta and tv_reel_meta.r2_url:
-        public_fields["videoFullGameUrl"] = tv_reel_meta.r2_url
+        public_fields["videoFullGameUrl"] = public_tv_url or tv_reel_meta.r2_url
         public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
     if auto_hl_meta and auto_hl_meta.r2_url:
-        public_fields["videoHighlightsUrl"] = auto_hl_meta.r2_url
+        public_fields["videoHighlightsUrl"] = public_hl_url or auto_hl_meta.r2_url
         public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
-    if public_fields or events_index:
+    # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
+    # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never
+    # clobber the live public reel/broadcast docs.
+    if (public_fields or events_index) and config.ANALYTICS_DOC_VERSION == "v1":
         # broadcastEvents (the big one) now lives in games/<id>/public/broadcast,
         # fetched on demand when a reel opens — keeps the game doc (pulled for
         # every game on dugout/public load) lean. Light overlay metadata stays
@@ -775,7 +824,9 @@ def run(
     # Clean up legacy clip docs from older pipeline runs that wrote the
     # tv_reel / auto_highlights records into the per-event clips/ collection.
     # They render as broken "· P 0' · —" rows in the PWA highlight list.
-    _purge_legacy_reel_clip_docs(game_id)
+    # Skipped on shadow runs — touches the live game's clips/ collection.
+    if config.ANALYTICS_DOC_VERSION == "v1":
+        _purge_legacy_reel_clip_docs(game_id)
     log.info("Wrote analytics for game %s - %d players", game_id, len(player_stats))
     return analytics
 

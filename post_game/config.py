@@ -142,7 +142,36 @@ STITCH_SLACK_M = 3.0           # plausible-move slack for near-zero gaps (foot-p
 STITCH_APPEARANCE_COS = 0.55   # OSNet Re-ID cosine ≥ this → same player (appearance gate)
 STITCH_HSV_COS = 0.90          # jersey-HSV cosine gate (fallback; mainly rejects cross-color)
 STITCH_GAP_WEIGHT = 0.5        # link-cost weight on temporal gap (s)
-STITCH_APP_WEIGHT = 5.0        # link-cost weight on (1 - appearance cosine)
+# Link-cost weight on (1 - appearance cosine). OSNet embeddings are empirically
+# kit-dominated on this footage (random cross-track cosine 0.62-0.75 — they can't
+# even separate teams), so appearance carries little signal; env-overridable to A/B
+# lowering it. Committed default unchanged (5.0).
+STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
+# Absolute cap (m) on the A-end -> B-start move, on top of speed*gap+slack. Bounds
+# over-merge when the gap is large. inf = no-op (current behavior).
+STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
+
+# --- Public-reel audio swap (public_audio.py, stage 7b) ---
+# Replace the PUBLIC reel's audio with a stadium-ambience bed + goal roars so the
+# coach voice / kids' names never leave the dugout. Dugout reel keeps original.
+PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "") == "1"
+PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/stadium_ambience.mp3")
+PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
+PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-8"))     # stadium bed level (dB rel. to source) — was -20 (too dim)
+PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-13"))  # goal-roar level — was -6 (too loud vs bed); ~8dB above bed now
+# The coach logs a goal ~tap_delay AFTER it happens, and goal-moment detection is
+# unreliable here (near-mic chatter / far-side crowd). So lead the roar earlier and
+# fade it IN so it BUILDS rather than banging at a wrong instant — the build hides
+# the timing slop and reads like a real crowd swelling as the goal goes in.
+PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "7"))   # start the roar this many s before the tap
+PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-in (build) duration
+
+# --- Gap-split pre-pass (pipeline.py, stage 3 -> 4) ---
+# Split each track_id at internal time gaps > SPLIT_GAP_S into clean contiguous
+# sub-tracks, removing "zombie" ids kept alive across long gaps (they teleport
+# between bodies and inflate distance). Off by default; flip only after A/B.
+GAP_SPLIT_ENABLED = os.environ.get("GAP_SPLIT_ENABLED", "") == "1"
+SPLIT_GAP_S = float(os.environ.get("SPLIT_GAP_S", "1.0"))
 
 # --- Coach-log identity assignment (identity_assign.py) ---
 # Board (coach tactical drag) coords: x∈[0,1] left→right (coach POV),
@@ -229,7 +258,7 @@ GK_EVENT_TYPES = ("SHOT_ON", "GOAL", "SAVE")
 
 FIRESTORE_PROJECT_ID = os.environ.get("FIRESTORE_PROJECT_ID", "stompers-tracker")
 FIRESTORE_TEAM_DOC = "teams/main"
-ANALYTICS_DOC_VERSION = "v1"                     # bump if schema breaks
+ANALYTICS_DOC_VERSION = os.environ.get("ANALYTICS_DOC_VERSION", "v1")  # bump if schema breaks; env-override for shadow A/B runs
 
 R2_BUCKET = os.environ.get("R2_BUCKET", "stompers-videos")
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")  # set in env, never committed
