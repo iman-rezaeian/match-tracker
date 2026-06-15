@@ -46,6 +46,7 @@ def run(
     skip_upload: bool = False,
     smoke_windows: list[tuple[float, float]] | None = None,
     reuse_tv_reel: bool = False,
+    stats_only: bool = False,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -75,37 +76,56 @@ def run(
             raise RuntimeError(
                 f"Game {game_id} still has no calibration after the browser tool exited."
             )
-    if not game.video_url:
-        raise RuntimeError(f"Game {game_id} has no videoUrl set.")
-
-    video_path = _ensure_local_video(game.video_url, game_id)
-    meta = open_video(str(video_path))
-    eq_w, eq_h = meta["width"], meta["height"]
-    log.info("Video: %dx%d @ %.2f fps (%.0fs)", eq_w, eq_h, meta["fps"], meta["duration_s"])
-
-    # 1b. Aim the virtual camera at OUR field (away from the back-hemisphere
-    # field). Used only for the legacy single-aim fallback and for ball
-    # crop centering; detection itself now uses multi-tile coverage.
-    aim_lon, aim_lat, aim_fov = aim_from_calibration(
-        field_cal.src_points_px, eq_w, eq_h,
+    # Stats-only refresh runs entirely off the cached tracks checkpoint, so the
+    # (possibly long-deleted) source video is never needed — synthesize the bits
+    # of `meta` we still use (fps, duration) from the parquet and skip the open.
+    _stats_only_cached = (
+        stats_only and (config.OUTPUTS_DIR / game_id / "tracks_raw.parquet").exists()
     )
-    log.info("Field aim (single, legacy): lon=%.1f° lat=%.1f° fov=%.1f°",
-             aim_lon, aim_lat, aim_fov)
-
-    # 1c. Build the FieldProjector + the multi-tile detection aims. Three
-    # 75° tiles spread across the pitch cover the ~170° horizontal angle
-    # that one perspective crop can't (X5 on a 16ft pole 3m behind the
-    # near sideline). Each tile is processed independently by YOLO and
-    # detections are then merged in field space.
     projector = FieldProjector(field_cal)
-    log.info("Projection model: %s", "sphere" if projector.use_sphere else "planar-homography")
-    tile_aims = compute_tile_aims(
-        projector, field_cal.length_m, field_cal.width_m,
-        n_tiles=config.DETECT_N_TILES, fov_deg=config.DETECT_TILE_FOV_DEG,
-    )
-    for i, (lon, lat, fov) in enumerate(tile_aims):
-        log.info("  tile %d/%d: lon=%+.1f° lat=%+.1f° fov=%.0f°",
-                 i + 1, len(tile_aims), lon, lat, fov)
+    if _stats_only_cached:
+        import pandas as pd
+        _peek = pd.read_parquet(
+            config.OUTPUTS_DIR / game_id / "tracks_raw.parquet", columns=["frame", "time_s"])
+        _t = _peek["time_s"].to_numpy(dtype=float)
+        _f = _peek["frame"].to_numpy(dtype=float)
+        _ok = _t > 0
+        _fps = float(np.median(_f[_ok] / _t[_ok])) if _ok.any() else 30.0
+        meta = {"fps": _fps, "duration_s": (float(_t.max()) if len(_t) else 0.0),
+                "width": 0, "height": 0}
+        video_path = None
+        tile_aims = []
+        log.info("Stats-only: using cached tracks (source video not opened); "
+                 "fps≈%.2f duration≈%.0fs", _fps, meta["duration_s"])
+    else:
+        if not game.video_url:
+            raise RuntimeError(f"Game {game_id} has no videoUrl set.")
+        video_path = _ensure_local_video(game.video_url, game_id)
+        meta = open_video(str(video_path))
+        eq_w, eq_h = meta["width"], meta["height"]
+        log.info("Video: %dx%d @ %.2f fps (%.0fs)", eq_w, eq_h, meta["fps"], meta["duration_s"])
+
+        # 1b. Aim the virtual camera at OUR field (away from the back-hemisphere
+        # field). Used only for the legacy single-aim fallback and for ball
+        # crop centering; detection itself now uses multi-tile coverage.
+        aim_lon, aim_lat, aim_fov = aim_from_calibration(
+            field_cal.src_points_px, eq_w, eq_h,
+        )
+        log.info("Field aim (single, legacy): lon=%.1f° lat=%.1f° fov=%.1f°",
+                 aim_lon, aim_lat, aim_fov)
+
+        # 1c. Build the multi-tile detection aims. Three 75° tiles spread across
+        # the pitch cover the ~170° horizontal angle that one perspective crop
+        # can't (X5 on a 16ft pole 3m behind the near sideline). Each tile is
+        # processed independently by YOLO and detections merged in field space.
+        log.info("Projection model: %s", "sphere" if projector.use_sphere else "planar-homography")
+        tile_aims = compute_tile_aims(
+            projector, field_cal.length_m, field_cal.width_m,
+            n_tiles=config.DETECT_N_TILES, fov_deg=config.DETECT_TILE_FOV_DEG,
+        )
+        for i, (lon, lat, fov) in enumerate(tile_aims):
+            log.info("  tile %d/%d: lon=%+.1f° lat=%+.1f° fov=%.0f°",
+                     i + 1, len(tile_aims), lon, lat, fov)
 
     # 2. Detection + tracking on perspective crops
     # Compute play windows (1st half, 2nd half) so we skip warmup/halftime/post.
@@ -558,6 +578,40 @@ def run(
                 }
     except Exception as e:
         log.warning("Field tilt failed: %s", e)
+
+    # --- Stats-only refresh: re-run purely to apply FIX-IDS overrides. Recompute
+    # the identity-dependent analytics and MERGE them in, leaving the reel / audio /
+    # broadcast-index (identity-independent) untouched — no re-render, no re-upload.
+    if stats_only:
+        _tlrecs = _build_tracklet_index(tracks_df, tracklet_of_track, assignments,
+                                        fps_sampled, field_cal.length_m, field_cal.width_m)
+        try:  # preserve existing thumbnail URLs (crops don't change with identity)
+            _prev = firestore_io.read_analytics(game_id) or {}
+            _thumbs = {t.get("tracklet_id"): t.get("thumb_url")
+                       for t in (_prev.get("tracklets") or []) if t.get("thumb_url")}
+            for _r in _tlrecs:
+                if not _r.get("thumb_url") and _thumbs.get(_r["tracklet_id"]):
+                    _r["thumb_url"] = _thumbs[_r["tracklet_id"]]
+        except Exception as e:
+            log.warning("stats-only: thumbnail preserve failed: %s", e)
+        _update = {
+            "identity_assignments": [asdict(a) for a in assignments],
+            "tracklets": _tlrecs,
+            "player_stats": [_player_stat_to_dict(s) for s in player_stats],
+            "formation_snapshots": [
+                {**asdict(f),
+                 "avg_positions": {k: list(v) for k, v in f.avg_positions.items()},
+                 "coach_positions_norm": {k: list(v) for k, v in f.coach_positions_norm.items()}}
+                for f in formation_snaps
+            ],
+            "team_time_series": asdict(team_ts),
+            "field_tilt": field_tilt,
+            "generated_at_ms": int(time.time() * 1000),
+        }
+        firestore_io.write_analytics_merge(game_id, _sanitize_json(_update))
+        log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
+                 game_id, len(player_stats))
+        return _update
 
     # 7. Highlight clips (per-event MP4s). Slow because we re-seek the source
     # video for every tagged event — skip during iteration.
