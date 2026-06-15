@@ -338,6 +338,23 @@ def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
     ).set(analytics)
 
 
+def write_analytics_merge(game_id: str, fields: dict[str, Any]) -> None:
+    """MERGE fields into the analytics doc — keys NOT provided are preserved.
+    Used by the stats-only refresh to update identity-dependent analytics
+    (player_stats, formation, tracklets, ...) without touching the reel / audio /
+    broadcast-index fields."""
+    _team_doc().collection("games").document(game_id).collection("analytics").document(
+        config.ANALYTICS_DOC_VERSION
+    ).set(fields, merge=True)
+
+
+def read_analytics(game_id: str) -> Optional[dict]:
+    """Read the current analytics doc (or None)."""
+    snap = (_team_doc().collection("games").document(game_id)
+            .collection("analytics").document(config.ANALYTICS_DOC_VERSION).get())
+    return snap.to_dict() if snap.exists else None
+
+
 def collect_prior_player_top_speeds(exclude_game_id: str | None = None) -> dict[str, list[float]]:
     """{player_id: [top_speed_ms per prior game]} from every other game's
     analytics doc. Feeds the personalized sprint threshold (plan 4.5)."""
