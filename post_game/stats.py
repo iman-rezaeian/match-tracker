@@ -36,6 +36,11 @@ class PlayerStats:
     sprint_est_count: int = 0             # (sprint_count / tracked_min) × coach_min
     # Personalized sprint threshold actually used for THIS game (plan 4.5).
     sprint_threshold_ms: float = 0.0
+    # Fraction of inter-detection steps that exceeded the physical speed cap —
+    # i.e. tracking artifacts (swap teleports / projection jumps / concurrent-
+    # tracklet ping-pong). A clean track is ~0; a swap-polluted one is high.
+    # The UI uses this (not "top speed == cap") to flag unreliable movement.
+    implausible_step_frac: float = 0.0
 
 
 def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
@@ -110,12 +115,22 @@ def compute_player_stats(
         dt = np.clip(dt, max(0.04, 0.5 * med_dt), 2.0)
         dx = np.diff(x)
         dy = np.diff(y)
-        seg_dist = np.sqrt(dx * dx + dy * dy)
-        # Clamp each step to a physically plausible move (MAX_PLAUSIBLE_SPEED_MS
-        # * dt). Kills identity-swap teleports that otherwise produce absurd top
-        # speeds (6000+ km/h) and inflate total distance.
-        seg_dist = np.minimum(seg_dist, config.MAX_PLAUSIBLE_SPEED_MS * dt)
-        speed = seg_dist / dt  # inherently <= MAX_PLAUSIBLE_SPEED_MS now
+        raw_seg = np.sqrt(dx * dx + dy * dy)
+        # A step above the physical cap (MAX_PLAUSIBLE_SPEED_MS) is NOT real
+        # motion — it's a tracking artifact: an identity-swap teleport, a
+        # far-side projection jump, or a ping-pong between two concurrent
+        # tracklets assigned to the same player. The OLD code CLAMPED these to
+        # the cap, which (a) inflated distance by adding cap×dt of fake travel
+        # and (b) pinned top speed at exactly the cap for ANY player with >1%
+        # artifact steps — which then tripped the UI's "inflated" gate and HID
+        # otherwise-good stats. Treat an artifact step as a gap instead: zero
+        # distance, zero speed, and it breaks sprint runs. `implausible_frac`
+        # (how polluted the track is) is what the UI gates on now, not the cap.
+        cap_dist = config.MAX_PLAUSIBLE_SPEED_MS * dt
+        teleport = raw_seg > cap_dist
+        implausible_frac = float(teleport.mean()) if len(teleport) else 0.0
+        seg_dist = np.where(teleport, 0.0, raw_seg)
+        speed = np.where(teleport, 0.0, raw_seg / dt)  # real speeds, all <= cap
         speed_s = _smooth(speed, config.SPEED_SMOOTH_WINDOW)
 
         # Sprints: continuous run above threshold for >= 0.5s. The threshold
@@ -199,6 +214,7 @@ def compute_player_stats(
             avg_speed_ms=float(np.mean(speed_s)) if len(speed_s) else 0.0,
             sprint_count=int(sprint_count),
             sprint_distance_m=float(sprint_dist),
+            implausible_step_frac=implausible_frac,
             pct_attacking_third=float(att.mean() * 100),
             pct_middle_third=float(mid.mean() * 100),
             pct_defensive_third=float(dfn.mean() * 100),

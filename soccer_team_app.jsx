@@ -9429,26 +9429,31 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 // When it is, low movement is a CAMERA-COVERAGE limit, not an
                 // identity mistake — so don't tell the coach to FIX IDS again.
                 const idConfirmed = conf != null && conf >= 0.8;
-                // Under-tracked: played real minutes but the assigned tracks carry
-                // almost no movement (the pipeline only captured a sliver of their
-                // play). Their distance/speed/sprints aren't real — flag, don't lie.
-                const distPerMin = (s.distance_m || 0) / Math.max(s.minutes_played || 1, 1);
                 const isGK = game.gkPlayerId && s.player_id === game.gkPlayerId; // keepers legitimately cover little
-                const lowTrack = !isGK && (s.minutes_played || 0) >= 5 && distPerMin < 12;
-                // Swap-polluted: top speed pinned at the physical cap (~32.4 km/h =
-                // 9 m/s) means identity-swap teleports got clamped into this player's
-                // tracks — no U10 sustains that — and the teleports inflate sprints.
-                // Their movement stats are over-counted, not real.
-                const topKmh = (s.top_speed_ms || 0) * 3.6;
-                const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 && topKmh >= 30;
+                // Coverage = tracked time / coach minutes. The camera misses
+                // players who stay deep or far-side; below ~8% coverage the
+                // movement sums are a sliver and can't be trusted. (Falls back to
+                // the old distance-rate gate for docs without tracked_seconds.)
+                const coverage = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
+                  ? (s.tracked_seconds / 60) / s.minutes_played : null;
+                const coveragePct = coverage != null ? Math.min(100, Math.round(coverage * 100)) : null;
+                const distPerMin = (s.distance_m || 0) / Math.max(s.minutes_played || 1, 1);
+                const lowTrack = !isGK && (s.minutes_played || 0) >= 5 &&
+                  (coverage != null ? coverage < 0.08 : distPerMin < 12);
+                // Swap-polluted: a large fraction of this player's inter-detection
+                // steps are physically-impossible jumps — another player's track
+                // merged in (identity-swap teleport / concurrent-tracklet ping-
+                // pong), so distance & sprints are over-counted. implausible_step_frac
+                // is the real signal; older docs (which pinned top speed at the
+                // 32 km/h cap) fall back to that.
+                const artFrac = s.implausible_step_frac;
+                const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 &&
+                  (artFrac != null ? artFrac >= 0.30 : ((s.top_speed_ms || 0) * 3.6) >= 30);
                 const statsBad = lowTrack || swapPolluted;
                 // 4.4: rate-based estimates (distance/sprints scaled to coach
                 // minutes) when the doc carries them; raw sums for older docs.
                 const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
                 const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
-                const coveragePct = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
-                  ? Math.min(100, Math.round((s.tracked_seconds / 60) / s.minutes_played * 100))
-                  : null;
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -9493,7 +9498,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     )}
                     {swapPolluted && (
                       <div className="text-[9px] text-rose-400/80 mb-2 leading-snug">
-                        Top speed pinned at the {topKmh.toFixed(0)} km/h cap + {s.sprint_count || 0} sprints — other players' tracks got merged in (identity-swap teleports), so movement stats are over-counted. Use FIX IDS to split them out.
+                        About {Math.round((artFrac || 0) * 100)}% of this player's tracked steps are identity-swap jumps — another player's movement is mixed into these tracks, so distance &amp; sprints are over-counted. Use FIX IDS to split them out.
                       </div>
                     )}
                     <div className="mb-2">
