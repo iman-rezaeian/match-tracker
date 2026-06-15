@@ -12558,7 +12558,6 @@ function LiveScorePage({ gameId }) {
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
       <div className="relative stripes-bg border-b-2 border-lime-500/70 shadow-[0_4px_24px_-8px_rgba(132,204,22,0.35)] overflow-hidden pt-[calc(env(safe-area-inset-top,0px)+3.25rem)]">
-        {!broadcastOpen && (
         <a
           href="./"
           onClick={(e) => { if (window.__navBack) { e.preventDefault(); window.__navBack(); } }}
@@ -12566,7 +12565,6 @@ function LiveScorePage({ gameId }) {
         >
           <ChevronLeft className="w-4 h-4" /> ALL MATCHES
         </a>
-        )}
         <LiveScoreboard game={game} roster={roster} transparent />
       </div>
       {game.youtubeVideoId && (
