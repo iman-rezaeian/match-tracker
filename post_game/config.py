@@ -159,6 +159,12 @@ PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/s
 PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
 PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-20"))    # stadium bed level (dB rel. to source)
 PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-6"))   # goal-roar level (louder than bed)
+# The coach logs a goal ~tap_delay AFTER it happens, and goal-moment detection is
+# unreliable here (near-mic chatter / far-side crowd). So lead the roar earlier and
+# fade it IN so it BUILDS rather than banging at a wrong instant — the build hides
+# the timing slop and reads like a real crowd swelling as the goal goes in.
+PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "7"))   # start the roar this many s before the tap
+PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-in (build) duration
 
 # --- Gap-split pre-pass (pipeline.py, stage 3 -> 4) ---
 # Split each track_id at internal time gaps > SPLIT_GAP_S into clean contiguous
