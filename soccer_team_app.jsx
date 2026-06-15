@@ -9425,6 +9425,10 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const p = rosterById[s.player_id];
                 const conf = playerConf(s.player_id);
                 const confColor = conf == null ? 'text-stone-500' : conf >= 0.8 ? 'text-lime-400' : conf >= 0.5 ? 'text-amber-400' : 'text-red-400';
+                // Identity is already settled (coach-confirmed / high confidence).
+                // When it is, low movement is a CAMERA-COVERAGE limit, not an
+                // identity mistake — so don't tell the coach to FIX IDS again.
+                const idConfirmed = conf != null && conf >= 0.8;
                 // Under-tracked: played real minutes but the assigned tracks carry
                 // almost no movement (the pipeline only captured a sliver of their
                 // play). Their distance/speed/sprints aren't real — flag, don't lie.
@@ -9454,7 +9458,6 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                           <div className="text-white font-display text-base leading-tight truncate">{p?.name || s.player_id}</div>
                           <div className="flex items-center gap-2">
                             {p?.number != null && <span className="text-[10px] text-stone-400 tabular-nums">#{p.number}</span>}
-                            <span className="text-[10px] tracking-widest text-lime-400">{posLabel(s)}</span>
                           </div>
                         </div>
                       </div>
@@ -9481,7 +9484,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     )}
                     {lowTrack && (
                       <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
-                        Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.
+                        {idConfirmed ? (
+                          <>Identity confirmed, but the camera only caught {Math.round(s.tracked_seconds || 0)}s of this player's {(s.minutes_played || 0).toFixed(0)}′ on the field — they stayed deep / far-side and were rarely in frame. Movement stats (distance, speed, sprints) aren't reliable here; there's no further tracking to recover.</>
+                        ) : (
+                          <>Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.</>
+                        )}
                       </div>
                     )}
                     {swapPolluted && (
