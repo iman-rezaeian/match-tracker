@@ -26,6 +26,7 @@ def run(
     skip_clips: bool = typer.Option(True, "--skip-clips/--with-clips", help="Skip per-event highlight clip rendering. Default ON: the PWA uses tv_reel + broadcast_events to seek to any event, so per-event clips are only needed for downloadable montages (e.g. end-of-season). Pass --with-clips to render them."),
     skip_upload: bool = typer.Option(False, "--skip-upload", help="Skip R2 uploads of clips / TV reel / highlights. Files stay local under outputs/<game>/."),
     reuse_tv_reel: bool = typer.Option(False, "--reuse-tv-reel", help="Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of re-rendering it (the multi-hour part). Implies --tv-view. Use to recover a run that died after the reel rendered but before uploads/analytics. Auto-highlights still render fresh."),
+    stats_only: bool = typer.Option(False, "--stats-only", help="Re-apply FIX-IDS overrides and recompute ONLY the identity-dependent analytics (player_stats, formation, field_tilt, tracklets, identity_assignments), then MERGE them into the existing doc. Leaves the reel, audio, broadcast index, and all public fields untouched — no re-render, no re-upload. Fast (~1-2 min/game)."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -47,6 +48,7 @@ def run(
         skip_upload=skip_upload,
         smoke_windows=[tuple(map(float, w.split("-"))) for w in smoke_window] if smoke_window else None,
         reuse_tv_reel=reuse_tv_reel,
+        stats_only=stats_only,
     )
     console.print_json(json.dumps({
         "game_id": game_id,
