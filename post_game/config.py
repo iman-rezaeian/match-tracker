@@ -157,8 +157,8 @@ STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
 PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "") == "1"
 PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/stadium_ambience.mp3")
 PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
-PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-20"))    # stadium bed level (dB rel. to source)
-PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-6"))   # goal-roar level (louder than bed)
+PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-8"))     # stadium bed level (dB rel. to source) — was -20 (too dim)
+PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-13"))  # goal-roar level — was -6 (too loud vs bed); ~8dB above bed now
 # The coach logs a goal ~tap_delay AFTER it happens, and goal-moment detection is
 # unreliable here (near-mic chatter / far-side crowd). So lead the roar earlier and
 # fade it IN so it BUILDS rather than banging at a wrong instant — the build hides
