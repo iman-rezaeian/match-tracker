@@ -208,6 +208,46 @@ def _board_to_field(bx: float, by: float, flip_d: bool, flip_l: bool,
     return (depth * L, lat * W)
 
 
+def _kickoff_depth_flip(tracks_df, team_of_track, kickoff_video_s: float,
+                        field_length_m: float) -> Optional[bool]:
+    """Determine the board DEPTH flip from the kickoff frame.
+
+    At a kickoff each team is in its OWN half, so the team centroids' depth (x_m)
+    cleanly give the attacking direction — far more robust than the cross-window
+    cost search, which can lock onto the wrong flip (and mirror every player). We
+    pin DEPTH from this and let the search resolve only LATERAL.
+
+    Convention (see _board_to_field): flip_d=True ⇒ our goal at high-x (we defend
+    high-x); False ⇒ our goal at low-x. At kickoff we sit in our defensive half, so
+    our centroid's depth says which end is ours. Returns the flip_d, or None when
+    the kickoff frame is too ambiguous (sparse/late-start) → caller falls back.
+    """
+    if "x_m" not in tracks_df.columns:
+        return None
+    w = tracks_df[(tracks_df["time_s"] >= kickoff_video_s - 6.0)
+                  & (tracks_df["time_s"] <= kickoff_video_s + 2.0)]
+    if w.empty:
+        return None
+    x = w["x_m"].to_numpy()
+    keep = np.isfinite(x) & (x >= -2.0) & (x <= field_length_m + 2.0)
+    w = w[keep]
+    teams = w["track_id"].map(team_of_track)
+    ours = w["x_m"][teams == 0].to_numpy()
+    opp = w["x_m"][teams == 1].to_numpy()
+    if len(ours) < 8:
+        return None
+    our_d = float(np.median(ours))
+    if len(opp) >= 8:
+        opp_d = float(np.median(opp))
+        if abs(our_d - opp_d) < 6.0:
+            return None                     # teams not cleanly separated → untrustworthy
+        return our_d > opp_d                # we defend the end our centroid sits at
+    center = field_length_m / 2.0           # opponent sparse: our centroid vs midfield
+    if abs(our_d - center) < 5.0:
+        return None
+    return our_d > center
+
+
 def _player_board_positions(events, period: int) -> dict[str, tuple[float, float]]:
     """Latest board (x,y) per player within a period (subs inherit via the app)."""
     out: dict[str, tuple[int, float, float]] = {}
@@ -383,11 +423,19 @@ def assign_identities_v2(
                 continue
             win_edges = np.arange(pstart, pend, WINDOW_S)
 
-            # Try 4 board orientations; keep the cheapest total matched cost.
+            # DEPTH from the kickoff frame (pstart == this half's kickoff video time):
+            # each team is in its own half there, so team centroids give the attacking
+            # direction directly. Pin flip_d to it (the axis the cost search gets wrong
+            # on hard games, mirroring every player) and search only lateral. None =
+            # ambiguous kickoff (e.g. late-start) → fall back to the full 4-way search.
+            kf_depth = _kickoff_depth_flip(tracks_df, team_of_track, pstart, field_length_m)
+            depth_opts = (kf_depth,) if kf_depth is not None else (False, True)
+
+            # Try board orientations; keep the cheapest total matched cost.
             best = None
             if not board:
                 win_edges = ()  # no template → skip Hungarian, keep event votes
-            for flip_d in ((False, True) if board else ()):
+            for flip_d in (depth_opts if board else ()):
                 for flip_l in (False, True):
                     exp = {p: _board_to_field(x, y, flip_d, flip_l, field_length_m, field_width_m)
                            for p, (x, y) in board.items() if p in valid_ids}
@@ -438,7 +486,8 @@ def assign_identities_v2(
             if best is not None:
                 _, fd, fl, per_window = best
                 log.info("  identity P%d: board orientation flip_depth=%s flip_lateral=%s "
-                         "(%d windows)", pi, fd, fl, len(per_window))
+                         "(%d windows%s)", pi, fd, fl, len(per_window),
+                         ", depth from kickoff" if kf_depth is not None else " [depth searched]")
             if resolved_flips_out is not None:
                 resolved_flips_out[pi] = (fd, fl)
                 for _wmid, matched in per_window:
