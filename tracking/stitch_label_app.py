@@ -86,12 +86,19 @@ stratum_opts = ["(all)"] + sorted(df["stratum"].unique())
 sel_game = st.sidebar.selectbox("Game", game_opts)
 sel_stratum = st.sidebar.selectbox("Stratum", stratum_opts)
 only_unlabeled = st.sidebar.checkbox("Only unlabeled", value=True)
+# Stitching is ONLY about merging OUR players' fragments, so the same-team
+# strata are what matter. Cross-team pairs involve an opponent (prod rejects
+# them via the team gate anyway) — hidden by default so you never label
+# opponents. Flip on only if you want to spot-check team-classification.
+include_cross = st.sidebar.checkbox("Include cross-team negatives", value=False)
 
 view = df.copy()
 if sel_game != "(all)":
     view = view[view["_game_dir"] == sel_game]
 if sel_stratum != "(all)":
     view = view[view["stratum"] == sel_stratum]
+elif not include_cross:
+    view = view[view["stratum"] != "cross_team"]
 if only_unlabeled:
     view = view[view["label"] == ""]
 view = view.reset_index(drop=True)
