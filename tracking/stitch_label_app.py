@@ -96,6 +96,17 @@ if only_unlabeled:
     view = view[view["label"] == ""]
 view = view.reset_index(drop=True)
 
+# Interleave strata round-robin so the queue ALTERNATES instead of front-loading
+# 25 trivial cross-team negatives. Same-team pairs (where geometry can actually
+# cause a wrong merge — the valuable labels) then surface immediately. Stable
+# within each stratum. Skipped when a single stratum is already selected.
+if sel_stratum == "(all)" and len(view) > 1:
+    from itertools import zip_longest
+    groups = [list(idxs) for _, idxs in
+              view.groupby("stratum", sort=True).groups.items()]
+    order = [x for tup in zip_longest(*groups) for x in tup if x is not None]
+    view = view.loc[order].reset_index(drop=True)
+
 # overall progress (across ALL pairs, not just the filtered view)
 done = int((df["label"] != "").sum())
 total = len(df)
