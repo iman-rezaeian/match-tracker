@@ -52,11 +52,20 @@ import cv2
 import numpy as np
 import pandas as pd
 
-# Borderline-decision window. <2 m/s is "obviously same player walking"; >9 m/s is
-# above the physical cap so it's an obvious reject. The interesting precision
-# question lives in between — that's where the stitcher decides.
-BORDERLINE_SPEED_MIN = 3.0
+# Needed-speed window. >9 m/s is above the physical cap (obvious reject). We do
+# NOT floor the low end any more: a v1 floor of 3 m/s excluded the easy
+# same-player continuations (small move → low needed speed), so the labeled set
+# had almost no positives and recall couldn't be measured. Keep the full range.
+BORDERLINE_SPEED_MIN = 0.0
 BORDERLINE_SPEED_MAX = 9.0
+
+# Non-player filter (data-driven from labeled junk: coaches/spectators are big,
+# stationary, near the sideline). A track is dropped before pairing if it looks
+# like one. Thresholds separate the labeled junk (bbox≈119px, move≈0.9m, ~2m from
+# touchline) from players (bbox≈65px, move≈2m, ~12m infield).
+NONPLAYER_BBOX_PX = 95.0      # adults near the camera are ~2× a U10's pixel height
+NONPLAYER_MOVE_M = 1.5        # coaches barely move over a tracklet
+SIDELINE_BAND_M = 3.0         # within this of a touchline = sideline zone
 
 
 def _norm(vec: np.ndarray) -> np.ndarray:
@@ -82,7 +91,13 @@ def main() -> None:
     ap.add_argument("--time-bucket-s", type=float, default=30.0,
                     help="cap one pair per (track, time-bucket) so a fragmented stretch doesn't dominate")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--nonplayer-filter", dest="nonplayer_filter", action="store_true", default=True,
+                    help="drop coach/spectator tracks (big+stationary or off-field) before pairing (default on)")
+    ap.add_argument("--no-nonplayer-filter", dest="nonplayer_filter", action="store_false")
+    ap.add_argument("--strata", default="likely_same,short_gap_intra,med_gap_intra,long_gap_intra",
+                    help="comma list of strata to emit (default excludes cross_team — same-team only)")
     args = ap.parse_args()
+    want_strata = [s.strip() for s in args.strata.split(",") if s.strip()]
 
     os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -142,10 +157,11 @@ def main() -> None:
                               ref_color_hex=game.ref_color)
     print(f"team breakdown: {pd.Series(list(team_of.values())).value_counts().to_dict()}")
 
-    # --- Per-tracklet endpoints (start/end time + foot pos).
+    # --- Per-tracklet endpoints (start/end time + foot pos) + non-player profile.
     eps: dict[int, dict] = {}
     last_box: dict[int, tuple[int, tuple[float, float, float, float]]] = {}
     first_box: dict[int, tuple[int, tuple[float, float, float, float]]] = {}
+    nonplayer: set[int] = set()
     for tid, sub in df.sort_values(["track_id", "time_s"]).groupby("track_id"):
         sub = sub.reset_index(drop=True)
         x = sub["x_m"].to_numpy(); y = sub["y_m"].to_numpy()
@@ -161,11 +177,26 @@ def main() -> None:
                                                   float(r0["x2_eq"]), float(r0["y2_eq"])))
         last_box[int(tid)]  = (int(r1["frame"]), (float(r1["x1_eq"]), float(r1["y1_eq"]),
                                                   float(r1["x2_eq"]), float(r1["y2_eq"])))
+        # Non-player profile (coach/spectator): big bbox AND barely moves, or
+        # sits off the field beyond the touchline. Conservative — needs BOTH
+        # size and stillness so a near-camera player who's actually running
+        # isn't dropped.
+        bh = float((sub["y2_eq"] - sub["y1_eq"]).median())
+        move = float(np.hypot(x.max() - x.min(), y.max() - y.min()))
+        dist_sideline = float(min(y.min(), W - y.max()))  # +ve = inside the field
+        if args.nonplayer_filter and (
+            (bh > NONPLAYER_BBOX_PX and move < NONPLAYER_MOVE_M) or dist_sideline < -0.5
+        ):
+            nonplayer.add(int(tid))
+    if args.nonplayer_filter:
+        print(f"non-player filter: dropped {len(nonplayer)} / {len(eps)} tracks "
+              f"(big+stationary or off-field)")
 
     # --- Candidate pairs by stratum. Walk every A and inspect Bs that start
     # shortly after A ends; bucket by gap range + team match; track diversity caps.
-    n_per_stratum = max(10, args.n // 4)
-    print(f"sampling target: {n_per_stratum} per stratum (4 strata, total ~{n_per_stratum*4})")
+    n_per_stratum = max(10, args.n // max(1, len(want_strata)))
+    print(f"sampling target: {n_per_stratum} per stratum ({len(want_strata)} strata "
+          f"{want_strata}, total ~{n_per_stratum*len(want_strata)})")
 
     # Index B's by start time for fast forward-scan.
     tids_by_start = sorted(eps.keys(), key=lambda i: eps[i]["t0"])
@@ -175,12 +206,16 @@ def main() -> None:
     per_track_count: dict[int, int] = defaultdict(int)
 
     for a in tids_by_start:
+        if a in nonplayer:
+            continue
         ea = eps[a]
         team_a = team_of.get(a, -1)
         if team_a not in (0, 1):           # skip ref/unknown as anchors
             continue
         # Forward scan a window of B candidates.
         for b in tids_by_start:
+            if b in nonplayer:
+                continue
             eb = eps[b]
             gap = eb["t0"] - ea["t1"]
             if gap <= -0.5:
@@ -199,15 +234,20 @@ def main() -> None:
             if need_speed > BORDERLINE_SPEED_MAX or need_speed < BORDERLINE_SPEED_MIN:
                 continue
 
-            # Stratum assignment
+            # Stratum assignment. `likely_same` = tiny gap + tiny move: almost
+            # certainly the same player continuing — the POSITIVES recall needs.
             if team_a == team_b == 0:
-                if gap < 3.0: stratum = "short_gap_intra"
+                if gap < 2.0 and dist < 2.5: stratum = "likely_same"
+                elif gap < 3.0: stratum = "short_gap_intra"
                 elif gap < 10.0: stratum = "med_gap_intra"
                 else: stratum = "long_gap_intra"
             elif team_a in (0, 1) and team_b in (0, 1) and team_a != team_b:
                 stratum = "cross_team"
             else:
                 continue  # opponent intra, or ref involvement — out of scope
+
+            if stratum not in want_strata:
+                continue
 
             tb = int(ea["t1"] // args.time_bucket_s)
             if (stratum, a, tb) in bucket_seen:
@@ -234,23 +274,20 @@ def main() -> None:
     print("candidate counts before sampling: " + ", ".join(
         f"{k}={len(v)}" for k, v in strata.items()))
 
-    # --- Subsample per stratum, biasing toward medium need-speed (most informative).
+    # --- Subsample per stratum, UNIFORMLY (no need-speed bias — that bias is what
+    # starved the v1 set of positives by over-picking the high-speed = different end).
     selected: list[dict] = []
     for stratum, cands in strata.items():
         if not cands:
             continue
-        # weight = 1 - |need_speed - 6| / 6  (peak at 6 m/s, zero at endpoints)
-        w = np.array([max(0.05, 1 - abs(c["need_speed"] - 6.0) / 6.0) for c in cands])
-        w = w / w.sum()
         k = min(n_per_stratum, len(cands))
-        idx = rng.choice(len(cands), size=k, replace=False, p=w)
+        idx = rng.choice(len(cands), size=k, replace=False)
         for i in idx:
             cands[i]["stratum"] = stratum
             selected.append(cands[i])
 
     print(f"sampled: {len(selected)} pairs total — " + ", ".join(
-        f"{s}={sum(1 for x in selected if x['stratum']==s)}" for s in
-        ("short_gap_intra", "med_gap_intra", "long_gap_intra", "cross_team")))
+        f"{s}={sum(1 for x in selected if x['stratum']==s)}" for s in want_strata))
 
     # --- Render side-by-side crops at A.end-frame and B.start-frame.
     out_dir = Path(args.out)
