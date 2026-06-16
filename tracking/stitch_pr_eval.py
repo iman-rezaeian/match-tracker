@@ -130,11 +130,18 @@ def main() -> None:
 
     # --- Load labels.
     rows: list[dict] = []
+    n_junk = 0
     for csv_path in sorted(LABELS_ROOT.glob(args.labels_glob)):
         with csv_path.open() as f:
             for r in csv.DictReader(f):
                 lab = (r.get("label") or "").strip()
                 if not lab:
+                    continue
+                # "junk" = a box is on a non-player (coach/spectator). Not a valid
+                # stitch decision — excluded from PR, but counted: it measures how
+                # much non-player noise survives into the candidate pool.
+                if lab == "junk":
+                    n_junk += 1
                     continue
                 try:
                     li = int(lab)
@@ -147,6 +154,8 @@ def main() -> None:
                 r["_y"] = 1 if li == 1 else 0
                 r["_src"] = csv_path.parent.name
                 rows.append(r)
+    if n_junk:
+        print(f"  (excluded {n_junk} 'not a player' pairs — non-player noise in the candidate pool)")
     if not rows:
         raise SystemExit(
             f"No labeled rows found under {LABELS_ROOT}/{args.labels_glob}. "

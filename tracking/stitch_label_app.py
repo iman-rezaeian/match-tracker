@@ -24,8 +24,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 LABELS_ROOT = Path(__file__).resolve().parent / "labels"
-LABEL_MEANING = {"1": "✅ same", "0": "❌ different", "-1": "🤷 can't tell"}
-LABEL_COLOR = {"1": "#22c55e", "0": "#ef4444", "-1": "#a8a29e", "": "#44403c"}
+LABEL_MEANING = {"1": "✅ same", "0": "❌ different", "-1": "🤷 can't tell",
+                 "junk": "🚫 not a player"}
+LABEL_COLOR = {"1": "#22c55e", "0": "#ef4444", "-1": "#a8a29e",
+               "junk": "#f59e0b", "": "#44403c"}
 
 st.set_page_config(page_title="Stitch Pair Labeler", layout="wide")
 
@@ -130,6 +132,7 @@ st.sidebar.markdown(
     f"- ✅ same: **{counts.get('1', 0)}**\n"
     f"- ❌ different: **{counts.get('0', 0)}**\n"
     f"- 🤷 can't tell: **{counts.get('-1', 0)}**\n"
+    f"- 🚫 not a player: **{counts.get('junk', 0)}**\n"
     f"- ⬜ remaining: **{counts.get('', 0)}**"
 )
 
@@ -191,20 +194,23 @@ m[4].metric("OSNet cos", row["cos_app"] if row["cos_app"] else "—")
 
 st.image(row["_img"], use_container_width=True)
 st.caption("Yellow **A** = end of track A (left) · Green **B** = start of track B (right) · "
-           "red bar = the stitch decision. Are A and B the **same physical player**?")
+           "red bar = the stitch decision. Are A and B the **same physical player**? "
+           "Use **Not a player** when a box is on a coach / spectator / non-player.")
 
 # action buttons
-b = st.columns([1, 1, 1, 1, 2])
+b = st.columns([1, 1, 1, 1.2, 1, 1.6])
 if b[0].button("✅ Same (1)", use_container_width=True, type="primary"):
     _apply("1")
 if b[1].button("❌ Different (2)", use_container_width=True):
     _apply("0")
 if b[2].button("🤷 Can't tell (3)", use_container_width=True):
     _apply("-1")
-if b[3].button("⬅ Back", use_container_width=True):
+if b[3].button("🚫 Not a player (4)", use_container_width=True):
+    _apply("junk")
+if b[4].button("⬅ Back", use_container_width=True):
     st.session_state.idx = max(0, st.session_state.idx - 1)
     st.rerun()
-with b[4]:
+with b[5]:
     jump = st.number_input("jump to #", min_value=1, max_value=len(view),
                            value=i + 1, step=1, label_visibility="collapsed")
     if jump - 1 != i:
@@ -230,6 +236,7 @@ components.html(
         if (e.key === '1' || e.key.toLowerCase() === 's') clickByText('✅');
         else if (e.key === '2' || e.key.toLowerCase() === 'd') clickByText('❌');
         else if (e.key === '3' || e.key.toLowerCase() === 'u') clickByText('🤷');
+        else if (e.key === '4' || e.key.toLowerCase() === 'n') clickByText('🚫');
         else if (e.key === 'ArrowLeft') clickByText('⬅');
       });
     }
@@ -237,4 +244,5 @@ components.html(
     """,
     height=0,
 )
-st.caption("⌨️  **1**/S = same · **2**/D = different · **3**/U = can't tell · **←** = back")
+st.caption("⌨️  **1**/S = same · **2**/D = different · **3**/U = can't tell · "
+           "**4**/N = not a player · **←** = back")
