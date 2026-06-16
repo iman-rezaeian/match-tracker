@@ -97,13 +97,17 @@ if only_unlabeled:
 view = view.reset_index(drop=True)
 
 # Interleave strata round-robin so the queue ALTERNATES instead of front-loading
-# 25 trivial cross-team negatives. Same-team pairs (where geometry can actually
-# cause a wrong merge — the valuable labels) then surface immediately. Stable
-# within each stratum. Skipped when a single stratum is already selected.
+# 25 trivial cross-team negatives. Strata are ordered by VALUE — the same-team
+# close calls (where geometry can actually cause a wrong merge) lead each cycle;
+# cross-team negatives (prod's team gate rejects them anyway) come last. So the
+# very first pair is a meaningful one. Stable within each stratum. Skipped when
+# a single stratum is already selected.
 if sel_stratum == "(all)" and len(view) > 1:
     from itertools import zip_longest
-    groups = [list(idxs) for _, idxs in
-              view.groupby("stratum", sort=True).groups.items()]
+    priority = ["short_gap_intra", "med_gap_intra", "long_gap_intra", "cross_team"]
+    grp_map = {s: list(idxs) for s, idxs in view.groupby("stratum").groups.items()}
+    groups = [grp_map[s] for s in priority if s in grp_map]
+    groups += [v for s, v in grp_map.items() if s not in priority]  # any unexpected strata
     order = [x for tup in zip_longest(*groups) for x in tup if x is not None]
     view = view.loc[order].reset_index(drop=True)
 
