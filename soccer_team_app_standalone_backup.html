@@ -8863,6 +8863,20 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Per-event reel index used by fieldInfoAt() to map a tracklet's video time
+  // → game clock. Moved off the game doc into games/<id>/public/broadcast
+  // (2026-06-13), so game.broadcastEvents is empty for re-run games — fetch the
+  // subcollection (legacy on-doc fallback retained). See [[broadcast-events]].
+  const [bEvents, setBEvents] = useState(() =>
+    (Array.isArray(game.broadcastEvents) && game.broadcastEvents.length) ? game.broadcastEvents : null);
+  useEffect(() => {
+    if (bEvents != null || !window.fbDb || !game?.id) return;
+    window.fbDb.collection('teams').doc('main').collection('games').doc(game.id)
+      .collection('public').doc('broadcast').get()
+      .then(s => setBEvents((s.exists && s.data().events) || []))
+      .catch(() => setBEvents([]));
+  }, [game?.id]);
+
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   // Only offer players who actually dressed for THIS game (squad), not the whole
   // team roster. Fall back to the starting lineup, then the full roster.
@@ -8898,7 +8912,7 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
     () => [...(game.events || [])].sort((a, b) => (a.at || 0) - (b.at || 0)),
     [game.events]);
   const fieldInfoAt = (tl) => {
-    const idx = game.broadcastEvents || [];
+    const idx = bEvents || game.broadcastEvents || [];
     if (!idx.length || tl.t_start_s == null) return null;
     const mid = ((tl.t_start_s || 0) + (tl.t_end_s || 0)) / 2;
     let near = null;
@@ -13532,6 +13546,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
