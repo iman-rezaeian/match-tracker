@@ -7321,8 +7321,11 @@ function identityReviewCount(game, analyticsDoc) {
 
 // The pipeline's broadcastEvents entry for an event — by id first (bookmark-
 // confirmed events keep the bookmark's id), then by clock as a fallback.
-function broadcastEntryFor(game, event) {
-  const idx = game.broadcastEvents || [];
+// `idxOverride` is the index fetched from games/<id>/public/broadcast — the
+// pipeline moved broadcastEvents OFF the game doc (2026-06-13), so the inline
+// game.broadcastEvents fallback only fires for legacy, not-yet-re-run games.
+function broadcastEntryFor(game, event, idxOverride) {
+  const idx = idxOverride || game.broadcastEvents || [];
   return idx.find(b => b.id === event.id)
     || idx.find(b => b.period === event.period
         && b.elapsed != null && Math.abs(b.elapsed - event.elapsed) <= 2)
@@ -7408,11 +7411,11 @@ function IdentityQueueCard({ item, onOpen, onSkip }) {
   );
 }
 
-function ConfirmQueueCard({ item, roster, onConfirm, onDismiss, onSkip, onCue }) {
+function ConfirmQueueCard({ item, roster, onConfirm, onDismiss, onSkip, onCue, broadcastEvents }) {
   const { game, event, kind } = item;
   const def = EVENT_TYPES[event.type] || { emoji: '•', label: event.type };
   const player = roster.find(p => p.id === event.playerId);
-  const entry = broadcastEntryFor(game, event);
+  const entry = broadcastEntryFor(game, event, broadcastEvents);
   const canCue = !!(game.videoFullGameUrl && entry && entry.tvReelTimeS != null);
 
   // Bookmark classification state.
@@ -7619,6 +7622,29 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
   const remaining = items.filter(i => !skippedIds.has(queueItemKey(i)));
   const current = remaining[0] || null;
 
+  // The pipeline moved the per-event reel index (broadcastEvents) OFF the game
+  // doc into games/<id>/public/broadcast (2026-06-13), so game.broadcastEvents
+  // is empty for re-run games and the cue button would always read "NO REEL".
+  // Lazily fetch the subcollection for the game on screen (cached per id, with
+  // a legacy on-doc fallback) — mirrors AnalyticsPanel's broadcast fetch.
+  const [bEventsByGame, setBEventsByGame] = useState({}); // gameId -> events[]
+  useEffect(() => {
+    const g = current && current.game;
+    if (!g || !g.id || bEventsByGame[g.id] != null) return;
+    if (Array.isArray(g.broadcastEvents) && g.broadcastEvents.length) {
+      setBEventsByGame(prev => ({ ...prev, [g.id]: g.broadcastEvents }));
+      return;
+    }
+    if (!window.fbDb) return;
+    window.fbDb.collection('teams').doc('main').collection('games').doc(g.id)
+      .collection('public').doc('broadcast').get()
+      .then(s => setBEventsByGame(prev => ({ ...prev, [g.id]: (s.exists && s.data().events) || [] })))
+      .catch(() => setBEventsByGame(prev => ({ ...prev, [g.id]: [] })));
+  }, [current && current.game && current.game.id]);
+
+  const curBEvents = (current && current.game && bEventsByGame[current.game.id])
+    || (current && current.game && current.game.broadcastEvents) || [];
+
   return (
     <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto pb-10">
       <div
@@ -7645,7 +7671,8 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
             key={queueItemKey(current) + ':' + current.kind}
             item={current}
             roster={roster}
-            onCue={(game, entry, def) => setCue({ game, entry, def })}
+            broadcastEvents={curBEvents}
+            onCue={(game, entry, def) => setCue({ game, entry, def, events: curBEvents })}
             onSkip={() => setSkippedIds(prev => new Set([...prev, queueItemKey(current)]))}
             onDismiss={() => {
               if (current.kind === 'bookmark') onDeleteEvent(current.game.id, current.event.id);
@@ -7674,7 +7701,7 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
         <BroadcastVideoPlayer
           url={cue.game.videoFullGameUrl}
           doc={{
-            broadcast_events: cue.game.broadcastEvents || [],
+            broadcast_events: cue.events || cue.game.broadcastEvents || [],
             halfLengthMin: cue.game.halfLengthMin,
             home_name: cue.game.broadcastHomeName || 'Stompers',
             away_name: cue.game.broadcastAwayName || (cue.game.opponent || 'OPP'),
@@ -13505,6 +13532,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
