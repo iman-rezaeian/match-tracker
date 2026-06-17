@@ -319,11 +319,21 @@ babel_script_pattern = re.compile(
 babel_match = babel_script_pattern.search(deploy_html)
 if babel_match:
     jsx_code = babel_match.group(1)
+    # Prefer a local esbuild; fall back to `npx esbuild` on Cloudflare Pages CI
+    # (mirrors the Tailwind fallback below). Without this, esbuild is absent on
+    # CI → the precompile is skipped → production ships the in-browser Babel
+    # runtime (3 MB download + 600 KB JSX transpiled on every cold load), which
+    # is slow on phones and black-screens iOS Safari when a partial Babel gets
+    # cached. Pinned to the local version for build reproducibility.
+    esbuild_bin = ['esbuild'] if shutil.which('esbuild') else ['npx', '--yes', 'esbuild@0.28.0']
+    esbuild_cmd = esbuild_bin + [
+        '--loader=jsx', '--jsx=transform',
+        '--jsx-factory=React.createElement', '--jsx-fragment=React.Fragment',
+        '--target=es2018',
+    ]
     try:
         result = subprocess.run(
-            ['esbuild', '--loader=jsx', '--jsx=transform',
-             '--jsx-factory=React.createElement', '--jsx-fragment=React.Fragment',
-             '--target=es2018'],
+            esbuild_cmd,
             input=jsx_code, capture_output=True, text=True, check=True,
         )
         compiled_js = result.stdout
@@ -341,7 +351,7 @@ if babel_match:
     except subprocess.CalledProcessError as e:
         print(f"  WARNING: esbuild transpile failed, keeping Babel runtime:\n  {e.stderr[:500]}")
     except FileNotFoundError:
-        print("  WARNING: esbuild not found, keeping Babel runtime (brew install esbuild)")
+        print("  WARNING: neither esbuild nor npx found, keeping Babel runtime (brew install esbuild)")
     # Rewrite the deploy file with compiled version
     (DEPLOY_DIR / "index.html").write_text(deploy_html)
 else:

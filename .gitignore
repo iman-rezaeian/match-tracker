@@ -31,3 +31,4 @@ worker/.wrangler/
 # Raw game-day audio (large; kept locally, not in history)
 voice memo/
 post_game/raw/voice/
+tracking/labels/
