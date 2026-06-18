@@ -207,6 +207,21 @@ def main() -> None:
     for p in pred.values():
         status_counts[p["status"]] = status_counts.get(p["status"], 0) + 1
 
+    # Per-status precision on labeled tracklets: of tracklets this status tier
+    # predicted, what fraction matched the coach label. The calibration guardrail
+    # — precision-among-'auto' should RISE once template-only guesses are demoted.
+    _sp: dict[str, dict] = {}
+    for r in labeled_predictions:
+        d = _sp.setdefault(r["status"], {"correct": 0, "total": 0})
+        d["total"] += 1
+        if r["pred"] == r["label_pid"]:
+            d["correct"] += 1
+    status_precision = {
+        s: {"precision": round(d["correct"] / d["total"], 3) if d["total"] else None,
+            "correct": d["correct"], "total": d["total"]}
+        for s, d in sorted(_sp.items())
+    }
+
     result = {
         "game_id": args.game_id,
         "label": args.label,
@@ -217,6 +232,7 @@ def main() -> None:
         "wrong": n_wrong,
         "accuracy_on_reproduced": round(n_match / n_label_hit, 3) if n_label_hit else None,
         "tracklet_status_counts": dict(sorted(status_counts.items())),
+        "status_precision": status_precision,
         "gk_windows": keeper_report,
         "keeper_assigned_players": [{"player_id": a, "name": b} for a, b in keeper_assigned],
         "wrong_rows": wrong_rows,
@@ -234,6 +250,9 @@ def main() -> None:
     print(f"ACCURACY on reproduced labels: {result['accuracy_on_reproduced']}  "
           f"({n_match} correct / {n_wrong} wrong)")
     print(f"status counts: {result['tracklet_status_counts']}")
+    print("per-status precision (labeled): " + "  ".join(
+        f"{s}={v['precision']} ({v['correct']}/{v['total']})"
+        for s, v in status_precision.items()))
     print(f"\nwritten: {out_path}")
 
 

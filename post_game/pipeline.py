@@ -47,6 +47,7 @@ def run(
     smoke_windows: list[tuple[float, float]] | None = None,
     reuse_tv_reel: bool = False,
     stats_only: bool = False,
+    pin_partition: tuple[dict[int, int], dict[int, int]] | None = None,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -176,14 +177,19 @@ def run(
     jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
     emb_ckpt = ckpt_dir / f"embeddings{ckpt_suffix}.npz"
 
-    if tracks_ckpt.exists() and jersey_ckpt.exists():
+    # A pinned-partition refresh skips classify+stitch, so the (multi-GB,
+    # often-deleted) jersey npz isn't needed — only tracks_raw is.
+    if tracks_ckpt.exists() and (jersey_ckpt.exists() or pin_partition is not None):
         import pandas as pd
         log.info("Stage 2/6: loading cached tracks from %s", tracks_ckpt)
         tracks_df = pd.read_parquet(tracks_ckpt)
-        with np.load(jersey_ckpt, allow_pickle=True) as nz:
-            track_jersey_samples = {
-                int(k): list(nz[k]) for k in nz.files
-            }
+        if jersey_ckpt.exists():
+            with np.load(jersey_ckpt, allow_pickle=True) as nz:
+                track_jersey_samples = {
+                    int(k): list(nz[k]) for k in nz.files
+                }
+        else:
+            track_jersey_samples = {}  # unused on the pinned path
         # Per-track Re-ID embeddings (sidecar; absent on pre-embedding caches →
         # stitching falls back to jersey-HSV).
         track_embeddings: dict[int, np.ndarray] = {}
@@ -401,7 +407,7 @@ def run(
     # teleporting between bodies) into clean contiguous sub-tracks BEFORE team
     # classification, so one id universe flows through stitch/assign/stats. Gated;
     # rebinds the three names every downstream stage reads. See post_game/gap_split.py.
-    if config.GAP_SPLIT_ENABLED and not tracks_df.empty:
+    if config.GAP_SPLIT_ENABLED and not tracks_df.empty and pin_partition is None:
         from .gap_split import gap_split_tracks
         _n0 = tracks_df["track_id"].nunique()
         tracks_df, track_jersey_samples, track_embeddings, _ = gap_split_tracks(
@@ -412,37 +418,53 @@ def run(
                  _n0, tracks_df["track_id"].nunique(), config.SPLIT_GAP_S)
 
     # 4. Team classification
-    log.info("Stage 4/6: team classification...")
-    our_color = _our_color(game)
-    team_of_track = classify_tracks(
-        tracks_df, track_jersey_samples,
-        our_home_color_hex=our_color,
-        opp_color_hex=game.away_color,
-        ref_color_hex=game.ref_color,
-    )
-    _team_counts: dict[int, int] = {}
-    for _t in team_of_track.values():
-        _team_counts[_t] = _team_counts.get(_t, 0) + 1
-    log.info("  -> our_color=%s · %d tracks classified · team breakdown: %s "
-             "(0=ours, 1=opp, 2=ref/unknown)",
-             our_color, len(team_of_track), dict(sorted(_team_counts.items())))
-    if _team_counts.get(0, 0) == 0:
-        log.warning("  -> NO tracks classified as OUR TEAM. "
-                    "Check home/away color hex on the game doc + jersey color in the smoke window. "
-                    "Identity assignment will produce zero players.")
+    # PIN PARTITION: a one-off surgical refresh (e.g. applying a confidence
+    # recalibration to an already-labelled game) can pass the ORIGINAL
+    # team/tracklet partition recovered from the live doc. We then SKIP
+    # classify+stitch so tracklet ids stay byte-stable and the coach's
+    # tracklet-keyed overrides all map (re-stitching would reshuffle ids and
+    # mis-apply them). Restricted to the tracks that survived stage-3 here.
+    if pin_partition is not None:
+        _pin_team, _pin_tl = pin_partition
+        _ids = set(tracks_df["track_id"].astype(int)) if not tracks_df.empty else set()
+        team_of_track = {t: int(_pin_team.get(t, 2)) for t in _ids}
+        tracklet_of_track = {t: int(_pin_tl.get(t, t)) for t in _ids}
+        _our = sum(1 for v in team_of_track.values() if v == 0)
+        log.info("Stage 4/6: PINNED partition from doc — %d tracks (%d ours), "
+                 "%d tracklets; classify+stitch SKIPPED",
+                 len(team_of_track), _our, len(set(tracklet_of_track.values())))
+    else:
+        log.info("Stage 4/6: team classification...")
+        our_color = _our_color(game)
+        team_of_track = classify_tracks(
+            tracks_df, track_jersey_samples,
+            our_home_color_hex=our_color,
+            opp_color_hex=game.away_color,
+            ref_color_hex=game.ref_color,
+        )
+        _team_counts: dict[int, int] = {}
+        for _t in team_of_track.values():
+            _team_counts[_t] = _team_counts.get(_t, 0) + 1
+        log.info("  -> our_color=%s · %d tracks classified · team breakdown: %s "
+                 "(0=ours, 1=opp, 2=ref/unknown)",
+                 our_color, len(team_of_track), dict(sorted(_team_counts.items())))
+        if _team_counts.get(0, 0) == 0:
+            log.warning("  -> NO tracks classified as OUR TEAM. "
+                        "Check home/away color hex on the game doc + jersey color in the smoke window. "
+                        "Identity assignment will produce zero players.")
 
-    # 4b. Tracklet stitching — collapse fragmented tracks of the same player
-    # (BoT-SORT yields ~100 fragments/player) into player-consistent tracklets
-    # using Re-ID embeddings (+ jersey-HSV fallback) and spatiotemporal gating.
-    tracklet_of_track = stitch_tracklets(
-        tracks_df, team_of_track,
-        track_embeddings=track_embeddings,
-        track_jersey_samples=track_jersey_samples,
-    )
-    _ss = stitch_stats(tracklet_of_track, team_of_track)
-    log.info("  -> stitching: %d our fragments -> %d tracklets (%d merged, largest=%d frags)",
-             _ss["our_fragments"], _ss["our_tracklets"], _ss["merged_tracklets"],
-             _ss["largest_tracklet_fragments"])
+        # 4b. Tracklet stitching — collapse fragmented tracks of the same player
+        # (BoT-SORT yields ~100 fragments/player) into player-consistent tracklets
+        # using Re-ID embeddings (+ jersey-HSV fallback) and spatiotemporal gating.
+        tracklet_of_track = stitch_tracklets(
+            tracks_df, team_of_track,
+            track_embeddings=track_embeddings,
+            track_jersey_samples=track_jersey_samples,
+        )
+        _ss = stitch_stats(tracklet_of_track, team_of_track)
+        log.info("  -> stitching: %d our fragments -> %d tracklets (%d merged, largest=%d frags)",
+                 _ss["our_fragments"], _ss["our_tracklets"], _ss["merged_tracklets"],
+                 _ss["largest_tracklet_fragments"])
 
     # 5. Identity — coach-log global assignment over stitched tracklets, with the
     # v0 per-fragment voter kept as a fallback if v2 collapses (e.g. no coach
@@ -452,6 +474,9 @@ def run(
     # Board orientation per period, resolved by the identity search — reused by
     # the tag pre-fill (3.3) to map field meters back to coach zone vocab.
     board_flips: dict[int, tuple] = {}
+    # Periods whose lateral board orientation was near-tied (team may be mirrored).
+    # Only populated when ID_ORIENT_AMBIG_REL_MARGIN > 0 (default off).
+    board_orient_ambiguous: list = []
     assignments = assign_identities_v2(
         tracks_df=tracks_df,
         tracklet_of_track=tracklet_of_track,
@@ -467,6 +492,7 @@ def run(
         overrides=game.identity_overrides,
         squad=game.squad,
         resolved_flips_out=board_flips,
+        orientation_ambiguous_out=board_orient_ambiguous,
     )
     if game.identity_overrides:
         log.info("  -> %d coach identity override(s) loaded from game doc",
@@ -608,6 +634,8 @@ def run(
             "field_tilt": field_tilt,
             "generated_at_ms": int(time.time() * 1000),
         }
+        if board_orient_ambiguous:
+            _update["orientation_ambiguous_periods"] = board_orient_ambiguous
         firestore_io.write_analytics_merge(game_id, _sanitize_json(_update))
         log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
                  game_id, len(player_stats))
@@ -841,6 +869,8 @@ def run(
         "away_color": game.away_color,
         "generated_at_ms": int(time.time() * 1000),
     }
+    if board_orient_ambiguous:
+        analytics["orientation_ambiguous_periods"] = board_orient_ambiguous
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
 
     # Public-safe slice on the game doc itself so parents can render the

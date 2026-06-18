@@ -133,6 +133,32 @@ ID_CONFIDENCE_EVIDENCE_VOTES = 8
 # plan); revisit after the Lab-color classifier change lands.
 ID_CONFIDENCE_STATS_MIN = 0.35
 
+# --- Tier 0 identity calibration (identity_assign.py) ---------------------
+# The auto-assigner's only signal for telling teammates apart is the coach's
+# STATIC board-formation template (a per-window Hungarian match, σ=18 m). That
+# identifies ZONE/ROLE, not the individual, yet the confidence formula rewards
+# geometric CONSISTENCY not correctness — so a tracklet consistently nearest the
+# WRONG teammate's slot still reads "auto"/100%. When enabled, a tracklet whose
+# CHOSEN player has no individuating anchor (action-event vote or SUB anchor;
+# board EXCLUDED) can't read confident. GK geometry + coach overrides use
+# separate code paths and are never capped. ON by default as of 2026-06-17
+# (8K proof on mqcf9axlvtuyt: demotes 18 confident-wrong tracklets, zero
+# accuracy regression, GK/coach paths untouched). Set =0 to disable.
+ID_ANCHOR_CAP_ENABLED = os.environ.get("ID_ANCHOR_CAP_ENABLED", "1") != "0"
+# Min summed anchor weight (event-vote weight + SUB weight; board EXCLUDED) for a
+# (tracklet, chosen) pair to count as individuating-anchored. One event vote
+# ≈ ASSIGN_W_VOTES*sc (≤1.5); one SUB anchor = ASSIGN_SUB_W (3.0). 1.0 ⇒ "at
+# least one solid event vote, or any SUB anchor".
+ID_ANCHOR_MIN_W = float(os.environ.get("ID_ANCHOR_MIN_W", "1.0"))
+# Confidence ceiling for template-only (un-anchored) tracklets when the cap is
+# on. 0.49 keeps them strictly below ID_CONFIDENCE_REVIEW (0.50) → 'lowconf'
+# (still feeds stats, honest low confidence), never 'auto'/'review'/green.
+ID_TEMPLATE_ONLY_CONF_CAP = float(os.environ.get("ID_TEMPLATE_ONLY_CONF_CAP", "0.49"))
+# Orientation guardrail: flag a period when best vs 2nd-best LATERAL board
+# orientation total-cost are within this RELATIVE margin (the search may have
+# mirrored the whole team left↔right). 0.0 = no-op (emit nothing).
+ID_ORIENT_AMBIG_REL_MARGIN = float(os.environ.get("ID_ORIENT_AMBIG_REL_MARGIN", "0.0"))
+
 MIN_BBOX_H_FOR_OCR = 80        # px; smaller → don't bother running OCR
 MIN_BBOX_H_FOR_FACE = 90       # px
 
