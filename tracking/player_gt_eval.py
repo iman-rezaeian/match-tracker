@@ -76,22 +76,16 @@ def main() -> None:
         field_length_m=field_cal.length_m, field_width_m=field_cal.width_m,
         overrides=None, squad=game.squad,  # WITHHELD — fair test
     )
-    pred = {}  # tracklet -> (player_id, status)
-    for a in assignments:
-        tl = (a.breakdown or {}).get("tracklet")
-        if tl is not None:
-            pred[int(tl)] = (a.player_id, a.status)
+    # Key by RUN (a.track_id), not the stitched-chain id: GT is labeled per run,
+    # and each run's prediction = its chain's assigned player. Behaviour-preserving
+    # when run==chain (no re-stitch); makes the metric re-stitch-ready.
+    pred = {int(a.track_id): (a.player_id, a.status) for a in assignments}
 
-    # tracked minutes per tracklet (detection-count × median dt) for time weights
+    # tracked minutes per RUN (detection-count × median dt) for time weights
     counts = tracks_df.groupby("track_id").size()
     dts = tracks_df.sort_values(["track_id", "time_s"]).groupby("track_id")["time_s"].diff().dropna()
     dt_med = float(dts[dts > 0].median()) if len(dts) else 0.1
-    members = defaultdict(list)
-    for trk, tl in tl_of.items():
-        if team_of.get(trk) == 0:
-            members[tl].append(trk)
-    tl_min = {tl: sum(int(counts.get(m, 0)) for m in mem) * dt_med / 60.0
-              for tl, mem in members.items()}
+    tl_min = {int(r): int(counts.get(int(r), 0)) * dt_med / 60.0 for r in tl_of}
 
     # ground-truth labels
     gt = {}  # tracklet -> true_player_id (only label == "player")

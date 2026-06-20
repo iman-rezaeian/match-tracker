@@ -46,6 +46,12 @@ def main() -> None:
                     help="Also apply switch-detection: split runs at mid-run identity "
                          "swaps (teleport jumps the team-blind tracker makes during "
                          "crossings). Recommended for the cleanest coherent cache.")
+    ap.add_argument("--restitch", action="store_true",
+                    help="Chain coherent runs into per-player tracklets (geometry only) "
+                         "so identity assignment has substantial units to name.")
+    ap.add_argument("--restitch-gap-s", type=float, default=5.0)
+    ap.add_argument("--restitch-dist-cap", type=float, default=12.0,
+                    help="Absolute cap (m) on a stitch link's end→start move.")
     args = ap.parse_args()
 
     s4_json = S4_DIR / f"{args.game_id}.stage4.json"
@@ -96,15 +102,32 @@ def main() -> None:
     print(f"{args.game_id}: raw {n_raw} → gap-split {n_runs} runs → our-team {len(our_runs)} "
           f"→ on-field {len(keep)} (dropped {before - len(keep)} sideline/edge, gate {args.edge_buffer}m)")
 
+    # 4b. re-stitch: chain coherent runs into per-player tracklets (geometry only —
+    # appearance is dead on same kit). assign_identities_v2 names one player per
+    # tracklet_of_track value and accumulates votes per chain, so a longer chain
+    # gathers more anchors → higher recall. Parquet track_id stays = run (GT ids
+    # untouched); only the tracklet map groups them.
+    runs = sorted(int(r) for r in keep)
+    tl_map = {r: r for r in runs}   # default: each run its own tracklet
+    if args.restitch:
+        from post_game.reid_stitch import stitch_tracklets
+        config.STITCH_DIST_CAP_M = args.restitch_dist_cap   # absolute over-merge cap (m)
+        config.STITCH_APP_WEIGHT = 0.0                      # appearance off (same kit)
+        team0 = {r: 0 for r in runs}
+        chain_of = stitch_tracklets(split, team0, max_gap_s=args.restitch_gap_s)
+        tl_map = {r: int(chain_of.get(r, r)) for r in runs}
+        n_chains = len(set(tl_map.values()))
+        print(f"re-stitch: {len(runs)} runs → {n_chains} chains "
+              f"(gap≤{args.restitch_gap_s}s, dist-cap {args.restitch_dist_cap}m, appearance off)")
+
     # 5. write the coherent cache (drop-in for sampler + eval)
     out_par = S4_DIR / f"{args.game_id}.stage4.coherent.parquet"
     out_json = S4_DIR / f"{args.game_id}.stage4.coherent.json"
     keep_cols = ["track_id", "frame", "time_s"] + _BBOX + ["x_m", "y_m", "conf"]
     split[keep_cols].reset_index(drop=True).to_parquet(out_par)
-    runs = sorted(int(r) for r in keep)
     out_json.write_text(json.dumps({
         "team_of_track": {str(r): 0 for r in runs},        # all our-team
-        "tracklet_of_track": {str(r): r for r in runs},     # each run = its own tracklet
+        "tracklet_of_track": {str(r): tl_map[r] for r in runs},  # run → chain (or self)
     }))
     print(f"wrote {out_par.name} ({len(split)} det, {len(runs)} runs) + {out_json.name}")
 
