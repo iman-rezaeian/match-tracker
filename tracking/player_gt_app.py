@@ -25,9 +25,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from post_game import firestore_io
+from post_game.identity import half_windows, period_clock_to_video_time_factory
+from post_game.identity_assign import _gk_windows
 
 LABELS_ROOT = Path(__file__).resolve().parent / "labels"
-NOT_PLAYER, CANT_TELL = "__not_player__", "__cant_tell__"
+NOT_PLAYER, CANT_TELL, REFEREE, OPPONENT = (
+    "__not_player__", "__cant_tell__", "__referee__", "__opponent__")
 
 st.set_page_config(page_title="Player GT Labeler", layout="wide")
 
@@ -51,6 +54,15 @@ def squad_of(game_id: str) -> list[dict]:
     out = [{"id": p, "num": roster[p].jersey_number,
             "label": f"#{roster[p].jersey_number or '?'} {roster[p].name}"} for p in ids]
     return sorted(out, key=lambda d: (d["num"] is None, d["num"] or 0))
+
+
+@st.cache_data(show_spinner=False)
+def gk_windows_of(game_id: str, duration_s: float):
+    """[(t0_video_s, t1_video_s, gk_player_id)] from the coach log — who was in
+    goal when. Ground truth (not a pipeline guess), so it's a fair labeling aid."""
+    game = firestore_io.get_game(game_id)
+    c2v = period_clock_to_video_time_factory(game)
+    return _gk_windows(game.gk_player_id, game.events, c2v, half_windows(game, duration_s))
 
 
 def save_label(csv_path: Path, tracklet_id: str, true_pid: str, label: str) -> None:
@@ -99,8 +111,10 @@ total = int((df["game_id"] == sel_game).sum())
 st.sidebar.progress(done / total if total else 0.0, text=f"{done} / {total} labeled")
 counts = df[df["game_id"] == sel_game]["label"].value_counts().to_dict()
 st.sidebar.markdown(
-    f"- 🙋 player: **{sum(v for k, v in counts.items() if k not in ('', NOT_PLAYER, CANT_TELL))}**\n"
+    f"- 🙋 player: **{sum(v for k, v in counts.items() if k not in ('', NOT_PLAYER, CANT_TELL, REFEREE, OPPONENT))}**\n"
     f"- 🚫 not a player: **{counts.get(NOT_PLAYER, 0)}**\n"
+    f"- 🔵 opponent: **{counts.get(OPPONENT, 0)}**\n"
+    f"- 🟨 referee: **{counts.get(REFEREE, 0)}**\n"
     f"- 🤷 can't tell: **{counts.get(CANT_TELL, 0)}**\n"
     f"- ⬜ remaining: **{counts.get('', 0)}**"
 )
@@ -138,6 +152,8 @@ m[1].metric("span", f"{float(row['t_start_s']):.0f}–{float(row['t_end_s']):.0f
 m[2].metric("detections", row["n_det"])
 cur = row["label"]
 cur_txt = name_of.get(cur, "🚫 not a player" if cur == NOT_PLAYER
+                       else "🔵 opponent" if cur == OPPONENT
+                       else "🟨 referee" if cur == REFEREE
                        else "🤷 can't tell" if cur == CANT_TELL else "unlabeled")
 m[3].metric("current", cur_txt if cur else "unlabeled")
 
@@ -145,17 +161,38 @@ st.image(row["_img"], use_container_width=True)
 st.caption("Same physical kid across the strip? Pick the player. **Blind on purpose** — "
            "the pipeline's guess is hidden so this stays unbiased.")
 
+# GK hint: who the coach logged in goal during THIS run's time window (ground
+# truth, not a pipeline guess). If it looks like a keeper near the net, one click.
+try:
+    _dur = float(df[df["game_id"] == sel_game]["t_end_s"].astype(float).max()) + 60.0
+    _gkw = gk_windows_of(sel_game, _dur)
+    _t0, _t1 = float(row["t_start_s"]), float(row["t_end_s"])
+    _on_duty = sorted({gk for (w0, w1, gk) in _gkw if min(_t1, w1) > max(_t0, w0)})
+except Exception:
+    _on_duty = []
+if _on_duty:
+    st.markdown("🧤 **In goal during this run (coach log)** — one click if this is the keeper:")
+    gcols = st.columns(min(len(_on_duty), 4))
+    for j, pid in enumerate(_on_duty):
+        if gcols[j % 4].button(f"🧤 {name_of.get(pid, pid)}", use_container_width=True,
+                               key=f"gk_{pid}", type="primary"):
+            _apply(pid, "player")
+
 # Roster picker grid (4 per row) + sentinels.
 cols = st.columns(4)
 for j, s in enumerate(squad):
     if cols[j % 4].button(s["label"], use_container_width=True, key=f"p_{s['id']}"):
         _apply(s["id"], "player")
-b = st.columns(3)
+b = st.columns(5)
 if b[0].button("🚫 Not a player (N)", use_container_width=True):
     _apply("", NOT_PLAYER)
-if b[1].button("🤷 Can't tell (U)", use_container_width=True):
+if b[1].button("🔵 Opponent (O)", use_container_width=True):
+    _apply("", OPPONENT)
+if b[2].button("🟨 Referee (R)", use_container_width=True):
+    _apply("", REFEREE)
+if b[3].button("🤷 Can't tell (U)", use_container_width=True):
     _apply("", CANT_TELL)
-if b[2].button("⬅ Back", use_container_width=True):
+if b[4].button("⬅ Back", use_container_width=True):
     st.session_state.idx = max(0, st.session_state.idx - 1)
     st.rerun()
 
@@ -172,6 +209,8 @@ components.html(
       doc.addEventListener('keydown', (e) => {
         if (e.target && /(INPUT|TEXTAREA|SELECT)/.test(e.target.tagName)) return;
         if (e.key.toLowerCase() === 'n') clickByText('🚫');
+        else if (e.key.toLowerCase() === 'o') clickByText('🔵');
+        else if (e.key.toLowerCase() === 'r') clickByText('🟨');
         else if (e.key.toLowerCase() === 'u') clickByText('🤷');
         else if (e.key === 'ArrowLeft') clickByText('⬅');
       });
@@ -180,4 +219,5 @@ components.html(
     """,
     height=0,
 )
-st.caption("⌨️  **N** = not a player · **U** = can't tell · **←** = back · players: click")
+st.caption("⌨️  **N** = not a player · **O** = opponent · **R** = referee · **U** = can't tell · "
+           "**←** = back · players: click")

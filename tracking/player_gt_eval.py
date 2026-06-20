@@ -35,20 +35,26 @@ from post_game.identity_assign import assign_identities_v2
 
 S4_DIR = Path(__file__).resolve().parent / "outputs" / "identity_eval"
 LABELS_ROOT = Path(__file__).resolve().parent / "labels"
-NOT_PLAYER, CANT_TELL = "__not_player__", "__cant_tell__"
+NOT_PLAYER, CANT_TELL, REFEREE, OPPONENT = (
+    "__not_player__", "__cant_tell__", "__referee__", "__opponent__")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--game-id", required=True)
+    ap.add_argument("--coherent", action="store_true",
+                    help="Score against the gap-split coherent cache "
+                         "(.stage4.coherent.*) — must match how the GT was sampled.")
     args = ap.parse_args()
 
     gt_csv = LABELS_ROOT / f"{args.game_id}_player_gt" / "gt.csv"
     if not gt_csv.exists():
         raise SystemExit(f"No GT labels: {gt_csv} (run player_gt_sampler + player_gt_app).")
-    s4p, s4j = S4_DIR / f"{args.game_id}.stage4.parquet", S4_DIR / f"{args.game_id}.stage4.json"
+    _suffix = ".stage4.coherent" if args.coherent else ".stage4"
+    s4p, s4j = S4_DIR / f"{args.game_id}{_suffix}.parquet", S4_DIR / f"{args.game_id}{_suffix}.json"
     if not (s4p.exists() and s4j.exists()):
-        raise SystemExit(f"No stage-4 cache for {args.game_id} (run eval_identity once).")
+        raise SystemExit(f"No {'coherent ' if args.coherent else ''}stage-4 cache for "
+                         f"{args.game_id} (run {'build_coherent_stage4' if args.coherent else 'eval_identity'}).")
 
     game = firestore_io.get_game(args.game_id)
     roster = firestore_io.get_roster()
@@ -89,15 +95,21 @@ def main() -> None:
 
     # ground-truth labels
     gt = {}  # tracklet -> true_player_id (only label == "player")
-    n_lab = {"player": 0, NOT_PLAYER: 0, CANT_TELL: 0, "": 0}
+    n_lab = {"player": 0, NOT_PLAYER: 0, OPPONENT: 0, REFEREE: 0, CANT_TELL: 0, "": 0}
+    ref_min = opp_min = 0.0  # ref / opponent-leak tracked time (share our colour → pollute)
     with open(gt_csv) as f:
         for r in csv.DictReader(f):
             lab = (r.get("label") or "").strip()
             n_lab[lab] = n_lab.get(lab, 0) + 1
+            tl = int(r["tracklet_id"])
             if lab == "player" and r.get("true_player_id"):
-                gt[int(r["tracklet_id"])] = r["true_player_id"]
+                gt[tl] = r["true_player_id"]
+            elif lab == REFEREE:
+                ref_min += tl_min.get(tl, 0.0)
+            elif lab == OPPONENT:
+                opp_min += tl_min.get(tl, 0.0)
     labeled = {int(r) for r in gt}  # tracklets with a true player
-    judgeable = labeled  # cant-tell excluded; not-player handled in precision below
+    judgeable = labeled  # cant-tell + referee excluded; not-player handled in precision below
 
     # --- per-player time-weighted precision/recall over the labeled universe ---
     pred_t = defaultdict(float)   # time pipeline assigned to X (among labeled, non-canttell)
@@ -149,6 +161,8 @@ def main() -> None:
     cap = "ON" if getattr(config, "ID_ANCHOR_CAP_ENABLED", False) else "OFF"
     print(f"\n=== Player GT eval · {args.game_id} · cap {cap} ===")
     print(f"labels: player={n_lab.get('player',0)} not-player={n_lab.get(NOT_PLAYER,0)} "
+          f"opponent={n_lab.get(OPPONENT,0)} ({opp_min:.1f}min) "
+          f"referee={n_lab.get(REFEREE,0)} ({ref_min:.1f}min) "
           f"cant-tell={n_lab.get(CANT_TELL,0)} unlabeled={n_lab.get('',0)}")
     print(f"labeled-universe tracked time: {sum(true_t.values()):.1f} min across {len(labeled)} tracklets\n")
     print(f"{'player':<22}{'true':>6}{'pred':>6}{'prec':>7}{'recall':>8}{'f1':>7}")
@@ -166,12 +180,14 @@ def main() -> None:
             print(f"  {name_of.get(tp, tp)} → {name_of.get(pp, pp)}: {m:.1f}")
 
     out = {"game_id": args.game_id, "cap": cap, "label_counts": n_lab,
+           "referee_min": round(ref_min, 1), "opponent_leak_min": round(opp_min, 1),
            "labeled_tracklets": len(labeled), "labeled_min": round(sum(true_t.values()), 1),
            "per_player": rows, "micro_precision": micro_p, "micro_recall": micro_r,
            "status_precision_vs_gt": status_prec,
            "top_confusions": [{"true": name_of.get(t, t), "pred": name_of.get(p, p),
                                "min": round(m, 1)} for (t, p), m in top_conf]}
-    out_path = LABELS_ROOT / f"{args.game_id}_player_gt" / f"eval_cap_{cap.lower()}.json"
+    _tag = "coherent_" if args.coherent else ""
+    out_path = LABELS_ROOT / f"{args.game_id}_player_gt" / f"eval_{_tag}cap_{cap.lower()}.json"
     out_path.write_text(json.dumps(out, indent=2))
     print(f"\nwritten: {out_path}")
 

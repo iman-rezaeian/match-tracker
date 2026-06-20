@@ -173,6 +173,22 @@ PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-i
 GAP_SPLIT_ENABLED = os.environ.get("GAP_SPLIT_ENABLED", "") == "1"
 SPLIT_GAP_S = float(os.environ.get("SPLIT_GAP_S", "1.0"))
 
+# --- Switch-detection split (gap_split.py switch_split_tracks) ---
+# gap-split cuts only on TIME gaps; a contiguous run can still contain a mid-run
+# identity swap (the team-blind tracker briefly latches onto a nearby body during
+# a crossing/scramble, no time gap). Switch-split cuts a run where the body
+# TELEPORTS: a single sampled step whose implied speed exceeds SWITCH_MAX_SPEED_MS
+# AND whose distance exceeds SWITCH_MIN_JUMP_M (the dual gate keeps real sprints,
+# ~1 m/step, from tripping it). Off by default. SWITCH_MAX_SPEED_MS mirrors
+# MAX_PLAUSIBLE_SPEED_MS (=9.0, defined below in the stats block).
+SWITCH_SPLIT_ENABLED = os.environ.get("SWITCH_SPLIT_ENABLED", "") == "1"
+SWITCH_MAX_SPEED_MS = float(os.environ.get("SWITCH_MAX_SPEED_MS", "9.0"))
+SWITCH_MIN_JUMP_M = float(os.environ.get("SWITCH_MIN_JUMP_M", "3.0"))
+# Secondary, conservative: also split on a sharp heading reversal (same-area
+# crossing swap). Off by default — validate teleport-split first.
+SWITCH_REVERSAL_ENABLED = os.environ.get("SWITCH_REVERSAL_ENABLED", "") == "1"
+SWITCH_REVERSAL_DEG = float(os.environ.get("SWITCH_REVERSAL_DEG", "120.0"))
+
 # --- Coach-log identity assignment (identity_assign.py) ---
 # Board (coach tactical drag) coords: x∈[0,1] left→right (coach POV),
 # y∈[0,1] 0=halfway/attacking → 1=own goal.
