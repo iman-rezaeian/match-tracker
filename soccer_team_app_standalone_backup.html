@@ -4554,8 +4554,12 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
 const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef }, ref) {
   const [state, setState] = useState('idle'); // idle | rec | uploading | done | err
   const [secs, setSecs] = useState(0);
-  const [armStop, setArmStop] = useState(false); // two-tap stop guard
+  const [paused, setPaused] = useState(false);   // mic muted for an on-field shout
+  const [pauseLeft, setPauseLeft] = useState(0);  // auto-resume countdown (s)
   const recRef = useRef(null);
+  const pauseTimerRef = useRef(null);
+  const lpRef = useRef(null);                     // long-press (= stop) tracker
+  const AUTO_RESUME_S = 5;
 
   // Recover orphaned chunks from ANY previous crashed/failed session — keys
   // carry their own gameId, so a take stranded on an already-finished game
@@ -4648,9 +4652,30 @@ const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef },
 
   const stop = () => {
     const rec = recRef.current;
+    if (rec) rec.stopping = true;
+    if (pauseTimerRef.current) { clearInterval(pauseTimerRef.current); pauseTimerRef.current = null; }
+    setPaused(false); setPauseLeft(0);
     if (!rec) return;
-    rec.stopping = true;
     try { rec.mr.stop(); } catch (e) { setState('err'); }
+  };
+
+  // Pause = MUTE the mic track (records silence) rather than pausing the
+  // recorder, so the take's timeline length is preserved and stays aligned to
+  // the game clock for video sync — the shout is replaced by ~silence, not cut.
+  const resumeMic = () => {
+    try { recRef.current?.stream?.getAudioTracks().forEach(t => { t.enabled = true; }); } catch (e) {}
+    if (pauseTimerRef.current) { clearInterval(pauseTimerRef.current); pauseTimerRef.current = null; }
+    setPaused(false); setPauseLeft(0);
+  };
+  const pauseMic = () => {
+    const rec = recRef.current;
+    if (!rec || rec.stopping) return;
+    try { rec.stream.getAudioTracks().forEach(t => { t.enabled = false; }); } catch (e) {}
+    setPaused(true); setPauseLeft(AUTO_RESUME_S);
+    if (pauseTimerRef.current) clearInterval(pauseTimerRef.current);
+    pauseTimerRef.current = setInterval(() => {
+      setPauseLeft(s => { if (s <= 1) { resumeMic(); return 0; } return s - 1; });
+    }, 1000);
   };
 
   // Recording timer.
@@ -4662,6 +4687,7 @@ const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef },
 
   // FINAL WHISTLE / leaving the game view stops + uploads automatically.
   useEffect(() => () => {
+    if (pauseTimerRef.current) clearInterval(pauseTimerRef.current);
     const rec = recRef.current;
     if (rec && !rec.stopping) { rec.stopping = true; try { rec.mr.stop(); } catch (e) {} }
   }, []);
@@ -4697,17 +4723,37 @@ const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef },
   if (typeof MediaRecorder === 'undefined') return null;
   const mmss = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   if (state === 'rec') {
+    // Tap = pause/resume (mute the mic to shout to the field; auto-resumes in
+    // AUTO_RESUME_S or on the next tap). Long-press = stop the take.
+    const press = () => {
+      lpRef.current = { fired: false };
+      lpRef.current.t = setTimeout(() => { lpRef.current.fired = true; stop(); }, 650);
+    };
+    const release = () => {
+      const lp = lpRef.current; if (!lp) return;
+      clearTimeout(lp.t); lpRef.current = null;
+      if (!lp.fired) { paused ? resumeMic() : pauseMic(); }
+    };
+    const cancel = () => { if (lpRef.current) { clearTimeout(lpRef.current.t); lpRef.current = null; } };
     return (
       <button
-        onClick={() => {
-          if (!armStop) { setArmStop(true); setTimeout(() => setArmStop(false), 2500); return; }
-          setArmStop(false); stop();
-        }}
-        className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${armStop ? 'bg-red-600 text-white border-red-400' : 'bg-red-500/15 text-red-300 border-red-600/60'}`}
-        title="Recording — tap twice to stop"
+        onPointerDown={press}
+        onPointerUp={release}
+        onPointerLeave={cancel}
+        className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${paused ? 'bg-amber-500/20 text-amber-300 border-amber-500/60' : 'bg-red-500/15 text-red-300 border-red-600/60'}`}
+        title={paused ? 'Paused (muted) — tap to resume now' : 'Recording — tap to pause for a shout · hold to stop'}
       >
-        <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-        <span>{armStop ? 'TAP TO STOP' : mmss}</span>
+        {paused ? (
+          <>
+            <span>⏸</span>
+            <span>PAUSED {pauseLeft}s · TAP</span>
+          </>
+        ) : (
+          <>
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span>{mmss}</span>
+          </>
+        )}
       </button>
     );
   }
@@ -13830,6 +13876,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
