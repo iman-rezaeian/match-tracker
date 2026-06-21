@@ -34,6 +34,13 @@ const EVENT_TYPES = {
   FOUL_ON:      { id: 'FOUL_ON',      label: 'FOUL ON US',  emoji: '🛑', tone: 'soft-green', requiresPlayer: true  },
   PEN_CONCEDED: { id: 'PEN_CONCEDED', label: 'PEN GIVEN',   emoji: '⚠️', tone: 'big-red',    requiresPlayer: true  },
   PEN_AWARDED:  { id: 'PEN_AWARDED',  label: 'PEN WON',     emoji: '🎯', tone: 'big-green',  requiresPlayer: true  },
+  // Penalty OUTCOMES (added 2026). Converted pens are stored as GOAL / OPP_GOAL
+  // carrying { penalty: true } (transparent to all score/stats/reel code that
+  // keys on type) — the picker translates the PEN_GOAL_US / PEN_GOAL_OPP button
+  // intents into those. Only the MISSES are their own stored types, and they
+  // carry NO `delta` so the scoreboard is untouched.
+  PEN_MISSED:     { id: 'PEN_MISSED',     label: 'PEN MISS',  emoji: '🚫', tone: 'soft-red', requiresPlayer: true  },
+  OPP_PEN_MISSED: { id: 'OPP_PEN_MISSED', label: 'PEN SAVED', emoji: '🧤', tone: 'blue',     requiresPlayer: false },
   // POSITION is a silent event written by the tactical board on drag-end.
   // Carries { playerId, x, y } where x,y ∈ [0,1] over a half-field portrait
   // (own goal bottom, halfway line top). Filtered out of RECENT and stats.
@@ -236,6 +243,47 @@ const TONE_CLASSES = {
   'purple':     'bg-violet-900/50 hover:bg-violet-900/70 text-violet-200 border-violet-600/60',
   'neutral':    'bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700',
 };
+
+// Live broadcast-TV penalty banner shown over the coach view the instant a
+// penalty outcome is logged (the "during the game" moment). Auto-dismissed by
+// the parent's timer; tapping it closes early. flash = { kind:'goal'|'miss',
+// side:'us'|'them', saved:bool, playerLabel, ourScore, oppScore }.
+function PenaltyFlash({ flash, onDismiss }) {
+  const us = flash.side === 'us';
+  const headline = flash.kind === 'goal'
+    ? 'PENALTY GOAL'
+    : (flash.saved ? 'PENALTY SAVED' : 'PENALTY MISSED');
+  const emoji = flash.kind === 'goal' ? '⚽' : (flash.saved ? '🧤' : '🚫');
+  // Tone: our goal / their miss = good (lime); their goal / our miss = bad (red).
+  const good = (flash.kind === 'goal' && us) || (flash.kind === 'miss' && !us);
+  const accent = good ? 'bg-lime-500 text-stone-950' : 'bg-red-500 text-white';
+  return (
+    <div
+      onClick={onDismiss}
+      className="fixed inset-x-0 top-16 z-[60] flex justify-center px-4 animate-[fadein_0.15s_ease-out]"
+    >
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/15 bg-stone-950/95 shadow-2xl">
+        <div className={`px-3 py-1.5 text-center font-display text-sm tracking-[0.3em] ${accent}`}>
+          {emoji} {headline}
+        </div>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 py-3 text-white">
+          <span className="font-display tracking-wide text-xs text-left text-lime-300">LASALLE STOMPERS</span>
+          <div className="font-display text-3xl tabular-nums text-center">
+            <span className={flash.kind === 'goal' && us ? 'text-lime-300' : ''}>{flash.ourScore}</span>
+            <span className="mx-1.5 text-stone-500">—</span>
+            <span className={flash.kind === 'goal' && !us ? 'text-red-300' : ''}>{flash.oppScore}</span>
+          </div>
+          <span className="font-display tracking-wide text-xs text-right text-red-300">OPPONENT</span>
+        </div>
+        {flash.playerLabel && (
+          <div className="px-4 pb-2.5 -mt-1 text-center text-[11px] tracking-wide text-stone-300 font-display">
+            {flash.playerLabel}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const SEED_ROSTER = [
   { id: 'p_adam',      name: 'Ben Adam',         number: '3',  position: '' },
@@ -759,6 +807,8 @@ function CoachApp() {
   const [viewingGameId, setViewingGameId] = useState(null);
   const [pendingEvent, setPendingEvent] = useState(null);
   const [toast, setToast] = useState(null);
+  // Broadcast-TV penalty flash (live coach view): { kind, side, saved, playerLabel, ourScore, oppScore }
+  const [penaltyFlash, setPenaltyFlash] = useState(null);
   const [tick, setTick] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingGameSetup, setPendingGameSetup] = useState(null);
@@ -997,6 +1047,13 @@ function CoachApp() {
     setTimeout(() => setToast(null), 1800);
   };
 
+  // Show the big TV-style penalty banner, then auto-dismiss (~2.8s).
+  const triggerPenaltyFlash = (info) => {
+    const _id = uid();
+    setPenaltyFlash({ ...info, _id });
+    setTimeout(() => setPenaltyFlash(cur => (cur && cur._id === _id) ? null : cur), 2800);
+  };
+
   const upsertPlayer = (player) => {
     if (player.id) {
       persistRoster(roster.map(p => p.id === player.id ? player : p));
@@ -1110,7 +1167,25 @@ function CoachApp() {
     }
     showToast(`${ev.emoji} ${ev.label}${playerLabel ? ` · ${playerLabel}` : ''}${suffix}`);
 
-    if (eventType === 'GOAL' && playerId) {
+    // Broadcast-TV flash for penalty outcomes (converted pens arrive as
+    // GOAL/OPP_GOAL with extras.penalty; misses are the dedicated types).
+    const isPenGoal = (eventType === 'GOAL' || eventType === 'OPP_GOAL') && extras.penalty;
+    const isPenMiss = eventType === 'PEN_MISSED' || eventType === 'OPP_PEN_MISSED';
+    if (isPenGoal || isPenMiss) {
+      const usSide = eventType === 'GOAL' || eventType === 'PEN_MISSED';
+      triggerPenaltyFlash({
+        kind: isPenGoal ? 'goal' : 'miss',
+        side: usSide ? 'us' : 'them',
+        // 'us miss' / 'them goal' = our keeper saved / their conversion etc.
+        saved: eventType === 'OPP_PEN_MISSED',
+        playerLabel,
+        ourScore: updated.ourScore,
+        oppScore: updated.oppScore,
+      });
+    }
+
+    // Penalty goals have no assist — skip the ASSIST prompt for them.
+    if (eventType === 'GOAL' && playerId && !extras.penalty) {
       setPendingEvent({ type: 'ASSIST', excludePlayerId: playerId, skippable: true });
     } else {
       setPendingEvent(null);
@@ -1667,6 +1742,8 @@ function CoachApp() {
         </div>
       )}
 
+      {penaltyFlash && <PenaltyFlash flash={penaltyFlash} onDismiss={() => setPenaltyFlash(null)} />}
+
       {view === 'home' && (
         <HomeView
           roster={roster}
@@ -1810,6 +1887,20 @@ function CoachApp() {
               setPendingEvent({ type: 'OPP_GOAL_FAULT' });
               return;
             }
+            // Penalty outcome intents (UI-only — never stored as their own type).
+            // Converted pens become a real GOAL/OPP_GOAL carrying {penalty:true}.
+            if (type === 'PEN_GOAL_US') {
+              // Taker picker follows; the penalty flag rides on pendingEvent and
+              // is threaded into logEvent at onSelectPlayer.
+              setPendingEvent({ type: 'GOAL', penalty: true });
+              return;
+            }
+            if (type === 'PEN_GOAL_OPP') {
+              // Opponent converted — log straight away, skipping the GK-fault
+              // prompt (a penalty isn't the keeper's fault).
+              logEvent(activeGame.id, 'OPP_GOAL', null, { penalty: true });
+              return;
+            }
             const ev = EVENT_TYPES[type];
             if (!ev.requiresPlayer) {
               logEvent(activeGame.id, type, null);
@@ -1871,8 +1962,9 @@ function CoachApp() {
             const t = typeof pendingEvent === 'string' ? pendingEvent : pendingEvent?.type;
             // Live flow is ruthlessly single-tap. Zone / pressure / decision modifiers are
             // applied post-game from GameDetail's TAG button, so the coach never misses
-            // the next play.
-            logEvent(activeGame.id, t, playerId);
+            // the next play. A penalty-goal pending event carries {penalty:true},
+            // threaded into the stored GOAL here.
+            logEvent(activeGame.id, t, playerId, pendingEvent?.penalty ? { penalty: true } : {});
           }}
           onCancelEvent={() => setPendingEvent(null)}
           onUndo={() => undoLastEvent(activeGame.id)}
@@ -4856,6 +4948,37 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
+            {/* Penalties — converted pens log as GOAL/OPP_GOAL + {penalty:true}
+                (so the scoreboard/stats/reel see a normal goal); the misses are
+                their own no-delta events. Outcome buttons are direct (no PEN-WON
+                two-step), per the coach. */}
+            <div className="mt-2 rounded-2xl border border-stone-600/50 bg-stone-900/40 p-2">
+              <div className="flex items-center justify-between px-1 pb-1.5">
+                <div className="flex items-center gap-1.5 text-stone-200 font-display text-xs tracking-widest">
+                  <span className="text-base leading-none">⚪</span>
+                  <span>PENALTIES</span>
+                </div>
+                <div className="text-[10px] text-stone-400 font-bold tracking-wider">SHOOTOUT / SPOT-KICK</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { intent: 'PEN_GOAL_US',    tone: 'big-green', emoji: '⚽', label: 'PEN GOAL' },
+                  { intent: 'PEN_MISSED',     tone: 'soft-red',  emoji: '🚫', label: 'PEN MISS' },
+                  { intent: 'PEN_GOAL_OPP',   tone: 'big-red',   emoji: '⚽', label: 'OPP PEN' },
+                  { intent: 'OPP_PEN_MISSED', tone: 'blue',      emoji: '🧤', label: 'PEN SAVED' },
+                ].map(b => (
+                  <button
+                    key={b.intent}
+                    onClick={() => onSelectEvent(b.intent)}
+                    className={`${TONE_CLASSES[b.tone]} border-2 rounded-2xl py-2.5 flex items-center justify-center gap-2 active:scale-[0.97] transition`}
+                  >
+                    <span className="text-2xl">{b.emoji}</span>
+                    <span className="font-sans-pro font-extrabold tracking-tight text-sm leading-none">{b.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2 mt-2">
               <button
                 onClick={() => onSelectEvent('SUB')}
@@ -6179,7 +6302,12 @@ function EventRow({ event, roster, onDelete, onTag, onSeek }) {
     >
       <div className="text-xl">{ev.emoji}</div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-bold">{ev.label}</div>
+        <div className="text-sm font-bold">
+          {ev.label}
+          {event.penalty && (
+            <span className="ml-1.5 align-middle text-[9px] font-extrabold tracking-widest px-1 py-0.5 rounded bg-stone-700 text-stone-200">PEN</span>
+          )}
+        </div>
         {isSub ? (
           <div className="text-xs text-stone-300 truncate">
             {subOnPlayer ? `${subOnPlayer.name} #${subOnPlayer.number}` : '?'} <span className="text-lime-600 font-bold">IN</span>
@@ -6202,7 +6330,7 @@ function EventRow({ event, roster, onDelete, onTag, onSeek }) {
               </div>
             )}
             {!player && ev.requiresPlayer && <div className="text-xs text-stone-400 italic">Unknown player</div>}
-            {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && <div className="text-xs text-stone-400">No player</div>}
+            {!player && !ev.requiresPlayer && event.type !== 'OPP_GOAL' && event.type !== 'OPP_PEN_MISSED' && <div className="text-xs text-stone-400">No player</div>}
             {event.type === 'OPP_GOAL' && (
               <div className="mt-0.5">
                 {event.gkFault === 'gk' && (
@@ -8155,6 +8283,11 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
       if (now - e.t > GOAL_POPUP_S) break;
       const isGoal = e.type === 'GOAL' || e.type === 'OPP_GOAL' || e.type === 'OPPONENT_GOAL' || e.type === 'GOAL_AGAINST';
       if (isGoal) return { kind: 'goal', ev: e, elapsed: now - e.t, holdEnd: GOAL_POPUP_S - 0.6 };
+      // Penalty miss/save — broadcast moment too (whichever happened most
+      // recently in the window wins, same as goals).
+      if (e.type === 'PEN_MISSED' || e.type === 'OPP_PEN_MISSED') {
+        return { kind: 'penmiss', ev: e, elapsed: now - e.t, holdEnd: GOAL_POPUP_S - 0.6 };
+      }
     }
     // 2. Otherwise most recent sub group anchored on its LAST sub
     for (let i = subGroups.length - 1; i >= 0; i--) {
@@ -8183,12 +8316,12 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
       if (isOurGoal) {
         const key = e.playerId || `?${e.jerseyNumber || ''}`;
         const entry = us.get(key) || { num: e.jerseyNumber, first: e.playerFirstName || 'Goal', goals: [] };
-        entry.goals.push({ min: minStr, aFirst: e.assistFirstName || null, aNum: e.assistJerseyNumber });
+        entry.goals.push({ min: minStr, aFirst: e.assistFirstName || null, aNum: e.assistJerseyNumber, pen: !!e.penalty });
         us.set(key, entry);
       } else if (isOppGoal) {
         // Opponent: we don't know scorer name — just collect minutes under "OPP".
         const entry = them.get('opp') || { num: null, first: null, goals: [] };
-        entry.goals.push({ min: minStr });
+        entry.goals.push({ min: minStr, pen: !!e.penalty });
         them.set('opp', entry);
       }
     }
@@ -8360,8 +8493,20 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
             oppScore={oppScore}
             scorers={goalScorers}
             scoringSide={activePopup.ev.team === 'them' ? 'them' : 'us'}
+            penalty={!!activePopup.ev.penalty}
             assistFirst={activePopup.ev.assistFirstName || null}
             assistNum={activePopup.ev.assistJerseyNumber ?? null}
+          />
+        )}
+        {activePopup && activePopup.kind === 'penmiss' && (
+          <BroadcastPenaltyCard
+            elapsed={activePopup.elapsed}
+            holdEnd={activePopup.holdEnd}
+            homeName={homeName}
+            awayName={awayName}
+            ourScore={ourScore}
+            oppScore={oppScore}
+            ev={activePopup.ev}
           />
         )}
         {activePopup && activePopup.kind === 'sub' && (
@@ -8385,7 +8530,7 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
  *
  * Holds ~7s, fades out.
  */
-function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide, assistFirst, assistNum }) {
+function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, awayColor, ourScore, oppScore, scorers, scoringSide, penalty, assistFirst, assistNum }) {
   let opacity = 1;
   let scale = 1;
   if (elapsed < 0.4) {
@@ -8404,6 +8549,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
         {goals.map((g, i) => (
           <span key={i} className="tabular-nums text-stone-300">
             {g.min}
+            {g.pen && <span className="text-amber-300/90 not-italic"> (P)</span>}
             {/* assist only known for our goals */}
             {g.aFirst && (
               <span className="text-lime-300/80 not-italic"> 🅰{g.aFirst.toUpperCase()}{g.aNum != null ? ` #${g.aNum}` : ''}</span>
@@ -8445,7 +8591,7 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
       >
         {/* Top banner */}
         <div className="px-3 py-1 text-center text-[9px] tracking-[0.3em]" style={{ background: scoringSide === 'us' ? homeColor : awayColor, color: readableTextOn(scoringSide === 'us' ? homeColor : awayColor) }}>
-          ⚽ GOAL
+          ⚽ {penalty ? 'PENALTY GOAL' : 'GOAL'}
         </div>
 
         {/* Score line */}
@@ -8482,6 +8628,53 @@ function BroadcastGoalCard({ elapsed, holdEnd, homeName, awayName, homeColor, aw
               {scorers.them.map(s => renderLine(s, 'them'))}
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---- TV-style "PENALTY MISSED / SAVED" card -------------------------
+ * Mirrors BroadcastGoalCard's fade/scale, fired for PEN_MISSED (our taker
+ * missed) and OPP_PEN_MISSED (opponent missed / our keeper saved). Score is
+ * unchanged — this is purely the broadcast moment.
+ */
+function BroadcastPenaltyCard({ elapsed, holdEnd, homeName, awayName, ourScore, oppScore, ev }) {
+  let opacity = 1;
+  let scale = 1;
+  if (elapsed < 0.4) {
+    opacity = elapsed / 0.4;
+    scale = 0.92 + 0.08 * opacity;
+  } else if (elapsed > holdEnd) {
+    opacity = 1 - Math.min(1, (elapsed - holdEnd) / 0.6);
+  }
+  const saved = ev.type === 'OPP_PEN_MISSED';   // opponent missed / we saved
+  const headline = saved ? 'PENALTY SAVED' : 'PENALTY MISSED';
+  const emoji = saved ? '🧤' : '🚫';
+  const taker = (!saved && ev.playerFirstName)
+    ? `#${ev.jerseyNumber ?? '?'} ${ev.playerFirstName.toUpperCase()}`
+    : (saved ? null : 'OPPONENT');
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none select-none flex items-end justify-center pb-[7%] sm:pb-[16%]"
+      style={{ opacity, transition: 'opacity 80ms linear' }}
+    >
+      <div
+        className="rounded-lg border border-black/60 shadow-2xl overflow-hidden"
+        style={{ background: 'rgba(0,0,0,0.82)', backdropFilter: 'blur(8px)', width: 'min(78vw, 440px)', transform: `scale(${scale})`, transformOrigin: 'center bottom', transition: 'transform 80ms linear' }}
+      >
+        <div className={`px-3 py-1 text-center text-[9px] tracking-[0.3em] font-bold ${saved ? 'bg-sky-500 text-stone-950' : 'bg-red-500 text-white'}`}>
+          {emoji} {headline}
+        </div>
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-2 text-white">
+          <span className="font-display text-sm sm:text-base tracking-wide truncate">{homeName}</span>
+          <div className="font-display text-xl sm:text-2xl tabular-nums text-center px-1">
+            {ourScore}<span className="mx-1.5 text-stone-500">—</span>{oppScore}
+          </div>
+          <span className="font-display text-sm sm:text-base tracking-wide text-right truncate">{awayName}</span>
+        </div>
+        {taker && (
+          <div className="px-3 pb-2 -mt-1 text-center text-[11px] tracking-wide text-stone-300 font-display">{taker}</div>
         )}
       </div>
     </div>
@@ -8929,8 +9122,8 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
  * about the opponent: a SAVE/BLOCK/CLEAR means they were attacking; a
  * TURNOVER hands them the ball. Pure client-side from game.events.
  */
-const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDED: 1 };
-const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1 };
+const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDED: 1, OPP_PEN_MISSED: 2 };
+const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
 function MomentumChart({ game }) {
