@@ -82,6 +82,7 @@ def _zone_center(zone, flip_d: bool, flip_l: bool,
 
 def _event_votes(
     match_count: dict[int, dict[str, float]],
+    anchor_count: dict[int, dict[str, dict[str, float]]],
     pdf: pd.DataFrame,
     events,
     period: int,
@@ -160,6 +161,8 @@ def _event_votes(
                 continue
             match_count.setdefault(tl, {})
             match_count[tl][pid] = match_count[tl].get(pid, 0.0) + config.ASSIGN_W_VOTES * sc
+            _ac = anchor_count.setdefault(tl, {}).setdefault(pid, {})
+            _ac["event"] = _ac.get("event", 0.0) + config.ASSIGN_W_VOTES * sc
             n += 1
     return n
 
@@ -286,6 +289,7 @@ def assign_identities_v2(
     overrides: Optional[dict] = None,
     squad: Optional[list[str]] = None,
     resolved_flips_out: Optional[dict] = None,
+    orientation_ambiguous_out: Optional[list] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
     video-second spans per period (half_windows).
@@ -410,6 +414,12 @@ def assign_identities_v2(
 
     # match_count[tracklet][player] accumulated over windows
     match_count: dict[int, dict[str, float]] = {}
+    # Per-signal provenance parallel to match_count: anchor_count[tl][p] =
+    # {"board": w, "event": w, "sub": w}. Lets the calibration cap tell a
+    # template-only (board) match from one anchored by individuating evidence
+    # (event/sub). Never read back into ranking — match_count is the sole input
+    # to confidence, unchanged.
+    anchor_count: dict[int, dict[str, dict[str, float]]] = {}
 
     if has_xy:
         df = tracks_df[tracks_df["track_id"].isin(our_tracks)].copy()
@@ -431,8 +441,10 @@ def assign_identities_v2(
             kf_depth = _kickoff_depth_flip(tracks_df, team_of_track, pstart, field_length_m)
             depth_opts = (kf_depth,) if kf_depth is not None else (False, True)
 
-            # Try board orientations; keep the cheapest total matched cost.
+            # Try board orientations; keep the cheapest total matched cost
+            # (and the runner-up, for the lateral-mirror ambiguity guardrail).
             best = None
+            second = None
             if not board:
                 win_edges = ()  # no template → skip Hungarian, keep event votes
             for flip_d in (depth_opts if board else ()):
@@ -480,7 +492,10 @@ def assign_identities_v2(
                             total_cost += float(C[a, b])
                         per_window.append((wmid, matched))
                     if best is None or total_cost < best[0]:
+                        second = best
                         best = (total_cost, flip_d, flip_l, per_window)
+                    elif second is None or total_cost < second[0]:
+                        second = (total_cost, flip_d, flip_l, per_window)
 
             fd = fl = None
             if best is not None:
@@ -488,16 +503,33 @@ def assign_identities_v2(
                 log.info("  identity P%d: board orientation flip_depth=%s flip_lateral=%s "
                          "(%d windows%s)", pi, fd, fl, len(per_window),
                          ", depth from kickoff" if kf_depth is not None else " [depth searched]")
-            if resolved_flips_out is not None:
-                resolved_flips_out[pi] = (fd, fl)
+                # Board-template window matches vote for identity. Accumulate
+                # ALWAYS (not only when resolved_flips_out is wanted) — the eval
+                # harness omits that out-param and was silently running
+                # board-less. per_window is in scope only when best is set.
                 for _wmid, matched in per_window:
                     for tl, p in matched:
                         match_count.setdefault(tl, {})[p] = match_count.setdefault(tl, {}).get(p, 0.0) + 1.0
+                        _ac = anchor_count.setdefault(tl, {}).setdefault(p, {})
+                        _ac["board"] = _ac.get("board", 0.0) + 1.0
+                # Lateral-mirror guardrail: if the best and runner-up orientation
+                # costs are near-tied, the search may have flipped the whole team
+                # left↔right — every player then mislabels for the half.
+                if (config.ID_ORIENT_AMBIG_REL_MARGIN > 0.0 and second is not None
+                        and orientation_ambiguous_out is not None):
+                    rel_margin = (second[0] - best[0]) / max(abs(best[0]), 1e-9)
+                    if rel_margin < config.ID_ORIENT_AMBIG_REL_MARGIN:
+                        log.warning("  identity P%d: LATERAL orientation ambiguous "
+                                    "(rel margin %.3f < %.3f) — team may be mirrored",
+                                    pi, rel_margin, config.ID_ORIENT_AMBIG_REL_MARGIN)
+                        orientation_ambiguous_out.append(pi)
+            if resolved_flips_out is not None:
+                resolved_flips_out[pi] = (fd, fl)
 
             # --- coach ACTION-EVENT votes (sharper anchors than the board;
             # board-independent except for the optional zone term) ---------
             n_ev = _event_votes(
-                match_count, pdf, events, pi, pstart, pend,
+                match_count, anchor_count, pdf, events, pi, pstart, pend,
                 period_clock_to_video_time, valid_ids, keeper_tracklets,
                 _is_gk_at, fd, fl, field_length_m, field_width_m,
             )
@@ -531,12 +563,16 @@ def assign_identities_v2(
                     if w0 <= ft <= w1 and min(fy, field_width_m - fy) <= config.ASSIGN_SUB_TOUCHLINE_M:
                         match_count.setdefault(tl, {})
                         match_count[tl][on_pid] = match_count[tl].get(on_pid, 0.0) + config.ASSIGN_SUB_W
+                        _ac = anchor_count.setdefault(tl, {}).setdefault(on_pid, {})
+                        _ac["sub"] = _ac.get("sub", 0.0) + config.ASSIGN_SUB_W
                         n_sub += 1
                 if off_pid and off_pid in valid_ids:
                     lt, ly = float(tl_last.loc[tl, "time_s"]), float(tl_last.loc[tl, "y_m"])
                     if w0 <= lt <= w1 and min(ly, field_width_m - ly) <= config.ASSIGN_SUB_TOUCHLINE_M:
                         match_count.setdefault(tl, {})
                         match_count[tl][off_pid] = match_count[tl].get(off_pid, 0.0) + config.ASSIGN_SUB_W
+                        _ac = anchor_count.setdefault(tl, {}).setdefault(off_pid, {})
+                        _ac["sub"] = _ac.get("sub", 0.0) + config.ASSIGN_SUB_W
                         n_sub += 1
         if n_sub:
             log.info("  identity: SUB anchors added %d (tracklet, player) votes", n_sub)
@@ -595,9 +631,20 @@ def assign_identities_v2(
             conf = float(min(1.0, evidence * (0.6 * share + 0.4 * margin)))
         else:
             conf = 0.0
+        ranked = sorted(votes, key=votes.get, reverse=True)
+        # conf_for_sort orders the greedy budget pass. When the cap is on, an
+        # un-anchored (template-only) top candidate sorts by its CAPPED value, so
+        # anchored tracklets win each player's minute budget first. Equals conf
+        # when the flag is off → identical ordering (no-op default).
+        conf_for_sort = conf
+        if config.ID_ANCHOR_CAP_ENABLED and ranked:
+            _prov = anchor_count.get(tl, {}).get(ranked[0], {})
+            if (_prov.get("event", 0.0) + _prov.get("sub", 0.0)) < config.ID_ANCHOR_MIN_W:
+                conf_for_sort = min(conf, config.ID_TEMPLATE_ONLY_CONF_CAP)
         tl_rank[tl] = {
-            "ranked": sorted(votes, key=votes.get, reverse=True),
+            "ranked": ranked,
             "conf": conf,
+            "conf_for_sort": conf_for_sort,
             "minutes": _tl_minutes(members),
             "span": span,
         }
@@ -638,7 +685,7 @@ def assign_identities_v2(
     # 2. Everyone else by descending confidence, respecting per-player budgets.
     remaining = [tl for tl in tracklet_members
                  if tl not in keeper_tracklets and tl not in forced]
-    for tl in sorted(remaining, key=lambda t: tl_rank[t]["conf"], reverse=True):
+    for tl in sorted(remaining, key=lambda t: tl_rank[t]["conf_for_sort"], reverse=True):
         info = tl_rank[tl]
         conf, tl_min = info["conf"], info["minutes"]
         chosen = None
@@ -655,20 +702,31 @@ def assign_identities_v2(
             tracklet_assign[tl] = (None, conf, "unknown")  # over budget / no candidate → drop
             continue
         assigned_min[chosen] = assigned_min.get(chosen, 0.0) + tl_min
+        # Calibration cap: a tracklet whose CHOSEN player is supported only by the
+        # board-formation template (no individuating event/SUB anchor) can't read
+        # as confident — the board identifies zone/role, not the person. GK
+        # (conf 0.95) and coach-override (conf 1.0) tracklets use separate code
+        # paths above and never reach here, so they're unaffected. No-op when the
+        # flag is off (eff_conf == conf).
+        eff_conf = conf
+        if config.ID_ANCHOR_CAP_ENABLED:
+            _prov = anchor_count.get(tl, {}).get(chosen, {})
+            if (_prov.get("event", 0.0) + _prov.get("sub", 0.0)) < config.ID_ANCHOR_MIN_W:
+                eff_conf = min(conf, config.ID_TEMPLATE_ONLY_CONF_CAP)
         # RECALL: assign the best-guess player down to a low floor (not just the
         # REVIEW tier), so a player's distance/heatmap aren't starved when most of
         # their play is low-confidence. The minute budget still caps over-assignment,
         # and the confidence stays honest (shown low). Only truly weak (< STATS_MIN)
         # tracklets are dropped. 'lowconf' tracklets surface in FIX IDS "All segments".
-        if conf >= config.ID_CONFIDENCE_AUTO:
+        if eff_conf >= config.ID_CONFIDENCE_AUTO:
             status = "auto"
-        elif conf >= config.ID_CONFIDENCE_REVIEW:
+        elif eff_conf >= config.ID_CONFIDENCE_REVIEW:
             status = "review"
-        elif conf >= config.ID_CONFIDENCE_STATS_MIN:
+        elif eff_conf >= config.ID_CONFIDENCE_STATS_MIN:
             status = "lowconf"
         else:
             status = "unknown"
-        tracklet_assign[tl] = (chosen if status != "unknown" else None, conf, status)
+        tracklet_assign[tl] = (chosen if status != "unknown" else None, eff_conf, status)
 
     # --- emit per original track ---
     out: list[IdentityAssignment] = []
