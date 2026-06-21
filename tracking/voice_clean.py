@@ -166,11 +166,38 @@ SYSTEM = (
 )
 
 
+def _llm_messages(payload: dict) -> str:
+    """POST to the Anthropic Messages API, return the first text block.
+
+    Uses the official `anthropic` SDK when it's importable; otherwise falls back
+    to raw HTTPS via `requests` (already installed). The SDK cannot be pip-
+    installed behind the corp VPN — every wheel 403s on download — so the raw
+    path is the working route there. Both need ANTHROPIC_API_KEY +
+    api.anthropic.com reachable.
+    """
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        resp = client.messages.create(**payload)
+        return next((b.text for b in resp.content if b.type == "text"), "{}")
+    except ImportError:
+        import requests
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise SystemExit("ANTHROPIC_API_KEY not set (needed for the classifier).")
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json=payload, timeout=120,
+        )
+        r.raise_for_status()
+        blocks = r.json().get("content", [])
+        return next((b["text"] for b in blocks if b.get("type") == "text"), "{}")
+
+
 def classify(segments: list[dict], model: str = MODEL, chunk: int = 300) -> list[str]:
     """Label each segment narration|instruction|other via claude-opus-4-8."""
-    import anthropic  # imported lazily so loudness-only runs without the SDK
-
-    client = anthropic.Anthropic()
     labels: dict[int, str] = {}
     for start in range(0, len(segments), chunk):
         batch = segments[start:start + chunk]
@@ -179,15 +206,14 @@ def classify(segments: list[dict], model: str = MODEL, chunk: int = 300) -> list
              "text": (s.get("text") or "").strip()}
             for k, s in enumerate(batch)
         ]
-        resp = client.messages.create(
-            model=model,
-            max_tokens=16000,
-            system=SYSTEM,
-            messages=[{"role": "user", "content":
-                       "Label these segments:\n" + json.dumps(lines, ensure_ascii=False)}],
-            output_config={"format": {"type": "json_schema", "schema": CLASSIFY_SCHEMA}},
-        )
-        text = next((b.text for b in resp.content if b.type == "text"), "{}")
+        text = _llm_messages({
+            "model": model,
+            "max_tokens": 16000,
+            "system": SYSTEM,
+            "messages": [{"role": "user", "content":
+                          "Label these segments:\n" + json.dumps(lines, ensure_ascii=False)}],
+            "output_config": {"format": {"type": "json_schema", "schema": CLASSIFY_SCHEMA}},
+        })
         for row in json.loads(text).get("labels", []):
             labels[int(row["i"])] = row["label"]
     # default anything the model skipped to narration (safer to keep than drop)
