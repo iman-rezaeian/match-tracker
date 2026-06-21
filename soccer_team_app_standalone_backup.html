@@ -998,6 +998,10 @@ function CoachApp() {
   const [toast, setToast] = useState(null);
   // Broadcast-TV penalty flash (live coach view): { kind, side, saved, playerLabel, ourScore, oppScore }
   const [penaltyFlash, setPenaltyFlash] = useState(null);
+  // Clock-driven voice auto-recording: imperative handle to the live recorder,
+  // plus a stash for the mic stream pre-acquired inside the kickoff tap (iOS).
+  const voiceRef = useRef(null);
+  const pendingMicRef = useRef(null);
   const [tick, setTick] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [pendingGameSetup, setPendingGameSetup] = useState(null);
@@ -1284,7 +1288,7 @@ function CoachApp() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     // Seed POSITION events from the kickoff tactical board so the in-game
@@ -1334,6 +1338,7 @@ function CoachApp() {
       gkPlayerId: gkPlayerId || null,
       gkChanges: [],
       pausePeriods: [],
+      autoRecord: !!autoRecord,
       ...(liveInput ? { liveInput } : {}),
       ...(youtubeVideoId ? { youtubeVideoId } : {}),
     };
@@ -2046,10 +2051,10 @@ function CoachApp() {
           initial={pendingGameSetup}
           opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
-          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor) => {
+          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
             // a scheduled-game start, so it survives the GameSetup detour.
-            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor });
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -2079,7 +2084,14 @@ function CoachApp() {
           onSaveTeamLiveInput={persistTeamLiveInput}
           onBack={() => { setView('squad'); }}
           onStart={(lineup, gkPlayerId, liveInput, youtubeVideoId, kickoffPositions) => {
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions);
+            // Kickoff is a user gesture — if auto-record is on, acquire the mic
+            // HERE (iOS won't grant it once we're out of the tap) and stash the
+            // promise for the recorder to adopt when it mounts.
+            if (pendingGameSetup.autoRecord && navigator.mediaDevices?.getUserMedia) {
+              try { pendingMicRef.current = navigator.mediaDevices.getUserMedia({ audio: true }); }
+              catch (e) { pendingMicRef.current = null; }
+            }
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord);
             setPendingGameSetup(null);
           }}
         />
@@ -2184,14 +2196,32 @@ function CoachApp() {
           }}
           onCancelEvent={() => setPendingEvent(null)}
           onUndo={() => undoLastEvent(activeGame.id)}
-          onPauseHalfTime={() => pauseHalfTime(activeGame.id)}
-          onStartSecondHalf={() => startSecondHalf(activeGame.id)}
-          onResumeFirstHalf={() => resumeFirstHalf(activeGame.id)}
+          onPauseHalfTime={() => {
+            // Half time → stop + upload the 1st-half voice segment.
+            if (activeGame.autoRecord) voiceRef.current?.stopSegment();
+            pauseHalfTime(activeGame.id);
+          }}
+          onStartSecondHalf={() => {
+            startSecondHalf(activeGame.id);
+            // This is a button tap → getUserMedia stays in-gesture for iOS.
+            if (activeGame.autoRecord) voiceRef.current?.startSegment();
+          }}
+          onResumeFirstHalf={() => {
+            resumeFirstHalf(activeGame.id);
+            if (activeGame.autoRecord) voiceRef.current?.startSegment();
+          }}
           onPauseClock={() => pauseClock(activeGame.id)}
           onResumeClock={() => resumeClock(activeGame.id)}
-          onEnd={() => askConfirm('End game and save final score?', () => endGame(activeGame.id))}
+          onEnd={() => askConfirm('End game and save final score?', () => {
+            // Final whistle → stop + upload the current segment (the unmount
+            // effect also finalizes if navigation beats this).
+            if (activeGame.autoRecord) voiceRef.current?.stopSegment();
+            endGame(activeGame.id);
+          })}
           onBack={() => askConfirm('Leave this game? The clock keeps running — you can resume from Home.', () => setView('home'), { yesLabel: 'LEAVE' })}
           onBulkReplaceLineup={(ids) => bulkReplaceLineup(activeGame.id, ids)}
+          voiceRef={voiceRef}
+          pendingMicRef={pendingMicRef}
           tick={tick}
         />
       )}
@@ -3025,6 +3055,12 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
   const [halfLengthMin, setHalfLengthMin] = useState(initial?.halfLengthMin ?? 25);
   const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
   const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
+  // Auto-record narration with the game clock. Sticky across games via
+  // localStorage; defaults ON the first time.
+  const [autoRecord, setAutoRecord] = useState(() => {
+    try { const v = localStorage.getItem('autoRecordVoice'); return v === null ? true : v === '1'; }
+    catch (e) { return true; }
+  });
   const isLightColor = (hex) => {
     try {
       const h = (hex || '').replace('#', '');
@@ -3185,10 +3221,32 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
           </div>
         </Field>
 
-
+        {/* Auto-record narration: starts at kickoff, pauses at half time,
+            resumes at the 2nd half, saves at the final whistle. */}
+        <button
+          type="button"
+          onClick={() => setAutoRecord(v => {
+            const nv = !v;
+            try { localStorage.setItem('autoRecordVoice', nv ? '1' : '0'); } catch (e) {}
+            return nv;
+          })}
+          className={`w-full mt-1 flex items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 text-left active:scale-[0.99] transition ${autoRecord ? 'border-lime-600 bg-lime-950/30' : 'border-stone-700 bg-stone-900'}`}
+        >
+          <div className="min-w-0">
+            <div className="font-display text-sm tracking-wide text-stone-100 flex items-center gap-1.5">
+              <span>🎙</span><span>AUTO-RECORD NARRATION</span>
+            </div>
+            <div className="text-[11px] text-stone-400 leading-tight mt-0.5">
+              Starts at kickoff · pauses at half time · saves at full time
+            </div>
+          </div>
+          <span className={`shrink-0 w-11 h-6 rounded-full border-2 relative transition ${autoRecord ? 'bg-lime-500 border-lime-400' : 'bg-stone-700 border-stone-600'}`}>
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${autoRecord ? 'left-[1.4rem]' : 'left-0.5'}`} />
+          </span>
+        </button>
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor, autoRecord)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -4493,7 +4551,7 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
   return publicUrl;
 }
 
-function VoiceRecorder({ game }) {
+const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef }, ref) {
   const [state, setState] = useState('idle'); // idle | rec | uploading | done | err
   const [secs, setSecs] = useState(0);
   const [armStop, setArmStop] = useState(false); // two-tap stop guard
@@ -4528,11 +4586,14 @@ function VoiceRecorder({ game }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.id]);
 
-  const start = async () => {
+  const start = async (streamOverride) => {
     try {
       const mime = _voiceMime();
       if (mime == null) { setState('err'); return; }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // streamOverride = a MediaStream pre-acquired inside a user gesture
+      // (the kickoff tap) — required on iOS, which won't grant getUserMedia
+      // outside a gesture. Falls back to acquiring our own here.
+      const stream = streamOverride || await navigator.mediaDevices.getUserMedia({ audio: true });
       const startedAt = Date.now();
       const rec = { stream, startedAt, chunks: [], idx: 0, mime, wakeLock: null, stopping: false };
       recRef.current = rec;
@@ -4605,6 +4666,34 @@ function VoiceRecorder({ game }) {
     if (rec && !rec.stopping) { rec.stopping = true; try { rec.mr.stop(); } catch (e) {} }
   }, []);
 
+  // Imperative control for clock-driven auto-recording — the parent calls these
+  // from the half-time / 2nd-half / resume / full-time handlers. startSegment
+  // may carry a pre-acquired stream (kickoff); otherwise it acquires its own
+  // (those calls happen inside a button tap, so iOS allows it).
+  useImperativeHandle(ref, () => ({
+    startSegment: (stream) => { if (state !== 'rec') start(stream); },
+    stopSegment: () => { if (state === 'rec') stop(); },
+    isRecording: () => state === 'rec',
+  }), [state]);
+
+  // Kickoff auto-start: adopt the mic stream pre-acquired during the START GAME
+  // tap (the iOS gesture). Runs once on mount when auto-record is on; if no
+  // stream was stashed it tries a plain getUserMedia (may need a manual tap on
+  // iOS — the documented fallback).
+  useEffect(() => {
+    if (!game.autoRecord) return;
+    let cancelled = false;
+    (async () => {
+      let stream;
+      try { stream = pendingMicRef && pendingMicRef.current ? await pendingMicRef.current : undefined; }
+      catch (e) { stream = undefined; }
+      if (pendingMicRef) pendingMicRef.current = null;
+      if (!cancelled) start(stream);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (typeof MediaRecorder === 'undefined') return null;
   const mmss = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   if (state === 'rec') {
@@ -4622,19 +4711,21 @@ function VoiceRecorder({ game }) {
       </button>
     );
   }
+  const canStart = state === 'idle' || state === 'err' || state === 'done';
   return (
     <button
-      onClick={state === 'idle' || state === 'err' || state === 'done' ? start : undefined}
+      onClick={canStart ? () => start() : undefined}
       className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${state === 'err' ? 'bg-red-500/15 text-red-400 border-red-700' : state === 'uploading' ? 'bg-stone-800 text-stone-400 border-stone-700' : 'bg-stone-900 text-stone-300 border-stone-800'}`}
-      title="Record sideline narration (synced to the game clock)"
+      title={game.autoRecord ? 'Auto-recording with the game clock — tap to start manually' : 'Record sideline narration (synced to the game clock)'}
     >
       <span>🎙</span>
       <span>{state === 'uploading' ? 'SAVING…' : state === 'done' ? 'REC ✓' : state === 'err' ? 'REC ⚠' : 'REC'}</span>
+      {game.autoRecord && <span className="text-[8px] font-extrabold tracking-widest text-lime-400/80 border border-lime-600/50 rounded px-1 leading-none">AUTO</span>}
     </button>
   );
-}
+});
 
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, voiceRef, pendingMicRef, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -4718,7 +4809,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             {/* Recorder lives in the scorebug (always-mounted header) so it
                 survives every event picker — same reason it's not in the
                 control row below. */}
-            <VoiceRecorder game={game} />
+            <VoiceRecorder ref={voiceRef} game={game} pendingMicRef={pendingMicRef} />
           </div>
           <div className="text-center">
             <div className="text-[10px] font-bold tracking-widest text-red-400 truncate">{game.opponent || 'OPPONENT'}</div>
@@ -13739,6 +13830,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
