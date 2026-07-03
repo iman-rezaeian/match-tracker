@@ -1,0 +1,57 @@
+{
+  "label": "game2_amherstburg",
+  "model": "claude-haiku-4-5",
+  "n_narration": 271,
+  "events": [
+    {
+      "videoTimeS": 147.0,
+      "type": "SAVE",
+      "player_id": null,
+      "player_first_name": "Liam",
+      "ambiguous_name": true,
+      "confidence": 0.85,
+      "quote": "save by Liam",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 166.0,
+      "type": "SHOT_OFF",
+      "player_id": null,
+      "player_first_name": "Liam",
+      "ambiguous_name": true,
+      "confidence": 0.7,
+      "quote": "A good shot by Golland. He went off.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 267.0,
+      "type": "GOAL",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "Goal!",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 273.0,
+      "type": "PEN_AWARDED",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.75,
+      "quote": "Padalti!",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 2881.0,
+      "type": "OFFSIDE",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "What's your offside, Call it!",
+      "source": "voice_draft"
+    }
+  ]
+}
