@@ -457,6 +457,18 @@ def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> No
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 
 
+def write_voice_drafts(game_id: str, drafts: list[dict]) -> None:
+    """Write voice-extracted draft events to the game doc's `voiceDrafts` field.
+
+    The PWA confirm queue reads these; the coach one-click accepts a draft into
+    `game.events` (source='voice-confirmed') or dismisses it. Additive and
+    reversible — a new sibling field to `voiceSegments`; does NOT touch
+    `events`/scores/stats. Overwrites the field (re-running extraction replaces
+    the draft set rather than appending duplicates)."""
+    _team_doc().collection("games").document(game_id).set(
+        {"voiceDrafts": drafts}, merge=True)
+
+
 def set_public_reels(game_id: str, fields: dict[str, Any]) -> None:
     """Merge public-safe broadcast-reel fields onto the game doc.
 

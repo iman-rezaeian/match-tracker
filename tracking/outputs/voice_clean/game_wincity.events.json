@@ -1,0 +1,197 @@
+{
+  "label": "game_wincity",
+  "model": "claude-haiku-4-5",
+  "n_narration": 195,
+  "events": [
+    {
+      "videoTimeS": 145.0,
+      "type": "FOUL_ON",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "Oh, got a foul.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 171.0,
+      "type": "BALL_WIN",
+      "player_id": "p_rezaeian",
+      "player_first_name": "Arian",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Arian blocks and clears the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 189.0,
+      "type": "CORNER",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Kicked it out in the corner.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 192.0,
+      "type": "BALL_WIN",
+      "player_id": "p_yaacoub",
+      "player_first_name": "Khalid",
+      "ambiguous_name": false,
+      "confidence": 0.75,
+      "quote": "A good ball win for Khaled.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 225.0,
+      "type": "BALL_WIN",
+      "player_id": null,
+      "player_first_name": "Liam",
+      "ambiguous_name": true,
+      "confidence": 0.8,
+      "quote": "Liam DiVolla won the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 249.0,
+      "type": "CORNER",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Liam DiVolla kicked the ball out, corner kicked for the team.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 300.0,
+      "type": "FOUL_BY",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "There is a foul in the field.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 350.0,
+      "type": "BALL_WIN",
+      "player_id": null,
+      "player_first_name": "Ben",
+      "ambiguous_name": true,
+      "confidence": 0.8,
+      "quote": "Ben on, won the ball to Maverick.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 360.0,
+      "type": "SHOT_ON",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.7,
+      "quote": "Nice shot by Call-Aid.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 371.0,
+      "type": "ASSIST",
+      "player_id": "p_cardoso",
+      "player_first_name": "Maverick",
+      "ambiguous_name": false,
+      "confidence": 0.75,
+      "quote": "Nice pass by Maverick.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 386.0,
+      "type": "SHOT_ON",
+      "player_id": "p_perrotta",
+      "player_first_name": "Luca",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Nice shot by Luca.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 444.0,
+      "type": "CORNER",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.7,
+      "quote": "Corner kick on the net by Ben Phan.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 641.0,
+      "type": "SAVE",
+      "player_id": null,
+      "player_first_name": "Liam",
+      "ambiguous_name": true,
+      "confidence": 0.9,
+      "quote": "Good job, good save by Liam, Garland, coming out.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 687.0,
+      "type": "BALL_WIN",
+      "player_id": "p_hassoun",
+      "player_first_name": "Issa",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Issa winning the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 710.0,
+      "type": "FOUL_ON",
+      "player_id": "p_hassoun",
+      "player_first_name": "Issa",
+      "ambiguous_name": false,
+      "confidence": 0.7,
+      "quote": "Fa\u00fclon on Issa.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 720.0,
+      "type": "BALL_WIN",
+      "player_id": "p_kerr",
+      "player_first_name": "Alexander",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Now, Rick, winning the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 974.0,
+      "type": "SUB",
+      "player_id": "p_bowser",
+      "player_first_name": "Nolan",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Nolan came out for Ben Adams.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 1032.0,
+      "type": "CORNER",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "The corner kick for the other team.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 1216.0,
+      "type": "BALL_WIN",
+      "player_id": "p_sharma",
+      "player_first_name": "Vince",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Nice win the ball by Vince.",
+      "source": "voice_draft"
+    }
+  ]
+}

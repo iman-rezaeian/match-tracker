@@ -1505,6 +1505,44 @@ function CoachApp() {
     showToast(`${ev.emoji} ${ev.label} confirmed from 🔖`);
   };
 
+  // Confirm-queue (voice): the post-game narration pipeline writes extracted
+  // DRAFT events to the game doc's `voiceDrafts` array (loaded onto the game
+  // object alongside events). Confirming one APPENDS a real event (source=
+  // 'voice-confirmed'; mirrors confirmBookmark but appends since a draft has no
+  // live bookmark to replace) AND removes it from voiceDrafts — both in ONE
+  // persistGames write (which writes the whole game doc), so there's no race
+  // with a separate Firestore update. Dismiss just removes the draft.
+  const confirmVoiceDraft = (gameId, draft, playerId = null) => {
+    const game = games.find(g => g.id === gameId);
+    const ev = draft && EVENT_TYPES[draft.type];
+    if (!game || !ev) return;
+    const { type, period, elapsed, quote } = draft;
+    const halfMs = (game.halfLengthMin || 25) * 60000;
+    const at = (game.startedAt || 0) + (period === 2 ? halfMs : 0) + (elapsed || 0) * 1000;
+    const confirmed = {
+      id: `v_${period}_${elapsed}_${type}_${playerId || 'na'}`,
+      type, playerId: playerId || null, period, elapsed, at,
+      source: 'voice-confirmed',
+      ...(quote ? { voiceQuote: quote } : {}),
+    };
+    const updated = {
+      ...game,
+      events: [...game.events, confirmed],
+      voiceDrafts: (game.voiceDrafts || []).filter(d => d.id !== draft.id),
+      ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
+      oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
+    };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+    showToast(`${ev.emoji} ${ev.label} confirmed from 🎙`);
+  };
+
+  const dismissVoiceDraft = (gameId, draftId) => {
+    const game = games.find(g => g.id === gameId);
+    if (!game) return;
+    const updated = { ...game, voiceDrafts: (game.voiceDrafts || []).filter(d => d.id !== draftId) };
+    persistGames(games.map(g => g.id === gameId ? updated : g));
+  };
+
   const endGame = (gameId) => {
     updateGame(gameId, g => {
       const now = Date.now();
@@ -2336,6 +2374,8 @@ function CoachApp() {
           onUpdateEvent={updateEvent}
           onDeleteEvent={deleteEvent}
           onConfirmBookmark={confirmBookmark}
+          onConfirmVoiceDraft={confirmVoiceDraft}
+          onDismissVoiceDraft={dismissVoiceDraft}
         />
       )}
 
@@ -7997,10 +8037,11 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
   );
 }
 
-function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onConfirmBookmark }) {
+function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onConfirmBookmark, onConfirmVoiceDraft, onDismissVoiceDraft }) {
   const [openGameId, setOpenGameId] = useState(null);
   const [showSeason, setShowSeason] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const finished = useMemo(() => (
     (games || [])
       .filter(g => g.status === 'finished')
@@ -8032,6 +8073,20 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finishedIdsKey]);
+
+  // Voice DRAFTS — the post-game narration pipeline writes extracted events to
+  // each game doc's `voiceDrafts` field; production loads it straight onto the
+  // game object (games listener spreads the whole doc). Accept/dismiss mutate it
+  // via persistGames (parent handlers) in one atomic game-doc write — no
+  // separate fetch/update needed.
+  const voiceDraftsByGame = useMemo(() => {
+    const m = {};
+    for (const g of finished) if ((g.voiceDrafts || []).length) m[g.id] = g.voiceDrafts;
+    return m;
+  }, [finished]);
+  const voiceDraftCount = useMemo(
+    () => Object.values(voiceDraftsByGame).reduce((n, arr) => n + arr.length, 0),
+    [voiceDraftsByGame]);
 
   // Identity summary cards (one per game with unresolved tracklets) lead the
   // queue — they're the batch task; the per-event cards follow. The count
@@ -8079,6 +8134,26 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           </div>
           {queueItems.length > 0 && (
             <span className="shrink-0 inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded-full bg-amber-500 text-stone-950 font-display text-base">{queueItems.length}</span>
+          )}
+        </button>
+
+        {/* VOICE DRAFTS — events extracted from the post-game narration, to confirm */}
+        <button
+          onClick={() => setVoiceOpen(true)}
+          disabled={voiceDraftCount === 0}
+          className={`w-full bg-stone-900 border rounded-2xl p-4 flex items-center gap-3 transition ${voiceDraftCount === 0 ? 'border-stone-800 opacity-60 cursor-not-allowed' : 'border-lime-600/50 hover:border-lime-400/70 active:scale-[0.99]'}`}
+        >
+          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">🎙</div>
+          <div className="flex-1 text-left">
+            <div className="font-display text-base">VOICE DRAFTS</div>
+            <div className="text-xs text-stone-400">
+              {voiceDraftCount === 0
+                ? 'Events extracted from your narration land here to confirm'
+                : `${voiceDraftCount} draft${voiceDraftCount === 1 ? '' : 's'} from narration · tap to review`}
+            </div>
+          </div>
+          {voiceDraftCount > 0 && (
+            <span className="shrink-0 inline-flex items-center justify-center min-w-[2rem] h-8 px-2 rounded-full bg-lime-500 text-stone-950 font-display text-base">{voiceDraftCount}</span>
           )}
         </button>
 
@@ -8165,6 +8240,92 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           onConfirmBookmark={onConfirmBookmark}
         />
       )}
+
+      {voiceOpen && (
+        <VoiceDraftsQueue
+          draftsByGame={voiceDraftsByGame}
+          games={finished}
+          roster={roster}
+          onClose={() => setVoiceOpen(false)}
+          onAccept={(gameId, draft, playerId) => onConfirmVoiceDraft(gameId, draft, playerId)}
+          onDismiss={(gameId, draftId) => onDismissVoiceDraft(gameId, draftId)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Voice-drafts confirm queue: events the post-game narration pipeline extracted
+ * (game doc `voiceDrafts`), grouped by game. Each row lets the coach set/confirm
+ * the player and ACCEPT (→ a real 'voice-confirmed' event) or DISMISS. Voice
+ * complements the live log — these are mostly the granular events (ball-wins,
+ * corners, fouls) the coach narrated but didn't tap. */
+function VoiceDraftsQueue({ draftsByGame, games, roster, onClose, onAccept, onDismiss }) {
+  const rows = useMemo(() => (games || [])
+    .filter(g => (draftsByGame[g.id] || []).length)
+    .flatMap(g => [...(draftsByGame[g.id] || [])]
+      .sort((a, b) => (a.period - b.period) || (a.elapsed - b.elapsed))
+      .map(d => ({ game: g, draft: d }))), [games, draftsByGame]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-stone-950/95 flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+      <div className="stripes-bg text-white px-4 py-3 flex items-center justify-between shrink-0">
+        <h2 className="font-display text-lg">🎙 VOICE DRAFTS</h2>
+        <button onClick={onClose} className="h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-sm active:scale-95">DONE</button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-4 max-w-2xl mx-auto w-full space-y-2">
+        {rows.length === 0 ? (
+          <div className="text-center text-sm text-stone-400 py-10">All voice drafts reviewed. 🎉</div>
+        ) : (
+          <>
+            <div className="text-xs text-stone-500 mb-1">
+              Extracted from your narration — mostly the granular events you didn't tap live.
+              Set the player if needed, then ACCEPT or DISMISS.
+            </div>
+            {rows.map(({ game, draft }) => (
+              <VoiceDraftRow
+                key={`${game.id}_${draft.id}`}
+                game={game} draft={draft} roster={roster}
+                onAccept={onAccept} onDismiss={onDismiss}
+              />
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VoiceDraftRow({ game, draft, roster, onAccept, onDismiss }) {
+  const [pid, setPid] = useState(draft.playerId || '');
+  const ev = EVENT_TYPES[draft.type] || { emoji: '•', label: draft.type };
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-2xl p-3">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-lg">{ev.emoji}</span>
+        <span className="font-display">{ev.label}</span>
+        <span className="text-stone-500 tabular-nums">{formatClock(draft.elapsed)} · P{draft.period}</span>
+        <span className="ml-auto text-[10px] text-stone-500">vs {game.opponent}</span>
+      </div>
+      {draft.quote && <div className="mt-1 text-xs text-stone-400 italic">“{draft.quote}”</div>}
+      <div className="mt-2 flex items-center gap-2">
+        <select
+          value={pid}
+          onChange={e => setPid(e.target.value)}
+          className="flex-1 bg-stone-800 border border-stone-700 rounded-lg px-2 py-1.5 text-sm"
+        >
+          <option value="">— no player —</option>
+          {roster.map(p => <option key={p.id} value={p.id}>#{p.number} {p.name}</option>)}
+        </select>
+        <button
+          onClick={() => onAccept(game.id, draft, pid || null)}
+          className="px-3 py-1.5 rounded-lg bg-lime-500 text-stone-950 font-display text-sm active:scale-95"
+        >ACCEPT</button>
+        <button
+          onClick={() => onDismiss(game.id, draft.id)}
+          className="px-3 py-1.5 rounded-lg bg-stone-800 border border-stone-700 text-stone-300 text-sm active:scale-95"
+        >DISMISS</button>
+      </div>
     </div>
   );
 }
@@ -13876,6 +14037,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 

@@ -1,0 +1,195 @@
+[0.0] Okay, the game has started.
+[3.0] On the other side of the field, Lupa having the call.
+[14.0] Pass to Paloalto, rolling the clubs at all.
+[34.0] Say, Paloalto.
+[36.0] Lupa.
+[37.0] Paloalto is preaching.
+[39.0] Pass.
+[44.0] Passing to Paloalto.
+[84.5] Ribbon and wind from the left.
+[89.6] Call it, it's a wing on the left, on the sideline.
+[93.5] It's the same.
+[95.4] It picks out, call and pick for us.
+[106.3] The box right outside.
+[144.5] Oh, got a foul.
+[157.5] Our left, it came inside the box.
+[163.5] Look out, trying to kick it out.
+[168.5] Still on that side.
+[170.5] Okay, Arian blocks and clears the ball.
+[177.5] Still on the left side.
+[179.5] Playing.
+[182.5] Oh, opportunity for them.
+[184.5] Luca won the ball, but they got it again.
+[188.5] Call it, kicked it out in the corner.
+[191.5] A good ball win for Khaled.
+[197.5] Corner from the left side for the opponent team.
+[202.5] Oh, so close!
+[204.5] Oh, man!
+[220.5] Nice try, nice ball!
+[224.5] Corner went out, Liam DiVolla won the ball.
+[232.5] Here, that's Jackson's ball, Jackson's ball.
+[245.5] Well, it's okay.
+[248.5] Liam DiVolla kicked the ball out, corner kicked for the team.
+[254.5] Corner kick coming in from our right side.
+[265.5] Short.
+[299.5] Okay, there is a foul in the field.
+[302.5] We're waiting for the game to start.
+[306.5] Another foul about the injury.
+[339.5] One of the shots from the other side of the field.
+[349.5] Okay, Ben on, won the ball to Maverick.
+[356.5] Call it, opportunity for Call-Aid.
+[359.5] Oh, nice shot by Call-Aid.
+[362.5] Shot on.
+[364.5] Four in three.
+[370.5] Nice pass by Maverick.
+[385.5] Nice shot by Luca.
+[392.5] Nice one.
+[404.5] Nice one.
+[412.5] Got the ball.
+[444.5] corner kick on the net by Ben Phan.
+[448.6] I'm going to grab it.
+[458.6] Okay, we have stop.
+[466.6] Going out for Alex.
+[495.5] This is bringing up the ball in from the right.
+[499.5] Okay, good pass for Ben.
+[502.5] Nice.
+[514.5] Okay, last ball.
+[516.5] Going back, it's a counterattack.
+[519.5] Routine send in Ben Phan, cut the ball, playing back with the goalie.
+[528.5] Good pass.
+[532.5] Still on the left side.
+[534.5] Tangling.
+[536.5] Good.
+[544.5] Okay, no long on the ball.
+[546.5] Nice, nice play, nice play.
+[548.5] Ben Phan on the ball.
+[550.5] Going in.
+[555.5] Oh, got that.
+[557.5] Well, it stopped.
+[575.5] Got it, got it.
+[583.5] Green ball on the ball.
+[587.5] It's a wonder ball in one on one.
+[640.7] Good job, good save by Liam,
+[644.1] Garland, coming out.
+[687.5] Issa winning the ball.
+[710.0] Faülon on Issa.
+[720.0] Now, Rick, winning the ball.
+[728.0] Alex did a good job winning the ball.
+[758.0] It was a nice pass by Ben, which got intercepted.
+[828.0] Nice pass for Maverick.
+[844.0] Nice.
+[898.0] Three building in.
+[918.0] Are you unintercepted?
+[926.0] Ball got intercepted.
+[958.0] Ben, hon, is playing with the ball too much.
+[974.0] Nolan came out for Ben Adams.
+[980.0] Win for Alex.
+[990.0] Then Colette went in for Issa.
+[1000.0] Win kicks the ball in.
+[1006.0] Ben, hon.
+[1008.0] Fighting for the ball.
+[1010.0] The ball goes in the middle.
+[1012.0] Issa is in.
+[1016.0] Issa.
+[1032.0] The corner kick for the other team.
+[1040.0] Nice serve by Liam Goley.
+[1048.0] Issa is in the ball for Issa.
+[1058.0] Passing.
+[1154.0] Nice pass by Vince.
+[1156.0] Ben Adams over there.
+[1158.0] Open in the space.
+[1160.0] Oh, too wide.
+[1162.0] Ben out.
+[1182.0] Nice serve by Issa.
+[1192.0] Yes.
+[1202.0] We lost the ball again.
+[1204.0] We had a chance.
+[1216.0] Nice win the ball by Vince.
+[1218.0] Malvere on the move.
+[1246.0] Nice serve by Issa.
+[1266.0] Nice serve by Issa.
+[1276.0] Nice serve by Issa.
+[1290.0] Nice serve by Malvere.
+[1300.0] Nice serve by Issa.
+[1310.0] Nice serve by Malvere.
+[1330.0] Nice serve by Issa.
+[1350.0] Nice serve by Issa.
+[1376.0] Yes.
+[1386.0] Nice serve by Issa.
+[1396.0] Nice serve by Issa.
+[1406.0] Nice serve by Issa.
+[1416.0] Nice serve by Malvere.
+[1426.0] Nice serve by Issa.
+[1446.0] Nice serve by Malvere.
+[1456.0] Nice serve by Malvere.
+[1466.0] Nice serve by Malvere.
+[1476.0] Nice serve by Malvere.
+[1486.0] Nice serve by Malvere.
+[1494.0] Nice serve by Malvere.
+[1504.0] Nice serve by Malvere.
+[1524.0] Nice serve by Malvere.
+[1534.0] Nice serve by Malvere.
+[1544.0] Nice serve by Malvere.
+[1552.0] Nice serve by Malvere.
+[1562.0] Nice serve by Malvere.
+[1572.0] Nice serve by Malvere.
+[1592.0] Nice serve by Malvere.
+[1602.0] Nice serve by Malvere.
+[1612.0] Nice serve by Malvere.
+[1622.0] Nice serve by Malvere.
+[1632.0] Nice serve by Malvere.
+[1642.0] Nice serve by Malvere.
+[1672.0] Nice serve by Arion.
+[1682.0] I hit the post.
+[1772.0] Nice serve by Malvere.
+[1782.0] Nice serve by Malvere.
+[1792.0] Nice serve by Malvere.
+[1802.0] Nice serve by Malvere.
+[1812.0] Nice serve by Malvere.
+[1822.0] Nice serve by Malvere.
+[1832.0] Malvere.
+[1842.0] Nice serve by Malvere.
+[1852.0] Nice serve by Malvere.
+[1862.0] Nice serve by Malvere.
+[1872.0] Nice serve by Malvere.
+[1882.0] Nice serve by Malvere.
+[1890.0] Nice serve by Malvere.
+[1900.0] Nice serve by Malvere.
+[1910.0] Nice serve by Malvere.
+[1920.0] Nice serve by Malvere.
+[1930.0] Nice serve by Malvere.
+[1940.0] Nice serve by Malvere.
+[1950.0] Nice serve by Malvere.
+[1960.0] Nice serve by Malvere.
+[1970.0] Nice serve by Malvere.
+[1980.0] Nice serve by Malvere.
+[1990.0] Nice serve by Malvere.
+[2000.0] Nice serve by Malvere.
+[2010.0] Nice serve by Malvere.
+[2020.0] Nice serve by Malvere.
+[2040.0] Nice serve by Malvere.
+[2050.0] Nice serve by Malvere.
+[2060.0] Nice serve by Malvere.
+[2070.0] Nice serve by Malvere.
+[2080.0] Nice serve by Malvere.
+[2090.0] Nice serve by Malvere.
+[2100.0] Very opportunity for Ben. He lost it in the middle.
+[2110.0] Nice serve by Malvere.
+[2120.0] Nice serve by Malvere.
+[2130.0] Nice serve by Malvere.
+[2140.0] Nice serve by Malvere.
+[2150.0] Nice serve by Malvere.
+[2160.0] Nice serve by Malvere.
+[2168.0] Nice serve by Malvere.
+[2178.0] Nice serve by Malvere.
+[2188.0] Nice serve by Malvere.
+[2198.0] Nice serve by Malvere.
+[2208.0] Nice serve by Malvere.
+[2218.0] Nice serve by Malvere.
+[2228.0] Nice serve by Malvere.
+[2238.0] Nice serve by Malvere.
+[2248.0] Nice serve by Malvere.
+[2456.0] Nice serve by Malvere.
+[2722.0] Two more minutes to go.
+[2732.0] One more.
+[2742.0] One more.

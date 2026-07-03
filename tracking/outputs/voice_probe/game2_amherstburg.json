@@ -1,0 +1,7402 @@
+{
+  "audio": "voice memo/New Recording 5.m4a",
+  "model": "small",
+  "summary": {
+    "total_words": 4342,
+    "name_hits": {
+      "Ben": 9,
+      "Liam": 9,
+      "Nolan": 17,
+      "Arian": 4,
+      "Jason": 10,
+      "David": 3,
+      "Gabriel": 6
+    },
+    "event_hits": {
+      "goal": 37,
+      "shot": 9,
+      "save": 2,
+      "give": 2,
+      "corner": 2,
+      "pass": 9,
+      "cross": 2
+    }
+  },
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 4.16,
+      "text": " Okay, we are getting ready for the game."
+    },
+    {
+      "start": 4.16,
+      "end": 9.52,
+      "text": " Captain is shaking hands right now."
+    },
+    {
+      "start": 9.52,
+      "end": 15.200000000000001,
+      "text": " We have two midfielder in the field."
+    },
+    {
+      "start": 15.200000000000001,
+      "end": 18.400000000000002,
+      "text": " Getting ready."
+    },
+    {
+      "start": 30.0,
+      "end": 38.0,
+      "text": " Trying to move up at the same time."
+    },
+    {
+      "start": 38.0,
+      "end": 44.0,
+      "text": " Trying to move up at the same time."
+    },
+    {
+      "start": 44.0,
+      "end": 50.0,
+      "text": " Trying to move up at the same time."
+    },
+    {
+      "start": 50.0,
+      "end": 58.0,
+      "text": " Trying to move up at the same time."
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 58.0,
+      "text": ""
+    },
+    {
+      "start": 58.0,
+      "end": 65.0,
+      "text": " Golland, Golland, over there, over there, on that side."
+    },
+    {
+      "start": 65.0,
+      "end": 74.0,
+      "text": " Okay, we are ready to start."
+    },
+    {
+      "start": 74.0,
+      "end": 84.0,
+      "text": " Kickoff."
+    },
+    {
+      "start": 94.0,
+      "end": 98.0,
+      "text": " Golland is ready to kickoff."
+    },
+    {
+      "start": 98.0,
+      "end": 102.0,
+      "text": " We started the kickoff already."
+    },
+    {
+      "start": 102.0,
+      "end": 107.0,
+      "text": " Playing in the back, the ball."
+    },
+    {
+      "start": 114.0,
+      "end": 119.0,
+      "text": " Okay, Liam kicked the ball out."
+    },
+    {
+      "start": 128.0,
+      "end": 135.0,
+      "text": " Golland, golland, watch. Stay there."
+    },
+    {
+      "start": 135.0,
+      "end": 137.0,
+      "text": " Stay there."
+    },
+    {
+      "start": 147.0,
+      "end": 153.0,
+      "text": " Okay, save by Liam."
+    },
+    {
+      "start": 158.0,
+      "end": 166.0,
+      "text": " Golland is going to 1-1."
+    },
+    {
+      "start": 166.0,
+      "end": 169.0,
+      "text": " A good shot by Golland."
+    },
+    {
+      "start": 169.0,
+      "end": 171.0,
+      "text": " He went off."
+    },
+    {
+      "start": 182.0,
+      "end": 187.0,
+      "text": " Okay, the opponent starts."
+    },
+    {
+      "start": 188.0,
+      "end": 196.0,
+      "text": " Okay, David, shoot the ball out."
+    },
+    {
+      "start": 196.0,
+      "end": 200.0,
+      "text": " Don't leave him out of your style."
+    },
+    {
+      "start": 200.0,
+      "end": 204.0,
+      "text": " Come on, come on, come on."
+    },
+    {
+      "start": 204.0,
+      "end": 208.0,
+      "text": " David, on him, on him."
+    },
+    {
+      "start": 208.0,
+      "end": 212.0,
+      "text": " Watch out, watch out."
+    },
+    {
+      "start": 212.0,
+      "end": 216.0,
+      "text": " Golland, golland, golland, golland."
+    },
+    {
+      "start": 216.0,
+      "end": 220.0,
+      "text": " Stay back, stay back."
+    },
+    {
+      "start": 223.0,
+      "end": 225.0,
+      "text": " Okay, ball went out."
+    },
+    {
+      "start": 225.0,
+      "end": 228.0,
+      "text": " It's ball ready for us."
+    },
+    {
+      "start": 228.0,
+      "end": 236.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 236.0,
+      "end": 239.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 239.0,
+      "end": 242.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 242.0,
+      "end": 249.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 249.0,
+      "end": 253.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 253.0,
+      "end": 256.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 256.0,
+      "end": 257.0,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 257.0,
+      "text": ""
+    },
+    {
+      "start": 257.0,
+      "end": 261.0,
+      "text": " Oh, goalie returned the ball."
+    },
+    {
+      "start": 261.0,
+      "end": 263.0,
+      "text": " Super! Super!"
+    },
+    {
+      "start": 263.0,
+      "end": 265.0,
+      "text": " Move!"
+    },
+    {
+      "start": 265.0,
+      "end": 267.0,
+      "text": " Let it out!"
+    },
+    {
+      "start": 267.0,
+      "end": 269.0,
+      "text": " Goal!"
+    },
+    {
+      "start": 269.0,
+      "end": 271.0,
+      "text": " Super!"
+    },
+    {
+      "start": 271.0,
+      "end": 273.0,
+      "text": " Good!"
+    },
+    {
+      "start": 273.0,
+      "end": 275.0,
+      "text": " Padalti!"
+    },
+    {
+      "start": 275.0,
+      "end": 277.0,
+      "text": " Come on!"
+    },
+    {
+      "start": 277.0,
+      "end": 279.0,
+      "text": " Down, down, down, down, down, down!"
+    },
+    {
+      "start": 279.0,
+      "end": 281.0,
+      "text": " Do it! Do it again, do it again, do it again!"
+    },
+    {
+      "start": 281.0,
+      "end": 285.0,
+      "text": " Guys, fight, fight, fight, fight!"
+    },
+    {
+      "start": 285.0,
+      "end": 287.0,
+      "text": " That was Padalti!"
+    },
+    {
+      "start": 287.0,
+      "end": 289.0,
+      "text": " That was Padalti, it was like this."
+    },
+    {
+      "start": 289.0,
+      "end": 291.0,
+      "text": " You take it easy."
+    },
+    {
+      "start": 291.0,
+      "end": 293.0,
+      "text": " Okay, I was complaining about that."
+    },
+    {
+      "start": 293.0,
+      "end": 295.0,
+      "text": " Come on, come on, come on!"
+    },
+    {
+      "start": 295.0,
+      "end": 297.0,
+      "text": " All tight!"
+    },
+    {
+      "start": 297.0,
+      "end": 299.0,
+      "text": " Circle the ball!"
+    },
+    {
+      "start": 299.0,
+      "end": 301.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 301.0,
+      "end": 303.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 303.0,
+      "end": 305.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 305.0,
+      "end": 307.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 307.0,
+      "end": 309.0,
+      "text": " Goal!"
+    },
+    {
+      "start": 309.0,
+      "end": 311.0,
+      "text": " Goal!"
+    },
+    {
+      "start": 311.0,
+      "end": 313.0,
+      "text": " That's it!"
+    },
+    {
+      "start": 313.0,
+      "end": 317.0,
+      "text": " Okay, the ball went out."
+    },
+    {
+      "start": 317.0,
+      "end": 319.0,
+      "text": " Come on!"
+    },
+    {
+      "start": 319.0,
+      "end": 323.0,
+      "text": " Arjan, drop back more, drop back more, Arjan!"
+    },
+    {
+      "start": 323.0,
+      "end": 325.0,
+      "text": " Stop, stop, stop!"
+    },
+    {
+      "start": 325.0,
+      "end": 327.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 327.0,
+      "end": 329.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 329.0,
+      "end": 331.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 331.0,
+      "end": 333.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 333.0,
+      "end": 335.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 335.0,
+      "end": 337.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 337.0,
+      "end": 339.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 339.0,
+      "end": 341.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 341.0,
+      "end": 343.0,
+      "text": " Goal!"
+    },
+    {
+      "start": 349.0,
+      "end": 351.0,
+      "text": " Trying to keep it all out."
+    },
+    {
+      "start": 363.0,
+      "end": 365.0,
+      "text": " Goal! Goal! Goal!"
+    },
+    {
+      "start": 365.0,
+      "end": 367.0,
+      "text": " Goal! Goal!"
+    },
+    {
+      "start": 367.0,
+      "end": 369.0,
+      "text": " Goal! Goal! Goal!"
+    },
+    {
+      "start": 369.0,
+      "end": 371.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 371.0,
+      "end": 373.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 373.0,
+      "end": 375.0,
+      "text": " Run, run, run, run, run!"
+    },
+    {
+      "start": 375.0,
+      "end": 377.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 377.0,
+      "end": 379.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 379.0,
+      "end": 381.0,
+      "text": " Nice!"
+    },
+    {
+      "start": 381.0,
+      "end": 383.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 383.0,
+      "end": 385.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 385.0,
+      "end": 387.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 387.0,
+      "end": 389.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 389.0,
+      "end": 391.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 391.0,
+      "end": 393.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 393.0,
+      "end": 395.0,
+      "text": " Get out!"
+    },
+    {
+      "start": 395.0,
+      "end": 397.0,
+      "text": " Get out!"
+    },
+    {
+      "start": 397.0,
+      "end": 399.0,
+      "text": " And Jay then,"
+    },
+    {
+      "start": 399.0,
+      "end": 401.0,
+      "text": " for bang-on."
+    },
+    {
+      "start": 401.0,
+      "end": 403.0,
+      "text": " Jay then,"
+    },
+    {
+      "start": 403.0,
+      "end": 405.0,
+      "text": " for bang-on."
+    },
+    {
+      "start": 405.0,
+      "end": 407.0,
+      "text": " Come on, come on, come on!"
+    },
+    {
+      "start": 407.0,
+      "end": 409.0,
+      "text": " Come on, come on, come on!"
+    },
+    {
+      "start": 409.0,
+      "end": 411.0,
+      "text": " Come on, come on, come on!"
+    },
+    {
+      "start": 411.0,
+      "end": 413.0,
+      "text": " Let's go, let's go, let's go!"
+    },
+    {
+      "start": 413.0,
+      "end": 415.0,
+      "text": " Up, up, up!"
+    },
+    {
+      "start": 415.0,
+      "end": 417.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 417.0,
+      "end": 419.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 419.0,
+      "end": 421.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 421.0,
+      "end": 423.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 423.0,
+      "end": 425.0,
+      "text": " Release it!"
+    },
+    {
+      "start": 425.0,
+      "end": 427.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 427.0,
+      "end": 429.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 429.0,
+      "end": 431.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 431.0,
+      "end": 433.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 433.0,
+      "end": 435.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 435.0,
+      "end": 437.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 437.0,
+      "end": 439.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 439.0,
+      "end": 441.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 441.0,
+      "end": 443.0,
+      "text": " Hey!"
+    },
+    {
+      "start": 443.0,
+      "end": 445.0,
+      "text": " This guy, behind you."
+    },
+    {
+      "start": 445.0,
+      "end": 447.0,
+      "text": " Behind you."
+    },
+    {
+      "start": 447.0,
+      "end": 449.0,
+      "text": " There he is."
+    },
+    {
+      "start": 449.0,
+      "end": 451.0,
+      "text": " Jay, go!"
+    },
+    {
+      "start": 451.0,
+      "end": 453.0,
+      "text": " Yeah!"
+    },
+    {
+      "start": 453.0,
+      "end": 455.0,
+      "text": " Yeah, come on!"
+    },
+    {
+      "start": 455.0,
+      "end": 457.0,
+      "text": " Get over here!"
+    },
+    {
+      "start": 457.0,
+      "end": 459.0,
+      "text": " Come on, stay on it all over!"
+    },
+    {
+      "start": 459.0,
+      "end": 461.0,
+      "text": " Come on, it's penalty!"
+    },
+    {
+      "start": 461.0,
+      "end": 463.0,
+      "text": " Come on!"
+    },
+    {
+      "start": 463.0,
+      "end": 465.0,
+      "text": " Nice!"
+    },
+    {
+      "start": 465.0,
+      "end": 467.0,
+      "text": " Get it, grab the ball, grab the ball!"
+    },
+    {
+      "start": 467.0,
+      "end": 469.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 469.0,
+      "end": 471.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 471.0,
+      "end": 473.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 473.0,
+      "end": 475.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 475.0,
+      "end": 477.0,
+      "text": " Get out of there!"
+    },
+    {
+      "start": 477.0,
+      "end": 479.0,
+      "text": " Get out of there!"
+    },
+    {
+      "start": 479.0,
+      "end": 481.0,
+      "text": " Get up there, get up there!"
+    },
+    {
+      "start": 481.0,
+      "end": 483.0,
+      "text": " Get up there!"
+    },
+    {
+      "start": 483.0,
+      "end": 485.0,
+      "text": " Get up!"
+    },
+    {
+      "start": 485.0,
+      "end": 487.0,
+      "text": " Get out of there!"
+    },
+    {
+      "start": 487.0,
+      "end": 489.0,
+      "text": " Get out of there!"
+    },
+    {
+      "start": 489.0,
+      "end": 491.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 491.0,
+      "end": 493.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 493.0,
+      "end": 495.0,
+      "text": " Stay on it!"
+    },
+    {
+      "start": 495.0,
+      "end": 497.0,
+      "text": " Go do it!"
+    },
+    {
+      "start": 497.0,
+      "end": 499.0,
+      "text": " Go!"
+    },
+    {
+      "start": 499.0,
+      "end": 501.0,
+      "text": " Go get him!"
+    },
+    {
+      "start": 501.0,
+      "end": 503.0,
+      "text": " Go!"
+    },
+    {
+      "start": 503.0,
+      "end": 505.0,
+      "text": " Get up!"
+    },
+    {
+      "start": 505.0,
+      "end": 507.0,
+      "text": " Get up!"
+    },
+    {
+      "start": 507.0,
+      "end": 509.0,
+      "text": " Get up!"
+    },
+    {
+      "start": 509.0,
+      "end": 511.0,
+      "text": " Come on, Jay, man!"
+    },
+    {
+      "start": 511.0,
+      "end": 513.0,
+      "text": " Come on, Jay!"
+    },
+    {
+      "start": 513.0,
+      "end": 515.0,
+      "text": " Stay there, Jay, man!"
+    },
+    {
+      "start": 515.0,
+      "end": 517.0,
+      "text": " Move it, move it!"
+    },
+    {
+      "start": 517.0,
+      "end": 519.0,
+      "text": " Stay there for David!"
+    },
+    {
+      "start": 519.0,
+      "end": 521.0,
+      "text": " Go!"
+    },
+    {
+      "start": 521.0,
+      "end": 523.0,
+      "text": " Go here!"
+    },
+    {
+      "start": 523.0,
+      "end": 525.0,
+      "text": " Go here, Lisa!"
+    },
+    {
+      "start": 525.0,
+      "end": 527.0,
+      "text": " Grab the ball, grab the ball, grab the ball!"
+    },
+    {
+      "start": 527.0,
+      "end": 529.0,
+      "text": " Time, time, time!"
+    },
+    {
+      "start": 529.0,
+      "end": 531.0,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 531.0,
+      "end": 533.0,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 533.0,
+      "end": 535.0,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 535.0,
+      "end": 537.0,
+      "text": " Go, go, go, go, go, go!"
+    },
+    {
+      "start": 537.0,
+      "end": 539.0,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 539.0,
+      "end": 541.0,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 541.0,
+      "end": 543.0,
+      "text": " Get back!"
+    },
+    {
+      "start": 543.0,
+      "end": 545.0,
+      "text": " Get back!"
+    },
+    {
+      "start": 545.0,
+      "end": 547.0,
+      "text": " Good, man!"
+    },
+    {
+      "start": 547.0,
+      "end": 549.0,
+      "text": " That's you, that's you!"
+    },
+    {
+      "start": 549.0,
+      "end": 551.0,
+      "text": " Wow!"
+    },
+    {
+      "start": 551.0,
+      "end": 553.0,
+      "text": " Artigan, with the ball, man."
+    },
+    {
+      "start": 553.0,
+      "end": 555.0,
+      "text": " Jay, Jay, you're the boy!"
+    },
+    {
+      "start": 555.0,
+      "end": 557.0,
+      "text": " Guys, it's behind you!"
+    },
+    {
+      "start": 557.0,
+      "end": 559.0,
+      "text": " Come on, guys!"
+    },
+    {
+      "start": 559.0,
+      "end": 561.0,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 561.0,
+      "end": 563.0,
+      "text": " Jay, Jay, Jay, Jay!"
+    },
+    {
+      "start": 563.0,
+      "end": 565.0,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 565.0,
+      "end": 567.0,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 567.0,
+      "end": 569.0,
+      "text": " Now I take the save for you!"
+    },
+    {
+      "start": 569.0,
+      "end": 571.0,
+      "text": " Bob, Bob, Jayden!"
+    },
+    {
+      "start": 571.0,
+      "end": 573.0,
+      "text": " Bob, Jayden!"
+    },
+    {
+      "start": 573.0,
+      "end": 575.0,
+      "text": " Behind you, Jayden, behind you!"
+    },
+    {
+      "start": 575.0,
+      "end": 577.0,
+      "text": " Push up, push up!"
+    },
+    {
+      "start": 577.0,
+      "end": 579.0,
+      "text": " Push up!"
+    },
+    {
+      "start": 579.0,
+      "end": 581.0,
+      "text": " Stay, stay!"
+    },
+    {
+      "start": 581.0,
+      "end": 583.0,
+      "text": " Stay!"
+    },
+    {
+      "start": 583.0,
+      "end": 585.0,
+      "text": " Go!"
+    },
+    {
+      "start": 585.0,
+      "end": 587.0,
+      "text": " Go!"
+    },
+    {
+      "start": 587.0,
+      "end": 589.0,
+      "text": " Stay, stay, stay, stay!"
+    },
+    {
+      "start": 589.0,
+      "end": 591.0,
+      "text": " Stay, stay, stay!"
+    },
+    {
+      "start": 591.0,
+      "end": 593.0,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 593.0,
+      "end": 595.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 601.0,
+      "end": 603.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 607.0,
+      "end": 609.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 609.0,
+      "end": 611.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 611.0,
+      "end": 613.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 613.0,
+      "end": 615.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 615.0,
+      "end": 617.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 617.0,
+      "end": 619.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 619.0,
+      "end": 621.0,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 621.0,
+      "end": 622.9,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 622.9,
+      "end": 624.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 624.9,
+      "end": 626.9,
+      "text": " Open up, open up, go!"
+    },
+    {
+      "start": 626.9,
+      "end": 628.9,
+      "text": " Go, go!"
+    },
+    {
+      "start": 628.9,
+      "end": 630.9,
+      "text": " Go, go!"
+    },
+    {
+      "start": 630.9,
+      "end": 632.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 632.9,
+      "end": 634.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 634.9,
+      "end": 636.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 636.9,
+      "end": 638.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 638.9,
+      "end": 640.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 640.9,
+      "end": 642.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 642.9,
+      "end": 644.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 644.9,
+      "end": 646.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 646.9,
+      "end": 648.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 648.9,
+      "end": 650.9,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 650.9,
+      "end": 652.9,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 658.9,
+      "end": 660.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 660.9,
+      "end": 662.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 662.9,
+      "end": 664.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 664.9,
+      "end": 666.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 666.9,
+      "end": 668.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 668.9,
+      "end": 670.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 670.9,
+      "end": 672.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 672.9,
+      "end": 674.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 674.9,
+      "end": 676.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 676.9,
+      "end": 678.9,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 678.9,
+      "end": 680.8,
+      "text": " Trying to move up!"
+    },
+    {
+      "start": 680.8,
+      "end": 687.8,
+      "text": " Go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go,"
+    },
+    {
+      "start": 687.8,
+      "end": 694.8,
+      "text": " go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go,"
+    },
+    {
+      "start": 694.8,
+      "end": 702.8,
+      "text": " go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go,"
+    },
+    {
+      "start": 702.8,
+      "end": 710.8,
+      "text": " go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go,"
+    },
+    {
+      "start": 710.8,
+      "end": 723.8,
+      "text": " go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go,"
+    },
+    {
+      "start": 783.8,
+      "end": 785.8,
+      "text": " Go! Go!"
+    },
+    {
+      "start": 785.8,
+      "end": 787.8,
+      "text": " Go! Go!"
+    },
+    {
+      "start": 787.8,
+      "end": 789.8,
+      "text": " Go! Go!"
+    },
+    {
+      "start": 789.8,
+      "end": 791.8,
+      "text": " Oh, that's four."
+    },
+    {
+      "start": 791.8,
+      "end": 793.8,
+      "text": " I was late."
+    },
+    {
+      "start": 793.8,
+      "end": 795.8,
+      "text": " Ah! Okay."
+    },
+    {
+      "start": 795.8,
+      "end": 797.8,
+      "text": " Oh, fuck."
+    },
+    {
+      "start": 797.8,
+      "end": 799.8,
+      "text": " Drop the gun."
+    },
+    {
+      "start": 799.8,
+      "end": 801.8,
+      "text": " Two, three."
+    },
+    {
+      "start": 801.8,
+      "end": 803.8,
+      "text": " Cut it! Cut it!"
+    },
+    {
+      "start": 803.8,
+      "end": 805.8,
+      "text": " San Cino!"
+    },
+    {
+      "start": 805.8,
+      "end": 807.8,
+      "text": " Enjoy the rest of the day. I want you to stay."
+    },
+    {
+      "start": 807.8,
+      "end": 809.8,
+      "text": " Call it somewhere else from Aubrey."
+    },
+    {
+      "start": 809.8,
+      "end": 811.8,
+      "text": " I'm Jaden."
+    },
+    {
+      "start": 811.8,
+      "end": 813.8,
+      "text": " Trying to move it up."
+    },
+    {
+      "start": 813.8,
+      "end": 815.8,
+      "text": " Trying to move it up."
+    },
+    {
+      "start": 815.8,
+      "end": 817.8,
+      "text": " Trying to move it up."
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 819.8,
+      "end": 819.8,
+      "text": ""
+    },
+    {
+      "start": 841.8,
+      "end": 842.8,
+      "text": " Go!"
+    },
+    {
+      "start": 842.8,
+      "end": 844.8,
+      "text": " Take it, take it, take it, go!"
+    },
+    {
+      "start": 844.8,
+      "end": 846.8,
+      "text": " Head up, head up!"
+    },
+    {
+      "start": 846.8,
+      "end": 849.8,
+      "text": " Back, Gabriel, back!"
+    },
+    {
+      "start": 849.8,
+      "end": 851.8,
+      "text": " Back!"
+    },
+    {
+      "start": 851.8,
+      "end": 852.8,
+      "text": " Then, then, back!"
+    },
+    {
+      "start": 852.8,
+      "end": 854.8,
+      "text": " Then, go up behind you!"
+    },
+    {
+      "start": 854.8,
+      "end": 856.8,
+      "text": " Go, Ben!"
+    },
+    {
+      "start": 856.8,
+      "end": 858.8,
+      "text": " Go, Shoya!"
+    },
+    {
+      "start": 858.8,
+      "end": 861.8,
+      "text": " Like it, good job, Allen, good job, buddy!"
+    },
+    {
+      "start": 861.8,
+      "end": 862.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 862.8,
+      "end": 864.8,
+      "text": " Okay, well for us."
+    },
+    {
+      "start": 864.8,
+      "end": 866.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 866.8,
+      "end": 867.8,
+      "text": " Good!"
+    },
+    {
+      "start": 867.8,
+      "end": 869.8,
+      "text": " Okay, Nolan, come on!"
+    },
+    {
+      "start": 869.8,
+      "end": 872.8,
+      "text": " Yes, one of you shoots!"
+    },
+    {
+      "start": 872.8,
+      "end": 875.8,
+      "text": " Head!"
+    },
+    {
+      "start": 875.8,
+      "end": 877.8,
+      "text": " Let's go!"
+    },
+    {
+      "start": 877.8,
+      "end": 879.8,
+      "text": " Let's go!"
+    },
+    {
+      "start": 879.8,
+      "end": 881.8,
+      "text": " Come on, get back!"
+    },
+    {
+      "start": 881.8,
+      "end": 882.8,
+      "text": " Get back!"
+    },
+    {
+      "start": 882.8,
+      "end": 884.8,
+      "text": " Come on, you got to shoot!"
+    },
+    {
+      "start": 884.8,
+      "end": 886.8,
+      "text": " Shoot! Shoot!"
+    },
+    {
+      "start": 886.8,
+      "end": 888.8,
+      "text": " Yeah!"
+    },
+    {
+      "start": 888.8,
+      "end": 890.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 890.8,
+      "end": 892.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 892.8,
+      "end": 894.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 894.8,
+      "end": 896.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 896.8,
+      "end": 898.8,
+      "text": " Quick, quick, quick, quick!"
+    },
+    {
+      "start": 898.8,
+      "end": 900.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 900.8,
+      "end": 902.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 902.8,
+      "end": 904.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 904.8,
+      "end": 906.8,
+      "text": " In the middle of the cry, in the middle!"
+    },
+    {
+      "start": 906.8,
+      "end": 908.8,
+      "text": " Put your hand back there!"
+    },
+    {
+      "start": 908.8,
+      "end": 910.8,
+      "text": " There, there, there!"
+    },
+    {
+      "start": 910.8,
+      "end": 912.8,
+      "text": " Okay, get the pressure."
+    },
+    {
+      "start": 912.8,
+      "end": 914.8,
+      "text": " Up, up, up!"
+    },
+    {
+      "start": 914.8,
+      "end": 916.8,
+      "text": " Arion, stay back! Arion, stay back!"
+    },
+    {
+      "start": 916.8,
+      "end": 918.8,
+      "text": " Stay back!"
+    },
+    {
+      "start": 918.8,
+      "end": 920.8,
+      "text": " Shoot!"
+    },
+    {
+      "start": 920.8,
+      "end": 922.8,
+      "text": " Shoot down, Nolan!"
+    },
+    {
+      "start": 922.8,
+      "end": 924.8,
+      "text": " Yes!"
+    },
+    {
+      "start": 924.8,
+      "end": 926.8,
+      "text": " Yes!"
+    },
+    {
+      "start": 926.8,
+      "end": 928.8,
+      "text": " Yes!"
+    },
+    {
+      "start": 928.8,
+      "end": 930.8,
+      "text": " Yes!"
+    },
+    {
+      "start": 930.8,
+      "end": 932.8,
+      "text": " Yes!"
+    },
+    {
+      "start": 932.8,
+      "end": 934.8,
+      "text": " Come on, baby!"
+    },
+    {
+      "start": 934.8,
+      "end": 936.8,
+      "text": " Come on, ball, let's go!"
+    },
+    {
+      "start": 936.8,
+      "end": 938.8,
+      "text": " Go, go, go, go, go!"
+    },
+    {
+      "start": 938.8,
+      "end": 940.8,
+      "text": " Leave it out! Leave it out!"
+    },
+    {
+      "start": 940.8,
+      "end": 942.8,
+      "text": " Left, left!"
+    },
+    {
+      "start": 942.8,
+      "end": 944.8,
+      "text": " Left!"
+    },
+    {
+      "start": 944.8,
+      "end": 946.8,
+      "text": " Ben, Ben on him!"
+    },
+    {
+      "start": 946.8,
+      "end": 948.8,
+      "text": " Come on, come on, come on!"
+    },
+    {
+      "start": 954.8,
+      "end": 956.8,
+      "text": " Arion!"
+    },
+    {
+      "start": 956.8,
+      "end": 958.8,
+      "text": " Stop it!"
+    },
+    {
+      "start": 958.8,
+      "end": 960.8,
+      "text": " Stop it!"
+    },
+    {
+      "start": 960.8,
+      "end": 962.8,
+      "text": " Come on, come on!"
+    },
+    {
+      "start": 962.8,
+      "end": 964.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 964.8,
+      "end": 966.8,
+      "text": " Now on the side, on the side!"
+    },
+    {
+      "start": 966.8,
+      "end": 968.8,
+      "text": " On the side, the man!"
+    },
+    {
+      "start": 968.8,
+      "end": 970.8,
+      "text": " Man on, man on!"
+    },
+    {
+      "start": 970.8,
+      "end": 972.8,
+      "text": " Push it, push it!"
+    },
+    {
+      "start": 972.8,
+      "end": 974.8,
+      "text": " Lock the angle!"
+    },
+    {
+      "start": 974.8,
+      "end": 976.8,
+      "text": " Good!"
+    },
+    {
+      "start": 976.8,
+      "end": 978.8,
+      "text": " I love how you've got that angle."
+    },
+    {
+      "start": 978.8,
+      "end": 980.8,
+      "text": " Okay, ball out."
+    },
+    {
+      "start": 980.8,
+      "end": 982.8,
+      "text": " It's for them."
+    },
+    {
+      "start": 982.8,
+      "end": 984.8,
+      "text": " Swing, swing, swing!"
+    },
+    {
+      "start": 984.8,
+      "end": 986.8,
+      "text": " Make sure!"
+    },
+    {
+      "start": 986.8,
+      "end": 988.8,
+      "text": " Ball, Toe!"
+    },
+    {
+      "start": 988.8,
+      "end": 990.8,
+      "text": " Backward, behind, behind!"
+    },
+    {
+      "start": 990.8,
+      "end": 992.8,
+      "text": " Good job!"
+    },
+    {
+      "start": 992.8,
+      "end": 994.8,
+      "text": " Son! Son!"
+    },
+    {
+      "start": 994.8,
+      "end": 996.8,
+      "text": " Go, Toe, let's go!"
+    },
+    {
+      "start": 996.8,
+      "end": 998.8,
+      "text": " Come on, I need to watch it with it!"
+    },
+    {
+      "start": 998.8,
+      "end": 1000.8,
+      "text": " Good."
+    },
+    {
+      "start": 1000.8,
+      "end": 1002.8,
+      "text": " Come on, go!"
+    },
+    {
+      "start": 1002.8,
+      "end": 1004.8,
+      "text": " Come on, take a shot!"
+    },
+    {
+      "start": 1004.8,
+      "end": 1006.8,
+      "text": " Yeah!"
+    },
+    {
+      "start": 1006.8,
+      "end": 1008.8,
+      "text": " Thanks, Sofie."
+    },
+    {
+      "start": 1008.8,
+      "end": 1010.8,
+      "text": " See you soon, Anthony."
+    },
+    {
+      "start": 1010.8,
+      "end": 1012.8,
+      "text": " All your players, all the mobsters!"
+    },
+    {
+      "start": 1012.8,
+      "end": 1014.8,
+      "text": " All the mobsters!"
+    },
+    {
+      "start": 1014.8,
+      "end": 1016.8,
+      "text": " Yeah!"
+    },
+    {
+      "start": 1016.8,
+      "end": 1018.8,
+      "text": " Yeah!"
+    },
+    {
+      "start": 1018.8,
+      "end": 1020.8,
+      "text": " Come on, Bob!"
+    },
+    {
+      "start": 1020.8,
+      "end": 1022.8,
+      "text": " Marv, get closer!"
+    },
+    {
+      "start": 1022.8,
+      "end": 1024.8,
+      "text": " Give him options!"
+    },
+    {
+      "start": 1024.8,
+      "end": 1026.8,
+      "text": " Go, Ben, go with Ben!"
+    },
+    {
+      "start": 1026.8,
+      "end": 1028.8,
+      "text": " Go on, Bob!"
+    },
+    {
+      "start": 1028.8,
+      "end": 1030.8,
+      "text": " Run up!"
+    },
+    {
+      "start": 1030.8,
+      "end": 1032.8,
+      "text": " Yep, they went and got Anthony, that's it!"
+    },
+    {
+      "start": 1032.8,
+      "end": 1034.8,
+      "text": " Yep, they went up!"
+    },
+    {
+      "start": 1034.8,
+      "end": 1036.8,
+      "text": " That's it!"
+    },
+    {
+      "start": 1036.8,
+      "end": 1038.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 1038.8,
+      "end": 1040.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 1040.8,
+      "end": 1042.8,
+      "text": " Good, good!"
+    },
+    {
+      "start": 1042.8,
+      "end": 1044.8,
+      "text": " Go!"
+    },
+    {
+      "start": 1044.8,
+      "end": 1046.8,
+      "text": " Bob, Bob, Bob!"
+    },
+    {
+      "start": 1046.8,
+      "end": 1048.8,
+      "text": " Come on, Luke!"
+    },
+    {
+      "start": 1048.8,
+      "end": 1050.8,
+      "text": " Come on, Luke!"
+    },
+    {
+      "start": 1050.8,
+      "end": 1052.8,
+      "text": " Come on, Luke!"
+    },
+    {
+      "start": 1052.8,
+      "end": 1054.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1054.8,
+      "end": 1056.8,
+      "text": " Great pass, Anthony, great ball!"
+    },
+    {
+      "start": 1056.8,
+      "end": 1058.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1058.8,
+      "end": 1060.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1060.8,
+      "end": 1062.8,
+      "text": " You keep like this until I come back!"
+    },
+    {
+      "start": 1064.8,
+      "end": 1066.8,
+      "text": " Open for him, Arion!"
+    },
+    {
+      "start": 1066.8,
+      "end": 1068.8,
+      "text": " Open for him!"
+    },
+    {
+      "start": 1068.8,
+      "end": 1070.8,
+      "text": " Open for him!"
+    },
+    {
+      "start": 1078.8,
+      "end": 1082.8,
+      "text": " Playing on the side, passing, the ball goes out."
+    },
+    {
+      "start": 1082.8,
+      "end": 1084.8,
+      "text": " Go, Arion!"
+    },
+    {
+      "start": 1084.8,
+      "end": 1086.8,
+      "text": " Find the space!"
+    },
+    {
+      "start": 1092.8,
+      "end": 1094.8,
+      "text": " Arion, drop!"
+    },
+    {
+      "start": 1094.8,
+      "end": 1096.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1096.8,
+      "end": 1098.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1098.8,
+      "end": 1100.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1100.8,
+      "end": 1102.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1106.8,
+      "end": 1108.8,
+      "text": " Arion, one whiskey, okay?"
+    },
+    {
+      "start": 1108.8,
+      "end": 1110.8,
+      "text": " One whiskey, one whiskey!"
+    },
+    {
+      "start": 1112.8,
+      "end": 1114.8,
+      "text": " Lowland, lowland!"
+    },
+    {
+      "start": 1114.8,
+      "end": 1116.8,
+      "text": " White, white, white, white!"
+    },
+    {
+      "start": 1116.8,
+      "end": 1118.8,
+      "text": " White, go, go, go, go, go, go, go!"
+    },
+    {
+      "start": 1118.8,
+      "end": 1120.8,
+      "text": " Go, go, go, go, go, go, go, go!"
+    },
+    {
+      "start": 1120.8,
+      "end": 1122.8,
+      "text": " Go, Nikolai, with this!"
+    },
+    {
+      "start": 1122.8,
+      "end": 1124.8,
+      "text": " Stay down, too!"
+    },
+    {
+      "start": 1124.8,
+      "end": 1126.8,
+      "text": " Hard, hard, hard!"
+    },
+    {
+      "start": 1126.8,
+      "end": 1128.8,
+      "text": " Yep, yep, yep, yep!"
+    },
+    {
+      "start": 1128.8,
+      "end": 1130.8,
+      "text": " Yep! Stay, stay, stay with them!"
+    },
+    {
+      "start": 1130.8,
+      "end": 1132.8,
+      "text": " Stay!"
+    },
+    {
+      "start": 1132.8,
+      "end": 1134.8,
+      "text": " Who's there? Who's there?"
+    },
+    {
+      "start": 1134.8,
+      "end": 1136.8,
+      "text": " Who's there?"
+    },
+    {
+      "start": 1136.8,
+      "end": 1138.8,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 1138.8,
+      "end": 1140.8,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 1140.8,
+      "end": 1142.8,
+      "text": " Go with it, go with it!"
+    },
+    {
+      "start": 1142.8,
+      "end": 1144.8,
+      "text": " Go, go, go, go!"
+    },
+    {
+      "start": 1144.8,
+      "end": 1146.8,
+      "text": " Hey, come on, boys!"
+    },
+    {
+      "start": 1146.8,
+      "end": 1148.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 1148.8,
+      "end": 1150.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1150.8,
+      "end": 1152.8,
+      "text": " Hard, hard, hard!"
+    },
+    {
+      "start": 1152.8,
+      "end": 1154.8,
+      "text": " Hard, hard, hard!"
+    },
+    {
+      "start": 1154.8,
+      "end": 1156.8,
+      "text": " Let's go with 15!"
+    },
+    {
+      "start": 1156.8,
+      "end": 1158.8,
+      "text": " Hold on, who you have?"
+    },
+    {
+      "start": 1158.8,
+      "end": 1160.8,
+      "text": " No, no, wait, wait, wait, wait, wait!"
+    },
+    {
+      "start": 1160.8,
+      "end": 1162.8,
+      "text": " Keep it ready!"
+    },
+    {
+      "start": 1162.8,
+      "end": 1164.8,
+      "text": " Play it wide!"
+    },
+    {
+      "start": 1164.8,
+      "end": 1166.8,
+      "text": " Good try, good try, guys!"
+    },
+    {
+      "start": 1168.8,
+      "end": 1170.8,
+      "text": " Get ready, boys!"
+    },
+    {
+      "start": 1170.8,
+      "end": 1172.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1172.8,
+      "end": 1174.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1174.8,
+      "end": 1176.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1176.8,
+      "end": 1178.8,
+      "text": " Use them, use them!"
+    },
+    {
+      "start": 1178.8,
+      "end": 1180.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1186.8,
+      "end": 1188.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1188.8,
+      "end": 1190.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1198.8,
+      "end": 1200.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1200.8,
+      "end": 1202.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1202.8,
+      "end": 1204.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1204.8,
+      "end": 1206.8,
+      "text": " Trying to move!"
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1206.8,
+      "end": 1206.8,
+      "text": ""
+    },
+    {
+      "start": 1236.8,
+      "end": 1254.8,
+      "text": " Don't play on the middle."
+    },
+    {
+      "start": 1254.8,
+      "end": 1262.8,
+      "text": " Trying to move on the middle."
+    },
+    {
+      "start": 1262.8,
+      "end": 1275.8,
+      "text": " Trying to move on the middle."
+    },
+    {
+      "start": 1275.8,
+      "end": 1281.8,
+      "text": " Trying to move on the middle."
+    },
+    {
+      "start": 1281.8,
+      "end": 1283.8,
+      "text": " Trying to move on the middle."
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1283.8,
+      "text": ""
+    },
+    {
+      "start": 1283.8,
+      "end": 1285.8,
+      "text": " Get up, get up, get up, get up, get up."
+    },
+    {
+      "start": 1285.8,
+      "end": 1287.8,
+      "text": " Yes, yes, yes!"
+    },
+    {
+      "start": 1287.8,
+      "end": 1289.8,
+      "text": " Get in there, great, Jay, get in there!"
+    },
+    {
+      "start": 1289.8,
+      "end": 1291.8,
+      "text": " Get in there!"
+    },
+    {
+      "start": 1291.8,
+      "end": 1293.8,
+      "text": " Jay Jay, I'll show you the ground."
+    },
+    {
+      "start": 1293.8,
+      "end": 1295.8,
+      "text": " Going, going!"
+    },
+    {
+      "start": 1295.8,
+      "end": 1297.8,
+      "text": " Jay Jay!"
+    },
+    {
+      "start": 1297.8,
+      "end": 1301.8,
+      "text": " Left side, left side, left side!"
+    },
+    {
+      "start": 1301.8,
+      "end": 1307.8,
+      "text": " Jay Jay, in the 40, 40, 40!"
+    },
+    {
+      "start": 1307.8,
+      "end": 1309.8,
+      "text": " Yeah, nice, Kelly!"
+    },
+    {
+      "start": 1309.8,
+      "end": 1311.8,
+      "text": " Yes, yes!"
+    },
+    {
+      "start": 1311.8,
+      "end": 1313.8,
+      "text": " Yes, yes!"
+    },
+    {
+      "start": 1313.8,
+      "end": 1315.8,
+      "text": " Yes, yes!"
+    },
+    {
+      "start": 1315.8,
+      "end": 1317.8,
+      "text": " Yes, yes!"
+    },
+    {
+      "start": 1317.8,
+      "end": 1319.8,
+      "text": " Oh, come on!"
+    },
+    {
+      "start": 1319.8,
+      "end": 1321.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 1321.8,
+      "end": 1323.8,
+      "text": " Wait, wait, wait!"
+    },
+    {
+      "start": 1323.8,
+      "end": 1325.8,
+      "text": " Wait, wait, wait!"
+    },
+    {
+      "start": 1325.8,
+      "end": 1327.8,
+      "text": " Hey, hey, come on!"
+    },
+    {
+      "start": 1327.8,
+      "end": 1329.8,
+      "text": " Let's go!"
+    },
+    {
+      "start": 1329.8,
+      "end": 1331.8,
+      "text": " Thanks, thanks!"
+    },
+    {
+      "start": 1331.8,
+      "end": 1333.8,
+      "text": " Come on, come on!"
+    },
+    {
+      "start": 1333.8,
+      "end": 1335.8,
+      "text": " Come on, come on!"
+    },
+    {
+      "start": 1335.8,
+      "end": 1337.8,
+      "text": " Oh yeah, you're good to stay, huh?"
+    },
+    {
+      "start": 1337.8,
+      "end": 1341.8,
+      "text": " Spread out, spread out, spread out!"
+    },
+    {
+      "start": 1341.8,
+      "end": 1345.8,
+      "text": " Stay in the ball, the ball is right there!"
+    },
+    {
+      "start": 1345.8,
+      "end": 1347.8,
+      "text": " Get in there, get in there!"
+    },
+    {
+      "start": 1347.8,
+      "end": 1349.8,
+      "text": " Left, left, left!"
+    },
+    {
+      "start": 1349.8,
+      "end": 1351.8,
+      "text": " Let's go, get in there!"
+    },
+    {
+      "start": 1351.8,
+      "end": 1353.8,
+      "text": " Get in there, get in there!"
+    },
+    {
+      "start": 1353.8,
+      "end": 1355.8,
+      "text": " Right!"
+    },
+    {
+      "start": 1355.8,
+      "end": 1357.8,
+      "text": " Kelly!"
+    },
+    {
+      "start": 1357.8,
+      "end": 1359.8,
+      "text": " Kelly!"
+    },
+    {
+      "start": 1359.8,
+      "end": 1361.8,
+      "text": " Kelly, Kelly, Kelly!"
+    },
+    {
+      "start": 1361.8,
+      "end": 1363.8,
+      "text": " Hi!"
+    },
+    {
+      "start": 1363.8,
+      "end": 1365.8,
+      "text": " You're here!"
+    },
+    {
+      "start": 1365.8,
+      "end": 1367.8,
+      "text": " Come on!"
+    },
+    {
+      "start": 1367.8,
+      "end": 1369.8,
+      "text": " Come on, Kelly!"
+    },
+    {
+      "start": 1369.8,
+      "end": 1371.8,
+      "text": " Touch, touch and go!"
+    },
+    {
+      "start": 1371.8,
+      "end": 1373.8,
+      "text": " Touch and go!"
+    },
+    {
+      "start": 1373.8,
+      "end": 1375.8,
+      "text": " Use it, use it!"
+    },
+    {
+      "start": 1375.8,
+      "end": 1377.8,
+      "text": " Pass, guys! Pass!"
+    },
+    {
+      "start": 1377.8,
+      "end": 1381.8,
+      "text": " You're doing dribbling too much!"
+    },
+    {
+      "start": 1381.8,
+      "end": 1383.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1383.8,
+      "end": 1385.8,
+      "text": " Play, play, play, play!"
+    },
+    {
+      "start": 1385.8,
+      "end": 1387.8,
+      "text": " Stay in the whistle!"
+    },
+    {
+      "start": 1387.8,
+      "end": 1389.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1389.8,
+      "end": 1391.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1391.8,
+      "end": 1393.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1393.8,
+      "end": 1395.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1395.8,
+      "end": 1397.8,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 1397.8,
+      "end": 1399.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1399.8,
+      "end": 1401.8,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1401.8,
+      "end": 1403.8,
+      "text": " No, no!"
+    },
+    {
+      "start": 1403.8,
+      "end": 1405.8,
+      "text": " Stay, stay, stay!"
+    },
+    {
+      "start": 1405.8,
+      "end": 1407.8,
+      "text": " Stay!"
+    },
+    {
+      "start": 1407.8,
+      "end": 1409.8,
+      "text": " Stay!"
+    },
+    {
+      "start": 1409.8,
+      "end": 1411.8,
+      "text": " Helen, don't chase it!"
+    },
+    {
+      "start": 1411.8,
+      "end": 1413.8,
+      "text": " Don't run, don't go!"
+    },
+    {
+      "start": 1413.8,
+      "end": 1415.8,
+      "text": " Don't go!"
+    },
+    {
+      "start": 1415.8,
+      "end": 1417.8,
+      "text": " Don't go!"
+    },
+    {
+      "start": 1417.8,
+      "end": 1419.8,
+      "text": " Don't go!"
+    },
+    {
+      "start": 1419.8,
+      "end": 1421.8,
+      "text": " Don't go back!"
+    },
+    {
+      "start": 1421.8,
+      "end": 1423.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1423.8,
+      "end": 1425.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1425.8,
+      "end": 1427.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1429.8,
+      "end": 1431.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1431.8,
+      "end": 1433.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1433.8,
+      "end": 1435.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1435.8,
+      "end": 1437.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1437.8,
+      "end": 1439.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1439.8,
+      "end": 1441.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1441.8,
+      "end": 1443.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1443.8,
+      "end": 1445.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1445.8,
+      "end": 1447.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1447.8,
+      "end": 1449.8,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1449.8,
+      "end": 1451.7,
+      "text": " Trying to move it!"
+    },
+    {
+      "start": 1451.7,
+      "end": 1453.7,
+      "text": " Go there."
+    },
+    {
+      "start": 1453.7,
+      "end": 1455.7,
+      "text": " Yes, Sam!"
+    },
+    {
+      "start": 1455.7,
+      "end": 1457.7,
+      "text": " There, my boy!"
+    },
+    {
+      "start": 1457.7,
+      "end": 1459.7,
+      "text": " Come on, make it good."
+    },
+    {
+      "start": 1459.7,
+      "end": 1461.7,
+      "text": " Let's get to that side."
+    },
+    {
+      "start": 1461.7,
+      "end": 1463.7,
+      "text": " Go there."
+    },
+    {
+      "start": 1463.7,
+      "end": 1465.7,
+      "text": " You're in bed in mid."
+    },
+    {
+      "start": 1465.7,
+      "end": 1467.7,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1467.7,
+      "end": 1469.7,
+      "text": " Go, go, go!"
+    },
+    {
+      "start": 1469.7,
+      "end": 1471.7,
+      "text": " Go there."
+    },
+    {
+      "start": 1471.7,
+      "end": 1473.7,
+      "text": " Go there."
+    },
+    {
+      "start": 1473.7,
+      "end": 1475.7,
+      "text": " Stay, stay, stay."
+    },
+    {
+      "start": 1475.7,
+      "end": 1477.7,
+      "text": " Stay, stay, stay."
+    },
+    {
+      "start": 1477.7,
+      "end": 1479.7,
+      "text": " Stay, stay, stay."
+    },
+    {
+      "start": 1479.7,
+      "end": 1481.7,
+      "text": " Stay, stay."
+    },
+    {
+      "start": 1481.7,
+      "end": 1483.7,
+      "text": " Stop, man."
+    },
+    {
+      "start": 1483.7,
+      "end": 1485.7,
+      "text": " Stay, stay."
+    },
+    {
+      "start": 1485.7,
+      "end": 1487.7,
+      "text": " Stay, stay, guys."
+    },
+    {
+      "start": 1487.7,
+      "end": 1489.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1489.7,
+      "end": 1491.7,
+      "text": " Don't turn your back on us."
+    },
+    {
+      "start": 1491.7,
+      "end": 1493.7,
+      "text": " Watch out."
+    },
+    {
+      "start": 1493.7,
+      "end": 1495.7,
+      "text": " Who's coming?"
+    },
+    {
+      "start": 1495.7,
+      "end": 1497.7,
+      "text": " Who's coming?"
+    },
+    {
+      "start": 1497.7,
+      "end": 1499.7,
+      "text": " Tell us that."
+    },
+    {
+      "start": 1499.7,
+      "end": 1501.7,
+      "text": " He's in behind you."
+    },
+    {
+      "start": 1501.7,
+      "end": 1503.7,
+      "text": " Take it quick, quick, quick."
+    },
+    {
+      "start": 1503.7,
+      "end": 1505.7,
+      "text": " Stay there."
+    },
+    {
+      "start": 1505.7,
+      "end": 1507.7,
+      "text": " Stay there, one, two."
+    },
+    {
+      "start": 1509.7,
+      "end": 1511.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 1511.7,
+      "end": 1513.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 1513.7,
+      "end": 1515.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1517.7,
+      "end": 1517.7,
+      "text": ""
+    },
+    {
+      "start": 1539.7,
+      "end": 1541.7,
+      "text": " No direct direct"
+    },
+    {
+      "start": 1569.7,
+      "end": 1573.7,
+      "text": " Come on man. What do they do guys?"
+    },
+    {
+      "start": 1579.7,
+      "end": 1581.7,
+      "text": " Come on Max. Again, again, again."
+    },
+    {
+      "start": 1581.7,
+      "end": 1584.7,
+      "text": " Russia, let's go. You got it, let's go."
+    },
+    {
+      "start": 1584.7,
+      "end": 1586.7,
+      "text": " No, no, no."
+    },
+    {
+      "start": 1590.7,
+      "end": 1592.7,
+      "text": " Come on Max, come on."
+    },
+    {
+      "start": 1592.7,
+      "end": 1594.7,
+      "text": " Beautiful."
+    },
+    {
+      "start": 1600.7,
+      "end": 1603.7,
+      "text": " Go get your work, get your work."
+    },
+    {
+      "start": 1603.7,
+      "end": 1605.7,
+      "text": " Come on over, take it."
+    },
+    {
+      "start": 1608.7,
+      "end": 1611.7,
+      "text": " Go ahead, Jaden. Watch him, Jaden."
+    },
+    {
+      "start": 1611.7,
+      "end": 1613.7,
+      "text": " Ben, Ben."
+    },
+    {
+      "start": 1613.7,
+      "end": 1615.7,
+      "text": " You gotta stay with them, Jaden. You need to."
+    },
+    {
+      "start": 1615.7,
+      "end": 1617.7,
+      "text": " Go to it boys."
+    },
+    {
+      "start": 1617.7,
+      "end": 1619.7,
+      "text": " No shot."
+    },
+    {
+      "start": 1619.7,
+      "end": 1621.7,
+      "text": " No shot."
+    },
+    {
+      "start": 1621.7,
+      "end": 1623.7,
+      "text": " No money. No shot."
+    },
+    {
+      "start": 1629.7,
+      "end": 1631.7,
+      "text": " Go off boys, don't leave it to them."
+    },
+    {
+      "start": 1631.7,
+      "end": 1633.7,
+      "text": " Jaden, come a little higher."
+    },
+    {
+      "start": 1633.7,
+      "end": 1635.7,
+      "text": " There you go, find some space."
+    },
+    {
+      "start": 1635.7,
+      "end": 1637.7,
+      "text": " Boys, come on boys."
+    },
+    {
+      "start": 1637.7,
+      "end": 1639.7,
+      "text": " Watch 19, Aryan."
+    },
+    {
+      "start": 1639.7,
+      "end": 1641.7,
+      "text": " Keep going, closer, closer."
+    },
+    {
+      "start": 1646.7,
+      "end": 1648.7,
+      "text": " Oh, haha."
+    },
+    {
+      "start": 1648.7,
+      "end": 1650.7,
+      "text": " Ha, last ball."
+    },
+    {
+      "start": 1659.7,
+      "end": 1661.7,
+      "text": " Come on boys."
+    },
+    {
+      "start": 1669.7,
+      "end": 1671.7,
+      "text": " Okay, half time."
+    },
+    {
+      "start": 1671.7,
+      "end": 1673.7,
+      "text": " We're gonna stay."
+    },
+    {
+      "start": 1673.7,
+      "end": 1675.7,
+      "text": " Go, go, go."
+    },
+    {
+      "start": 1688.7,
+      "end": 1690.7,
+      "text": " Drink water, drink water."
+    },
+    {
+      "start": 1703.7,
+      "end": 1705.7,
+      "text": " Okay, listen up."
+    },
+    {
+      "start": 1705.7,
+      "end": 1707.7,
+      "text": " We've done 61.5."
+    },
+    {
+      "start": 1707.7,
+      "end": 1709.7,
+      "text": " We're starting to doubt, guys."
+    },
+    {
+      "start": 1709.7,
+      "end": 1711.7,
+      "text": " We're starting to doubt."
+    },
+    {
+      "start": 1711.7,
+      "end": 1713.7,
+      "text": " I'm telling you, we're gonna waste the intensity."
+    },
+    {
+      "start": 1713.7,
+      "end": 1715.7,
+      "text": " We're gonna waste the intensity."
+    },
+    {
+      "start": 1715.7,
+      "end": 1717.7,
+      "text": " Okay, I showed you the second half."
+    },
+    {
+      "start": 1717.7,
+      "end": 1719.7,
+      "text": " You don't need to be standing on the ground."
+    },
+    {
+      "start": 1719.7,
+      "end": 1721.7,
+      "text": " I don't know."
+    },
+    {
+      "start": 1721.7,
+      "end": 1723.7,
+      "text": " We gotta waste the intensity."
+    },
+    {
+      "start": 1723.7,
+      "end": 1725.7,
+      "text": " We gotta waste the intensity."
+    },
+    {
+      "start": 1725.7,
+      "end": 1727.7,
+      "text": " Okay, so."
+    },
+    {
+      "start": 1727.7,
+      "end": 1729.7,
+      "text": " Put it on the ground."
+    },
+    {
+      "start": 1729.7,
+      "end": 1731.7,
+      "text": " Put it on the ground."
+    },
+    {
+      "start": 1731.7,
+      "end": 1733.7,
+      "text": " Put it, no, put it on back."
+    },
+    {
+      "start": 1733.7,
+      "end": 1735.7,
+      "text": " You have,"
+    },
+    {
+      "start": 1735.7,
+      "end": 1737.7,
+      "text": " You have,"
+    },
+    {
+      "start": 1737.7,
+      "end": 1739.7,
+      "text": " You have sun screen,"
+    },
+    {
+      "start": 1739.7,
+      "end": 1741.7,
+      "text": " so we're gonna go to your eyes."
+    },
+    {
+      "start": 1741.7,
+      "end": 1743.7,
+      "text": " So, bend the hand, Jaden."
+    },
+    {
+      "start": 1743.7,
+      "end": 1745.7,
+      "text": " I want you to drop."
+    },
+    {
+      "start": 1745.7,
+      "end": 1747.7,
+      "text": " It's okay, drink some water."
+    },
+    {
+      "start": 1747.7,
+      "end": 1749.7,
+      "text": " One on the right, one on the left."
+    },
+    {
+      "start": 1749.7,
+      "end": 1751.7,
+      "text": " Good job."
+    },
+    {
+      "start": 1751.7,
+      "end": 1753.7,
+      "text": " Keep your hand back off the ball, okay?"
+    },
+    {
+      "start": 1753.7,
+      "end": 1755.7,
+      "text": " So, it doesn't slip through your hand."
+    },
+    {
+      "start": 1755.7,
+      "end": 1757.7,
+      "text": " Aryan, this is, I'm gonna simplify."
+    },
+    {
+      "start": 1757.7,
+      "end": 1759.7,
+      "text": " I'm just gonna see if we can do this one."
+    },
+    {
+      "start": 1759.7,
+      "end": 1761.7,
+      "text": " I'm just gonna see if we can do this one."
+    },
+    {
+      "start": 1761.7,
+      "end": 1763.7,
+      "text": " This one."
+    },
+    {
+      "start": 1763.7,
+      "end": 1765.7,
+      "text": " This one."
+    },
+    {
+      "start": 1765.7,
+      "end": 1767.7,
+      "text": " Stay, but when we go out the ball,"
+    },
+    {
+      "start": 1767.7,
+      "end": 1769.7,
+      "text": " we just,"
+    },
+    {
+      "start": 1769.7,
+      "end": 1771.7,
+      "text": " we walk, we walk."
+    },
+    {
+      "start": 1771.7,
+      "end": 1773.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1773.7,
+      "end": 1775.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1775.7,
+      "end": 1777.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1777.7,
+      "end": 1779.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1779.7,
+      "end": 1781.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1781.7,
+      "end": 1783.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1783.7,
+      "end": 1785.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1785.7,
+      "end": 1787.7,
+      "text": " Stay."
+    },
+    {
+      "start": 1787.7,
+      "end": 1789.7,
+      "text": " Jada,"
+    },
+    {
+      "start": 1789.7,
+      "end": 1791.7,
+      "text": " when you have space,"
+    },
+    {
+      "start": 1791.7,
+      "end": 1793.7,
+      "text": " take it,"
+    },
+    {
+      "start": 1793.7,
+      "end": 1795.7,
+      "text": " Jaden,"
+    },
+    {
+      "start": 1795.7,
+      "end": 1797.7,
+      "text": " talk to your friends,"
+    },
+    {
+      "start": 1797.7,
+      "end": 1799.7,
+      "text": " but to get what's in,"
+    },
+    {
+      "start": 1799.7,
+      "end": 1801.7,
+      "text": " he has to,"
+    },
+    {
+      "start": 1801.7,
+      "end": 1803.7,
+      "text": " he's gonna touch,"
+    },
+    {
+      "start": 1803.7,
+      "end": 1805.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1805.7,
+      "end": 1807.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1807.7,
+      "end": 1809.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1809.7,
+      "end": 1811.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1811.7,
+      "end": 1813.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1813.7,
+      "end": 1815.7,
+      "text": " he'll make you,"
+    },
+    {
+      "start": 1815.7,
+      "end": 1823.7,
+      "text": " find the space and they shoot because players are going to be on the field."
+    },
+    {
+      "start": 1823.7,
+      "end": 1830.7,
+      "text": " When we move, when we are moving, when we are attacking, Jason, Liam, up, up the wing, support, support up the wing."
+    },
+    {
+      "start": 1830.7,
+      "end": 1833.7,
+      "text": " It's not about the running, but support up the wing."
+    },
+    {
+      "start": 1833.7,
+      "end": 1837.7,
+      "text": " No matter what, do not leave number 10 out of your sight."
+    },
+    {
+      "start": 1837.7,
+      "end": 1839.7,
+      "text": " No matter what, get back boy."
+    },
+    {
+      "start": 1839.7,
+      "end": 1841.7,
+      "text": " No matter what, don't leave no matter what side."
+    },
+    {
+      "start": 1841.7,
+      "end": 1843.7,
+      "text": " Don't buy, it's his name."
+    },
+    {
+      "start": 1843.7,
+      "end": 1847.7,
+      "text": " Yeah, whatever side he's on, pick that side you're on him."
+    },
+    {
+      "start": 1847.7,
+      "end": 1849.7,
+      "text": " Okay, you understand?"
+    },
+    {
+      "start": 1849.7,
+      "end": 1851.7,
+      "text": " That and Jason, they are collapsing on you guys."
+    },
+    {
+      "start": 1851.7,
+      "end": 1853.7,
+      "text": " You touched the ball on their corner."
+    },
+    {
+      "start": 1853.7,
+      "end": 1855.7,
+      "text": " Who's playing his striker?"
+    },
+    {
+      "start": 1855.7,
+      "end": 1857.7,
+      "text": " Nolan."
+    },
+    {
+      "start": 1857.7,
+      "end": 1861.7,
+      "text": " Nolan or James or Fanners, open, get it over to them."
+    },
+    {
+      "start": 1861.7,
+      "end": 1864.7,
+      "text": " Right, Nolan and then the captain guy's got to talk."
+    },
+    {
+      "start": 1864.7,
+      "end": 1866.7,
+      "text": " I got to hear you out there yelling."
+    },
+    {
+      "start": 1866.7,
+      "end": 1868.7,
+      "text": " They're not going to know you're open if they don't tell them."
+    },
+    {
+      "start": 1868.7,
+      "end": 1876.7,
+      "text": " So we got Ariana D, Liam DiMala and Jason, strong z-tries, okay?"
+    },
+    {
+      "start": 1876.7,
+      "end": 1878.7,
+      "text": " Make some ones at the ball if you got space."
+    },
+    {
+      "start": 1878.7,
+      "end": 1880.7,
+      "text": " You had to pass the ball to them."
+    },
+    {
+      "start": 1880.7,
+      "end": 1884.7,
+      "text": " Okay, sit down and have a look at the ball."
+    },
+    {
+      "start": 1884.7,
+      "end": 1886.7,
+      "text": " This is a net, this is a net."
+    },
+    {
+      "start": 1886.7,
+      "end": 1888.7,
+      "text": " See, here's the net."
+    },
+    {
+      "start": 1888.7,
+      "end": 1890.7,
+      "text": " Okay, corner, get, okay."
+    },
+    {
+      "start": 1890.7,
+      "end": 1893.7,
+      "text": " You're going to pass it to here and here."
+    },
+    {
+      "start": 1893.7,
+      "end": 1895.7,
+      "text": " You'll see your knees."
+    },
+    {
+      "start": 1896.7,
+      "end": 1898.7,
+      "text": " You get the ball in."
+    },
+    {
+      "start": 1898.7,
+      "end": 1902.7,
+      "text": " Bullsign means right in the shoulder to the shoulders on this side"
+    },
+    {
+      "start": 1902.7,
+      "end": 1904.7,
+      "text": " and you're helping your player."
+    },
+    {
+      "start": 1904.7,
+      "end": 1905.7,
+      "text": " Is that our ball?"
+    },
+    {
+      "start": 1905.7,
+      "end": 1906.7,
+      "text": " No."
+    },
+    {
+      "start": 1906.7,
+      "end": 1908.7,
+      "text": " You said bullsign, that's our ball."
+    },
+    {
+      "start": 1908.7,
+      "end": 1909.7,
+      "text": " Okay."
+    },
+    {
+      "start": 1909.7,
+      "end": 1911.7,
+      "text": " So that's our net."
+    },
+    {
+      "start": 1911.7,
+      "end": 1913.7,
+      "text": " Which way should you be? Which side?"
+    },
+    {
+      "start": 1913.7,
+      "end": 1914.7,
+      "text": " Is it on this side or this?"
+    },
+    {
+      "start": 1914.7,
+      "end": 1916.7,
+      "text": " Yeah, it's Nolan's ball."
+    },
+    {
+      "start": 1916.7,
+      "end": 1918.7,
+      "text": " Is it on this side or on this side?"
+    },
+    {
+      "start": 1918.7,
+      "end": 1920.7,
+      "text": " That's our ball."
+    },
+    {
+      "start": 1920.7,
+      "end": 1922.7,
+      "text": " I'm going to tell you one thing."
+    },
+    {
+      "start": 1923.7,
+      "end": 1927.7,
+      "text": " This is the game with what we played with stuff."
+    },
+    {
+      "start": 1927.7,
+      "end": 1928.7,
+      "text": " Yes?"
+    },
+    {
+      "start": 1928.7,
+      "end": 1929.7,
+      "text": " Yes."
+    },
+    {
+      "start": 1929.7,
+      "end": 1931.7,
+      "text": " So this is what I'm going to tell you."
+    },
+    {
+      "start": 1940.7,
+      "end": 1942.7,
+      "text": " Okay, let's go."
+    },
+    {
+      "start": 1942.7,
+      "end": 1943.7,
+      "text": " Let's go."
+    },
+    {
+      "start": 1943.7,
+      "end": 1944.7,
+      "text": " Come on."
+    },
+    {
+      "start": 1944.7,
+      "end": 1945.7,
+      "text": " Let's get out of the car."
+    },
+    {
+      "start": 1945.7,
+      "end": 1947.7,
+      "text": " Let's go, let's go, let's go, let's go."
+    },
+    {
+      "start": 1948.7,
+      "end": 1951.7,
+      "text": " Okay, we are ready to start the second half."
+    },
+    {
+      "start": 1951.7,
+      "end": 1952.7,
+      "text": " Keep up."
+    },
+    {
+      "start": 1966.7,
+      "end": 1969.7,
+      "text": " Okay, we're starting the second half."
+    },
+    {
+      "start": 1969.7,
+      "end": 1971.7,
+      "text": " Keep up here."
+    },
+    {
+      "start": 1977.7,
+      "end": 1978.7,
+      "text": " Don't come in."
+    },
+    {
+      "start": 1978.7,
+      "end": 1980.7,
+      "text": " Hand going to the right."
+    },
+    {
+      "start": 1982.7,
+      "end": 1984.7,
+      "text": " Come on, don't watch, don't watch."
+    },
+    {
+      "start": 1984.7,
+      "end": 1986.7,
+      "text": " Let it go, let it go, let it go."
+    },
+    {
+      "start": 1986.7,
+      "end": 1988.7,
+      "text": " Let it go, let it go."
+    },
+    {
+      "start": 1988.7,
+      "end": 1992.7,
+      "text": " Hand, Liam, Liam, Liam."
+    },
+    {
+      "start": 1993.7,
+      "end": 1996.7,
+      "text": " Nolan, go ahead, behind the screen."
+    },
+    {
+      "start": 1996.7,
+      "end": 1998.7,
+      "text": " Make out the ball, you've got to change."
+    },
+    {
+      "start": 1998.7,
+      "end": 2000.7,
+      "text": " Very good, beautiful."
+    },
+    {
+      "start": 2000.7,
+      "end": 2002.7,
+      "text": " All right, all right."
+    },
+    {
+      "start": 2004.7,
+      "end": 2006.7,
+      "text": " Come on, boys, come on."
+    },
+    {
+      "start": 2006.7,
+      "end": 2008.7,
+      "text": " All right, who's in the middle?"
+    },
+    {
+      "start": 2008.7,
+      "end": 2010.7,
+      "text": " Who's in the middle, boys?"
+    },
+    {
+      "start": 2010.7,
+      "end": 2012.7,
+      "text": " Come on, boys."
+    },
+    {
+      "start": 2012.7,
+      "end": 2014.7,
+      "text": " Come on, come on."
+    },
+    {
+      "start": 2016.7,
+      "end": 2018.7,
+      "text": " You see that, Julian?"
+    },
+    {
+      "start": 2018.7,
+      "end": 2020.7,
+      "text": " You've got to come in."
+    },
+    {
+      "start": 2020.7,
+      "end": 2022.7,
+      "text": " You've got to be doing that."
+    },
+    {
+      "start": 2022.7,
+      "end": 2024.7,
+      "text": " You're doing that all day long."
+    },
+    {
+      "start": 2024.7,
+      "end": 2025.7,
+      "text": " Watch."
+    },
+    {
+      "start": 2025.7,
+      "end": 2027.7,
+      "text": " Make sure that ball goes through before you take off."
+    },
+    {
+      "start": 2027.7,
+      "end": 2029.7,
+      "text": " Watch the shot from far away."
+    },
+    {
+      "start": 2030.7,
+      "end": 2032.7,
+      "text": " You're marching out, Dr. Marching out."
+    },
+    {
+      "start": 2032.7,
+      "end": 2034.7,
+      "text": " Watch the shot."
+    },
+    {
+      "start": 2034.7,
+      "end": 2036.7,
+      "text": " That's him."
+    },
+    {
+      "start": 2036.7,
+      "end": 2038.7,
+      "text": " You've got space, give him the ball."
+    },
+    {
+      "start": 2038.7,
+      "end": 2040.7,
+      "text": " No, no, yep, yep."
+    },
+    {
+      "start": 2040.7,
+      "end": 2042.7,
+      "text": " Go, release."
+    },
+    {
+      "start": 2042.7,
+      "end": 2045.7,
+      "text": " Go, go, go, go, go, go, go, go, go."
+    },
+    {
+      "start": 2045.7,
+      "end": 2049.7,
+      "text": " Yep, yep, again, again, again."
+    },
+    {
+      "start": 2049.7,
+      "end": 2051.7,
+      "text": " Again, good job, Nolan."
+    },
+    {
+      "start": 2051.7,
+      "end": 2053.7,
+      "text": " Good job."
+    },
+    {
+      "start": 2053.7,
+      "end": 2055.7,
+      "text": " Good, Jason, good, Jason."
+    },
+    {
+      "start": 2055.7,
+      "end": 2057.7,
+      "text": " Wait, wait, wait."
+    },
+    {
+      "start": 2060.7,
+      "end": 2062.7,
+      "text": " Jason, you're making it."
+    },
+    {
+      "start": 2062.7,
+      "end": 2064.7,
+      "text": " Yeah."
+    },
+    {
+      "start": 2064.7,
+      "end": 2069.7,
+      "text": " I told you, get the ball and you take that off."
+    },
+    {
+      "start": 2075.7,
+      "end": 2077.7,
+      "text": " Wait, wait, second touch, second touch."
+    },
+    {
+      "start": 2077.7,
+      "end": 2079.7,
+      "text": " Now, go."
+    },
+    {
+      "start": 2079.7,
+      "end": 2083.7,
+      "text": " Nolan, Nolan, Nolan, Nolan, Nolan, Nolan, Nolan."
+    },
+    {
+      "start": 2083.7,
+      "end": 2086.7,
+      "text": " Come on, Joey."
+    },
+    {
+      "start": 2086.7,
+      "end": 2089.7,
+      "text": " Yeah, support, support, come on, guys."
+    },
+    {
+      "start": 2089.7,
+      "end": 2091.7,
+      "text": " Yeah, on the line."
+    },
+    {
+      "start": 2091.7,
+      "end": 2093.7,
+      "text": " On the line."
+    },
+    {
+      "start": 2093.7,
+      "end": 2095.7,
+      "text": " Come on."
+    },
+    {
+      "start": 2095.7,
+      "end": 2097.7,
+      "text": " Come on, guys."
+    },
+    {
+      "start": 2097.7,
+      "end": 2099.7,
+      "text": " Come on, guys."
+    },
+    {
+      "start": 2099.7,
+      "end": 2102.7,
+      "text": " Jason, no."
+    },
+    {
+      "start": 2102.7,
+      "end": 2104.7,
+      "text": " Jason, you're making it."
+    },
+    {
+      "start": 2104.7,
+      "end": 2106.7,
+      "text": " Jason, no."
+    },
+    {
+      "start": 2106.7,
+      "end": 2110.7,
+      "text": " The ball went out from the other side."
+    },
+    {
+      "start": 2110.7,
+      "end": 2112.7,
+      "text": " Let it hit your body."
+    },
+    {
+      "start": 2112.7,
+      "end": 2115.7,
+      "text": " You got to be more there, guys."
+    },
+    {
+      "start": 2115.7,
+      "end": 2117.7,
+      "text": " You got to be more."
+    },
+    {
+      "start": 2117.7,
+      "end": 2119.7,
+      "text": " No, more pressure."
+    },
+    {
+      "start": 2119.7,
+      "end": 2121.7,
+      "text": " You need to do it."
+    },
+    {
+      "start": 2121.7,
+      "end": 2122.7,
+      "text": " Too much."
+    },
+    {
+      "start": 2122.7,
+      "end": 2123.7,
+      "text": " Overlock."
+    },
+    {
+      "start": 2123.7,
+      "end": 2125.7,
+      "text": " Cutting, cutting, cutting."
+    },
+    {
+      "start": 2125.7,
+      "end": 2127.7,
+      "text": " All right, guys, go, go, go."
+    },
+    {
+      "start": 2127.7,
+      "end": 2128.7,
+      "text": " Stay in the middle."
+    },
+    {
+      "start": 2128.7,
+      "end": 2130.7,
+      "text": " Don't go."
+    },
+    {
+      "start": 2130.7,
+      "end": 2133.7,
+      "text": " Up, up, just kick it."
+    },
+    {
+      "start": 2133.7,
+      "end": 2136.7,
+      "text": " Go, get a breakaway."
+    },
+    {
+      "start": 2136.7,
+      "end": 2138.7,
+      "text": " Boy, before I open."
+    },
+    {
+      "start": 2138.7,
+      "end": 2140.7,
+      "text": " Come on, Colin."
+    },
+    {
+      "start": 2140.7,
+      "end": 2142.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2142.7,
+      "end": 2144.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2144.7,
+      "end": 2146.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2146.7,
+      "end": 2149.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2149.7,
+      "end": 2152.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2152.7,
+      "end": 2154.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2154.7,
+      "end": 2156.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2156.7,
+      "end": 2158.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2158.7,
+      "end": 2160.7,
+      "text": " Come out."
+    },
+    {
+      "start": 2160.7,
+      "end": 2162.7,
+      "text": " Come out, Joey."
+    },
+    {
+      "start": 2162.7,
+      "end": 2164.7,
+      "text": " One position, that's what you are doing."
+    },
+    {
+      "start": 2164.7,
+      "end": 2167.7,
+      "text": " Left foot, one, left foot, right foot."
+    },
+    {
+      "start": 2167.7,
+      "end": 2169.7,
+      "text": " Come out, Joey."
+    },
+    {
+      "start": 2169.7,
+      "end": 2171.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2171.7,
+      "end": 2173.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2173.7,
+      "end": 2177.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2177.7,
+      "end": 2180.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2180.7,
+      "end": 2183.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2183.7,
+      "end": 2186.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2186.7,
+      "end": 2190.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2190.7,
+      "end": 2193.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2193.7,
+      "end": 2196.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2196.7,
+      "end": 2198.7,
+      "text": " Trying to move up."
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2198.7,
+      "end": 2198.7,
+      "text": ""
+    },
+    {
+      "start": 2228.7,
+      "end": 2230.7,
+      "text": " Get back, get back."
+    },
+    {
+      "start": 2258.7,
+      "end": 2266.7,
+      "text": " Trying to move up at the same time."
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2266.7,
+      "text": ""
+    },
+    {
+      "start": 2266.7,
+      "end": 2268.7,
+      "text": " You can be ready fast."
+    },
+    {
+      "start": 2272.18,
+      "end": 2274.18,
+      "text": " Ah, good job."
+    },
+    {
+      "start": 2277.3799999999997,
+      "end": 2279.3799999999997,
+      "text": " Go, Lowe!"
+    },
+    {
+      "start": 2279.3799999999997,
+      "end": 2281.3799999999997,
+      "text": " That's it! Here we go!"
+    },
+    {
+      "start": 2282.74,
+      "end": 2286.8199999999997,
+      "text": " Hey! Jason, don't turn your bat next time!"
+    },
+    {
+      "start": 2286.8199999999997,
+      "end": 2288.8199999999997,
+      "text": " Sign it, Lowe!"
+    },
+    {
+      "start": 2288.8199999999997,
+      "end": 2290.8199999999997,
+      "text": " Hey, Jay, they're wearing out of their blouse."
+    },
+    {
+      "start": 2290.8199999999997,
+      "end": 2292.8199999999997,
+      "text": " Go, Lowe!"
+    },
+    {
+      "start": 2292.8199999999997,
+      "end": 2294.8199999999997,
+      "text": " Hey, get it back!"
+    },
+    {
+      "start": 2296.8199999999997,
+      "end": 2298.8199999999997,
+      "text": " And he's ahead."
+    },
+    {
+      "start": 2300.8199999999997,
+      "end": 2302.8199999999997,
+      "text": " Good job, Oliver."
+    },
+    {
+      "start": 2302.8199999999997,
+      "end": 2304.8199999999997,
+      "text": " Good job, Lowe!"
+    },
+    {
+      "start": 2304.8199999999997,
+      "end": 2306.8199999999997,
+      "text": " Hey, stop!"
+    },
+    {
+      "start": 2306.8199999999997,
+      "end": 2308.8199999999997,
+      "text": " Pressure, Joey, pressure."
+    },
+    {
+      "start": 2308.8199999999997,
+      "end": 2310.8199999999997,
+      "text": " What? Leave it! Leave it!"
+    },
+    {
+      "start": 2310.8199999999997,
+      "end": 2312.8199999999997,
+      "text": " Good job!"
+    },
+    {
+      "start": 2312.8199999999997,
+      "end": 2314.8199999999997,
+      "text": " There you go."
+    },
+    {
+      "start": 2314.8199999999997,
+      "end": 2316.8199999999997,
+      "text": " Come on, Joey."
+    },
+    {
+      "start": 2316.8199999999997,
+      "end": 2318.8199999999997,
+      "text": " Lowe!"
+    },
+    {
+      "start": 2318.8199999999997,
+      "end": 2320.8199999999997,
+      "text": " Come on, Joey, keep going, Joey."
+    },
+    {
+      "start": 2320.8199999999997,
+      "end": 2322.8199999999997,
+      "text": " Come on!"
+    },
+    {
+      "start": 2322.8199999999997,
+      "end": 2324.8199999999997,
+      "text": " Pressure, blue, pressure."
+    },
+    {
+      "start": 2324.82,
+      "end": 2326.82,
+      "text": " There you go."
+    },
+    {
+      "start": 2326.82,
+      "end": 2328.82,
+      "text": " There you go."
+    },
+    {
+      "start": 2328.82,
+      "end": 2330.82,
+      "text": " Get it out."
+    },
+    {
+      "start": 2330.82,
+      "end": 2332.82,
+      "text": " Come on."
+    },
+    {
+      "start": 2332.82,
+      "end": 2334.82,
+      "text": " Pressure, pressure."
+    },
+    {
+      "start": 2334.82,
+      "end": 2336.82,
+      "text": " Pressure, pressure."
+    },
+    {
+      "start": 2336.82,
+      "end": 2338.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2338.82,
+      "end": 2340.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2340.82,
+      "end": 2342.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2342.82,
+      "end": 2344.82,
+      "text": " Ah!"
+    },
+    {
+      "start": 2344.82,
+      "end": 2346.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2346.82,
+      "end": 2348.82,
+      "text": " Send it off."
+    },
+    {
+      "start": 2348.82,
+      "end": 2350.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2350.82,
+      "end": 2352.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2352.82,
+      "end": 2354.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2354.82,
+      "end": 2356.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2356.82,
+      "end": 2358.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2358.82,
+      "end": 2360.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2360.82,
+      "end": 2362.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2362.82,
+      "end": 2364.82,
+      "text": " Get back, boys."
+    },
+    {
+      "start": 2364.82,
+      "end": 2366.82,
+      "text": " You gotta get back with your guy."
+    },
+    {
+      "start": 2366.82,
+      "end": 2368.82,
+      "text": " That's what it works."
+    },
+    {
+      "start": 2368.82,
+      "end": 2370.82,
+      "text": " That's what it works."
+    },
+    {
+      "start": 2370.82,
+      "end": 2372.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2372.82,
+      "end": 2374.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2374.82,
+      "end": 2376.82,
+      "text": " Go, man. Go, go, go, go, go, go, go!"
+    },
+    {
+      "start": 2376.82,
+      "end": 2378.82,
+      "text": " Open, Adam, open!"
+    },
+    {
+      "start": 2378.82,
+      "end": 2380.82,
+      "text": " Adam, Adam, take some space."
+    },
+    {
+      "start": 2380.82,
+      "end": 2382.82,
+      "text": " Put it cross."
+    },
+    {
+      "start": 2382.82,
+      "end": 2384.82,
+      "text": " Put it cross on, right?"
+    },
+    {
+      "start": 2384.82,
+      "end": 2386.82,
+      "text": " Get a first."
+    },
+    {
+      "start": 2386.82,
+      "end": 2388.82,
+      "text": " You got that leg."
+    },
+    {
+      "start": 2388.82,
+      "end": 2390.82,
+      "text": " You got that leg."
+    },
+    {
+      "start": 2390.82,
+      "end": 2392.82,
+      "text": " Get the weight."
+    },
+    {
+      "start": 2392.82,
+      "end": 2394.82,
+      "text": " Get the weight."
+    },
+    {
+      "start": 2394.82,
+      "end": 2396.82,
+      "text": " Get it."
+    },
+    {
+      "start": 2396.82,
+      "end": 2398.82,
+      "text": " Get it."
+    },
+    {
+      "start": 2398.82,
+      "end": 2400.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2400.82,
+      "end": 2402.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2402.82,
+      "end": 2404.82,
+      "text": " Go, go, Nick. Go."
+    },
+    {
+      "start": 2404.82,
+      "end": 2406.82,
+      "text": " Watch! Watch!"
+    },
+    {
+      "start": 2406.82,
+      "end": 2408.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2408.82,
+      "end": 2410.82,
+      "text": " Go, Lowe."
+    },
+    {
+      "start": 2410.82,
+      "end": 2412.82,
+      "text": " Go, Lowe."
+    },
+    {
+      "start": 2412.82,
+      "end": 2414.82,
+      "text": " Go, go, go, go, go, go!"
+    },
+    {
+      "start": 2414.82,
+      "end": 2416.82,
+      "text": " Where's that going?"
+    },
+    {
+      "start": 2416.82,
+      "end": 2418.82,
+      "text": " Go with me!"
+    },
+    {
+      "start": 2418.82,
+      "end": 2420.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2420.82,
+      "end": 2422.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2422.82,
+      "end": 2424.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2424.82,
+      "end": 2426.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2426.82,
+      "end": 2428.82,
+      "text": " Come on, Lowe."
+    },
+    {
+      "start": 2428.82,
+      "end": 2430.82,
+      "text": " It's your boss."
+    },
+    {
+      "start": 2430.82,
+      "end": 2432.82,
+      "text": " It's right."
+    },
+    {
+      "start": 2432.82,
+      "end": 2434.82,
+      "text": " It's right, Lowe."
+    },
+    {
+      "start": 2434.82,
+      "end": 2436.82,
+      "text": " It's right."
+    },
+    {
+      "start": 2436.82,
+      "end": 2438.82,
+      "text": " It's right."
+    },
+    {
+      "start": 2438.82,
+      "end": 2440.82,
+      "text": " It's right."
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2442.82,
+      "end": 2442.82,
+      "text": ""
+    },
+    {
+      "start": 2464.82,
+      "end": 2466.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2466.82,
+      "end": 2468.82,
+      "text": " You watch it!"
+    },
+    {
+      "start": 2468.82,
+      "end": 2470.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2470.82,
+      "end": 2472.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2472.82,
+      "end": 2474.82,
+      "text": " You watch it!"
+    },
+    {
+      "start": 2474.82,
+      "end": 2476.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2476.82,
+      "end": 2478.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2478.82,
+      "end": 2480.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2480.82,
+      "end": 2482.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2482.82,
+      "end": 2484.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2484.82,
+      "end": 2486.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2486.82,
+      "end": 2488.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2488.82,
+      "end": 2490.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2490.82,
+      "end": 2492.82,
+      "text": " I'm going back!"
+    },
+    {
+      "start": 2492.82,
+      "end": 2494.82,
+      "text": " You watch it!"
+    },
+    {
+      "start": 2494.82,
+      "end": 2496.82,
+      "text": " And Joey!"
+    },
+    {
+      "start": 2496.82,
+      "end": 2498.82,
+      "text": " Oh!"
+    },
+    {
+      "start": 2498.82,
+      "end": 2500.82,
+      "text": " Move up!"
+    },
+    {
+      "start": 2500.82,
+      "end": 2502.82,
+      "text": " Come on Joey!"
+    },
+    {
+      "start": 2502.82,
+      "end": 2504.82,
+      "text": " Nice work Joey!"
+    },
+    {
+      "start": 2504.82,
+      "end": 2506.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2506.82,
+      "end": 2508.82,
+      "text": " Take a shot!"
+    },
+    {
+      "start": 2508.82,
+      "end": 2510.82,
+      "text": " Get back to move!"
+    },
+    {
+      "start": 2510.82,
+      "end": 2512.82,
+      "text": " Get back to move!"
+    },
+    {
+      "start": 2512.82,
+      "end": 2514.82,
+      "text": " Come on up again!"
+    },
+    {
+      "start": 2516.82,
+      "end": 2518.82,
+      "text": " Come on, Bowie!"
+    },
+    {
+      "start": 2518.82,
+      "end": 2520.82,
+      "text": " Come on again!"
+    },
+    {
+      "start": 2522.82,
+      "end": 2524.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2524.82,
+      "end": 2526.82,
+      "text": " Joey!"
+    },
+    {
+      "start": 2526.82,
+      "end": 2528.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2528.82,
+      "end": 2530.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2530.82,
+      "end": 2532.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2534.82,
+      "end": 2536.82,
+      "text": " Go on!"
+    },
+    {
+      "start": 2536.82,
+      "end": 2538.82,
+      "text": " Go with it!"
+    },
+    {
+      "start": 2538.82,
+      "end": 2540.82,
+      "text": " That's it!"
+    },
+    {
+      "start": 2540.82,
+      "end": 2542.82,
+      "text": " It's a both course!"
+    },
+    {
+      "start": 2546.82,
+      "end": 2548.82,
+      "text": " Hey! Back!"
+    },
+    {
+      "start": 2548.82,
+      "end": 2550.82,
+      "text": " Back!"
+    },
+    {
+      "start": 2550.82,
+      "end": 2552.82,
+      "text": " Joey!"
+    },
+    {
+      "start": 2552.82,
+      "end": 2554.82,
+      "text": " Yep!"
+    },
+    {
+      "start": 2554.82,
+      "end": 2556.82,
+      "text": " Open up!"
+    },
+    {
+      "start": 2556.82,
+      "end": 2558.82,
+      "text": " Open up!"
+    },
+    {
+      "start": 2558.82,
+      "end": 2560.82,
+      "text": " And up!"
+    },
+    {
+      "start": 2562.82,
+      "end": 2564.82,
+      "text": " Then last the ball."
+    },
+    {
+      "start": 2568.82,
+      "end": 2570.82,
+      "text": " Good job! Good job!"
+    },
+    {
+      "start": 2580.82,
+      "end": 2582.82,
+      "text": " Don't talk about it!"
+    },
+    {
+      "start": 2582.82,
+      "end": 2584.82,
+      "text": " Why?"
+    },
+    {
+      "start": 2584.82,
+      "end": 2586.82,
+      "text": " Why don't you speak to me?"
+    },
+    {
+      "start": 2586.82,
+      "end": 2588.82,
+      "text": " Me?"
+    },
+    {
+      "start": 2588.82,
+      "end": 2590.82,
+      "text": " Sonia, sonia, two minutes of strike."
+    },
+    {
+      "start": 2594.82,
+      "end": 2596.82,
+      "text": " Watch your aint!"
+    },
+    {
+      "start": 2596.82,
+      "end": 2598.82,
+      "text": " Watch your aint!"
+    },
+    {
+      "start": 2598.82,
+      "end": 2600.82,
+      "text": " Drop back! Drop back!"
+    },
+    {
+      "start": 2600.82,
+      "end": 2602.82,
+      "text": " Drop back!"
+    },
+    {
+      "start": 2606.82,
+      "end": 2608.82,
+      "text": " That's it!"
+    },
+    {
+      "start": 2608.82,
+      "end": 2610.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2610.82,
+      "end": 2612.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2612.82,
+      "end": 2614.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2634.82,
+      "end": 2636.82,
+      "text": " Good job, Ariane!"
+    },
+    {
+      "start": 2638.82,
+      "end": 2640.82,
+      "text": " I don't look for you on the ground."
+    },
+    {
+      "start": 2640.82,
+      "end": 2642.82,
+      "text": " I need to help."
+    },
+    {
+      "start": 2642.82,
+      "end": 2644.82,
+      "text": " Back!"
+    },
+    {
+      "start": 2644.82,
+      "end": 2646.82,
+      "text": " Side! Side!"
+    },
+    {
+      "start": 2646.82,
+      "end": 2648.82,
+      "text": " Side!"
+    },
+    {
+      "start": 2648.82,
+      "end": 2650.82,
+      "text": " Sit down!"
+    },
+    {
+      "start": 2650.82,
+      "end": 2652.82,
+      "text": " Watch your aint!"
+    },
+    {
+      "start": 2652.82,
+      "end": 2654.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2654.82,
+      "end": 2656.82,
+      "text": " One of you!"
+    },
+    {
+      "start": 2656.82,
+      "end": 2658.82,
+      "text": " Capri\u00e1n, you go back!"
+    },
+    {
+      "start": 2658.82,
+      "end": 2660.82,
+      "text": " Go back, Capri\u00e1n!"
+    },
+    {
+      "start": 2660.82,
+      "end": 2662.82,
+      "text": " You know how to be a striker!"
+    },
+    {
+      "start": 2662.82,
+      "end": 2664.82,
+      "text": " Who's my striker?"
+    },
+    {
+      "start": 2664.82,
+      "end": 2666.82,
+      "text": " There's Monday!"
+    },
+    {
+      "start": 2666.82,
+      "end": 2668.82,
+      "text": " Okay!"
+    },
+    {
+      "start": 2678.82,
+      "end": 2680.82,
+      "text": " Go, man! Go! Go!"
+    },
+    {
+      "start": 2680.82,
+      "end": 2682.82,
+      "text": " Good job! Win it!"
+    },
+    {
+      "start": 2690.82,
+      "end": 2692.82,
+      "text": " Look at Adam! Adam!"
+    },
+    {
+      "start": 2692.82,
+      "end": 2694.82,
+      "text": " No!"
+    },
+    {
+      "start": 2694.82,
+      "end": 2696.82,
+      "text": " Hey!"
+    },
+    {
+      "start": 2704.82,
+      "end": 2706.82,
+      "text": " Good job, Ben!"
+    },
+    {
+      "start": 2714.82,
+      "end": 2716.82,
+      "text": " Red ball, red ball, red ball!"
+    },
+    {
+      "start": 2716.82,
+      "end": 2718.82,
+      "text": " Stay front! Stay front!"
+    },
+    {
+      "start": 2724.82,
+      "end": 2726.82,
+      "text": " Are you ready?"
+    },
+    {
+      "start": 2726.82,
+      "end": 2728.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 2728.82,
+      "end": 2730.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2738.82,
+      "end": 2740.82,
+      "text": " Yeah!"
+    },
+    {
+      "start": 2744.82,
+      "end": 2746.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2748.82,
+      "end": 2750.82,
+      "text": " Yes, both guys!"
+    },
+    {
+      "start": 2750.82,
+      "end": 2752.82,
+      "text": " Red ball!"
+    },
+    {
+      "start": 2752.82,
+      "end": 2754.82,
+      "text": " Madlion!"
+    },
+    {
+      "start": 2754.82,
+      "end": 2756.82,
+      "text": " Boys, get back!"
+    },
+    {
+      "start": 2770.82,
+      "end": 2772.82,
+      "text": " Ah, come on!"
+    },
+    {
+      "start": 2780.82,
+      "end": 2782.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2782.82,
+      "end": 2784.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2784.82,
+      "end": 2786.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2786.82,
+      "end": 2788.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2788.82,
+      "end": 2790.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2790.82,
+      "end": 2792.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2792.82,
+      "end": 2794.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2794.82,
+      "end": 2796.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2796.82,
+      "end": 2798.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2798.82,
+      "end": 2800.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2800.82,
+      "end": 2802.82,
+      "text": " Hey!"
+    },
+    {
+      "start": 2804.82,
+      "end": 2806.82,
+      "text": " Oh, the past!"
+    },
+    {
+      "start": 2806.82,
+      "end": 2808.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2808.82,
+      "end": 2810.82,
+      "text": " Come on, guys!"
+    },
+    {
+      "start": 2810.82,
+      "end": 2812.82,
+      "text": " Pass it!"
+    },
+    {
+      "start": 2816.82,
+      "end": 2818.82,
+      "text": " Come on, let's stay up!"
+    },
+    {
+      "start": 2818.82,
+      "end": 2820.82,
+      "text": " Stay high!"
+    },
+    {
+      "start": 2820.82,
+      "end": 2822.82,
+      "text": " Come on, guys!"
+    },
+    {
+      "start": 2822.82,
+      "end": 2824.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2824.82,
+      "end": 2826.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2828.82,
+      "end": 2830.82,
+      "text": " Come on, guys!"
+    },
+    {
+      "start": 2836.82,
+      "end": 2838.82,
+      "text": " Guys, come on!"
+    },
+    {
+      "start": 2840.82,
+      "end": 2842.82,
+      "text": " Get it out, boys!"
+    },
+    {
+      "start": 2842.82,
+      "end": 2844.82,
+      "text": " Out!"
+    },
+    {
+      "start": 2844.82,
+      "end": 2846.82,
+      "text": " Red ball, then out!"
+    },
+    {
+      "start": 2846.82,
+      "end": 2848.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2848.82,
+      "end": 2850.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 2850.82,
+      "end": 2852.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2852.82,
+      "end": 2854.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2854.82,
+      "end": 2856.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2856.82,
+      "end": 2858.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2858.82,
+      "end": 2860.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2860.82,
+      "end": 2862.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2862.82,
+      "end": 2864.82,
+      "text": " Take a line!"
+    },
+    {
+      "start": 2864.82,
+      "end": 2866.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2866.82,
+      "end": 2868.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2868.82,
+      "end": 2870.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2870.82,
+      "end": 2872.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2872.82,
+      "end": 2874.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2874.82,
+      "end": 2876.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2876.82,
+      "end": 2878.82,
+      "text": " Ah!"
+    },
+    {
+      "start": 2878.82,
+      "end": 2880.82,
+      "text": " Call it!"
+    },
+    {
+      "start": 2880.82,
+      "end": 2882.82,
+      "text": " What's your offside, Call it!"
+    },
+    {
+      "start": 2882.82,
+      "end": 2884.82,
+      "text": " What's your offside?"
+    },
+    {
+      "start": 2884.82,
+      "end": 2886.82,
+      "text": " Win it! Win it!"
+    },
+    {
+      "start": 2886.82,
+      "end": 2888.82,
+      "text": " Angle! Angle!"
+    },
+    {
+      "start": 2888.82,
+      "end": 2890.82,
+      "text": " Angle!"
+    },
+    {
+      "start": 2890.82,
+      "end": 2892.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2892.82,
+      "end": 2894.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2894.82,
+      "end": 2896.82,
+      "text": " No, no!"
+    },
+    {
+      "start": 2896.82,
+      "end": 2898.82,
+      "text": " We're going to win!"
+    },
+    {
+      "start": 2898.82,
+      "end": 2900.82,
+      "text": " We're going to win!"
+    },
+    {
+      "start": 2908.82,
+      "end": 2910.82,
+      "text": " We're going to win!"
+    },
+    {
+      "start": 2910.82,
+      "end": 2912.82,
+      "text": " Ah!"
+    },
+    {
+      "start": 2912.82,
+      "end": 2914.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 2914.82,
+      "end": 2916.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 2916.82,
+      "end": 2918.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 2918.82,
+      "end": 2920.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 2922.82,
+      "end": 2924.82,
+      "text": " Gabriel!"
+    },
+    {
+      "start": 2924.82,
+      "end": 2926.82,
+      "text": " Gabriel, stay back a little bit!"
+    },
+    {
+      "start": 2926.82,
+      "end": 2928.82,
+      "text": " Gabriel!"
+    },
+    {
+      "start": 2928.82,
+      "end": 2930.82,
+      "text": " Stay back a little bit!"
+    },
+    {
+      "start": 2930.82,
+      "end": 2932.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2932.82,
+      "end": 2934.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2934.82,
+      "end": 2936.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2936.82,
+      "end": 2938.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2938.82,
+      "end": 2940.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2940.82,
+      "end": 2942.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2942.82,
+      "end": 2944.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2944.82,
+      "end": 2946.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2946.82,
+      "end": 2948.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2948.82,
+      "end": 2950.82,
+      "text": " Get!"
+    },
+    {
+      "start": 2950.82,
+      "end": 2952.82,
+      "text": " Guys, move!"
+    },
+    {
+      "start": 2952.82,
+      "end": 2954.82,
+      "text": " Guys, move!"
+    },
+    {
+      "start": 2954.82,
+      "end": 2956.82,
+      "text": " Ariane, watch him!"
+    },
+    {
+      "start": 2956.82,
+      "end": 2958.82,
+      "text": " Watch him! Ariane, behind you!"
+    },
+    {
+      "start": 2958.82,
+      "end": 2960.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2960.82,
+      "end": 2962.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2962.82,
+      "end": 2964.82,
+      "text": " Go, go!"
+    },
+    {
+      "start": 2964.82,
+      "end": 2966.82,
+      "text": " Go!"
+    },
+    {
+      "start": 2966.82,
+      "end": 2968.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2968.82,
+      "end": 2970.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2970.82,
+      "end": 2972.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2972.82,
+      "end": 2974.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2974.82,
+      "end": 2976.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2976.82,
+      "end": 2978.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2978.82,
+      "end": 2980.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2980.82,
+      "end": 2982.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2982.82,
+      "end": 2984.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2984.82,
+      "end": 2986.82,
+      "text": " Keep going!"
+    },
+    {
+      "start": 2986.82,
+      "end": 2988.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2988.82,
+      "end": 2990.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 2990.82,
+      "end": 2992.82,
+      "text": " Back up! Back up!"
+    },
+    {
+      "start": 2992.82,
+      "end": 2994.82,
+      "text": " Back up!"
+    },
+    {
+      "start": 2994.82,
+      "end": 2996.82,
+      "text": " I can feel the things sitting here."
+    },
+    {
+      "start": 2996.82,
+      "end": 2998.82,
+      "text": " Coach, I'm so sorry!"
+    },
+    {
+      "start": 2998.82,
+      "end": 3000.82,
+      "text": " You know what?"
+    },
+    {
+      "start": 3000.82,
+      "end": 3002.82,
+      "text": " You're the best!"
+    },
+    {
+      "start": 3002.82,
+      "end": 3004.82,
+      "text": " You're the best!"
+    },
+    {
+      "start": 3004.82,
+      "end": 3006.82,
+      "text": " You're the best!"
+    },
+    {
+      "start": 3006.82,
+      "end": 3008.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 3008.82,
+      "end": 3010.82,
+      "text": " Go up and go!"
+    },
+    {
+      "start": 3010.82,
+      "end": 3012.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3012.82,
+      "end": 3014.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 3014.82,
+      "end": 3016.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 3016.82,
+      "end": 3018.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 3018.82,
+      "end": 3020.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 3020.82,
+      "end": 3022.82,
+      "text": " You got 30!"
+    },
+    {
+      "start": 3022.82,
+      "end": 3024.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3024.82,
+      "end": 3026.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3026.82,
+      "end": 3028.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3028.82,
+      "end": 3030.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3030.82,
+      "end": 3032.82,
+      "text": " Look at J.D."
+    },
+    {
+      "start": 3032.82,
+      "end": 3034.82,
+      "text": " He's alone!"
+    },
+    {
+      "start": 3034.82,
+      "end": 3036.82,
+      "text": " Quicker!"
+    },
+    {
+      "start": 3036.82,
+      "end": 3038.82,
+      "text": " Quicker!"
+    },
+    {
+      "start": 3038.82,
+      "end": 3040.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 3040.82,
+      "end": 3042.82,
+      "text": " Go, Sean!"
+    },
+    {
+      "start": 3042.82,
+      "end": 3044.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3050.82,
+      "end": 3052.82,
+      "text": " Come on, have a go!"
+    },
+    {
+      "start": 3052.82,
+      "end": 3054.82,
+      "text": " Come on!"
+    },
+    {
+      "start": 3054.82,
+      "end": 3056.82,
+      "text": " Good job! Go with them!"
+    },
+    {
+      "start": 3056.82,
+      "end": 3058.82,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 3058.82,
+      "end": 3060.82,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 3060.82,
+      "end": 3062.82,
+      "text": " Up! Up! Up!"
+    },
+    {
+      "start": 3062.82,
+      "end": 3064.82,
+      "text": " Stay!"
+    },
+    {
+      "start": 3064.82,
+      "end": 3066.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 3066.82,
+      "end": 3068.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3068.82,
+      "end": 3070.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3070.82,
+      "end": 3072.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3072.82,
+      "end": 3074.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3074.82,
+      "end": 3076.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3076.82,
+      "end": 3078.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3078.82,
+      "end": 3080.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3080.82,
+      "end": 3082.82,
+      "text": " Why?"
+    },
+    {
+      "start": 3082.82,
+      "end": 3084.82,
+      "text": " Why?"
+    },
+    {
+      "start": 3084.82,
+      "end": 3086.82,
+      "text": " Why?"
+    },
+    {
+      "start": 3086.82,
+      "end": 3088.82,
+      "text": " Let it go! Let it go!"
+    },
+    {
+      "start": 3088.82,
+      "end": 3090.82,
+      "text": " Come here, stay!"
+    },
+    {
+      "start": 3090.82,
+      "end": 3092.82,
+      "text": " Let it go!"
+    },
+    {
+      "start": 3092.82,
+      "end": 3094.82,
+      "text": " Let it go!"
+    },
+    {
+      "start": 3094.82,
+      "end": 3096.82,
+      "text": " Let it go!"
+    },
+    {
+      "start": 3096.82,
+      "end": 3098.82,
+      "text": " Come on, boys!"
+    },
+    {
+      "start": 3098.82,
+      "end": 3100.82,
+      "text": " Let it go!"
+    },
+    {
+      "start": 3100.82,
+      "end": 3102.82,
+      "text": " Ask him!"
+    },
+    {
+      "start": 3102.82,
+      "end": 3104.82,
+      "text": " Ask him!"
+    },
+    {
+      "start": 3104.82,
+      "end": 3106.82,
+      "text": " Arion! Arion!"
+    },
+    {
+      "start": 3106.82,
+      "end": 3108.82,
+      "text": " Watch him! Watch him!"
+    },
+    {
+      "start": 3108.82,
+      "end": 3110.82,
+      "text": " Stay on him! Stay on him!"
+    },
+    {
+      "start": 3110.82,
+      "end": 3112.82,
+      "text": " Man to man!"
+    },
+    {
+      "start": 3112.82,
+      "end": 3114.82,
+      "text": " Move in a little bit!"
+    },
+    {
+      "start": 3114.82,
+      "end": 3116.82,
+      "text": " Move in a little bit!"
+    },
+    {
+      "start": 3116.82,
+      "end": 3118.82,
+      "text": " He's fresh and come in and cut that fat off!"
+    },
+    {
+      "start": 3118.82,
+      "end": 3120.82,
+      "text": " Get the Rion!"
+    },
+    {
+      "start": 3120.82,
+      "end": 3122.82,
+      "text": " Get the Rion!"
+    },
+    {
+      "start": 3122.82,
+      "end": 3124.82,
+      "text": " Get the Rion!"
+    },
+    {
+      "start": 3124.82,
+      "end": 3126.82,
+      "text": " Arion, bring it!"
+    },
+    {
+      "start": 3126.82,
+      "end": 3128.82,
+      "text": " They're going! They're going!"
+    },
+    {
+      "start": 3128.82,
+      "end": 3130.82,
+      "text": " Now, Liam, go get them!"
+    },
+    {
+      "start": 3130.82,
+      "end": 3132.82,
+      "text": " Go get them!"
+    },
+    {
+      "start": 3132.82,
+      "end": 3134.82,
+      "text": " Yep! Time!"
+    },
+    {
+      "start": 3134.82,
+      "end": 3136.82,
+      "text": " Yep!"
+    },
+    {
+      "start": 3136.82,
+      "end": 3138.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3138.82,
+      "end": 3140.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3140.82,
+      "end": 3142.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3142.82,
+      "end": 3144.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 3144.82,
+      "end": 3146.82,
+      "text": " That's Joe's got me!"
+    },
+    {
+      "start": 3146.82,
+      "end": 3148.82,
+      "text": " You gotta beat your day, you got it!"
+    },
+    {
+      "start": 3148.82,
+      "end": 3150.82,
+      "text": " You got it!"
+    },
+    {
+      "start": 3150.82,
+      "end": 3152.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 3152.82,
+      "end": 3154.82,
+      "text": " Come here!"
+    },
+    {
+      "start": 3154.82,
+      "end": 3156.82,
+      "text": " Come here!"
+    },
+    {
+      "start": 3156.82,
+      "end": 3158.82,
+      "text": " Open! Open!"
+    },
+    {
+      "start": 3158.82,
+      "end": 3160.82,
+      "text": " Take a shot!"
+    },
+    {
+      "start": 3160.82,
+      "end": 3162.82,
+      "text": " Behind you! Behind you!"
+    },
+    {
+      "start": 3162.82,
+      "end": 3164.82,
+      "text": " One of you!"
+    },
+    {
+      "start": 3164.82,
+      "end": 3166.82,
+      "text": " I'm not here!"
+    },
+    {
+      "start": 3166.82,
+      "end": 3168.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3168.82,
+      "end": 3170.82,
+      "text": " Yes!"
+    },
+    {
+      "start": 3170.82,
+      "end": 3172.82,
+      "text": " Pass it!"
+    },
+    {
+      "start": 3172.82,
+      "end": 3174.82,
+      "text": " Pass it!"
+    },
+    {
+      "start": 3174.82,
+      "end": 3176.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3190.82,
+      "end": 3192.82,
+      "text": " Five more minutes!"
+    },
+    {
+      "start": 3192.82,
+      "end": 3194.82,
+      "text": " Later!"
+    },
+    {
+      "start": 3194.82,
+      "end": 3196.82,
+      "text": " Other way!"
+    },
+    {
+      "start": 3196.82,
+      "end": 3198.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3198.82,
+      "end": 3200.82,
+      "text": " Turn!"
+    },
+    {
+      "start": 3200.82,
+      "end": 3202.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3202.82,
+      "end": 3204.82,
+      "text": " There he comes!"
+    },
+    {
+      "start": 3204.82,
+      "end": 3206.82,
+      "text": " Now! Now!"
+    },
+    {
+      "start": 3206.82,
+      "end": 3208.82,
+      "text": " Let's go down!"
+    },
+    {
+      "start": 3208.82,
+      "end": 3210.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3210.82,
+      "end": 3212.82,
+      "text": " Let's go!"
+    },
+    {
+      "start": 3212.82,
+      "end": 3214.82,
+      "text": " Let's go!"
+    },
+    {
+      "start": 3214.82,
+      "end": 3216.82,
+      "text": " Go!"
+    },
+    {
+      "start": 3216.82,
+      "end": 3218.82,
+      "text": " Five more minutes!"
+    },
+    {
+      "start": 3218.82,
+      "end": 3220.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3220.82,
+      "end": 3222.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3222.82,
+      "end": 3224.82,
+      "text": " Time!"
+    },
+    {
+      "start": 3224.82,
+      "end": 3226.82,
+      "text": " Come on, Liam!"
+    },
+    {
+      "start": 3226.82,
+      "end": 3228.82,
+      "text": " You got it!"
+    },
+    {
+      "start": 3228.82,
+      "end": 3230.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 3230.82,
+      "end": 3232.82,
+      "text": " What do we do?"
+    },
+    {
+      "start": 3232.82,
+      "end": 3234.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3238.82,
+      "end": 3240.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3244.82,
+      "end": 3246.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3246.82,
+      "end": 3248.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3252.82,
+      "end": 3254.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3254.82,
+      "end": 3256.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3256.82,
+      "end": 3258.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3258.82,
+      "end": 3260.82,
+      "text": " Trying to move on!"
+    },
+    {
+      "start": 3260.82,
+      "end": 3263.5,
+      "text": " need to take this out"
+    },
+    {
+      "start": 3279.06,
+      "end": 3282.06,
+      "text": " three minutes"
+    },
+    {
+      "start": 3290.82,
+      "end": 3292.82,
+      "text": " come on"
+    },
+    {
+      "start": 3292.82,
+      "end": 3321.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3321.34,
+      "end": 3323.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3323.34,
+      "end": 3325.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3325.34,
+      "end": 3327.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3327.34,
+      "end": 3329.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3329.34,
+      "end": 3331.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3331.34,
+      "end": 3333.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3333.34,
+      "end": 3335.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3335.34,
+      "end": 3337.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3337.34,
+      "end": 3339.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3339.34,
+      "end": 3341.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3341.34,
+      "end": 3343.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3343.34,
+      "end": 3345.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3345.34,
+      "end": 3347.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3347.34,
+      "end": 3349.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3349.34,
+      "end": 3351.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3351.34,
+      "end": 3353.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3357.34,
+      "end": 3359.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3359.34,
+      "end": 3361.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3361.34,
+      "end": 3363.34,
+      "text": " Come on, for God's sake."
+    },
+    {
+      "start": 3363.34,
+      "end": 3365.34,
+      "text": " It's on me!"
+    },
+    {
+      "start": 3365.34,
+      "end": 3367.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3367.34,
+      "end": 3369.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3369.34,
+      "end": 3371.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3371.34,
+      "end": 3373.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3373.34,
+      "end": 3375.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3375.34,
+      "end": 3377.34,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3377.34,
+      "end": 3379.2400000000002,
+      "text": " Trying to get up on my legs!"
+    },
+    {
+      "start": 3439.24,
+      "end": 3441.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3441.24,
+      "end": 3443.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3443.24,
+      "end": 3445.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3445.24,
+      "end": 3447.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3447.24,
+      "end": 3449.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3449.24,
+      "end": 3451.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3451.24,
+      "end": 3453.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3453.24,
+      "end": 3455.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3455.24,
+      "end": 3457.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3457.24,
+      "end": 3459.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3459.24,
+      "end": 3461.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3461.24,
+      "end": 3463.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3463.24,
+      "end": 3465.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3465.24,
+      "end": 3467.24,
+      "text": " Yeah."
+    },
+    {
+      "start": 3467.24,
+      "end": 3475.24,
+      "text": " Trying to move on at the same time."
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3475.24,
+      "text": ""
+    },
+    {
+      "start": 3475.24,
+      "end": 3482.24,
+      "text": " It's done almost."
+    },
+    {
+      "start": 3482.24,
+      "end": 3484.24,
+      "text": " One minute, guys."
+    },
+    {
+      "start": 3484.24,
+      "end": 3486.24,
+      "text": " Pressure, pressure, pressure."
+    },
+    {
+      "start": 3486.24,
+      "end": 3487.24,
+      "text": " Go."
+    },
+    {
+      "start": 3487.24,
+      "end": 3493.24,
+      "text": " One minute, one minute."
+    },
+    {
+      "start": 3493.24,
+      "end": 3496.24,
+      "text": " Don't go too much."
+    },
+    {
+      "start": 3496.24,
+      "end": 3498.24,
+      "text": " Gabriel, get back."
+    },
+    {
+      "start": 3498.24,
+      "end": 3500.24,
+      "text": " Don't go too much far."
+    },
+    {
+      "start": 3500.24,
+      "end": 3503.24,
+      "text": " Gabriel, who's in the back?"
+    },
+    {
+      "start": 3503.24,
+      "end": 3512.24,
+      "text": " Come on, felt it."
+    },
+    {
+      "start": 3512.24,
+      "end": 3521.24,
+      "text": " Come on, go."
+    },
+    {
+      "start": 3521.24,
+      "end": 3524.24,
+      "text": " Come on, go."
+    },
+    {
+      "start": 3524.24,
+      "end": 3527.24,
+      "text": " Joey, do it again."
+    },
+    {
+      "start": 3527.24,
+      "end": 3529.24,
+      "text": " Come on."
+    },
+    {
+      "start": 3529.24,
+      "end": 3537.24,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 3537.24,
+      "end": 3550.24,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 3550.24,
+      "end": 3554.24,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 3554.24,
+      "end": 3558.24,
+      "text": " Trying to move on."
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3558.24,
+      "text": ""
+    },
+    {
+      "start": 3558.24,
+      "end": 3569.7599999999998,
+      "text": " 30 seconds guys 30 seconds and stay on him Nolan pressure pressure pressure"
+    },
+    {
+      "start": 3569.76,
+      "end": 3574.92,
+      "text": " pressure Nolan pressure pressure pressure pressure"
+    },
+    {
+      "start": 3599.76,
+      "end": 3629.76,
+      "text": " wheeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "start": 3629.76,
+      "end": 3633.76,
+      "text": " Go on, go chase the kids."
+    },
+    {
+      "start": 3633.76,
+      "end": 3635.76,
+      "text": " I told you I'm like 1 second."
+    },
+    {
+      "start": 3643.76,
+      "end": 3649.76,
+      "text": " Good job guys, good job, good job. Keep it up, keep it up. Good job, good job, good job."
+    },
+    {
+      "start": 3649.76,
+      "end": 3655.76,
+      "text": " Good job, good job, great, great hustle guys, great hustle. Good job, good job. Keep it up guys, keep it up."
+    },
+    {
+      "start": 3655.76,
+      "end": 3659.76,
+      "text": " Keep it up, keep it up. Thank you."
+    },
+    {
+      "start": 3665.76,
+      "end": 3667.76,
+      "text": " Thank you very much."
+    }
+  ]
+}
