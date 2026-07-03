@@ -181,19 +181,34 @@ def _llm_messages(payload: dict) -> str:
         resp = client.messages.create(**payload)
         return next((b.text for b in resp.content if b.type == "text"), "{}")
     except ImportError:
+        import time
         import requests
         key = os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise SystemExit("ANTHROPIC_API_KEY not set (needed for the classifier).")
-        r = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-            json=payload, timeout=120,
-        )
-        r.raise_for_status()
-        blocks = r.json().get("content", [])
-        return next((b["text"] for b in blocks if b.get("type") == "text"), "{}")
+        base = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
+        # Corp VPN does TLS interception → trust the corp CA bundle if provided
+        # (same var R2 uploads use), or set VLM_INSECURE_TLS=1 as an opt-in escape
+        # for corp CA chains OpenSSL 3 rejects ("Missing Authority Key Identifier").
+        verify = (os.environ.get("REQUESTS_CA_BUNDLE")
+                  or os.environ.get("AWS_CA_BUNDLE") or True)
+        if os.environ.get("VLM_INSECURE_TLS") == "1":
+            verify = False
+            import urllib3
+            urllib3.disable_warnings()
+        for attempt in range(5):
+            r = requests.post(
+                f"{base}/v1/messages",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                         "content-type": "application/json"},
+                json=payload, timeout=120, verify=verify,
+            )
+            if r.status_code in (429, 500, 502, 503, 529) and attempt < 4:
+                time.sleep(min(float(r.headers.get("retry-after", 2 ** attempt)), 30))
+                continue
+            r.raise_for_status()
+            blocks = r.json().get("content", [])
+            return next((b["text"] for b in blocks if b.get("type") == "text"), "{}")
 
 
 def classify(segments: list[dict], model: str = MODEL, chunk: int = 300) -> list[str]:
