@@ -73,12 +73,28 @@ def stitch_tracklets(
     max_gap_s: float = config.STITCH_MAX_GAP_S,
     appearance_thresh: float = config.STITCH_APPEARANCE_COS,
     slack_m: float = config.STITCH_SLACK_M,
+    geom_dist_cap_m: float = config.STITCH_DIST_CAP_M,
+    must_link: Optional[dict[int, object]] = None,
+    must_link_dist_cap_m: float = config.STITCH_DIST_CAP_M,
 ) -> dict[int, int]:
     """Return {track_id: tracklet_id} merging `target_team` fragments.
 
     Tracks not in `target_team` (opponents/refs/unknown) are left as their own
     singleton tracklets. Appearance uses Re-ID embeddings if available, else
     falls back to jersey-HSV; if neither, gating is purely spatiotemporal.
+
+    Identity constraints (iterative_identity coupling):
+      * ``must_link`` maps track_id → an identity label (e.g. player_id). It is
+        applied in two ways:
+          - MUST-LINK pre-pass: fragments sharing an identity are chained in time
+            order, bridging gaps beyond ``max_gap_s`` that geometry alone can't
+            (the player left frame and returned), gated only by no-overlap and
+            ``must_link_dist_cap_m`` — since a confident identity says it IS the
+            same player.
+          - CANNOT-LINK: the geometric pass never merges two fragments carrying
+            different identities (cost = +inf).
+      Fragments with no identity label are unconstrained. Passing ``must_link``
+      as None (default) reproduces the original geometry-only behaviour exactly.
     """
     if "x_m" not in tracks_df.columns or tracks_df.empty:
         return {int(t): int(t) for t in tracks_df.get("track_id", pd.Series([], dtype=int)).unique()}
@@ -98,6 +114,49 @@ def stitch_tracklets(
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
+
+    # Identity of each union component (root → label), seeded from must_link.
+    # Used for the MUST-LINK pre-pass and the CANNOT-LINK guard below.
+    must_link = must_link or {}
+    comp_ident: dict[int, object] = {}
+    for t in ids:
+        lbl = must_link.get(t)
+        if lbl is not None:
+            comp_ident[t] = lbl
+
+    def union(a: int, b: int) -> None:
+        """Merge b's component into a's, carrying any identity label forward."""
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        parent[rb] = ra
+        lbl = comp_ident.pop(rb, None)
+        if lbl is not None and ra not in comp_ident:
+            comp_ident[ra] = lbl
+
+    # ---- MUST-LINK pre-pass -------------------------------------------------
+    # Chain same-identity fragments in time order across arbitrary gaps (the
+    # player left frame and returned), gated only by no-overlap + dist-cap.
+    if must_link:
+        by_ident: dict[object, list[int]] = {}
+        for t in ids:
+            lbl = must_link.get(t)
+            if lbl is not None:
+                by_ident.setdefault(lbl, []).append(t)
+        for lbl, members in by_ident.items():
+            members.sort(key=lambda t: summ[t]["t0"])
+            prev = members[0]
+            for cur in members[1:]:
+                sp, sc = summ[prev], summ[cur]
+                gap = sc["t0"] - sp["t1"]
+                if gap < -0.5:
+                    continue  # temporal overlap → can't be the same instance; skip
+                dist = float(np.hypot(sc["p0"][0] - sp["p1"][0], sc["p0"][1] - sp["p1"][1]))
+                if dist > must_link_dist_cap_m:
+                    prev = cur  # too far to bridge even for a confident identity
+                    continue
+                union(prev, cur)
+                prev = cur
 
     used_succ: set[int] = set()  # a fragment already chained as someone's successor
     hsv_cache: dict[int, Optional[np.ndarray]] = {}
@@ -135,8 +194,13 @@ def stitch_tracklets(
             dy = sb["p0"][1] - sa["p1"][1]
             dist = float(np.hypot(dx, dy))
             max_move = min(config.MAX_PLAUSIBLE_SPEED_MS * max(gap, 0.0) + slack_m,
-                           config.STITCH_DIST_CAP_M)
+                           geom_dist_cap_m)
             if dist > max_move:
+                continue
+            # CANNOT-LINK: never merge two fragments with different confirmed
+            # identities, however geometrically plausible the move looks.
+            ia, ib = comp_ident.get(find(a)), comp_ident.get(find(b))
+            if ia is not None and ib is not None and ia != ib:
                 continue
             ok, cos = appearance_ok(a, b)
             if not ok:
@@ -147,7 +211,7 @@ def stitch_tracklets(
             if cost < best_cost:
                 best_cost, best_b = cost, b
         if best_b is not None:
-            parent[find(best_b)] = find(a)
+            union(a, best_b)
             used_succ.add(best_b)
 
     # Build {track_id: tracklet_id} for ALL tracks (non-our-team = singleton).

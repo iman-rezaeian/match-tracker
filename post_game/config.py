@@ -177,6 +177,23 @@ STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
 # over-merge when the gap is large. inf = no-op (current behavior).
 STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
 
+# --- Iterative anchor-coupled re-stitch (post_game/iterative_identity.py) -----
+# Couple stitching and identity: stitch (geometry-only) → seed identities from
+# individuating coach-log anchors (event/SUB/keeper) → use those seeds as
+# MUST-LINK / CANNOT-LINK constraints → re-stitch → re-assign, for a few rounds.
+# Lets one coach confirmation cover a longer, cleaner chain. OFF by default until
+# the GT A/B clears the precision guardrail.
+ID_ITERATIVE_ENABLED = os.environ.get("ID_ITERATIVE_ENABLED", "0") != "0"
+ID_ITERATIVE_MAX_ROUNDS = int(os.environ.get("ID_ITERATIVE_MAX_ROUNDS", "3"))
+# PRECISION-SAFE geometry for the iterative rounds. The un-seeded majority is
+# stitched by geometry alone, so it must stay tight or same-team crossings
+# over-merge into cross-player chimeras (the "499→814 was partly false merges"
+# trap). METRICS_RELEVANCE_PLAN's within-team finding: gap 5s + abs dist-cap 12m
+# → ~814 CLEAN chains. Long-gap bridging is left to identity-gated MUST-LINK
+# (safe: a confirmed identity says it IS the same player), not to loose geometry.
+ID_ITERATIVE_GAP_S = float(os.environ.get("ID_ITERATIVE_GAP_S", "5.0"))
+ID_ITERATIVE_DIST_CAP_M = float(os.environ.get("ID_ITERATIVE_DIST_CAP_M", "12.0"))
+
 # --- Public-reel audio swap (public_audio.py, stage 7b) ---
 # Replace the PUBLIC reel's audio with a stadium-ambience bed + goal roars so the
 # coach voice / kids' names never leave the dugout. Dugout reel keeps original.

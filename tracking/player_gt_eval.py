@@ -45,6 +45,10 @@ def main() -> None:
     ap.add_argument("--coherent", action="store_true",
                     help="Score against the gap-split coherent cache "
                          "(.stage4.coherent.*) — must match how the GT was sampled.")
+    ap.add_argument("--iterative", action="store_true",
+                    help="Use the iterative anchor-coupled re-stitch "
+                         "(assign_identities_iterative) instead of the one-shot "
+                         "assign_identities_v2. GT is per-run so this A/Bs directly.")
     args = ap.parse_args()
 
     gt_csv = LABELS_ROOT / f"{args.game_id}_player_gt" / "gt.csv"
@@ -67,15 +71,27 @@ def main() -> None:
     tl_of = {int(k): int(v) for k, v in maps["tracklet_of_track"].items()}
 
     duration_s = float(tracks_df["time_s"].max()) + 1.0
-    assignments = assign_identities_v2(
-        tracks_df=tracks_df, tracklet_of_track=tl_of, team_of_track=team_of,
-        events=game.events, roster=roster, starting_lineup=game.starting_lineup,
-        gk_player_id=game.gk_player_id,
-        period_clock_to_video_time=period_clock_to_video_time_factory(game),
-        periods_video=half_windows(game, duration_s),
-        field_length_m=field_cal.length_m, field_width_m=field_cal.width_m,
-        overrides=None, squad=game.squad,  # WITHHELD — fair test
-    )
+    _clk = period_clock_to_video_time_factory(game)
+    _pw = half_windows(game, duration_s)
+    if args.iterative:
+        from post_game.iterative_identity import assign_identities_iterative
+        tl_of, assignments = assign_identities_iterative(
+            tracks_df=tracks_df, team_of_track=team_of,
+            events=game.events, roster=roster, starting_lineup=game.starting_lineup,
+            gk_player_id=game.gk_player_id, period_clock_to_video_time=_clk,
+            periods_video=_pw, field_length_m=field_cal.length_m,
+            field_width_m=field_cal.width_m,
+            overrides=None, squad=game.squad,  # WITHHELD — fair test
+        )
+    else:
+        assignments = assign_identities_v2(
+            tracks_df=tracks_df, tracklet_of_track=tl_of, team_of_track=team_of,
+            events=game.events, roster=roster, starting_lineup=game.starting_lineup,
+            gk_player_id=game.gk_player_id, period_clock_to_video_time=_clk,
+            periods_video=_pw,
+            field_length_m=field_cal.length_m, field_width_m=field_cal.width_m,
+            overrides=None, squad=game.squad,  # WITHHELD — fair test
+        )
     # Key by RUN (a.track_id), not the stitched-chain id: GT is labeled per run,
     # and each run's prediction = its chain's assigned player. Behaviour-preserving
     # when run==chain (no re-stitch); makes the metric re-stitch-ready.
