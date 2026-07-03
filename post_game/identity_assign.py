@@ -290,6 +290,7 @@ def assign_identities_v2(
     squad: Optional[list[str]] = None,
     resolved_flips_out: Optional[dict] = None,
     orientation_ambiguous_out: Optional[list] = None,
+    anchor_seeds_out: Optional[dict] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
     video-second spans per period (half_windows).
@@ -305,6 +306,15 @@ def assign_identities_v2(
     (None, None) when the period had no POSITION board to search. Consumers
     (tag pre-fill, Phase 3.3) use it to map field meters back to the coach's
     zone vocabulary.
+
+    `anchor_seeds_out`, when given, is filled with {tracklet_id: player_id} for
+    the HIGH-MARGIN tracklets whose identity is backed by INDIVIDUATING evidence
+    — a coach action-event or SUB anchor at/above ID_ANCHOR_MIN_W, or a
+    geometrically-detected keeper window — not the board template alone (the
+    board identifies zone/role, not the person). The iterative re-stitch
+    coupling (iterative_identity) turns these into MUST-LINK / CANNOT-LINK stitch
+    constraints. Purely read-only: filling it does not change this call's
+    assignment output.
     """
     # Coach log is ground truth: only players who DRESSED for this game (the
     # logged squad) can be assigned — not the whole team roster. This is a hard
@@ -648,6 +658,30 @@ def assign_identities_v2(
             "minutes": _tl_minutes(members),
             "span": span,
         }
+
+    # --- high-margin identity SEEDS (iterative re-stitch coupling) -----------
+    # A seed is a tracklet whose top candidate is backed by individuating
+    # evidence (event/SUB anchor ≥ ID_ANCHOR_MIN_W) or is a detected keeper —
+    # NOT board-template alone. iterative_identity turns these into MUST-LINK
+    # (same seed → merge across long gaps) / CANNOT-LINK (different seed → never
+    # merge) constraints for the next stitch round. Read-only w.r.t. assignment.
+    if anchor_seeds_out is not None:
+        # Values are (player_id, source) so the caller can gate by how
+        # individuating the evidence is: "keeper" (reliable goal-line geometry)
+        # and "sub" (touchline entry/exit timing) identify the PERSON; "event"
+        # (team-centroid proximity at a logged action) is weak in a U10 swarm.
+        for tl, kpid in keeper_assign.items():
+            if tl in tracklet_members and kpid in valid_ids:
+                anchor_seeds_out[tl] = (kpid, "keeper")
+        for tl, info in tl_rank.items():
+            if tl in keeper_tracklets or not info["ranked"] or tl in anchor_seeds_out:
+                continue
+            top = info["ranked"][0]
+            prov = anchor_count.get(tl, {}).get(top, {})
+            if prov.get("sub", 0.0) >= config.ASSIGN_SUB_W:
+                anchor_seeds_out[tl] = (top, "sub")
+            elif (prov.get("event", 0.0) + prov.get("sub", 0.0)) >= config.ID_ANCHOR_MIN_W:
+                anchor_seeds_out[tl] = (top, "event")
 
     # --- greedy capacity assignment, highest-confidence tracklets first -------
     tracklet_assign: dict[int, tuple[Optional[str], float, str]] = {}

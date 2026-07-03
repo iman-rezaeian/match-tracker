@@ -1,0 +1,147 @@
+{
+  "label": "game1_belleriver",
+  "model": "claude-haiku-4-5",
+  "n_narration": 132,
+  "events": [
+    {
+      "videoTimeS": 94.0,
+      "type": "GOAL",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.7,
+      "quote": "Oh, we got a goal.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 138.0,
+      "type": "SHOT_ON",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "Shoot on target.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 166.0,
+      "type": "SHOT_OFF",
+      "player_id": "p_cardoso",
+      "player_first_name": "Maverick",
+      "ambiguous_name": false,
+      "confidence": 0.75,
+      "quote": "Shot off by Maverick.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 209.0,
+      "type": "BALL_WIN",
+      "player_id": "p_duncan",
+      "player_first_name": "Jaedyn",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Jaden grabbed the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 437.0,
+      "type": "GOAL",
+      "player_id": "p_duncan",
+      "player_first_name": "Jaedyn",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "And the goal by Jaden.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 444.0,
+      "type": "ASSIST",
+      "player_id": null,
+      "player_first_name": "Ben",
+      "ambiguous_name": true,
+      "confidence": 0.7,
+      "quote": "Ben Pan was assisting.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 534.0,
+      "type": "FOUL_BY",
+      "player_id": null,
+      "player_first_name": "",
+      "ambiguous_name": false,
+      "confidence": 0.6,
+      "quote": "Oh, it's a foul.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 612.0,
+      "type": "BALL_WIN",
+      "player_id": "p_duncan",
+      "player_first_name": "Jaedyn",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Jaden got the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 662.0,
+      "type": "BALL_WIN",
+      "player_id": "p_zaidan",
+      "player_first_name": "Gabriel",
+      "ambiguous_name": false,
+      "confidence": 0.9,
+      "quote": "Gabriel won the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 689.0,
+      "type": "BALL_WIN",
+      "player_id": "p_perrotta",
+      "player_first_name": "Luca",
+      "ambiguous_name": false,
+      "confidence": 0.85,
+      "quote": "Luca intercepted the ball.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 770.0,
+      "type": "SHOT_ON",
+      "player_id": "p_cardoso",
+      "player_first_name": "Maverick",
+      "ambiguous_name": false,
+      "confidence": 0.8,
+      "quote": "Shot opportunity for Maverick.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 850.0,
+      "type": "SAVE",
+      "player_id": "p_zaidan",
+      "player_first_name": "Gabriel",
+      "ambiguous_name": false,
+      "confidence": 0.9,
+      "quote": "Nice save by Gabriel.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 915.0,
+      "type": "GOAL",
+      "player_id": "p_qian",
+      "player_first_name": "Jason",
+      "ambiguous_name": false,
+      "confidence": 0.9,
+      "quote": "Goal by Jason on the rebound.",
+      "source": "voice_draft"
+    },
+    {
+      "videoTimeS": 1016.0,
+      "type": "SHOT_ON",
+      "player_id": "p_cardoso",
+      "player_first_name": "Maverick",
+      "ambiguous_name": false,
+      "confidence": 0.75,
+      "quote": "Opportunity for Maverick, selling the ball.",
+      "source": "voice_draft"
+    }
+  ]
+}

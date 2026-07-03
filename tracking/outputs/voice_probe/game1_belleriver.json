@@ -1,0 +1,1383 @@
+{
+  "audio": "voice memo/game1_belleriver_inpwa_concat.m4a",
+  "model": "small",
+  "summary": {
+    "total_words": 1500,
+    "name_hits": {
+      "Ben": 9,
+      "Maverick": 9,
+      "Issa": 1,
+      "Arian": 4,
+      "Jason": 3,
+      "David": 6,
+      "Luca": 4,
+      "Gabriel": 2
+    },
+    "event_hits": {
+      "goal": 5,
+      "shot": 6,
+      "save": 1,
+      "give": 1,
+      "corner": 1,
+      "foul": 1,
+      "pass": 23
+    }
+  },
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.0,
+      "text": " Yeah, yeah, yeah, yeah."
+    },
+    {
+      "start": 2.0,
+      "end": 3.0,
+      "text": " No, no, no, no."
+    },
+    {
+      "start": 3.0,
+      "end": 6.0,
+      "text": " Jeden on the left, passing the ball."
+    },
+    {
+      "start": 6.0,
+      "end": 8.0,
+      "text": " It's probably not coming back."
+    },
+    {
+      "start": 8.0,
+      "end": 11.0,
+      "text": " Grabbing, raising, shoot, pass."
+    },
+    {
+      "start": 22.0,
+      "end": 25.0,
+      "text": " Jeden started 10 seconds ago."
+    },
+    {
+      "start": 26.0,
+      "end": 29.0,
+      "text": " Jeden got the ball on the right."
+    },
+    {
+      "start": 33.0,
+      "end": 35.0,
+      "text": " Okay, the ball went out."
+    },
+    {
+      "start": 45.0,
+      "end": 48.0,
+      "text": " Dribbling, laying."
+    },
+    {
+      "start": 55.0,
+      "end": 57.0,
+      "text": " Okay, okay."
+    },
+    {
+      "start": 57.0,
+      "end": 59.0,
+      "text": " Okay."
+    },
+    {
+      "start": 59.0,
+      "end": 61.0,
+      "text": " Oh, sorry."
+    },
+    {
+      "start": 61.0,
+      "end": 63.0,
+      "text": " Okay."
+    },
+    {
+      "start": 63.0,
+      "end": 65.0,
+      "text": " Pass, pass, pass."
+    },
+    {
+      "start": 65.0,
+      "end": 67.0,
+      "text": " The ball out."
+    },
+    {
+      "start": 81.0,
+      "end": 83.0,
+      "text": " So."
+    },
+    {
+      "start": 85.0,
+      "end": 90.0,
+      "text": " A throwing from the right side on our side."
+    },
+    {
+      "start": 94.0,
+      "end": 98.0,
+      "text": " Oh, we got a goal."
+    },
+    {
+      "start": 98.0,
+      "end": 100.0,
+      "text": " Or anything."
+    },
+    {
+      "start": 100.0,
+      "end": 103.0,
+      "text": " Pick it up, pick it up, pick it up."
+    },
+    {
+      "start": 103.0,
+      "end": 105.0,
+      "text": " Got caught."
+    },
+    {
+      "start": 105.0,
+      "end": 107.0,
+      "text": " Ariane kicked the ball out."
+    },
+    {
+      "start": 107.0,
+      "end": 114.0,
+      "text": " We are roughly around five minutes in into the first half."
+    },
+    {
+      "start": 114.0,
+      "end": 117.0,
+      "text": " Then hand the ball."
+    },
+    {
+      "start": 117.0,
+      "end": 120.0,
+      "text": " Ariane on the right."
+    },
+    {
+      "start": 120.0,
+      "end": 122.0,
+      "text": " Trying to try to gap."
+    },
+    {
+      "start": 122.0,
+      "end": 124.0,
+      "text": " Okay, nice pass from Ben Hand."
+    },
+    {
+      "start": 124.0,
+      "end": 127.0,
+      "text": " Maverick on the right, trying to defend."
+    },
+    {
+      "start": 127.0,
+      "end": 129.0,
+      "text": " Okay, Maverick on the low."
+    },
+    {
+      "start": 129.0,
+      "end": 131.0,
+      "text": " He's going, he's going."
+    },
+    {
+      "start": 138.0,
+      "end": 140.0,
+      "text": " Shoot on target."
+    },
+    {
+      "start": 140.0,
+      "end": 142.0,
+      "text": " We call it a shot."
+    },
+    {
+      "start": 142.0,
+      "end": 144.0,
+      "text": " We'll shoot on target."
+    },
+    {
+      "start": 144.0,
+      "end": 146.0,
+      "text": " We'll call it."
+    },
+    {
+      "start": 150.0,
+      "end": 152.0,
+      "text": " Holy, got the ball."
+    },
+    {
+      "start": 160.0,
+      "end": 162.0,
+      "text": " Nice pass from Ariane."
+    },
+    {
+      "start": 162.0,
+      "end": 166.0,
+      "text": " And oh, he went out."
+    },
+    {
+      "start": 166.0,
+      "end": 171.0,
+      "text": " Shot off by Maverick."
+    },
+    {
+      "start": 173.0,
+      "end": 175.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 175.0,
+      "end": 178.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 178.0,
+      "end": 181.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 181.0,
+      "end": 186.0,
+      "text": " Two stars from the, from the opposite team starts from the"
+    },
+    {
+      "start": 186.0,
+      "end": 188.0,
+      "text": " goalie line."
+    },
+    {
+      "start": 188.0,
+      "end": 190.0,
+      "text": " Shoot."
+    },
+    {
+      "start": 190.0,
+      "end": 193.0,
+      "text": " Shoot."
+    },
+    {
+      "start": 193.0,
+      "end": 196.0,
+      "text": " We asked to start again."
+    },
+    {
+      "start": 196.0,
+      "end": 201.0,
+      "text": " Very free blue."
+    },
+    {
+      "start": 201.0,
+      "end": 204.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 204.0,
+      "end": 207.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 207.0,
+      "end": 209.0,
+      "text": " Okay, Jaden."
+    },
+    {
+      "start": 209.0,
+      "end": 211.0,
+      "text": " Jaden grabbed the ball."
+    },
+    {
+      "start": 211.0,
+      "end": 213.0,
+      "text": " Jaden won the ball."
+    },
+    {
+      "start": 213.0,
+      "end": 215.0,
+      "text": " Passing for Colored."
+    },
+    {
+      "start": 215.0,
+      "end": 217.0,
+      "text": " Oh, passing from Maverick."
+    },
+    {
+      "start": 217.0,
+      "end": 219.0,
+      "text": " Another shot."
+    },
+    {
+      "start": 219.0,
+      "end": 222.0,
+      "text": " Okay, goalie starts."
+    },
+    {
+      "start": 222.0,
+      "end": 225.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 225.0,
+      "end": 227.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 227.0,
+      "end": 234.0,
+      "text": " Okay, good."
+    },
+    {
+      "start": 234.0,
+      "end": 237.0,
+      "text": " Hey, you saw."
+    },
+    {
+      "start": 237.0,
+      "end": 240.0,
+      "text": " You have a good one."
+    },
+    {
+      "start": 240.0,
+      "end": 245.0,
+      "text": " Even go."
+    },
+    {
+      "start": 245.0,
+      "end": 248.0,
+      "text": " Okay."
+    },
+    {
+      "start": 248.0,
+      "end": 278.0,
+      "text": " Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell Hell"
+    },
+    {
+      "start": 278.0,
+      "end": 279.8,
+      "text": " So high."
+    },
+    {
+      "start": 279.8,
+      "end": 281.56,
+      "text": " You're in the back."
+    },
+    {
+      "start": 281.56,
+      "end": 282.84,
+      "text": " You went out."
+    },
+    {
+      "start": 282.84,
+      "end": 283.84,
+      "text": " All is ours."
+    },
+    {
+      "start": 288.88,
+      "end": 290.6,
+      "text": " Okay, Ben Ham, ask the ball."
+    },
+    {
+      "start": 291.96,
+      "end": 292.8,
+      "text": " He's going."
+    },
+    {
+      "start": 293.72,
+      "end": 294.56,
+      "text": " He's going."
+    },
+    {
+      "start": 294.56,
+      "end": 295.72,
+      "text": " He's going with the ball."
+    },
+    {
+      "start": 296.8,
+      "end": 298.12,
+      "text": " Passing back to Jayden."
+    },
+    {
+      "start": 298.12,
+      "end": 298.96,
+      "text": " Shot."
+    },
+    {
+      "start": 298.96,
+      "end": 299.8,
+      "text": " Awesome."
+    },
+    {
+      "start": 304.96,
+      "end": 305.8,
+      "text": " Okay."
+    },
+    {
+      "start": 306.64,
+      "end": 307.48,
+      "text": " Ask."
+    },
+    {
+      "start": 307.48,
+      "end": 308.8,
+      "text": " Oh, they wanted."
+    },
+    {
+      "start": 315.08,
+      "end": 315.92,
+      "text": " Okay."
+    },
+    {
+      "start": 315.92,
+      "end": 319.52000000000004,
+      "text": " Ball for the white team, for the opponent."
+    },
+    {
+      "start": 332.28000000000003,
+      "end": 333.56,
+      "text": " Ariane, behind you."
+    },
+    {
+      "start": 333.56,
+      "end": 334.4,
+      "text": " Behind you."
+    },
+    {
+      "start": 341.12,
+      "end": 341.96,
+      "text": " Okay."
+    },
+    {
+      "start": 348.44,
+      "end": 349.84000000000003,
+      "text": " Ben Ham, take the ball."
+    },
+    {
+      "start": 351.08,
+      "end": 352.44,
+      "text": " They're going to grab it."
+    },
+    {
+      "start": 358.04,
+      "end": 359.0,
+      "text": " Going."
+    },
+    {
+      "start": 359.0,
+      "end": 361.0,
+      "text": " Okay, Ben Ham, win the ball."
+    },
+    {
+      "start": 361.0,
+      "end": 363.0,
+      "text": " Pass to Issa, to Ben Ham again."
+    },
+    {
+      "start": 363.56,
+      "end": 364.54,
+      "text": " Bad ball, fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi fi"
+    },
+    {
+      "start": 393.56,
+      "end": 400.56,
+      "text": " Jaden got the ball, he won the ball."
+    },
+    {
+      "start": 400.56,
+      "end": 408.56,
+      "text": " You're going, going, trying to dribble, asking to burn the ball."
+    },
+    {
+      "start": 408.56,
+      "end": 413.56,
+      "text": " The ball, you got the ball."
+    },
+    {
+      "start": 413.56,
+      "end": 423.56,
+      "text": " The ball."
+    },
+    {
+      "start": 423.56,
+      "end": 431.56,
+      "text": " But Hong got intercepted."
+    },
+    {
+      "start": 431.56,
+      "end": 435.56,
+      "text": " Then he's going with the ball."
+    },
+    {
+      "start": 435.56,
+      "end": 436.56,
+      "text": " Chance for us."
+    },
+    {
+      "start": 436.56,
+      "end": 443.56,
+      "text": " And the goal by Jaden. Nice."
+    },
+    {
+      "start": 443.56,
+      "end": 450.56,
+      "text": " Oh, by Ben Pan. Ben, by Jaden, sorry. Ben Pan was assisting."
+    },
+    {
+      "start": 450.56,
+      "end": 460.56,
+      "text": " That's the other team."
+    },
+    {
+      "start": 460.56,
+      "end": 486.56,
+      "text": " What's wrong?"
+    },
+    {
+      "start": 486.56,
+      "end": 510.56,
+      "text": " Okay, run out."
+    },
+    {
+      "start": 510.56,
+      "end": 522.56,
+      "text": " Okay, it's going to start on that team."
+    },
+    {
+      "start": 522.56,
+      "end": 533.56,
+      "text": " Side, reverse."
+    },
+    {
+      "start": 533.56,
+      "end": 536.56,
+      "text": " Oh, it's a foul."
+    },
+    {
+      "start": 536.56,
+      "end": 543.56,
+      "text": " Ball for Jaden starting the ball."
+    },
+    {
+      "start": 543.56,
+      "end": 548.56,
+      "text": " Maybe this feeling."
+    },
+    {
+      "start": 548.56,
+      "end": 569.56,
+      "text": " Go only got the ball."
+    },
+    {
+      "start": 569.56,
+      "end": 579.56,
+      "text": " Okay, pass by Luca again."
+    },
+    {
+      "start": 579.56,
+      "end": 584.56,
+      "text": " Luca pass by."
+    },
+    {
+      "start": 584.56,
+      "end": 593.56,
+      "text": " He's lost the ball."
+    },
+    {
+      "start": 593.56,
+      "end": 595.56,
+      "text": " Luca got the ball."
+    },
+    {
+      "start": 595.56,
+      "end": 602.56,
+      "text": " Pass."
+    },
+    {
+      "start": 602.56,
+      "end": 611.56,
+      "text": " He's so canning."
+    },
+    {
+      "start": 611.56,
+      "end": 616.56,
+      "text": " Jaden got the ball."
+    },
+    {
+      "start": 616.56,
+      "end": 621.56,
+      "text": " Jaden is going in from the right."
+    },
+    {
+      "start": 621.56,
+      "end": 622.56,
+      "text": " Nice."
+    },
+    {
+      "start": 622.56,
+      "end": 625.56,
+      "text": " Passing team."
+    },
+    {
+      "start": 625.56,
+      "end": 627.56,
+      "text": " Okay, lost the ball."
+    },
+    {
+      "start": 627.56,
+      "end": 629.56,
+      "text": " Got it."
+    },
+    {
+      "start": 629.56,
+      "end": 633.56,
+      "text": " Shot was intercepted."
+    },
+    {
+      "start": 633.56,
+      "end": 645.56,
+      "text": " Now they kicked the ball out."
+    },
+    {
+      "start": 645.56,
+      "end": 661.56,
+      "text": " Okay, going in."
+    },
+    {
+      "start": 661.56,
+      "end": 670.56,
+      "text": " Okay, Gabriel won the ball."
+    },
+    {
+      "start": 670.56,
+      "end": 672.56,
+      "text": " Jason lost the ball."
+    },
+    {
+      "start": 672.56,
+      "end": 676.56,
+      "text": " David going to Jaden."
+    },
+    {
+      "start": 676.56,
+      "end": 679.56,
+      "text": " Pass."
+    },
+    {
+      "start": 679.56,
+      "end": 686.56,
+      "text": " No one to rebound the ball."
+    },
+    {
+      "start": 686.56,
+      "end": 688.56,
+      "text": " On the outside."
+    },
+    {
+      "start": 688.56,
+      "end": 694.56,
+      "text": " Okay, Luca intercepted the ball."
+    },
+    {
+      "start": 694.56,
+      "end": 698.56,
+      "text": " Jaden passing back."
+    },
+    {
+      "start": 698.56,
+      "end": 701.56,
+      "text": " Okay, he's ripped."
+    },
+    {
+      "start": 701.56,
+      "end": 702.56,
+      "text": " Lost the ball."
+    },
+    {
+      "start": 702.56,
+      "end": 706.56,
+      "text": " They kicked it out."
+    },
+    {
+      "start": 706.56,
+      "end": 727.56,
+      "text": " Starting again."
+    },
+    {
+      "start": 727.56,
+      "end": 732.56,
+      "text": " Jaden passes the ball."
+    },
+    {
+      "start": 732.56,
+      "end": 737.56,
+      "text": " Nice pass."
+    },
+    {
+      "start": 737.56,
+      "end": 739.56,
+      "text": " Oh, it was too wide."
+    },
+    {
+      "start": 739.56,
+      "end": 741.56,
+      "text": " We ran out."
+    },
+    {
+      "start": 741.56,
+      "end": 747.56,
+      "text": " Call it sent the ball."
+    },
+    {
+      "start": 747.56,
+      "end": 755.56,
+      "text": " What is going to start the ball?"
+    },
+    {
+      "start": 755.56,
+      "end": 762.56,
+      "text": " David is going to rebound the ball."
+    },
+    {
+      "start": 762.56,
+      "end": 766.56,
+      "text": " Passing by David."
+    },
+    {
+      "start": 766.56,
+      "end": 769.56,
+      "text": " David on the right."
+    },
+    {
+      "start": 769.56,
+      "end": 771.56,
+      "text": " Shot opportunity for Maverick."
+    },
+    {
+      "start": 771.56,
+      "end": 772.56,
+      "text": " He lost it."
+    },
+    {
+      "start": 772.56,
+      "end": 776.56,
+      "text": " The ball is out."
+    },
+    {
+      "start": 776.56,
+      "end": 801.56,
+      "text": " Hell, a short break."
+    },
+    {
+      "start": 801.56,
+      "end": 803.56,
+      "text": " I let the ball in."
+    },
+    {
+      "start": 803.56,
+      "end": 804.7199999999999,
+      "text": " Pass."
+    },
+    {
+      "start": 804.7199999999999,
+      "end": 806.8399999999999,
+      "text": " No one was there."
+    },
+    {
+      "start": 806.8399999999999,
+      "end": 807.68,
+      "text": " No one was there."
+    },
+    {
+      "start": 813.68,
+      "end": 816.18,
+      "text": " OK."
+    },
+    {
+      "start": 816.18,
+      "end": 819.16,
+      "text": " Hit the ball."
+    },
+    {
+      "start": 819.16,
+      "end": 821.64,
+      "text": " Ball hit to the David and then out."
+    },
+    {
+      "start": 821.64,
+      "end": 822.8399999999999,
+      "text": " Ball is for the opponent."
+    },
+    {
+      "start": 831.56,
+      "end": 837.56,
+      "text": " Hit the ball."
+    },
+    {
+      "start": 837.56,
+      "end": 838.56,
+      "text": " Hit the ball."
+    },
+    {
+      "start": 843.56,
+      "end": 844.56,
+      "text": " Good."
+    },
+    {
+      "start": 844.56,
+      "end": 847.56,
+      "text": " Hit the ball."
+    },
+    {
+      "start": 847.56,
+      "end": 848.9599999999999,
+      "text": " All right."
+    },
+    {
+      "start": 848.9599999999999,
+      "end": 849.7199999999999,
+      "text": " Dangerous."
+    },
+    {
+      "start": 849.7199999999999,
+      "end": 853.56,
+      "text": " Oh, nice save by Gabriel."
+    },
+    {
+      "start": 853.56,
+      "end": 854.56,
+      "text": " OK."
+    },
+    {
+      "start": 854.56,
+      "end": 855.56,
+      "text": " Yeah."
+    },
+    {
+      "start": 855.56,
+      "end": 861.9599999999999,
+      "text": " Bad experiences, a little bit, but a little bit, a little bit,"
+    },
+    {
+      "start": 861.9599999999999,
+      "end": 867.2399999999999,
+      "text": " a little bit, a little bit, a little bit, a little bit,"
+    },
+    {
+      "start": 867.2399999999999,
+      "end": 873.1999999999999,
+      "text": " a little bit, a little bit, a little bit, a little bit,"
+    },
+    {
+      "start": 873.1999999999999,
+      "end": 879.68,
+      "text": " a little bit, a little bit, a little bit, a little bit,"
+    },
+    {
+      "start": 879.68,
+      "end": 884.1199999999999,
+      "text": " a little bit, a little bit, a little bit, a little bit,"
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.1199999999999,
+      "end": 884.1199999999999,
+      "text": ""
+    },
+    {
+      "start": 884.12,
+      "end": 884.96,
+      "text": " Okay."
+    },
+    {
+      "start": 884.96,
+      "end": 885.8,
+      "text": " Okay."
+    },
+    {
+      "start": 885.8,
+      "end": 886.8,
+      "text": " That's gonna be it."
+    },
+    {
+      "start": 886.8,
+      "end": 887.64,
+      "text": " Thank you."
+    },
+    {
+      "start": 887.64,
+      "end": 888.48,
+      "text": " That was good."
+    },
+    {
+      "start": 888.48,
+      "end": 890.32,
+      "text": " Gordo, good job."
+    },
+    {
+      "start": 890.32,
+      "end": 891.64,
+      "text": " You're gonna start."
+    },
+    {
+      "start": 892.64,
+      "end": 894.64,
+      "text": " So, you're gonna start."
+    },
+    {
+      "start": 894.64,
+      "end": 895.96,
+      "text": " You're gonna start."
+    },
+    {
+      "start": 895.96,
+      "end": 897.28,
+      "text": " You're gonna start."
+    },
+    {
+      "start": 897.28,
+      "end": 898.12,
+      "text": " Okay?"
+    },
+    {
+      "start": 898.12,
+      "end": 899.28,
+      "text": " I'm gonna start."
+    },
+    {
+      "start": 899.28,
+      "end": 900.12,
+      "text": " So, it's good."
+    },
+    {
+      "start": 900.12,
+      "end": 900.96,
+      "text": " It's good."
+    },
+    {
+      "start": 900.96,
+      "end": 902.8,
+      "text": " You're gonna start."
+    },
+    {
+      "start": 902.8,
+      "end": 903.64,
+      "text": " Opportunity."
+    },
+    {
+      "start": 904.96,
+      "end": 906.72,
+      "text": " Back to the pallet."
+    },
+    {
+      "start": 906.72,
+      "end": 908.44,
+      "text": " Opportunity for pallet."
+    },
+    {
+      "start": 908.44,
+      "end": 909.28,
+      "text": " Okay."
+    },
+    {
+      "start": 911.28,
+      "end": 912.12,
+      "text": " Okay."
+    },
+    {
+      "start": 912.12,
+      "end": 912.96,
+      "text": " Okay."
+    },
+    {
+      "start": 912.96,
+      "end": 913.8000000000001,
+      "text": " Okay."
+    },
+    {
+      "start": 913.8000000000001,
+      "end": 914.64,
+      "text": " Okay."
+    },
+    {
+      "start": 914.64,
+      "end": 917.84,
+      "text": " Goal by Jason on the rebound."
+    },
+    {
+      "start": 920.36,
+      "end": 921.5600000000001,
+      "text": " Rian, give it to him."
+    },
+    {
+      "start": 921.5600000000001,
+      "end": 922.4000000000001,
+      "text": " Quick."
+    },
+    {
+      "start": 924.36,
+      "end": 925.2,
+      "text": " David."
+    },
+    {
+      "start": 925.2,
+      "end": 926.32,
+      "text": " Go."
+    },
+    {
+      "start": 926.32,
+      "end": 927.1600000000001,
+      "text": " Back."
+    },
+    {
+      "start": 928.1600000000001,
+      "end": 929.44,
+      "text": " Pager on our side."
+    },
+    {
+      "start": 929.44,
+      "end": 930.2800000000001,
+      "text": " Okay."
+    },
+    {
+      "start": 930.2800000000001,
+      "end": 931.12,
+      "text": " Intercept it."
+    },
+    {
+      "start": 931.12,
+      "end": 931.96,
+      "text": " Get it."
+    },
+    {
+      "start": 931.96,
+      "end": 932.8000000000001,
+      "text": " Get the corner."
+    },
+    {
+      "start": 932.8000000000001,
+      "end": 933.64,
+      "text": " Great."
+    },
+    {
+      "start": 933.64,
+      "end": 934.48,
+      "text": " Don't let it go."
+    },
+    {
+      "start": 934.48,
+      "end": 935.32,
+      "text": " It's not gonna go."
+    },
+    {
+      "start": 935.32,
+      "end": 936.1600000000001,
+      "text": " Don't let it go."
+    },
+    {
+      "start": 936.1600000000001,
+      "end": 937.0,
+      "text": " Go."
+    },
+    {
+      "start": 937.0,
+      "end": 937.84,
+      "text": " It's you."
+    },
+    {
+      "start": 937.84,
+      "end": 938.88,
+      "text": " Get the left foot."
+    },
+    {
+      "start": 938.88,
+      "end": 941.36,
+      "text": " What's the promise for the opponent?"
+    },
+    {
+      "start": 941.36,
+      "end": 942.2,
+      "text": " Watch out."
+    },
+    {
+      "start": 942.24,
+      "end": 943.08,
+      "text": " Watch out."
+    },
+    {
+      "start": 943.08,
+      "end": 943.9200000000001,
+      "text": " Watch right."
+    },
+    {
+      "start": 943.9200000000001,
+      "end": 945.2800000000001,
+      "text": " Go on the ground and pose."
+    },
+    {
+      "start": 945.2800000000001,
+      "end": 946.6800000000001,
+      "text": " One, two, five, we go."
+    },
+    {
+      "start": 946.6800000000001,
+      "end": 947.76,
+      "text": " What's the deal with that?"
+    },
+    {
+      "start": 947.76,
+      "end": 948.84,
+      "text": " You said you were."
+    },
+    {
+      "start": 948.84,
+      "end": 950.5600000000001,
+      "text": " Niel, what's the height of the ball?"
+    },
+    {
+      "start": 950.5600000000001,
+      "end": 951.4000000000001,
+      "text": " Come here."
+    },
+    {
+      "start": 951.4000000000001,
+      "end": 952.24,
+      "text": " Come on."
+    },
+    {
+      "start": 953.32,
+      "end": 954.1600000000001,
+      "text": " Come on."
+    },
+    {
+      "start": 954.1600000000001,
+      "end": 955.0,
+      "text": " Come on."
+    },
+    {
+      "start": 955.0,
+      "end": 955.84,
+      "text": " Come on."
+    },
+    {
+      "start": 958.84,
+      "end": 959.6800000000001,
+      "text": " Yeah."
+    },
+    {
+      "start": 959.6800000000001,
+      "end": 960.5200000000001,
+      "text": " Yeah."
+    },
+    {
+      "start": 960.5200000000001,
+      "end": 961.36,
+      "text": " Okay."
+    },
+    {
+      "start": 961.36,
+      "end": 962.2,
+      "text": " Okay."
+    },
+    {
+      "start": 962.2,
+      "end": 963.8000000000001,
+      "text": " Intercepted by Maric."
+    },
+    {
+      "start": 966.12,
+      "end": 967.36,
+      "text": " Okay. Jason is going."
+    },
+    {
+      "start": 967.48,
+      "end": 968.4,
+      "text": " Intercepted."
+    },
+    {
+      "start": 973.76,
+      "end": 974.76,
+      "text": " Intercepted."
+    },
+    {
+      "start": 976.28,
+      "end": 977.28,
+      "text": " Go, Ligah, ball."
+    },
+    {
+      "start": 977.28,
+      "end": 1005.76,
+      "text": " Okay, call it as the ball."
+    },
+    {
+      "start": 1005.76,
+      "end": 1009.36,
+      "text": " Ben passed the ball. Call it. Fighting for the ball."
+    },
+    {
+      "start": 1010.96,
+      "end": 1011.76,
+      "text": " Ball went out."
+    },
+    {
+      "start": 1012.96,
+      "end": 1015.4399999999999,
+      "text": " Norma almost over time. Call it. Ficking in."
+    },
+    {
+      "start": 1015.88,
+      "end": 1018.96,
+      "text": " Opportunity for Maverick, selling the ball."
+    },
+    {
+      "start": 1019.28,
+      "end": 1021.96,
+      "text": " It went wide again by Maverick."
+    },
+    {
+      "start": 1036.64,
+      "end": 1041.36,
+      "text": " Okay, intercepted by Callit. Passing in for Maverick, intercepted."
+    },
+    {
+      "start": 1041.92,
+      "end": 1042.4,
+      "text": " Go back."
+    },
+    {
+      "start": 1050.48,
+      "end": 1050.96,
+      "text": " Coach?"
+    },
+    {
+      "start": 1065.76,
+      "end": 1079.92,
+      "text": " I think it's the last ball, coach. Ah, I think so."
+    },
+    {
+      "start": 1080.88,
+      "end": 1082.0,
+      "text": " Go, go, go."
+    },
+    {
+      "start": 1083.2,
+      "end": 1084.0,
+      "text": " Stubborn."
+    },
+    {
+      "start": 1086.48,
+      "end": 1087.2,
+      "text": " Go on."
+    },
+    {
+      "start": 1087.2,
+      "end": 1087.8400000000001,
+      "text": " Come on."
+    },
+    {
+      "start": 1087.8400000000001,
+      "end": 1088.5600000000002,
+      "text": " Yeah, yeah, yeah."
+    },
+    {
+      "start": 1088.5600000000002,
+      "end": 1089.04,
+      "text": " Okay."
+    },
+    {
+      "start": 1089.04,
+      "end": 1089.8400000000001,
+      "text": " Ready, go."
+    },
+    {
+      "start": 1089.8400000000001,
+      "end": 1090.8000000000002,
+      "text": " Go, go."
+    },
+    {
+      "start": 1090.8000000000002,
+      "end": 1092.0800000000002,
+      "text": " Everybody, stop."
+    },
+    {
+      "start": 1092.0800000000002,
+      "end": 1092.96,
+      "text": " I think they have it."
+    },
+    {
+      "start": 1092.96,
+      "end": 1094.0,
+      "text": " Everybody, stop it."
+    },
+    {
+      "start": 1096.24,
+      "end": 1097.2,
+      "text": " Hooker up."
+    },
+    {
+      "start": 1097.2,
+      "end": 1098.16,
+      "text": " Hooker."
+    },
+    {
+      "start": 1098.16,
+      "end": 1099.3600000000001,
+      "text": " Go, go, go, go."
+    },
+    {
+      "start": 1102.16,
+      "end": 1103.3600000000001,
+      "text": " Hooker in."
+    },
+    {
+      "start": 1103.3600000000001,
+      "end": 1104.4,
+      "text": " In, kiss it."
+    },
+    {
+      "start": 1104.4,
+      "end": 1105.3600000000001,
+      "text": " Wait a minute."
+    },
+    {
+      "start": 1105.3600000000001,
+      "end": 1105.8400000000001,
+      "text": " Go."
+    },
+    {
+      "start": 1105.8400000000001,
+      "end": 1106.16,
+      "text": " Come on."
+    },
+    {
+      "start": 1106.16,
+      "end": 1107.3600000000001,
+      "text": " Kiss it, Maverick."
+    },
+    {
+      "start": 1107.36,
+      "end": 1107.4399999999998,
+      "text": " Set, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll, roll"
+    }
+  ]
+}
