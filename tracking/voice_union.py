@@ -79,6 +79,9 @@ def main() -> None:
     ap.add_argument("--boundaries", help="comma-sep cumulative half-end concat-seconds "
                                          "(default: auto from R2 segment durations)")
     ap.add_argument("--window-s", type=float, default=30.0, help="same-type match window")
+    ap.add_argument("--write", action="store_true",
+                    help="write the drafts to the game doc's voiceDrafts field "
+                         "(PWA confirm queue reads them). Additive + reversible.")
     args = ap.parse_args()
     os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
     import sys
@@ -137,6 +140,23 @@ def main() -> None:
         "new_drafts": new_drafts, "enrichments": enrichments, "dups": dups,
     }, indent=2))
     print(f"\nwritten: {out}\n(new_drafts + enrichments are the confirm-queue candidates)")
+
+    if args.write:
+        # Shape for the PWA: camelCase (matches event/voiceSegments fields) +
+        # deterministic id per (period,elapsed,type) so re-runs replace, not dup.
+        def _shape(r, kind):
+            return {
+                "id": f"vd_{r['period']}_{r['elapsed']}_{r['type']}",
+                "type": r["type"], "period": r["period"], "elapsed": r["elapsed"],
+                "playerId": r.get("player_id"),
+                "playerName": r.get("player_first_name") or "",
+                "confidence": r.get("confidence"), "quote": r.get("quote"),
+                "kind": kind, "source": "voice_draft",
+            }
+        drafts = [_shape(r, "new") for r in new_drafts] + [_shape(r, "enrich") for r in enrichments]
+        firestore_io.write_voice_drafts(args.game_id, drafts)
+        print(f"→ wrote {len(drafts)} voiceDrafts to game {args.game_id} "
+              f"(PWA confirm queue). Reversible: field can be cleared.")
 
 
 if __name__ == "__main__":
