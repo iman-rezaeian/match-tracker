@@ -195,7 +195,7 @@
   </script>
 
   <script type="text/babel" data-presets="react">
-    const { useState, useEffect, useMemo, useRef } = React;
+    const { useState, useEffect, useMemo, useRef, useImperativeHandle, forwardRef } = React;
 
     // -------- inline icon library (lucide-style) --------
     const Svg = ({ className = "w-5 h-5", children, ...p }) => (
@@ -14037,6 +14037,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
