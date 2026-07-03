@@ -1,0 +1,3718 @@
+{
+  "model": "claude-haiku-4-5",
+  "counts": {
+    "narration": 195,
+    "instruction": 117,
+    "other": 100
+  },
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "text": " Okay, the game has started.",
+      "mean_dbfs": -38.9,
+      "peak_dbfs": -16.3,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 3.0,
+      "end": 8.0,
+      "text": " On the other side of the field, Lupa having the call.",
+      "mean_dbfs": -46.2,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 8.0,
+      "end": 10.0,
+      "text": " We're being named.",
+      "mean_dbfs": -36.1,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 10.0,
+      "end": 14.0,
+      "text": " Good for the clubs.",
+      "mean_dbfs": -53.4,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 14.0,
+      "end": 19.0,
+      "text": " Pass to Paloalto, rolling the clubs at all.",
+      "mean_dbfs": -59.1,
+      "peak_dbfs": -14.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 19.0,
+      "end": 24.0,
+      "text": " Back, back, back.",
+      "mean_dbfs": -71.6,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 24.0,
+      "end": 26.0,
+      "text": " Get close to him.",
+      "mean_dbfs": -31.4,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 26.0,
+      "end": 28.0,
+      "text": " Get close, get close, get close.",
+      "mean_dbfs": -41.1,
+      "peak_dbfs": -20.2,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 28.0,
+      "end": 30.0,
+      "text": " Get close right there.",
+      "mean_dbfs": -40.3,
+      "peak_dbfs": -18.5,
+      "loud_rank": 0.97,
+      "label": "instruction"
+    },
+    {
+      "start": 30.0,
+      "end": 32.0,
+      "text": " Okay, on him, on him, on him.",
+      "mean_dbfs": -29.8,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 32.0,
+      "end": 34.0,
+      "text": " One of you, one of you, one of you.",
+      "mean_dbfs": -43.4,
+      "peak_dbfs": -14.9,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 34.0,
+      "end": 36.0,
+      "text": " Say, Paloalto.",
+      "mean_dbfs": -69.1,
+      "peak_dbfs": -23.0,
+      "loud_rank": 0.91,
+      "label": "narration"
+    },
+    {
+      "start": 36.0,
+      "end": 37.0,
+      "text": " Lupa.",
+      "mean_dbfs": -35.3,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 37.0,
+      "end": 39.0,
+      "text": " Paloalto is preaching.",
+      "mean_dbfs": -78.8,
+      "peak_dbfs": -18.5,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 39.0,
+      "end": 44.0,
+      "text": " Pass.",
+      "mean_dbfs": -95.6,
+      "peak_dbfs": -13.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 44.0,
+      "end": 48.0,
+      "text": " Passing to Paloalto.",
+      "mean_dbfs": -70.5,
+      "peak_dbfs": -15.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 48.0,
+      "end": 78.0,
+      "text": " Psuppies, Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies Psuppies",
+      "mean_dbfs": -69.9,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 78.0,
+      "end": 81.84,
+      "text": " Oh, well, keep the unit.",
+      "mean_dbfs": -69.1,
+      "peak_dbfs": -21.1,
+      "loud_rank": 0.94,
+      "label": "instruction"
+    },
+    {
+      "start": 81.84,
+      "end": 84.48,
+      "text": " Call it, grab the ball.",
+      "mean_dbfs": -53.4,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 84.48,
+      "end": 86.8,
+      "text": " Ribbon and wind from the left.",
+      "mean_dbfs": -43.4,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 86.8,
+      "end": 88.28,
+      "text": " Daniel!",
+      "mean_dbfs": -52.5,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 88.28,
+      "end": 89.64,
+      "text": " Daniel!",
+      "mean_dbfs": -45.7,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 89.64,
+      "end": 93.48,
+      "text": " Call it, it's a wing on the left, on the sideline.",
+      "mean_dbfs": -47.2,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 93.48,
+      "end": 95.4,
+      "text": " It's the same.",
+      "mean_dbfs": -64.0,
+      "peak_dbfs": -21.3,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 95.4,
+      "end": 97.64,
+      "text": " It picks out, call and pick for us.",
+      "mean_dbfs": -46.0,
+      "peak_dbfs": -19.0,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 101.32,
+      "end": 102.12,
+      "text": " Ion!",
+      "mean_dbfs": -65.9,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 102.12,
+      "end": 104.03999999999999,
+      "text": " Up, up, up, right there!",
+      "mean_dbfs": -54.4,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 104.03999999999999,
+      "end": 105.52,
+      "text": " Right there, stop!",
+      "mean_dbfs": -53.4,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 106.32,
+      "end": 109.84,
+      "text": " The box right outside.",
+      "mean_dbfs": -58.4,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 109.84,
+      "end": 110.84,
+      "text": " What do we do?",
+      "mean_dbfs": -33.1,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "instruction"
+    },
+    {
+      "start": 110.84,
+      "end": 111.84,
+      "text": " What do we do?",
+      "mean_dbfs": -33.5,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 111.84,
+      "end": 112.84,
+      "text": " Don't hit!",
+      "mean_dbfs": -47.0,
+      "peak_dbfs": -15.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 112.84,
+      "end": 113.84,
+      "text": " What do we do?",
+      "mean_dbfs": -32.1,
+      "peak_dbfs": -14.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 113.84,
+      "end": 114.84,
+      "text": " Don't hit!",
+      "mean_dbfs": -39.0,
+      "peak_dbfs": -14.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 114.84,
+      "end": 116.84,
+      "text": " What do we do?",
+      "mean_dbfs": -46.9,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 116.84,
+      "end": 118.84,
+      "text": " What do we do?",
+      "mean_dbfs": -56.5,
+      "peak_dbfs": -18.2,
+      "loud_rank": 0.97,
+      "label": "instruction"
+    },
+    {
+      "start": 118.84,
+      "end": 120.84,
+      "text": " What is your name?",
+      "mean_dbfs": -59.7,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 124.84,
+      "end": 126.84,
+      "text": " Boys, what is your name?",
+      "mean_dbfs": -65.7,
+      "peak_dbfs": -17.7,
+      "loud_rank": 0.98,
+      "label": "instruction"
+    },
+    {
+      "start": 126.84,
+      "end": 128.84,
+      "text": " Hey, shoot!",
+      "mean_dbfs": -77.9,
+      "peak_dbfs": -19.7,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 135.52,
+      "end": 144.52,
+      "text": " Okay, look out.",
+      "mean_dbfs": -78.7,
+      "peak_dbfs": -19.9,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 144.52,
+      "end": 146.52,
+      "text": " Oh, got a foul.",
+      "mean_dbfs": -53.5,
+      "peak_dbfs": -19.6,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 157.52,
+      "end": 162.52,
+      "text": " Our left, it came inside the box.",
+      "mean_dbfs": -61.0,
+      "peak_dbfs": -17.5,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 162.52,
+      "end": 163.52,
+      "text": " Okay.",
+      "mean_dbfs": -55.7,
+      "peak_dbfs": -19.1,
+      "loud_rank": 0.96,
+      "label": "other"
+    },
+    {
+      "start": 163.52,
+      "end": 168.52,
+      "text": " Look out, trying to kick it out.",
+      "mean_dbfs": -77.4,
+      "peak_dbfs": -19.0,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 168.52,
+      "end": 170.52,
+      "text": " Still on that side.",
+      "mean_dbfs": -40.6,
+      "peak_dbfs": -18.4,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 170.52,
+      "end": 175.52,
+      "text": " Okay, Arian blocks and clears the ball.",
+      "mean_dbfs": -61.7,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 175.52,
+      "end": 177.52,
+      "text": " So what?",
+      "mean_dbfs": -82.7,
+      "peak_dbfs": -18.8,
+      "loud_rank": 0.96,
+      "label": "other"
+    },
+    {
+      "start": 177.52,
+      "end": 179.52,
+      "text": " Still on the left side.",
+      "mean_dbfs": -47.5,
+      "peak_dbfs": -19.9,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 179.52,
+      "end": 182.52,
+      "text": " Playing.",
+      "mean_dbfs": -90.3,
+      "peak_dbfs": -19.8,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 182.52,
+      "end": 184.52,
+      "text": " Oh, opportunity for them.",
+      "mean_dbfs": -38.5,
+      "peak_dbfs": -20.2,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 184.52,
+      "end": 188.52,
+      "text": " Luca won the ball, but they got it again.",
+      "mean_dbfs": -48.5,
+      "peak_dbfs": -18.0,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 188.52,
+      "end": 191.52,
+      "text": " Call it, kicked it out in the corner.",
+      "mean_dbfs": -40.8,
+      "peak_dbfs": -17.8,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 191.52,
+      "end": 197.52,
+      "text": " A good ball win for Khaled.",
+      "mean_dbfs": -88.5,
+      "peak_dbfs": -19.1,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 197.52,
+      "end": 202.52,
+      "text": " Corner from the left side for the opponent team.",
+      "mean_dbfs": -69.0,
+      "peak_dbfs": -19.0,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 202.52,
+      "end": 204.52,
+      "text": " Oh, so close!",
+      "mean_dbfs": -48.5,
+      "peak_dbfs": -21.2,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 204.52,
+      "end": 206.52,
+      "text": " Oh, man!",
+      "mean_dbfs": -70.9,
+      "peak_dbfs": -25.6,
+      "loud_rank": 0.88,
+      "label": "narration"
+    },
+    {
+      "start": 206.52,
+      "end": 209.52,
+      "text": " I'm not feeling it.",
+      "mean_dbfs": -80.3,
+      "peak_dbfs": -39.0,
+      "loud_rank": 0.73,
+      "label": "other"
+    },
+    {
+      "start": 209.52,
+      "end": 212.52,
+      "text": " Get in there, let's go!",
+      "mean_dbfs": -72.1,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 220.52,
+      "end": 222.52,
+      "text": " Nice try, nice ball!",
+      "mean_dbfs": -34.1,
+      "peak_dbfs": -16.8,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 222.52,
+      "end": 224.52,
+      "text": " Yeah, come back there, Jackson.",
+      "mean_dbfs": -47.9,
+      "peak_dbfs": -20.1,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 224.52,
+      "end": 227.52,
+      "text": " Corner went out, Liam DiVolla won the ball.",
+      "mean_dbfs": -40.9,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 227.52,
+      "end": 229.52,
+      "text": " Okay.",
+      "mean_dbfs": -71.0,
+      "peak_dbfs": -18.7,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 232.52,
+      "end": 235.52,
+      "text": " Here, that's Jackson's ball, Jackson's ball.",
+      "mean_dbfs": -57.6,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 235.52,
+      "end": 238.52,
+      "text": " Yeah, right there, stay right there, Matt.",
+      "mean_dbfs": -63.2,
+      "peak_dbfs": -20.6,
+      "loud_rank": 0.94,
+      "label": "instruction"
+    },
+    {
+      "start": 238.52,
+      "end": 243.52,
+      "text": " Triple it in, Jackson, go, go, go, go, go, yeah, bring it right in, bring it.",
+      "mean_dbfs": -53.0,
+      "peak_dbfs": -19.2,
+      "loud_rank": 0.96,
+      "label": "instruction"
+    },
+    {
+      "start": 243.52,
+      "end": 245.52,
+      "text": " Good job, Jackson.",
+      "mean_dbfs": -54.3,
+      "peak_dbfs": -17.8,
+      "loud_rank": 0.98,
+      "label": "instruction"
+    },
+    {
+      "start": 245.52,
+      "end": 248.52,
+      "text": " Well, it's okay.",
+      "mean_dbfs": -76.9,
+      "peak_dbfs": -21.0,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 248.52,
+      "end": 254.52,
+      "text": " Liam DiVolla kicked the ball out, corner kicked for the team.",
+      "mean_dbfs": -55.6,
+      "peak_dbfs": -18.9,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 254.52,
+      "end": 265.52,
+      "text": " Corner kick coming in from our right side.",
+      "mean_dbfs": -74.5,
+      "peak_dbfs": -20.9,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 265.52,
+      "end": 267.52,
+      "text": " Short.",
+      "mean_dbfs": -119.7,
+      "peak_dbfs": -107.9,
+      "loud_rank": 0.0,
+      "label": "narration"
+    },
+    {
+      "start": 267.52,
+      "end": 269.52,
+      "text": " One.",
+      "mean_dbfs": -92.3,
+      "peak_dbfs": -19.7,
+      "loud_rank": 0.95,
+      "label": "other"
+    },
+    {
+      "start": 269.52,
+      "end": 271.52,
+      "text": " Go!",
+      "mean_dbfs": -60.5,
+      "peak_dbfs": -23.0,
+      "loud_rank": 0.91,
+      "label": "instruction"
+    },
+    {
+      "start": 271.52,
+      "end": 273.52,
+      "text": " Yeah.",
+      "mean_dbfs": -73.9,
+      "peak_dbfs": -25.3,
+      "loud_rank": 0.89,
+      "label": "other"
+    },
+    {
+      "start": 273.52,
+      "end": 275.52,
+      "text": " Okay, go, go, go, go, go, go!",
+      "mean_dbfs": -90.1,
+      "peak_dbfs": -28.7,
+      "loud_rank": 0.85,
+      "label": "instruction"
+    },
+    {
+      "start": 275.52,
+      "end": 277.52,
+      "text": " Go!",
+      "mean_dbfs": -73.4,
+      "peak_dbfs": -30.3,
+      "loud_rank": 0.83,
+      "label": "instruction"
+    },
+    {
+      "start": 277.52,
+      "end": 280.52,
+      "text": " Go, go, go, go, go, go, go!",
+      "mean_dbfs": -47.6,
+      "peak_dbfs": -13.9,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 280.52,
+      "end": 282.52,
+      "text": " Go!",
+      "mean_dbfs": -85.6,
+      "peak_dbfs": -23.1,
+      "loud_rank": 0.91,
+      "label": "instruction"
+    },
+    {
+      "start": 282.52,
+      "end": 287.52,
+      "text": " Take a knee, boys, take a knee.",
+      "mean_dbfs": -57.8,
+      "peak_dbfs": -25.9,
+      "loud_rank": 0.88,
+      "label": "instruction"
+    },
+    {
+      "start": 287.52,
+      "end": 289.52,
+      "text": " Take a knee, everyone.",
+      "mean_dbfs": -72.2,
+      "peak_dbfs": -20.1,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 299.52,
+      "end": 302.52,
+      "text": " Okay, there is a foul in the field.",
+      "mean_dbfs": -51.9,
+      "peak_dbfs": -18.7,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 302.52,
+      "end": 306.52,
+      "text": " We're waiting for the game to start.",
+      "mean_dbfs": -75.8,
+      "peak_dbfs": -20.7,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 306.52,
+      "end": 310.52,
+      "text": " Another foul about the injury.",
+      "mean_dbfs": -57.9,
+      "peak_dbfs": -16.7,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 336.52,
+      "end": 339.52,
+      "text": " Okay.",
+      "mean_dbfs": -93.7,
+      "peak_dbfs": -26.0,
+      "loud_rank": 0.88,
+      "label": "other"
+    },
+    {
+      "start": 339.52,
+      "end": 343.52,
+      "text": " One of the shots from the other side of the field.",
+      "mean_dbfs": -53.4,
+      "peak_dbfs": -22.2,
+      "loud_rank": 0.92,
+      "label": "narration"
+    },
+    {
+      "start": 349.52,
+      "end": 352.52,
+      "text": " Okay, Ben on, won the ball to Maverick.",
+      "mean_dbfs": -35.0,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 356.52,
+      "end": 359.52,
+      "text": " Call it, opportunity for Call-Aid.",
+      "mean_dbfs": -41.6,
+      "peak_dbfs": -13.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 359.52,
+      "end": 362.52,
+      "text": " Oh, nice shot by Call-Aid.",
+      "mean_dbfs": -62.8,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 362.52,
+      "end": 364.52,
+      "text": " Shot on.",
+      "mean_dbfs": -55.5,
+      "peak_dbfs": -22.1,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 364.52,
+      "end": 366.52,
+      "text": " Four in three.",
+      "mean_dbfs": -56.0,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 370.52,
+      "end": 373.52,
+      "text": " Nice pass by Maverick.",
+      "mean_dbfs": -47.2,
+      "peak_dbfs": -18.0,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 385.52,
+      "end": 389.52,
+      "text": " Nice shot by Luca.",
+      "mean_dbfs": -86.3,
+      "peak_dbfs": -19.7,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 392.52,
+      "end": 394.52,
+      "text": " Nice one.",
+      "mean_dbfs": -67.9,
+      "peak_dbfs": -31.7,
+      "loud_rank": 0.81,
+      "label": "narration"
+    },
+    {
+      "start": 394.52,
+      "end": 396.52,
+      "text": " Go!",
+      "mean_dbfs": -45.7,
+      "peak_dbfs": -17.5,
+      "loud_rank": 0.98,
+      "label": "instruction"
+    },
+    {
+      "start": 396.52,
+      "end": 398.52,
+      "text": " Go!",
+      "mean_dbfs": -49.2,
+      "peak_dbfs": -19.0,
+      "loud_rank": 0.96,
+      "label": "instruction"
+    },
+    {
+      "start": 398.52,
+      "end": 400.52,
+      "text": " Go!",
+      "mean_dbfs": -56.8,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 400.52,
+      "end": 402.52,
+      "text": " Stop!",
+      "mean_dbfs": -48.1,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 402.52,
+      "end": 404.52,
+      "text": " Stop!",
+      "mean_dbfs": -54.0,
+      "peak_dbfs": -16.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 404.52,
+      "end": 406.52,
+      "text": " Nice one.",
+      "mean_dbfs": -84.5,
+      "peak_dbfs": -34.8,
+      "loud_rank": 0.77,
+      "label": "narration"
+    },
+    {
+      "start": 410.52,
+      "end": 412.52,
+      "text": " Liam.",
+      "mean_dbfs": -69.2,
+      "peak_dbfs": -18.2,
+      "loud_rank": 0.97,
+      "label": "instruction"
+    },
+    {
+      "start": 412.52,
+      "end": 414.52,
+      "text": " Got the ball.",
+      "mean_dbfs": -82.7,
+      "peak_dbfs": -17.6,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 414.52,
+      "end": 416.5,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -67.8,
+      "peak_dbfs": -17.2,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 420.91999999999996,
+      "end": 422.47999999999996,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -50.6,
+      "peak_dbfs": -19.3,
+      "loud_rank": 0.96,
+      "label": "other"
+    },
+    {
+      "start": 422.47999999999996,
+      "end": 423.53999999999996,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -38.8,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 423.53999999999996,
+      "end": 424.71999999999997,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -99.2,
+      "peak_dbfs": -48.4,
+      "loud_rank": 0.62,
+      "label": "other"
+    },
+    {
+      "start": 424.71999999999997,
+      "end": 426.79999999999995,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -106.4,
+      "peak_dbfs": -45.0,
+      "loud_rank": 0.65,
+      "label": "other"
+    },
+    {
+      "start": 426.79999999999995,
+      "end": 429.71999999999997,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -73.5,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 429.71999999999997,
+      "end": 437.06,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -81.9,
+      "peak_dbfs": -17.2,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 437.06,
+      "end": 442.29999999999995,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -67.1,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 442.29999999999995,
+      "end": 444.47999999999996,
+      "text": " Should I take a picture?",
+      "mean_dbfs": -49.8,
+      "peak_dbfs": -20.7,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 444.48,
+      "end": 448.62,
+      "text": " corner kick on the net by Ben Phan.",
+      "mean_dbfs": -59.8,
+      "peak_dbfs": -16.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 448.62,
+      "end": 450.62,
+      "text": " I'm going to grab it.",
+      "mean_dbfs": -68.3,
+      "peak_dbfs": -19.2,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 458.62,
+      "end": 460.12,
+      "text": " Okay, we have stop.",
+      "mean_dbfs": -53.8,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 466.62,
+      "end": 470.12,
+      "text": " Going out for Alex.",
+      "mean_dbfs": -66.6,
+      "peak_dbfs": -21.1,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 474.48,
+      "end": 478.48,
+      "text": " No, no, no.",
+      "mean_dbfs": -77.9,
+      "peak_dbfs": -21.2,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 478.48,
+      "end": 480.48,
+      "text": " It was in for...",
+      "mean_dbfs": -68.8,
+      "peak_dbfs": -20.8,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 484.48,
+      "end": 486.48,
+      "text": " Which...",
+      "mean_dbfs": -69.4,
+      "peak_dbfs": -24.1,
+      "loud_rank": 0.9,
+      "label": "other"
+    },
+    {
+      "start": 490.48,
+      "end": 492.48,
+      "text": " Okay.",
+      "mean_dbfs": -59.0,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 492.48,
+      "end": 494.48,
+      "text": " Hold out.",
+      "mean_dbfs": -62.9,
+      "peak_dbfs": -21.6,
+      "loud_rank": 0.93,
+      "label": "instruction"
+    },
+    {
+      "start": 495.48,
+      "end": 499.48,
+      "text": " This is bringing up the ball in from the right.",
+      "mean_dbfs": -49.5,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 499.48,
+      "end": 501.48,
+      "text": " Okay, good pass for Ben.",
+      "mean_dbfs": -33.2,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 502.48,
+      "end": 504.48,
+      "text": " Nice.",
+      "mean_dbfs": -78.3,
+      "peak_dbfs": -23.7,
+      "loud_rank": 0.91,
+      "label": "narration"
+    },
+    {
+      "start": 504.48,
+      "end": 506.48,
+      "text": " Nice job, Alex.",
+      "mean_dbfs": -43.8,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 506.48,
+      "end": 508.48,
+      "text": " Pass.",
+      "mean_dbfs": -92.8,
+      "peak_dbfs": -51.4,
+      "loud_rank": 0.58,
+      "label": "instruction"
+    },
+    {
+      "start": 508.48,
+      "end": 510.48,
+      "text": " Pizza.",
+      "mean_dbfs": -46.7,
+      "peak_dbfs": -22.8,
+      "loud_rank": 0.92,
+      "label": "other"
+    },
+    {
+      "start": 510.48,
+      "end": 512.48,
+      "text": " Oh, yeah.",
+      "mean_dbfs": -69.5,
+      "peak_dbfs": -38.8,
+      "loud_rank": 0.73,
+      "label": "other"
+    },
+    {
+      "start": 512.48,
+      "end": 514.48,
+      "text": " Oh, yeah.",
+      "mean_dbfs": -63.9,
+      "peak_dbfs": -26.2,
+      "loud_rank": 0.88,
+      "label": "other"
+    },
+    {
+      "start": 514.48,
+      "end": 516.48,
+      "text": " Okay, last ball.",
+      "mean_dbfs": -43.9,
+      "peak_dbfs": -17.9,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 516.48,
+      "end": 519.48,
+      "text": " Going back, it's a counterattack.",
+      "mean_dbfs": -54.0,
+      "peak_dbfs": -16.6,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 519.48,
+      "end": 525.48,
+      "text": " Routine send in Ben Phan, cut the ball, playing back with the goalie.",
+      "mean_dbfs": -52.0,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 526.48,
+      "end": 528.48,
+      "text": " Okay.",
+      "mean_dbfs": -89.4,
+      "peak_dbfs": -50.1,
+      "loud_rank": 0.59,
+      "label": "other"
+    },
+    {
+      "start": 528.48,
+      "end": 530.48,
+      "text": " Good pass.",
+      "mean_dbfs": -72.9,
+      "peak_dbfs": -23.4,
+      "loud_rank": 0.91,
+      "label": "narration"
+    },
+    {
+      "start": 530.48,
+      "end": 532.48,
+      "text": " Alex, pass.",
+      "mean_dbfs": -82.6,
+      "peak_dbfs": -19.9,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 532.48,
+      "end": 534.48,
+      "text": " Still on the left side.",
+      "mean_dbfs": -73.9,
+      "peak_dbfs": -30.0,
+      "loud_rank": 0.83,
+      "label": "narration"
+    },
+    {
+      "start": 534.48,
+      "end": 536.48,
+      "text": " Tangling.",
+      "mean_dbfs": -44.5,
+      "peak_dbfs": -19.6,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 536.48,
+      "end": 538.48,
+      "text": " Good.",
+      "mean_dbfs": -40.5,
+      "peak_dbfs": -19.1,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 538.48,
+      "end": 540.48,
+      "text": " Who's there?",
+      "mean_dbfs": -87.2,
+      "peak_dbfs": -44.6,
+      "loud_rank": 0.66,
+      "label": "instruction"
+    },
+    {
+      "start": 540.48,
+      "end": 542.48,
+      "text": " Who's there?",
+      "mean_dbfs": -76.5,
+      "peak_dbfs": -29.4,
+      "loud_rank": 0.84,
+      "label": "instruction"
+    },
+    {
+      "start": 542.48,
+      "end": 544.48,
+      "text": " Who's there?",
+      "mean_dbfs": -62.3,
+      "peak_dbfs": -21.7,
+      "loud_rank": 0.93,
+      "label": "instruction"
+    },
+    {
+      "start": 544.48,
+      "end": 546.48,
+      "text": " Okay, no long on the ball.",
+      "mean_dbfs": -91.9,
+      "peak_dbfs": -28.8,
+      "loud_rank": 0.85,
+      "label": "narration"
+    },
+    {
+      "start": 546.48,
+      "end": 548.48,
+      "text": " Nice, nice play, nice play.",
+      "mean_dbfs": -80.2,
+      "peak_dbfs": -41.3,
+      "loud_rank": 0.7,
+      "label": "narration"
+    },
+    {
+      "start": 548.48,
+      "end": 550.48,
+      "text": " Ben Phan on the ball.",
+      "mean_dbfs": -48.1,
+      "peak_dbfs": -16.2,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 550.48,
+      "end": 552.48,
+      "text": " Going in.",
+      "mean_dbfs": -29.1,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 552.48,
+      "end": 555.48,
+      "text": " Open in, open in for Colette.",
+      "mean_dbfs": -51.7,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 555.48,
+      "end": 557.48,
+      "text": " Oh, got that.",
+      "mean_dbfs": -37.3,
+      "peak_dbfs": -15.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 557.48,
+      "end": 559.48,
+      "text": " Well, it stopped.",
+      "mean_dbfs": -57.3,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 559.48,
+      "end": 561.48,
+      "text": " Okay, stop, stop, stop.",
+      "mean_dbfs": -53.1,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 561.48,
+      "end": 563.48,
+      "text": " Stop, stop, stop.",
+      "mean_dbfs": -55.5,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 563.48,
+      "end": 565.48,
+      "text": " Okay, stop, stop.",
+      "mean_dbfs": -80.8,
+      "peak_dbfs": -22.3,
+      "loud_rank": 0.92,
+      "label": "instruction"
+    },
+    {
+      "start": 565.48,
+      "end": 567.48,
+      "text": " Okay, stop, stop.",
+      "mean_dbfs": -73.8,
+      "peak_dbfs": -31.7,
+      "loud_rank": 0.81,
+      "label": "instruction"
+    },
+    {
+      "start": 567.48,
+      "end": 569.48,
+      "text": " Okay, move the ball there, dad.",
+      "mean_dbfs": -63.1,
+      "peak_dbfs": -33.9,
+      "loud_rank": 0.79,
+      "label": "instruction"
+    },
+    {
+      "start": 569.48,
+      "end": 571.48,
+      "text": " Okay.",
+      "mean_dbfs": -67.4,
+      "peak_dbfs": -21.9,
+      "loud_rank": 0.93,
+      "label": "other"
+    },
+    {
+      "start": 571.48,
+      "end": 573.48,
+      "text": " Okay.",
+      "mean_dbfs": -92.2,
+      "peak_dbfs": -37.3,
+      "loud_rank": 0.75,
+      "label": "other"
+    },
+    {
+      "start": 573.48,
+      "end": 575.48,
+      "text": " Yeah.",
+      "mean_dbfs": -94.4,
+      "peak_dbfs": -22.2,
+      "loud_rank": 0.92,
+      "label": "other"
+    },
+    {
+      "start": 575.48,
+      "end": 577.48,
+      "text": " Got it, got it.",
+      "mean_dbfs": -61.5,
+      "peak_dbfs": -21.5,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 577.48,
+      "end": 579.48,
+      "text": " Okay, I got it.",
+      "mean_dbfs": -86.7,
+      "peak_dbfs": -43.1,
+      "loud_rank": 0.68,
+      "label": "other"
+    },
+    {
+      "start": 579.48,
+      "end": 581.48,
+      "text": " Okay, I got it.",
+      "mean_dbfs": -55.6,
+      "peak_dbfs": -20.7,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 581.48,
+      "end": 583.48,
+      "text": " Okay.",
+      "mean_dbfs": -63.4,
+      "peak_dbfs": -20.3,
+      "loud_rank": 0.95,
+      "label": "other"
+    },
+    {
+      "start": 583.48,
+      "end": 587.48,
+      "text": " Green ball on the ball.",
+      "mean_dbfs": -68.4,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 587.48,
+      "end": 590.48,
+      "text": " It's a wonder ball in one on one.",
+      "mean_dbfs": -47.7,
+      "peak_dbfs": -18.9,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 590.48,
+      "end": 592.48,
+      "text": " Okay.",
+      "mean_dbfs": -118.5,
+      "peak_dbfs": -99.6,
+      "loud_rank": 0.01,
+      "label": "other"
+    },
+    {
+      "start": 592.48,
+      "end": 594.48,
+      "text": " That's it.",
+      "mean_dbfs": -73.8,
+      "peak_dbfs": -39.2,
+      "loud_rank": 0.72,
+      "label": "other"
+    },
+    {
+      "start": 594.48,
+      "end": 596.48,
+      "text": " That's something.",
+      "mean_dbfs": -108.4,
+      "peak_dbfs": -45.8,
+      "loud_rank": 0.65,
+      "label": "other"
+    },
+    {
+      "start": 596.48,
+      "end": 598.48,
+      "text": " Oh, no.",
+      "mean_dbfs": -56.5,
+      "peak_dbfs": -31.3,
+      "loud_rank": 0.82,
+      "label": "other"
+    },
+    {
+      "start": 599.48,
+      "end": 602.48,
+      "text": "..]",
+      "mean_dbfs": -96.5,
+      "peak_dbfs": -21.4,
+      "loud_rank": 0.93,
+      "label": "other"
+    },
+    {
+      "start": 602.48,
+      "end": 607.48,
+      "text": "..]",
+      "mean_dbfs": -51.2,
+      "peak_dbfs": -16.3,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 607.48,
+      "end": 610.48,
+      "text": "..]",
+      "mean_dbfs": -99.9,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 610.48,
+      "end": 613.48,
+      "text": "..]",
+      "mean_dbfs": -31.0,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 613.48,
+      "end": 620.48,
+      "text": "..]",
+      "mean_dbfs": -71.0,
+      "peak_dbfs": -29.2,
+      "loud_rank": 0.84,
+      "label": "other"
+    },
+    {
+      "start": 620.48,
+      "end": 623.48,
+      "text": "..]",
+      "mean_dbfs": -77.5,
+      "peak_dbfs": -25.1,
+      "loud_rank": 0.89,
+      "label": "other"
+    },
+    {
+      "start": 623.48,
+      "end": 627.48,
+      "text": "..]",
+      "mean_dbfs": -49.1,
+      "peak_dbfs": -16.6,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 627.48,
+      "end": 628.32,
+      "text": " Okay.",
+      "mean_dbfs": -79.2,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 632.74,
+      "end": 635.74,
+      "text": " I'll start, five, five, six, seven, eight.",
+      "mean_dbfs": -62.9,
+      "peak_dbfs": -18.6,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 635.74,
+      "end": 636.74,
+      "text": " You can do it, you can do it.",
+      "mean_dbfs": -46.7,
+      "peak_dbfs": -24.2,
+      "loud_rank": 0.9,
+      "label": "instruction"
+    },
+    {
+      "start": 636.74,
+      "end": 638.74,
+      "text": " What's the number, what's the number?",
+      "mean_dbfs": -82.7,
+      "peak_dbfs": -38.4,
+      "loud_rank": 0.73,
+      "label": "other"
+    },
+    {
+      "start": 640.74,
+      "end": 644.14,
+      "text": " Good job, good save by Liam,",
+      "mean_dbfs": -46.2,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 644.14,
+      "end": 646.6,
+      "text": " Garland, coming out.",
+      "mean_dbfs": -69.9,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 649.14,
+      "end": 652.14,
+      "text": " Come on, boys, let's go, come on, come on, come on.",
+      "mean_dbfs": -61.8,
+      "peak_dbfs": -20.3,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 652.14,
+      "end": 653.48,
+      "text": " Subway, come on.",
+      "mean_dbfs": -58.6,
+      "peak_dbfs": -22.5,
+      "loud_rank": 0.92,
+      "label": "instruction"
+    },
+    {
+      "start": 657.48,
+      "end": 657.58,
+      "text": " Go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go, go",
+      "mean_dbfs": -120.0,
+      "peak_dbfs": -120.0,
+      "loud_rank": 0.0,
+      "label": "instruction"
+    },
+    {
+      "start": 687.48,
+      "end": 710.02,
+      "text": " Issa winning the ball.",
+      "mean_dbfs": -79.5,
+      "peak_dbfs": -18.1,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 710.02,
+      "end": 717.98,
+      "text": " Faülon on Issa.",
+      "mean_dbfs": -71.9,
+      "peak_dbfs": -18.9,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 717.98,
+      "end": 719.98,
+      "text": " Okay.",
+      "mean_dbfs": -86.1,
+      "peak_dbfs": -35.6,
+      "loud_rank": 0.77,
+      "label": "other"
+    },
+    {
+      "start": 719.98,
+      "end": 727.98,
+      "text": " Now, Rick, winning the ball.",
+      "mean_dbfs": -73.0,
+      "peak_dbfs": -21.9,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 727.98,
+      "end": 737.98,
+      "text": " Alex did a good job winning the ball.",
+      "mean_dbfs": -69.5,
+      "peak_dbfs": -16.2,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 737.98,
+      "end": 747.98,
+      "text": " Okay.",
+      "mean_dbfs": -50.2,
+      "peak_dbfs": -17.0,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 747.98,
+      "end": 757.98,
+      "text": " Okay.",
+      "mean_dbfs": -48.6,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 757.98,
+      "end": 767.98,
+      "text": " It was a nice pass by Ben, which got intercepted.",
+      "mean_dbfs": -74.8,
+      "peak_dbfs": -18.6,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 767.98,
+      "end": 773.98,
+      "text": " Ben, hon.",
+      "mean_dbfs": -99.3,
+      "peak_dbfs": -18.6,
+      "loud_rank": 0.97,
+      "label": "instruction"
+    },
+    {
+      "start": 773.98,
+      "end": 777.98,
+      "text": " Oh.",
+      "mean_dbfs": -85.5,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 777.98,
+      "end": 779.98,
+      "text": " Shoot off by now, Rick.",
+      "mean_dbfs": -58.8,
+      "peak_dbfs": -21.8,
+      "loud_rank": 0.93,
+      "label": "instruction"
+    },
+    {
+      "start": 779.98,
+      "end": 789.98,
+      "text": " You went up.",
+      "mean_dbfs": -82.9,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 789.98,
+      "end": 799.98,
+      "text": " I'm going to sit down on the board.",
+      "mean_dbfs": -70.9,
+      "peak_dbfs": -24.1,
+      "loud_rank": 0.9,
+      "label": "other"
+    },
+    {
+      "start": 799.98,
+      "end": 809.98,
+      "text": " Alex, you said paper moving.",
+      "mean_dbfs": -57.0,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 809.98,
+      "end": 813.98,
+      "text": " Alex, stop.",
+      "mean_dbfs": -46.7,
+      "peak_dbfs": -18.7,
+      "loud_rank": 0.97,
+      "label": "instruction"
+    },
+    {
+      "start": 813.98,
+      "end": 823.98,
+      "text": " Okay.",
+      "mean_dbfs": -68.4,
+      "peak_dbfs": -21.2,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 823.98,
+      "end": 825.98,
+      "text": " Okay.",
+      "mean_dbfs": -60.6,
+      "peak_dbfs": -20.5,
+      "loud_rank": 0.94,
+      "label": "other"
+    },
+    {
+      "start": 825.98,
+      "end": 827.98,
+      "text": " Okay.",
+      "mean_dbfs": -38.5,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 827.98,
+      "end": 843.98,
+      "text": " Nice pass for Maverick.",
+      "mean_dbfs": -66.1,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 843.98,
+      "end": 853.98,
+      "text": " Nice.",
+      "mean_dbfs": -56.2,
+      "peak_dbfs": -13.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 853.98,
+      "end": 869.98,
+      "text": " Okay.",
+      "mean_dbfs": -52.0,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 869.98,
+      "end": 897.98,
+      "text": " Okay.",
+      "mean_dbfs": -71.7,
+      "peak_dbfs": -14.2,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 897.98,
+      "end": 917.98,
+      "text": " Three building in.",
+      "mean_dbfs": -85.3,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 917.98,
+      "end": 925.98,
+      "text": " Are you unintercepted?",
+      "mean_dbfs": -82.6,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 925.98,
+      "end": 937.98,
+      "text": " Ball got intercepted.",
+      "mean_dbfs": -79.2,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 937.98,
+      "end": 945.98,
+      "text": " Okay.",
+      "mean_dbfs": -73.0,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 945.98,
+      "end": 955.98,
+      "text": " Ben, too much.",
+      "mean_dbfs": -69.9,
+      "peak_dbfs": -13.3,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 955.98,
+      "end": 957.98,
+      "text": " Don't dribble everybody.",
+      "mean_dbfs": -25.9,
+      "peak_dbfs": -19.0,
+      "loud_rank": 0.96,
+      "label": "instruction"
+    },
+    {
+      "start": 957.98,
+      "end": 965.98,
+      "text": " Ben, hon, is playing with the ball too much.",
+      "mean_dbfs": -77.2,
+      "peak_dbfs": -21.6,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 965.98,
+      "end": 973.98,
+      "text": " You're out.",
+      "mean_dbfs": -81.0,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "instruction"
+    },
+    {
+      "start": 973.98,
+      "end": 979.98,
+      "text": " Nolan came out for Ben Adams.",
+      "mean_dbfs": -56.7,
+      "peak_dbfs": -18.7,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 979.98,
+      "end": 989.98,
+      "text": " Win for Alex.",
+      "mean_dbfs": -80.8,
+      "peak_dbfs": -19.6,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 989.98,
+      "end": 999.98,
+      "text": " Then Colette went in for Issa.",
+      "mean_dbfs": -73.4,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 999.98,
+      "end": 1003.98,
+      "text": " Win kicks the ball in.",
+      "mean_dbfs": -45.9,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1003.98,
+      "end": 1005.98,
+      "text": " Okay.",
+      "mean_dbfs": -50.9,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 1005.98,
+      "end": 1007.98,
+      "text": " Ben, hon.",
+      "mean_dbfs": -59.0,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1007.98,
+      "end": 1009.98,
+      "text": " Fighting for the ball.",
+      "mean_dbfs": -109.8,
+      "peak_dbfs": -55.9,
+      "loud_rank": 0.53,
+      "label": "narration"
+    },
+    {
+      "start": 1009.98,
+      "end": 1011.98,
+      "text": " The ball goes in the middle.",
+      "mean_dbfs": -99.4,
+      "peak_dbfs": -32.7,
+      "loud_rank": 0.8,
+      "label": "narration"
+    },
+    {
+      "start": 1011.98,
+      "end": 1015.98,
+      "text": " Issa is in.",
+      "mean_dbfs": -55.8,
+      "peak_dbfs": -20.4,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 1015.98,
+      "end": 1021.98,
+      "text": " Issa.",
+      "mean_dbfs": -85.0,
+      "peak_dbfs": -21.9,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 1021.98,
+      "end": 1031.98,
+      "text": " Okay.",
+      "mean_dbfs": -65.4,
+      "peak_dbfs": -14.9,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 1031.98,
+      "end": 1039.98,
+      "text": " The corner kick for the other team.",
+      "mean_dbfs": -55.1,
+      "peak_dbfs": -16.2,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1039.98,
+      "end": 1047.98,
+      "text": " Nice serve by Liam Goley.",
+      "mean_dbfs": -71.5,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1047.98,
+      "end": 1057.98,
+      "text": " Issa is in the ball for Issa.",
+      "mean_dbfs": -82.4,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1057.98,
+      "end": 1067.98,
+      "text": " Passing.",
+      "mean_dbfs": -58.5,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1067.98,
+      "end": 1077.98,
+      "text": " Good job Issa.",
+      "mean_dbfs": -67.7,
+      "peak_dbfs": -16.3,
+      "loud_rank": 0.99,
+      "label": "instruction"
+    },
+    {
+      "start": 1077.98,
+      "end": 1079.98,
+      "text": " Okay.",
+      "mean_dbfs": -73.3,
+      "peak_dbfs": -19.3,
+      "loud_rank": 0.96,
+      "label": "other"
+    },
+    {
+      "start": 1079.98,
+      "end": 1097.98,
+      "text": " Change this.",
+      "mean_dbfs": -73.3,
+      "peak_dbfs": -18.7,
+      "loud_rank": 0.96,
+      "label": "instruction"
+    },
+    {
+      "start": 1097.98,
+      "end": 1107.98,
+      "text": " Okay.",
+      "mean_dbfs": -73.1,
+      "peak_dbfs": -16.2,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 1107.98,
+      "end": 1117.98,
+      "text": " Okay.",
+      "mean_dbfs": -45.7,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 1117.98,
+      "end": 1127.98,
+      "text": " Okay.",
+      "mean_dbfs": -58.5,
+      "peak_dbfs": -15.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 1127.98,
+      "end": 1137.98,
+      "text": " Guys, jump out.",
+      "mean_dbfs": -52.0,
+      "peak_dbfs": -13.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1137.98,
+      "end": 1147.98,
+      "text": " Okay.",
+      "mean_dbfs": -78.5,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 1147.98,
+      "end": 1153.98,
+      "text": " Okay.",
+      "mean_dbfs": -56.3,
+      "peak_dbfs": -13.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 1153.98,
+      "end": 1155.98,
+      "text": " Nice pass by Vince.",
+      "mean_dbfs": -42.3,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1155.98,
+      "end": 1157.98,
+      "text": " Ben Adams over there.",
+      "mean_dbfs": -70.1,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1157.98,
+      "end": 1159.98,
+      "text": " Open in the space.",
+      "mean_dbfs": -40.2,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1159.98,
+      "end": 1161.98,
+      "text": " Oh, too wide.",
+      "mean_dbfs": -26.3,
+      "peak_dbfs": -16.6,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1161.98,
+      "end": 1181.98,
+      "text": " Ben out.",
+      "mean_dbfs": -86.3,
+      "peak_dbfs": -21.1,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 1181.98,
+      "end": 1191.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -64.7,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1191.98,
+      "end": 1197.98,
+      "text": " Yes.",
+      "mean_dbfs": -76.4,
+      "peak_dbfs": -16.6,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1197.98,
+      "end": 1199.98,
+      "text": " Come on.",
+      "mean_dbfs": -38.2,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1199.98,
+      "end": 1201.98,
+      "text": " How many?",
+      "mean_dbfs": -45.6,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1201.98,
+      "end": 1203.98,
+      "text": " We lost the ball again.",
+      "mean_dbfs": -40.2,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1203.98,
+      "end": 1205.98,
+      "text": " We had a chance.",
+      "mean_dbfs": -30.6,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1205.98,
+      "end": 1215.98,
+      "text": " Why?",
+      "mean_dbfs": -72.0,
+      "peak_dbfs": -13.9,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1215.98,
+      "end": 1217.98,
+      "text": " Nice win the ball by Vince.",
+      "mean_dbfs": -41.7,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1217.98,
+      "end": 1219.98,
+      "text": " Malvere on the move.",
+      "mean_dbfs": -52.8,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1219.98,
+      "end": 1225.98,
+      "text": " Pass it in space.",
+      "mean_dbfs": -57.4,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1225.98,
+      "end": 1235.98,
+      "text": " Okay.",
+      "mean_dbfs": -74.1,
+      "peak_dbfs": -17.4,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 1235.98,
+      "end": 1245.98,
+      "text": " Okay.",
+      "mean_dbfs": -69.2,
+      "peak_dbfs": -17.6,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 1245.98,
+      "end": 1265.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -67.5,
+      "peak_dbfs": -20.5,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 1265.98,
+      "end": 1275.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -57.0,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1275.98,
+      "end": 1285.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -74.7,
+      "peak_dbfs": -20.3,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 1285.98,
+      "end": 1289.98,
+      "text": " Okay.",
+      "mean_dbfs": -63.5,
+      "peak_dbfs": -17.2,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 1289.98,
+      "end": 1299.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -85.3,
+      "peak_dbfs": -13.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1299.98,
+      "end": 1309.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -67.1,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1309.98,
+      "end": 1319.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -68.1,
+      "peak_dbfs": -16.3,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1319.98,
+      "end": 1329.98,
+      "text": " Okay.",
+      "mean_dbfs": -64.0,
+      "peak_dbfs": -19.1,
+      "loud_rank": 0.96,
+      "label": "other"
+    },
+    {
+      "start": 1329.98,
+      "end": 1339.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -73.3,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1339.98,
+      "end": 1349.98,
+      "text": " Okay.",
+      "mean_dbfs": -78.4,
+      "peak_dbfs": -21.4,
+      "loud_rank": 0.93,
+      "label": "other"
+    },
+    {
+      "start": 1349.98,
+      "end": 1369.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -86.4,
+      "peak_dbfs": -19.7,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 1369.98,
+      "end": 1375.98,
+      "text": " Go with it.",
+      "mean_dbfs": -57.9,
+      "peak_dbfs": -14.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1375.98,
+      "end": 1385.98,
+      "text": " Yes.",
+      "mean_dbfs": -59.7,
+      "peak_dbfs": -13.6,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1385.98,
+      "end": 1395.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -61.8,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1395.98,
+      "end": 1405.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -70.0,
+      "peak_dbfs": -18.3,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 1405.98,
+      "end": 1415.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -79.4,
+      "peak_dbfs": -19.8,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 1415.98,
+      "end": 1425.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -77.0,
+      "peak_dbfs": -21.4,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 1425.98,
+      "end": 1445.98,
+      "text": " Nice serve by Issa.",
+      "mean_dbfs": -81.2,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1445.98,
+      "end": 1455.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -46.0,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1455.98,
+      "end": 1465.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -56.9,
+      "peak_dbfs": -14.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1465.98,
+      "end": 1475.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -67.6,
+      "peak_dbfs": -16.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1475.98,
+      "end": 1485.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.3,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1485.98,
+      "end": 1493.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -63.1,
+      "peak_dbfs": -15.6,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1493.98,
+      "end": 1503.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -74.6,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1503.98,
+      "end": 1523.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -82.0,
+      "peak_dbfs": -17.7,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1523.98,
+      "end": 1533.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -69.5,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1533.98,
+      "end": 1543.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -87.5,
+      "peak_dbfs": -20.2,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 1543.98,
+      "end": 1551.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -70.0,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1551.98,
+      "end": 1561.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -65.4,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1561.98,
+      "end": 1571.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -67.8,
+      "peak_dbfs": -17.6,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1571.98,
+      "end": 1591.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -75.6,
+      "peak_dbfs": -21.5,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 1591.98,
+      "end": 1601.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -62.8,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1601.98,
+      "end": 1611.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -58.9,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1611.98,
+      "end": 1621.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -74.3,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1621.98,
+      "end": 1631.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -73.3,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1631.98,
+      "end": 1641.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -56.9,
+      "peak_dbfs": -16.2,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1641.98,
+      "end": 1651.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -86.9,
+      "peak_dbfs": -37.8,
+      "loud_rank": 0.74,
+      "label": "narration"
+    },
+    {
+      "start": 1651.98,
+      "end": 1661.98,
+      "text": " Arion, stay closer.",
+      "mean_dbfs": -72.8,
+      "peak_dbfs": -14.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1661.98,
+      "end": 1671.98,
+      "text": " Send the ball in.",
+      "mean_dbfs": -68.0,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1671.98,
+      "end": 1681.98,
+      "text": " Nice serve by Arion.",
+      "mean_dbfs": -74.6,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1681.98,
+      "end": 1691.98,
+      "text": " I hit the post.",
+      "mean_dbfs": -70.0,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1691.98,
+      "end": 1701.98,
+      "text": " Open up.",
+      "mean_dbfs": -65.7,
+      "peak_dbfs": -24.7,
+      "loud_rank": 0.89,
+      "label": "instruction"
+    },
+    {
+      "start": 1701.98,
+      "end": 1711.98,
+      "text": " Open up.",
+      "mean_dbfs": -76.1,
+      "peak_dbfs": -17.0,
+      "loud_rank": 0.99,
+      "label": "instruction"
+    },
+    {
+      "start": 1711.98,
+      "end": 1721.98,
+      "text": " On the net.",
+      "mean_dbfs": -75.9,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1721.98,
+      "end": 1731.98,
+      "text": " On the net.",
+      "mean_dbfs": -70.4,
+      "peak_dbfs": -14.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1731.98,
+      "end": 1741.98,
+      "text": " On the net.",
+      "mean_dbfs": -83.1,
+      "peak_dbfs": -15.7,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1741.98,
+      "end": 1751.98,
+      "text": " On the net.",
+      "mean_dbfs": -99.0,
+      "peak_dbfs": -19.7,
+      "loud_rank": 0.95,
+      "label": "instruction"
+    },
+    {
+      "start": 1751.98,
+      "end": 1761.98,
+      "text": " On the net.",
+      "mean_dbfs": -58.4,
+      "peak_dbfs": -21.5,
+      "loud_rank": 0.93,
+      "label": "instruction"
+    },
+    {
+      "start": 1761.98,
+      "end": 1771.98,
+      "text": " On the net.",
+      "mean_dbfs": -58.1,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 1771.98,
+      "end": 1781.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -84.3,
+      "peak_dbfs": -13.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1781.98,
+      "end": 1791.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -57.6,
+      "peak_dbfs": -13.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1791.98,
+      "end": 1801.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.2,
+      "peak_dbfs": -16.4,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 1801.98,
+      "end": 1811.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -55.0,
+      "peak_dbfs": -14.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1811.98,
+      "end": 1821.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -72.6,
+      "peak_dbfs": -18.0,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 1821.98,
+      "end": 1831.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -77.6,
+      "peak_dbfs": -18.0,
+      "loud_rank": 0.97,
+      "label": "narration"
+    },
+    {
+      "start": 1831.98,
+      "end": 1841.98,
+      "text": " Malvere.",
+      "mean_dbfs": -75.5,
+      "peak_dbfs": -19.4,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 1841.98,
+      "end": 1851.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -77.7,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1851.98,
+      "end": 1861.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.2,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1861.98,
+      "end": 1871.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -75.4,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1871.98,
+      "end": 1881.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -76.5,
+      "peak_dbfs": -27.2,
+      "loud_rank": 0.86,
+      "label": "narration"
+    },
+    {
+      "start": 1881.98,
+      "end": 1889.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -59.3,
+      "peak_dbfs": -17.2,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1889.98,
+      "end": 1899.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -79.8,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1899.98,
+      "end": 1909.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.7,
+      "peak_dbfs": -14.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1909.98,
+      "end": 1919.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -47.8,
+      "peak_dbfs": -13.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1919.98,
+      "end": 1929.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -74.0,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1929.98,
+      "end": 1939.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -66.4,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1939.98,
+      "end": 1949.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -81.3,
+      "peak_dbfs": -17.1,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 1949.98,
+      "end": 1959.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -67.6,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1959.98,
+      "end": 1969.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -61.2,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1969.98,
+      "end": 1979.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -51.9,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1979.98,
+      "end": 1989.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -65.6,
+      "peak_dbfs": -20.9,
+      "loud_rank": 0.94,
+      "label": "narration"
+    },
+    {
+      "start": 1989.98,
+      "end": 1999.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -58.9,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 1999.98,
+      "end": 2009.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -55.8,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2009.98,
+      "end": 2019.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -58.4,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2019.98,
+      "end": 2029.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -78.0,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2029.98,
+      "end": 2039.98,
+      "text": " No, no, no, no.",
+      "mean_dbfs": -59.9,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2039.98,
+      "end": 2049.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -65.2,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2049.98,
+      "end": 2059.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -84.1,
+      "peak_dbfs": -24.6,
+      "loud_rank": 0.9,
+      "label": "narration"
+    },
+    {
+      "start": 2059.98,
+      "end": 2069.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -84.4,
+      "peak_dbfs": -23.4,
+      "loud_rank": 0.91,
+      "label": "narration"
+    },
+    {
+      "start": 2069.98,
+      "end": 2079.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -61.1,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2079.98,
+      "end": 2089.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.5,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2089.98,
+      "end": 2099.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -64.1,
+      "peak_dbfs": -13.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2099.98,
+      "end": 2109.98,
+      "text": " Very opportunity for Ben. He lost it in the middle.",
+      "mean_dbfs": -58.0,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2109.98,
+      "end": 2119.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -62.9,
+      "peak_dbfs": -16.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2119.98,
+      "end": 2129.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -59.2,
+      "peak_dbfs": -16.3,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 2129.98,
+      "end": 2139.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -85.9,
+      "peak_dbfs": -16.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2139.98,
+      "end": 2149.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -78.1,
+      "peak_dbfs": -17.8,
+      "loud_rank": 0.98,
+      "label": "narration"
+    },
+    {
+      "start": 2149.98,
+      "end": 2159.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -91.0,
+      "peak_dbfs": -21.7,
+      "loud_rank": 0.93,
+      "label": "narration"
+    },
+    {
+      "start": 2159.98,
+      "end": 2167.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -84.8,
+      "peak_dbfs": -14.7,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2167.98,
+      "end": 2177.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -66.9,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2177.98,
+      "end": 2187.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -69.2,
+      "peak_dbfs": -13.1,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2187.98,
+      "end": 2197.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -87.8,
+      "peak_dbfs": -19.8,
+      "loud_rank": 0.95,
+      "label": "narration"
+    },
+    {
+      "start": 2197.98,
+      "end": 2207.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -83.7,
+      "peak_dbfs": -15.3,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2207.98,
+      "end": 2217.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -67.8,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2217.98,
+      "end": 2227.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -75.5,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "narration"
+    },
+    {
+      "start": 2227.98,
+      "end": 2237.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -88.5,
+      "peak_dbfs": -19.2,
+      "loud_rank": 0.96,
+      "label": "narration"
+    },
+    {
+      "start": 2237.98,
+      "end": 2247.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -60.0,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2247.98,
+      "end": 2257.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -56.7,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2257.98,
+      "end": 2267.98,
+      "text": " Good job, Baba. Drink some water.",
+      "mean_dbfs": -69.2,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2267.98,
+      "end": 2277.98,
+      "text": " Stay up.",
+      "mean_dbfs": -83.8,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2277.98,
+      "end": 2287.98,
+      "text": " Stay up.",
+      "mean_dbfs": -70.0,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2287.98,
+      "end": 2295.98,
+      "text": " Who passed?",
+      "mean_dbfs": -68.7,
+      "peak_dbfs": -18.4,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 2295.98,
+      "end": 2305.98,
+      "text": " Who passed?",
+      "mean_dbfs": -54.8,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2305.98,
+      "end": 2315.98,
+      "text": " Yes, it is.",
+      "mean_dbfs": -57.9,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2315.98,
+      "end": 2325.98,
+      "text": " Who passed?",
+      "mean_dbfs": -78.1,
+      "peak_dbfs": -20.3,
+      "loud_rank": 0.95,
+      "label": "other"
+    },
+    {
+      "start": 2325.98,
+      "end": 2335.98,
+      "text": " Who passed?",
+      "mean_dbfs": -59.0,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2335.98,
+      "end": 2345.98,
+      "text": " Who passed?",
+      "mean_dbfs": -70.2,
+      "peak_dbfs": -19.9,
+      "loud_rank": 0.95,
+      "label": "other"
+    },
+    {
+      "start": 2345.98,
+      "end": 2355.98,
+      "text": " Who passed?",
+      "mean_dbfs": -88.7,
+      "peak_dbfs": -28.4,
+      "loud_rank": 0.85,
+      "label": "other"
+    },
+    {
+      "start": 2355.98,
+      "end": 2365.98,
+      "text": " Who passed?",
+      "mean_dbfs": -62.6,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2365.98,
+      "end": 2375.98,
+      "text": " Who passed?",
+      "mean_dbfs": -54.3,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2375.98,
+      "end": 2385.98,
+      "text": " Who passed?",
+      "mean_dbfs": -55.4,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2385.98,
+      "end": 2395.98,
+      "text": " Who passed?",
+      "mean_dbfs": -69.1,
+      "peak_dbfs": -17.8,
+      "loud_rank": 0.98,
+      "label": "other"
+    },
+    {
+      "start": 2395.98,
+      "end": 2405.98,
+      "text": " Who passed?",
+      "mean_dbfs": -57.0,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2405.98,
+      "end": 2415.98,
+      "text": " Who passed?",
+      "mean_dbfs": -70.8,
+      "peak_dbfs": -16.7,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 2415.98,
+      "end": 2425.98,
+      "text": " Who passed?",
+      "mean_dbfs": -76.5,
+      "peak_dbfs": -15.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2425.98,
+      "end": 2435.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -64.8,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2435.98,
+      "end": 2445.98,
+      "text": " Look at the job.",
+      "mean_dbfs": -61.3,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2445.98,
+      "end": 2455.98,
+      "text": " Good job.",
+      "mean_dbfs": -72.6,
+      "peak_dbfs": -13.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2455.98,
+      "end": 2475.98,
+      "text": " Nice serve by Malvere.",
+      "mean_dbfs": -62.8,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2475.98,
+      "end": 2485.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -58.7,
+      "peak_dbfs": -15.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2485.98,
+      "end": 2495.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -74.4,
+      "peak_dbfs": -17.0,
+      "loud_rank": 0.99,
+      "label": "instruction"
+    },
+    {
+      "start": 2495.98,
+      "end": 2505.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -74.7,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2505.98,
+      "end": 2515.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -79.1,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2515.98,
+      "end": 2525.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -66.1,
+      "peak_dbfs": -14.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2525.98,
+      "end": 2535.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -81.3,
+      "peak_dbfs": -15.7,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2535.98,
+      "end": 2545.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -57.1,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2545.98,
+      "end": 2553.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -82.6,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2553.98,
+      "end": 2563.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -82.6,
+      "peak_dbfs": -22.0,
+      "loud_rank": 0.93,
+      "label": "instruction"
+    },
+    {
+      "start": 2563.98,
+      "end": 2573.98,
+      "text": " What's up, guys?",
+      "mean_dbfs": -51.5,
+      "peak_dbfs": -14.8,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2573.98,
+      "end": 2583.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -50.7,
+      "peak_dbfs": -13.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2583.98,
+      "end": 2593.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -70.0,
+      "peak_dbfs": -13.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2593.98,
+      "end": 2603.98,
+      "text": " Good job, guys.",
+      "mean_dbfs": -40.7,
+      "peak_dbfs": -14.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2603.98,
+      "end": 2613.98,
+      "text": " Open up, guys, for him.",
+      "mean_dbfs": -60.2,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2613.98,
+      "end": 2623.98,
+      "text": " Open up for Luca.",
+      "mean_dbfs": -46.6,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2623.98,
+      "end": 2633.98,
+      "text": " Open up.",
+      "mean_dbfs": -48.6,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2633.98,
+      "end": 2643.98,
+      "text": " Open up.",
+      "mean_dbfs": -72.4,
+      "peak_dbfs": -24.4,
+      "loud_rank": 0.9,
+      "label": "instruction"
+    },
+    {
+      "start": 2643.98,
+      "end": 2653.98,
+      "text": " Open up.",
+      "mean_dbfs": -62.4,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2653.98,
+      "end": 2663.98,
+      "text": " Open up.",
+      "mean_dbfs": -72.6,
+      "peak_dbfs": -15.5,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2663.98,
+      "end": 2673.98,
+      "text": " Open up.",
+      "mean_dbfs": -73.8,
+      "peak_dbfs": -14.9,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2673.98,
+      "end": 2675.98,
+      "text": " Five.",
+      "mean_dbfs": -80.6,
+      "peak_dbfs": -13.7,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2675.98,
+      "end": 2679.98,
+      "text": " Two.",
+      "mean_dbfs": -89.1,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2679.98,
+      "end": 2687.98,
+      "text": " Okay.",
+      "mean_dbfs": -91.9,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2687.98,
+      "end": 2697.98,
+      "text": " Open up.",
+      "mean_dbfs": -74.4,
+      "peak_dbfs": -15.0,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2697.98,
+      "end": 2707.98,
+      "text": " Okay.",
+      "mean_dbfs": -79.7,
+      "peak_dbfs": -18.1,
+      "loud_rank": 0.97,
+      "label": "other"
+    },
+    {
+      "start": 2707.98,
+      "end": 2717.98,
+      "text": " Hey, guys.",
+      "mean_dbfs": -60.8,
+      "peak_dbfs": -15.2,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2717.98,
+      "end": 2721.98,
+      "text": " Make the smart play, boys. Keep it wide.",
+      "mean_dbfs": -48.3,
+      "peak_dbfs": -17.3,
+      "loud_rank": 0.98,
+      "label": "instruction"
+    },
+    {
+      "start": 2721.98,
+      "end": 2731.98,
+      "text": " Two more minutes to go.",
+      "mean_dbfs": -69.1,
+      "peak_dbfs": -15.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2731.98,
+      "end": 2741.98,
+      "text": " One more.",
+      "mean_dbfs": -55.9,
+      "peak_dbfs": -13.5,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2741.98,
+      "end": 2751.98,
+      "text": " One more.",
+      "mean_dbfs": -66.4,
+      "peak_dbfs": -15.9,
+      "loud_rank": 1.0,
+      "label": "narration"
+    },
+    {
+      "start": 2751.98,
+      "end": 2761.98,
+      "text": " What's up?",
+      "mean_dbfs": -71.6,
+      "peak_dbfs": -13.3,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2761.98,
+      "end": 2777.98,
+      "text": " I'm giving you the time.",
+      "mean_dbfs": -66.5,
+      "peak_dbfs": -14.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2777.98,
+      "end": 2789.98,
+      "text": " I'm giving you a period of time. Two minutes.",
+      "mean_dbfs": -75.7,
+      "peak_dbfs": -16.9,
+      "loud_rank": 0.99,
+      "label": "instruction"
+    },
+    {
+      "start": 2789.98,
+      "end": 2799.98,
+      "text": " Okay.",
+      "mean_dbfs": -69.2,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2799.98,
+      "end": 2809.98,
+      "text": " Good job.",
+      "mean_dbfs": -59.1,
+      "peak_dbfs": -15.4,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2809.98,
+      "end": 2819.98,
+      "text": " Okay.",
+      "mean_dbfs": -75.3,
+      "peak_dbfs": -26.2,
+      "loud_rank": 0.88,
+      "label": "other"
+    },
+    {
+      "start": 2819.98,
+      "end": 2829.98,
+      "text": " No, Alex.",
+      "mean_dbfs": -60.9,
+      "peak_dbfs": -15.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2829.98,
+      "end": 2839.98,
+      "text": " Nice try, Theo.",
+      "mean_dbfs": -64.0,
+      "peak_dbfs": -14.1,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2839.98,
+      "end": 2849.98,
+      "text": " Alex.",
+      "mean_dbfs": -58.3,
+      "peak_dbfs": -14.6,
+      "loud_rank": 1.0,
+      "label": "instruction"
+    },
+    {
+      "start": 2849.98,
+      "end": 2859.98,
+      "text": " Okay.",
+      "mean_dbfs": -81.7,
+      "peak_dbfs": -16.5,
+      "loud_rank": 0.99,
+      "label": "other"
+    },
+    {
+      "start": 2859.98,
+      "end": 2869.98,
+      "text": " Okay.",
+      "mean_dbfs": -62.9,
+      "peak_dbfs": -14.3,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2869.98,
+      "end": 2879.98,
+      "text": " Okay.",
+      "mean_dbfs": -59.2,
+      "peak_dbfs": -13.6,
+      "loud_rank": 1.0,
+      "label": "other"
+    },
+    {
+      "start": 2879.98,
+      "end": 2889.98,
+      "text": " Okay.",
+      "mean_dbfs": -61.0,
+      "peak_dbfs": -14.5,
+      "loud_rank": 1.0,
+      "label": "other"
+    }
+  ]
+}
