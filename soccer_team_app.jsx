@@ -11421,10 +11421,9 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
   const [homeColor, setHomeColor] = useState('#0a0a0a');
   const [awayColor, setAwayColor] = useState('#dc2626');
   const [squadIds, setSquadIds] = useState([]);
-  const [pasteText, setPasteText] = useState('');
-  const [parsed, setParsed] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [showPast, setShowPast] = useState(false);
   const [showOpponentManager, setShowOpponentManager] = useState(false);
   const formRef = React.useRef(null);
   const isLightColor = (hex) => {
@@ -11465,88 +11464,6 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
     onConsumedInitialEditId?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialEditId]);
-
-  const parseECSL = (text) => {
-    // ECSL table rows: # | Date | KO | Field | Home | Away
-    // When copied they come as tab-separated or multi-line
-    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
-    const results = [];
-    const months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
-    const year = new Date().getFullYear();
-
-    for (const line of lines) {
-      // Split by tab first, fall back to 2+ spaces
-      let parts = line.split('\t');
-      if (parts.length < 5) parts = line.split(/\s{2,}/);
-      if (parts.length < 5) continue;
-
-      // Try to find date pattern (like "May 9" or "Jun 15")
-      let dateStr = '', timeStr = '', field = '', home = '', away = '';
-      let idx = 0;
-      // Skip game number if first part is just a number
-      if (/^\d+$/.test(parts[0].trim())) idx = 1;
-
-      dateStr = parts[idx]?.trim() || '';
-      timeStr = parts[idx + 1]?.trim() || '';
-      field = parts[idx + 2]?.trim() || '';
-      home = parts[idx + 3]?.trim() || '';
-      away = parts[idx + 4]?.trim() || '';
-
-      // Parse date
-      const dateMatch = dateStr.match(/([a-z]+)\s*(\d+)/i);
-      if (!dateMatch) continue;
-      const mon = months[dateMatch[1].toLowerCase().slice(0, 3)];
-      if (mon === undefined) continue;
-      const day = parseInt(dateMatch[2]);
-      const isoDate = `${year}-${String(mon + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-
-      // Parse time (3:00pm -> 15:00)
-      const timeMatch = timeStr.match(/(\d+):(\d+)\s*(am|pm)/i);
-      let isoTime = '';
-      if (timeMatch) {
-        let h = parseInt(timeMatch[1]);
-        const m = parseInt(timeMatch[2]);
-        if (timeMatch[3].toLowerCase() === 'pm' && h < 12) h += 12;
-        if (timeMatch[3].toLowerCase() === 'am' && h === 12) h = 0;
-        isoTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      }
-
-      // Determine opponent (we are "Lasalle" or "LasalleGn" or "LSSC")
-      const isUs = (name) => /lasalle|lssc|stompers/i.test(name);
-      let opp = '';
-      if (isUs(home)) opp = away;
-      else if (isUs(away)) opp = home;
-      else continue; // neither team is us, skip
-
-      // Clean up opponent name (remove B10 prefix if present)
-      opp = opp.replace(/^B\d+/i, '').trim() || opp;
-
-      results.push({ date: isoDate, time: isoTime, opponent: opp, field });
-    }
-    return results;
-  };
-
-  const handleParse = () => {
-    const results = parseECSL(pasteText);
-    setParsed(results);
-  };
-
-  const handleImport = () => {
-    if (!parsed || parsed.length === 0) return;
-    const newItems = parsed.map(p => ({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      opponent: p.opponent,
-      date: p.date,
-      time: p.time,
-      tournament: '',
-      location: '',
-      field: p.field || '',
-    }));
-    onSave([...schedule, ...newItems]);
-    showToast?.(`✅ Added ${newItems.length} game${newItems.length === 1 ? '' : 's'}`);
-    setPasteText('');
-    setParsed(null);
-  };
 
   const handleAdd = () => {
     if (!opponent.trim() || !date) return;
@@ -11635,6 +11552,97 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
   };
 
   const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  const isPastItem = (item) => new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
+  const upcoming = sorted.filter(item => !isPastItem(item));      // soonest first
+  const past = sorted.filter(isPastItem).reverse();               // most-recent first
+
+  const renderRow = (item) => {
+    const isPast = isPastItem(item);
+    const isCancelled = !!item.cancelled;
+    const isEditing = editingId === item.id;
+    return (
+      <div
+        key={item.id}
+        className={`bg-stone-900 border rounded-xl p-3 flex items-center gap-3 ${
+          isEditing ? 'border-amber-500/60 ring-1 ring-amber-500/30'
+          : isCancelled ? 'border-red-900/60 opacity-70'
+          : isPast ? 'border-stone-800 opacity-50'
+          : 'border-stone-800'
+        }`}
+      >
+        <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
+          <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
+          <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className={`font-bold text-sm truncate ${isCancelled ? 'line-through text-stone-400' : ''}`}>vs {item.opponent}</div>
+          <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+            {isCancelled && (
+              <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                CANCELLED
+              </span>
+            )}
+            {item.tournament && <TournamentChip value={item.tournament} />}
+            {item.time && <span>{formatTime12(item.time)}</span>}
+            {item.field && (
+              <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                📍 {item.field}
+              </span>
+            )}
+            {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
+              <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                👥 {item.squadIds.length}
+              </span>
+            )}
+            {(() => {
+              const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
+                && typeof item.isHome === 'boolean'
+                && typeof item.halfLengthMin === 'number'
+                && !!item.homeColor && !!item.awayColor;
+              return ready ? (
+                <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                  READY
+                </span>
+              ) : null;
+            })()}
+          </div>
+          {item.location && (
+            <a
+              href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
+              target="_blank" rel="noopener noreferrer"
+              className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
+              onClick={e => e.stopPropagation()}
+            >
+              <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
+            </a>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5 shrink-0">
+          <button
+            onClick={() => handleEdit(item)}
+            className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
+            title="Edit"
+          >
+            ✏️
+          </button>
+          <button
+            onClick={() => handleToggleCancel(item)}
+            className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${isCancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'}`}
+            title={isCancelled ? 'Restore' : 'Mark cancelled'}
+          >
+            {isCancelled ? '↻' : '🚫'}
+          </button>
+          <button
+            onClick={() => handleDelete(item.id)}
+            className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
+            title="Delete"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-stone-900 pb-8">
@@ -11652,59 +11660,6 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
           ) : null
         }
       />
-
-      {/* Import from ECSL */}
-      <div className="px-4 pt-4">
-        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 space-y-3">
-          <div className="font-display text-lg">IMPORT FROM ECSL</div>
-          <p className="text-xs text-stone-400">Go to ecslsoccer.ca → Schedule → select your team → copy the table rows → paste below.</p>
-          <textarea
-            placeholder="Paste schedule rows here..."
-            value={pasteText}
-            onChange={e => setPasteText(e.target.value)}
-            rows={3}
-            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500 resize-none"
-          />
-          {pasteText.trim() && !parsed && (
-            <button
-              onClick={handleParse}
-              className="w-full bg-blue-600 text-white font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
-            >
-              PARSE
-            </button>
-          )}
-          {parsed && (
-            <div className="space-y-2">
-              {parsed.length === 0 ? (
-                <div className="text-sm text-red-600">Could not parse any games. Make sure you copied the table rows.</div>
-              ) : (
-                <>
-                  <div className="text-xs font-semibold text-stone-300">Found {parsed.length} game{parsed.length > 1 ? 's' : ''}:</div>
-                  {parsed.map((p, i) => (
-                    <div key={i} className="bg-stone-950 rounded-lg px-3 py-2 text-sm">
-                      <span className="font-bold">vs {p.opponent}</span> · {new Date(p.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' })}
-                      {p.time && ` · ${formatTime12(p.time)}`}
-                      {p.location && ` · ${p.location}`}
-                    </div>
-                  ))}
-                  <button
-                    onClick={handleImport}
-                    className="w-full bg-lime-500 text-stone-100 font-display text-base py-2.5 rounded-xl active:scale-[0.98] transition"
-                  >
-                    ADD {parsed.length} GAME{parsed.length > 1 ? 'S' : ''}
-                  </button>
-                  <button
-                    onClick={() => { setParsed(null); setPasteText(''); }}
-                    className="w-full text-stone-400 text-sm py-1"
-                  >
-                    Cancel
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Add form */}
       <div className="px-4 pt-4 space-y-3" ref={formRef}>
@@ -11943,105 +11898,37 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
         </div>
       </div>
 
-      {/* List */}
+      {/* Upcoming */}
       <div className="px-4 pt-6">
-        <h2 className="font-display text-xl mb-3">ALL GAMES ({sorted.length})</h2>
-        {sorted.length === 0 ? (
+        <h2 className="font-display text-xl mb-3">UPCOMING ({upcoming.length})</h2>
+        {upcoming.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
-            No scheduled games yet.
+            {sorted.length === 0 ? 'No scheduled games yet.' : 'No upcoming games.'}
           </div>
         ) : (
           <div className="space-y-2">
-            {sorted.map(item => {
-              const isPast = new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
-              const isCancelled = !!item.cancelled;
-              const isEditing = editingId === item.id;
-              return (
-                <div
-                  key={item.id}
-                  className={`bg-stone-900 border rounded-xl p-3 flex items-center gap-3 ${
-                    isEditing ? 'border-amber-500/60 ring-1 ring-amber-500/30'
-                    : isCancelled ? 'border-red-900/60 opacity-70'
-                    : isPast ? 'border-stone-800 opacity-50'
-                    : 'border-stone-800'
-                  }`}
-                >
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
-                    <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
-                    <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`font-bold text-sm truncate ${isCancelled ? 'line-through text-stone-400' : ''}`}>vs {item.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {isCancelled && (
-                        <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          CANCELLED
-                        </span>
-                      )}
-                      {item.tournament && <TournamentChip value={item.tournament} />}
-                      {item.time && <span>{formatTime12(item.time)}</span>}
-                      {item.field && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          📍 {item.field}
-                        </span>
-                      )}
-                      {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
-                        <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          👥 {item.squadIds.length}
-                        </span>
-                      )}
-                      {(() => {
-                        const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
-                          && typeof item.isHome === 'boolean'
-                          && typeof item.halfLengthMin === 'number'
-                          && !!item.homeColor && !!item.awayColor;
-                        return ready ? (
-                          <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                            READY
-                          </span>
-                        ) : null;
-                      })()}
-                    </div>
-                    {item.location && (
-                      <a
-                        href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
-                        target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
-                      </a>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    <button
-                      onClick={() => handleEdit(item)}
-                      className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      onClick={() => handleToggleCancel(item)}
-                      className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${isCancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'}`}
-                      title={isCancelled ? 'Restore' : 'Mark cancelled'}
-                    >
-                      {isCancelled ? '↻' : '🚫'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            {upcoming.map(renderRow)}
           </div>
         )}
       </div>
+
+      {/* Past games — collapsed by default to keep the section uncluttered */}
+      {past.length > 0 && (
+        <div className="px-4 pt-6">
+          <button
+            onClick={() => setShowPast(v => !v)}
+            className="w-full flex items-center justify-between font-display text-xl mb-3 text-stone-300 hover:text-stone-100"
+          >
+            <span>PAST GAMES ({past.length})</span>
+            <span className="text-sm text-stone-400">{showPast ? 'HIDE ▲' : 'SHOW ▼'}</span>
+          </button>
+          {showPast && (
+            <div className="space-y-2">
+              {past.map(renderRow)}
+            </div>
+          )}
+        </div>
+      )}
       {showOpponentManager && (
         <OpponentManagerModal
           opponentSuggestions={opponentSuggestions}
