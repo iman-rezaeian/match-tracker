@@ -61,6 +61,10 @@ KNOWN_NONSILENT_EVENTS = frozenset({
 # v2: mistake events already priced in DEF/DEC earn no Involvement credit.
 INV_EXCLUDED = frozenset({"TURNOVER", "DUEL_LOSE", "FOUL_BY"})
 
+# Pressure multiplier (plan 4.3): positive DEC-pillar actions under pressure are
+# scaled by PRESSURE_DEC_MULT. Mirrors soccer_team_app.jsx exactly.
+PRESSURE_DEC_MULT = 1.5
+
 SCORING_VERSION = 2
 
 # --- DEFAULT_WEIGHTS — mirrors the jsx constant ----------------------------
@@ -233,18 +237,25 @@ def gk_extras_for_game(player_id: str, game: dict) -> dict:
 def pillar_points(player_id: str, events: list[dict], f: float,
                   gk_extras: Optional[dict], W: dict) -> dict:
     c: dict[str, int] = {}
+    c_pressure: dict[str, int] = {}
     partner_count = 0
+    partner_pressure_count = 0
     own_goals = 0
     inv_count = 0
     for e in events or []:
         if e.get("type") not in KNOWN_NONSILENT_EVENTS:
             continue
+        under_pressure = e.get("pressure") == "pressure"
         if e.get("playerId") == player_id:
             c[e["type"]] = c.get(e["type"], 0) + 1
+            if under_pressure:
+                c_pressure[e["type"]] = c_pressure.get(e["type"], 0) + 1
             if e["type"] not in INV_EXCLUDED:
                 inv_count += 1
         if e.get("type") == "GIVE_GO" and e.get("partnerId") == player_id:
             partner_count += 1
+            if under_pressure:
+                partner_pressure_count += 1
             inv_count += 1
         if e.get("type") == "OPP_GOAL" and e.get("ownGoalById") == player_id:
             own_goals += 1  # costs DEF points; NOT involvement (v2)
@@ -271,7 +282,14 @@ def pillar_points(player_id: str, events: list[dict], f: float,
            + g("GATES") * pt("GATES_dec") + g("KEY_PASS") * pt("KEY_PASS_dec")
            + g("ASSIST") * pt("ASSIST_dec") + g("HOLDS_BALL") * pt("HOLDS_BALL_dec")
            + g("TURNOVER") * pt("TURNOVER_dec"))
-    return {"atk": atk, "def": dfn, "dec": dec, "inv": inv_count,
+    # Pressure bonus: extra (mult-1) DEC points for positive DEC actions under
+    # pressure; DEC mistakes (HOLDS_BALL/TURNOVER) left at base cost.
+    gp = lambda k: c_pressure.get(k, 0)
+    dec_pressure_bonus = (PRESSURE_DEC_MULT - 1) * (
+        gp("GIVE_GO") * pt("GIVE_GO_dec") + partner_pressure_count * pt("GIVE_GO_PARTNER_dec")
+        + gp("GATES") * pt("GATES_dec") + gp("KEY_PASS") * pt("KEY_PASS_dec")
+        + gp("ASSIST") * pt("ASSIST_dec"))
+    return {"atk": atk, "def": dfn, "dec": dec + dec_pressure_bonus, "inv": inv_count,
             "_counts": c, "_partner": partner_count, "_own_goals": own_goals}
 
 

@@ -755,13 +755,23 @@ function mergeWeights(w) {
 // penalty as "activity". Own goals are likewise excluded from INV.
 const INV_EXCLUDED = new Set(['TURNOVER', 'DUEL_LOSE', 'FOUL_BY']);
 
+// Pressure multiplier (plan 4.3): a decision (DEC-pillar) action executed under
+// defensive pressure is worth more than the same action in space. Only DEC
+// points are scaled — ATK/DEF/INV are unchanged — and only when the event is
+// tagged `pressure==='pressure'`. Positive DEC actions get the bonus; the DEC
+// mistakes (HOLDS_BALL, TURNOVER) are NOT amplified (losing the ball under
+// pressure shouldn't be penalized extra — the base penalty already stands).
+const PRESSURE_DEC_MULT = 1.5;
+
 // Raw pillar POINTS (not rates) for one player over an event list, with
 // outfield↔GK point values blended by f. Shared by the per-game score, the
 // season aggregate (which weights per-game points by game type), and the
 // squad-average prior used for shrinkage.
 function pillarPoints(playerId, events, f, gkExtras, W) {
   const c = {};
+  const cPressure = {}; // per-type counts of THIS player's events tagged pressure
   let partnerCount = 0; // give & go wall-pass credits earned by this player
+  let partnerPressureCount = 0; // give & go partner credits earned under pressure
   let ownGoals = 0;     // own goals attributed via OPP_GOAL.ownGoalById
   let invCount = 0;     // involvement = positive/neutral actions only (v2)
   for (const e of events) {
@@ -771,12 +781,15 @@ function pillarPoints(playerId, events, f, gkExtras, W) {
     // drags), so none of them inflate the Involvement pillar.
     const def = EVENT_TYPES[e.type];
     if (!def || def.silent) continue;
+    const underPressure = e.pressure === 'pressure';
     if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
+      if (underPressure) cPressure[e.type] = (cPressure[e.type] || 0) + 1;
       if (!INV_EXCLUDED.has(e.type)) invCount++;
     }
     if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
       partnerCount++;
+      if (underPressure) partnerPressureCount++;
       invCount++;
     }
     if (e.type === 'OPP_GOAL' && e.ownGoalById === playerId) {
@@ -820,7 +833,17 @@ function pillarPoints(playerId, events, f, gkExtras, W) {
     (c.HOLDS_BALL || 0) * pt('HOLDS_BALL_dec') +
     (c.TURNOVER || 0)   * pt('TURNOVER_dec')
   );
-  return { atk, def: dfn, dec, inv: invCount };
+  // Pressure bonus: the EXTRA DEC points (mult−1) for positive DEC actions made
+  // under pressure. Only DEC_PRESSURE_EVENTS + the give-&-go partner credit are
+  // amplified; DEC mistakes are deliberately left at base cost.
+  const decPressureBonus = (PRESSURE_DEC_MULT - 1) * (
+    (cPressure.GIVE_GO  || 0) * pt('GIVE_GO_dec') +
+    partnerPressureCount      * pt('GIVE_GO_PARTNER_dec') +
+    (cPressure.GATES    || 0) * pt('GATES_dec') +
+    (cPressure.KEY_PASS || 0) * pt('KEY_PASS_dec') +
+    (cPressure.ASSIST   || 0) * pt('ASSIST_dec')
+  );
+  return { atk, def: dfn, dec: dec + decPressureBonus, inv: invCount };
 }
 
 // Squad-average per-20-min pillar rates — the shrinkage prior. Computed with
@@ -837,6 +860,46 @@ function computeSquadRates(perPlayer, events, W) {
   }
   const ph = Math.max(totMin, 1) / 20;
   return { atk: tot.atk / ph, def: tot.def / ph, dec: tot.dec / ph, inv: tot.inv / ph };
+}
+
+// Squad DISTRIBUTION (mean + population std-dev) of each pillar's per-20-min
+// rate across the players who played — the reference for z-scoring (plan 2.4).
+// This answers "how does this player compare to the squad" rather than the raw
+// rate's absolute units. `scored` = [{ atk, def, dec, inv }] of per-player
+// pillar RATES (already shrunk — we compare the same numbers the coach sees, so
+// the comparison is self-consistent). Needs ≥2 players for a meaningful spread;
+// returns null std where it can't be computed (caller then hides the percentile).
+function computeSquadPillarStats(scored) {
+  const keys = ['atk', 'def', 'dec', 'inv'];
+  const n = scored.length;
+  const out = {};
+  for (const k of keys) {
+    if (n < 2) { out[k] = { mean: n === 1 ? scored[0][k] : 0, std: null, n }; continue; }
+    const vals = scored.map(s => Number(s[k]) || 0);
+    const mean = vals.reduce((a, b) => a + b, 0) / n;
+    const variance = vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n;
+    out[k] = { mean, std: Math.sqrt(variance), n };
+  }
+  return out;
+}
+
+// Standard-normal CDF (Abramowitz & Stegun 7.1.26 erf approximation) → the
+// percentile for a z-score. Pure, no deps. Returns 0..100.
+function normalCdf(z) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp(-z * z / 2);
+  let p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  p = z > 0 ? 1 - p : p;
+  return p;
+}
+
+// A player's pillar rate → percentile vs squad (0..100), or null when the
+// squad spread is undefined (fewer than 2 players, or zero variance — everyone
+// identical, so "rank" is meaningless). value/stats units must match.
+function pillarPercentile(value, stat) {
+  if (!stat || stat.std == null || !(stat.std > 0)) return null;
+  const z = ((Number(value) || 0) - stat.mean) / stat.std;
+  return Math.round(normalCdf(z) * 100);
 }
 
 function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gkExtras = {}, weights, squadRates = null) {
@@ -6818,6 +6881,33 @@ function PillarMini({ label, value }) {
   );
 }
 
+// Percentile-vs-squad variant of PillarMini (plan 2.4 "vs Squad" view). `pct` is
+// 0..100 or null (squad spread undefined → too few players / everyone equal).
+// Bar fills to the percentile; color escalates with rank. Top/bottom quartiles
+// get a plain-language tag so a coach reads strength/weakness without stats.
+function PillarPct({ label, pct }) {
+  if (pct == null) {
+    return (
+      <div>
+        <div className="text-[9px] font-bold tracking-wider text-stone-400 mb-0.5">{label}</div>
+        <div className="h-2 bg-stone-900 rounded-full overflow-hidden"></div>
+        <div className="text-[10px] font-display tabular-nums text-stone-600 mt-0.5">—</div>
+      </div>
+    );
+  }
+  const color = pct >= 75 ? 'bg-lime-500' : pct >= 40 ? 'bg-sky-400' : 'bg-red-400';
+  const tag = pct >= 90 ? `top ${100 - pct}%` : pct >= 75 ? `${pct}th` : pct <= 10 ? `bottom ${pct}%` : `${pct}th`;
+  return (
+    <div>
+      <div className="text-[9px] font-bold tracking-wider text-stone-400 mb-0.5">{label}</div>
+      <div className="h-2 bg-stone-900 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(4, pct)}%` }}></div>
+      </div>
+      <div className="text-[10px] font-display tabular-nums text-stone-300 mt-0.5">{tag}</div>
+    </div>
+  );
+}
+
 /* ---------- FIELD CALIBRATION (post-game analytics) ----------
  *
  * Coach taps the 4 corners of the pitch (TL, TR, BR, BL clockwise) on the
@@ -10312,6 +10402,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
   const [shareMsg, setShareMsg] = useState(null);
+  const [scoreView, setScoreView] = useState('raw'); // 'raw' | 'squad' — pillar display mode
   const [taggingEvent, setTaggingEvent] = useState(null);
   const [showVideo, setShowVideo] = useState(false);
   const [seekTo, setSeekTo] = useState(null);
@@ -10758,7 +10849,23 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
       {/* Performance Scores */}
       {Object.keys(tally).length > 0 && (
         <div className="px-4 pt-5">
-          <h3 className="font-display text-xl mb-2">PERFORMANCE SCORES</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-display text-xl">PERFORMANCE SCORES</h3>
+            {/* Raw per-20 rates vs percentile-vs-squad (plan 2.4). Raw is the
+                default/public view; "vs Squad" re-expresses each pillar as a
+                percentile rank so strengths/weaknesses read at a glance. */}
+            <div className="flex rounded-lg overflow-hidden border border-stone-700 text-[11px] font-bold tracking-wider">
+              {['raw', 'squad'].map(m => (
+                <button
+                  key={m}
+                  onClick={() => setScoreView(m)}
+                  className={`px-2.5 py-1 ${scoreView === m ? 'bg-lime-600 text-stone-950' : 'bg-stone-900 text-stone-400'}`}
+                >
+                  {m === 'raw' ? 'RAW' : 'VS SQUAD'}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800">
             {(() => {
               // Squad-average pillar rates for this game — the shrinkage prior
@@ -10769,10 +10876,9 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                   .map(([pid, s]) => ({ playerId: pid, minutes: (s.seconds || 0) / 60 })),
                 events, mergeWeights(weights),
               );
-              return Object.entries(tally)
+              const scored = Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
-                const player = roster.find(p => p.id === pid);
                 // Treat as GK for scoring if they served any GK time in this game.
                 const wasGKThisGame = (game.gkPlayerId === pid) || (game.gkChanges || []).some(c => c.gkPlayerId === pid);
                 const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
@@ -10781,7 +10887,16 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                 const score = computePerformanceScore(pid, events, min, gkFraction, gkExtras, weights, squadRates);
                 return { pid, stats, min, score, gkExtras };
               })
-              .sort((a, b) => b.score.overall - a.score.overall)
+              .sort((a, b) => b.score.overall - a.score.overall);
+              // Squad distribution of the SHOWN pillar rates → percentiles. GK
+              // is excluded from the reference set: their pillar mix is scored
+              // on a different weighting, so mixing them skews the outfield
+              // spread. (A GK still gets a raw score; just no cross-role rank.)
+              const pillarStats = computeSquadPillarStats(
+                scored.filter(s => s.min > 0 && (s.score.attacking != null))
+                  .map(s => ({ atk: s.score.attacking, def: s.score.defending, dec: s.score.decisions, inv: s.score.involvement })),
+              );
+              return scored
               .map(({ pid, stats, min, score }) => {
                 const player = roster.find(p => p.id === pid);
                 const parts = [];
@@ -10815,10 +10930,21 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-1.5 mt-2">
-                      <PillarMini label="ATK" value={score.attacking} />
-                      <PillarMini label="DEF" value={score.defending} />
-                      <PillarMini label="DEC" value={score.decisions} />
-                      <PillarMini label="INV" value={score.involvement} />
+                      {scoreView === 'squad' ? (
+                        <>
+                          <PillarPct label="ATK" pct={pillarPercentile(score.attacking, pillarStats.atk)} />
+                          <PillarPct label="DEF" pct={pillarPercentile(score.defending, pillarStats.def)} />
+                          <PillarPct label="DEC" pct={pillarPercentile(score.decisions, pillarStats.dec)} />
+                          <PillarPct label="INV" pct={pillarPercentile(score.involvement, pillarStats.inv)} />
+                        </>
+                      ) : (
+                        <>
+                          <PillarMini label="ATK" value={score.attacking} />
+                          <PillarMini label="DEF" value={score.defending} />
+                          <PillarMini label="DEC" value={score.decisions} />
+                          <PillarMini label="INV" value={score.involvement} />
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -13924,6 +14050,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
