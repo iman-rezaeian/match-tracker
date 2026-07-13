@@ -584,24 +584,40 @@ def run(
     # GK positioning analysis removed — not used in the film room.
 
     # 4.6 Field tilt: team-centroid third-occupancy %, attack-normalized per
-    # half — the best no-ball possession proxy available pre-8K.
+    # half — the best no-ball possession proxy available pre-8K. Accumulated
+    # per period so the film room can show H1 vs H2 tilt (a team that pins the
+    # opponent back in H1 but sits deep in H2 is the whole point of the metric);
+    # a game-wide roll-up is also emitted for backward compatibility with older
+    # PWA builds that read the flat dict.
     field_tilt = None
     try:
         ts_t, ts_cx = team_ts.times_s, team_ts.centroid_x_m
         if ts_t:
             L = field_cal.length_m
-            counts = [0, 0, 0]  # def / mid / att thirds, our perspective
+            per_period = {}  # period(int) -> [def, mid, att]
             for t, x in zip(ts_t, ts_cx):
                 pi = next((i + 1 for i, (a, b) in enumerate(play_windows) if a <= t <= b), 1)
                 depth = (x / L) if attack_dir.get(pi, True) else (1.0 - x / L)
-                counts[0 if depth < 1.0 / 3 else (1 if depth < 2.0 / 3 else 2)] += 1
-            n = sum(counts)
-            if n:
-                field_tilt = {
-                    "def_pct": 100.0 * counts[0] / n,
-                    "mid_pct": 100.0 * counts[1] / n,
-                    "att_pct": 100.0 * counts[2] / n,
-                }
+                b = 0 if depth < 1.0 / 3 else (1 if depth < 2.0 / 3 else 2)
+                per_period.setdefault(pi, [0, 0, 0])[b] += 1
+
+            def _tilt(counts):
+                n = sum(counts)
+                if not n:
+                    return None
+                return {"def_pct": 100.0 * counts[0] / n,
+                        "mid_pct": 100.0 * counts[1] / n,
+                        "att_pct": 100.0 * counts[2] / n}
+
+            total = [sum(c[i] for c in per_period.values()) for i in range(3)]
+            gw = _tilt(total)
+            if gw:
+                by_half = []
+                for pi in sorted(per_period):
+                    ph = _tilt(per_period[pi])
+                    if ph:
+                        by_half.append({"period": pi, **ph})
+                field_tilt = {**gw, "byHalf": by_half}
     except Exception as e:
         log.warning("Field tilt failed: %s", e)
 
