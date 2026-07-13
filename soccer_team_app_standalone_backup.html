@@ -9730,6 +9730,77 @@ const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDE
 const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
+// TEAM SHAPE (Tier 2) — surfaces the per-second team_time_series the pipeline
+// already writes (compactness / width / depth of the outfield block) but which
+// nothing rendered. Identity-ROBUST: it's the aggregate shape of team-0, so it
+// holds up even when per-player identity assignment is weak. Three sparklines
+// over match time with a half divider + each series' average — a coach reads
+// "we got stretched in the second half" or "we sat compact all game" at a glance.
+const TEAM_SHAPE_SERIES = [
+  { key: 'compactness_m', label: 'COMPACT', color: '#a3e635', hint: 'avg spacing between players — lower = tighter block' },
+  { key: 'width_m',       label: 'WIDTH',   color: '#38bdf8', hint: 'side-to-side spread' },
+  { key: 'depth_m',       label: 'DEPTH',   color: '#f59e0b', hint: 'front-to-back spread' },
+];
+
+function Sparkline({ times, values, color, halfT }) {
+  // Downsample to ~120 points so the SVG stays light on a full-match series.
+  const n = values.length;
+  if (n < 2) return null;
+  const step = Math.max(1, Math.floor(n / 120));
+  const pts = [];
+  for (let i = 0; i < n; i += step) pts.push([times[i], values[i]]);
+  if (pts[pts.length - 1][0] !== times[n - 1]) pts.push([times[n - 1], values[n - 1]]);
+  const t0 = times[0], t1 = times[n - 1] || t0 + 1;
+  const vs = pts.map(p => p[1]);
+  const vmin = Math.min(...vs), vmax = Math.max(...vs);
+  const W = 100, H = 28, pad = 2;
+  const sx = (t) => pad + (W - 2 * pad) * ((t - t0) / (t1 - t0 || 1));
+  const sy = (v) => pad + (H - 2 * pad) * (1 - (v - vmin) / (vmax - vmin || 1));
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)} ${sy(p[1]).toFixed(1)}`).join(' ');
+  const hx = halfT != null && halfT > t0 && halfT < t1 ? sx(halfT) : null;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height: '28px' }}>
+      {hx != null && <line x1={hx} y1={0} x2={hx} y2={H} stroke="#57534e" strokeWidth="0.5" strokeDasharray="1.5 1.5" />}
+      <path d={d} fill="none" stroke={color} strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TeamShapeChart({ doc, halfLenS }) {
+  const ts = doc && doc.team_time_series;
+  const times = (ts && ts.times_s) || [];
+  if (times.length < 3) return null; // older games / too little data
+  const avg = (arr) => arr && arr.length ? arr.reduce((a, b) => a + (Number(b) || 0), 0) / arr.length : null;
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="text-[10px] tracking-widest text-stone-400 mb-2">
+        TEAM SHAPE <span className="text-stone-600">· outfield block over the match</span>
+      </div>
+      <div className="space-y-2">
+        {TEAM_SHAPE_SERIES.map(s => {
+          const vals = (ts[s.key] || []);
+          const a = avg(vals);
+          if (a == null) return null;
+          return (
+            <div key={s.key} className="flex items-center gap-2">
+              <div className="w-14 shrink-0">
+                <div className="text-[9px] font-bold tracking-wider" style={{ color: s.color }}>{s.label}</div>
+                <div className="text-[10px] tabular-nums text-stone-300">{a.toFixed(1)}m</div>
+              </div>
+              <div className="flex-1 min-w-0" title={s.hint}>
+                <Sparkline times={times} values={vals} color={s.color} halfT={halfLenS} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-1 text-[9px] text-stone-600">
+        <span>KICKOFF</span><span>HALF</span><span>FULL TIME</span>
+      </div>
+    </div>
+  );
+}
+
 function MomentumChart({ game }) {
   const halfLenS = (game.halfLengthMin || 25) * 60;
   const totalS = halfLenS * 2;
@@ -10232,21 +10303,48 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             </div>
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
+              <TeamShapeChart doc={doc} halfLenS={(game.halfLengthMin || 25) * 60} />
               <ShotMap games={[game]} />
-              {/* 4.6 — team-centroid third occupancy: where the game lived. */}
+              {/* 4.6 — team-centroid third occupancy: where the game lived.
+                  Prefers per-half (field_tilt.byHalf, newer pipeline runs) and
+                  falls back to the game-wide bar for older docs. */}
               {doc.field_tilt && (
                 <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
                   <div className="text-[10px] tracking-widest text-stone-400 mb-2">FIELD TILT <span className="text-stone-600">· where the game lived (possession proxy)</span></div>
-                  <div className="flex h-2 rounded-full overflow-hidden mb-1">
-                    <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
-                    <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
-                    <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
-                  </div>
-                  <div className="flex justify-between text-[9px] text-stone-500">
-                    <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
-                    <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
-                    <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
-                  </div>
+                  {Array.isArray(doc.field_tilt.byHalf) && doc.field_tilt.byHalf.length ? (
+                    <div className="space-y-2">
+                      {doc.field_tilt.byHalf.map(h => (
+                        <div key={h.period}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 shrink-0 text-[9px] font-bold text-stone-400">H{h.period}</span>
+                            <div className="flex-1 flex h-2 rounded-full overflow-hidden">
+                              <div style={{ width: `${h.att_pct || 0}%`, background: '#a3e635' }} title="Their third" />
+                              <div style={{ width: `${h.mid_pct || 0}%`, background: '#eab308' }} />
+                              <div style={{ width: `${h.def_pct || 0}%`, background: '#ef4444' }} />
+                            </div>
+                          </div>
+                          <div className="flex justify-between text-[9px] text-stone-500 ml-7">
+                            <span className="text-lime-300">Their {(h.att_pct || 0).toFixed(0)}%</span>
+                            <span className="text-yellow-300">Mid {(h.mid_pct || 0).toFixed(0)}%</span>
+                            <span className="text-red-300">Ours {(h.def_pct || 0).toFixed(0)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex h-2 rounded-full overflow-hidden mb-1">
+                        <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
+                        <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
+                        <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
+                      </div>
+                      <div className="flex justify-between text-[9px] text-stone-500">
+                        <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
+                        <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
+                        <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -14050,6 +14148,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
