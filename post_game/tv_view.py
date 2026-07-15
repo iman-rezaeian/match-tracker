@@ -704,7 +704,12 @@ def _build_aim_stream(
 
         dyn = np.clip(dyn, cfg.fov_min_deg, cfg.dynamic_fov_max_deg)
         # Pre-smooth (boxcar) to kill single-sample spikes…
+        # Clamp the kernel to the sample count: np.convolve(..., mode="same")
+        # returns max(len(data), len(kernel)), so a window LONGER than a short
+        # segment silently inflates the FOV array's length → a shape mismatch
+        # downstream (bit a degenerate ~0.5s play window). Kernel ≤ N samples.
         win = max(1, int(round(cfg.dynamic_fov_smooth_s * TV_AIM_HZ)))
+        win = min(win, len(dyn))
         if win > 1:
             ker = np.ones(win) / win
             dyn = np.convolve(dyn, ker, mode="same")
@@ -764,7 +769,10 @@ def _build_aim_stream(
             0.0, 1.0,
         )
         # Smooth the direction + confidence so the offset eases in/out (no snap).
+        # Clamp kernel ≤ N (see the dynamic-FOV convolve above: an over-long
+        # 'same' kernel inflates the array length → downstream shape mismatch).
         win = max(1, int(round(cfg.leading_room_smooth_s * TV_AIM_HZ)))
+        win = min(win, len(conf))
         if win > 1:
             ker = np.ones(win) / win
             conf = np.convolve(conf, ker, mode="same")

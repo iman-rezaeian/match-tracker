@@ -6,6 +6,13 @@ Companion to `METRICS_RELEVANCE_PLAN.md` (identity bottleneck) and `ANALYTICS_IM
 helping players and coaches find individual and team strengths/weaknesses and plan growth —
 and prioritizes by ROI × how-blocked.
 
+**STATUS (2026-07-13): Tiers 1 & 2 shipped to `beta`.**
+- Tier 1 DONE: pressure multiplier (DEC ×1.5) + "vs Squad" percentile toggle (commit 667f426).
+- Tier 2 DONE: TEAM SHAPE sparkline card (surfaced the hidden `team_time_series`) + per-half
+  `field_tilt` (pipeline fix + both 8K games re-run stats-only, `byHalf` confirmed live) (commit 00d63ed).
+- NEXT: Tier 3 (honest-reporting finish) — then Tier 4 (identity recall, VLM-gated).
+Both tiers await coach validation on `beta.match-tracker-843.pages.dev` before promotion to main.
+
 ## The core finding: two metric systems, opposite accuracy profiles
 
 The system produces metrics from two independent sources. They must be reasoned about
