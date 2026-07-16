@@ -566,13 +566,23 @@ function mergeWeights(w) {
 // penalty as "activity". Own goals are likewise excluded from INV.
 const INV_EXCLUDED = new Set(['TURNOVER', 'DUEL_LOSE', 'FOUL_BY']);
 
+// Pressure multiplier (plan 4.3): a decision (DEC-pillar) action executed under
+// defensive pressure is worth more than the same action in space. Only DEC
+// points are scaled — ATK/DEF/INV are unchanged — and only when the event is
+// tagged `pressure==='pressure'`. Positive DEC actions get the bonus; the DEC
+// mistakes (HOLDS_BALL, TURNOVER) are NOT amplified (losing the ball under
+// pressure shouldn't be penalized extra — the base penalty already stands).
+const PRESSURE_DEC_MULT = 1.5;
+
 // Raw pillar POINTS (not rates) for one player over an event list, with
 // outfield↔GK point values blended by f. Shared by the per-game score, the
 // season aggregate (which weights per-game points by game type), and the
 // squad-average prior used for shrinkage.
 function pillarPoints(playerId, events, f, gkExtras, W) {
   const c = {};
+  const cPressure = {}; // per-type counts of THIS player's events tagged pressure
   let partnerCount = 0; // give & go wall-pass credits earned by this player
+  let partnerPressureCount = 0; // give & go partner credits earned under pressure
   let ownGoals = 0;     // own goals attributed via OPP_GOAL.ownGoalById
   let invCount = 0;     // involvement = positive/neutral actions only (v2)
   for (const e of events) {
@@ -582,12 +592,15 @@ function pillarPoints(playerId, events, f, gkExtras, W) {
     // drags), so none of them inflate the Involvement pillar.
     const def = EVENT_TYPES[e.type];
     if (!def || def.silent) continue;
+    const underPressure = e.pressure === 'pressure';
     if (e.playerId === playerId) {
       c[e.type] = (c[e.type] || 0) + 1;
+      if (underPressure) cPressure[e.type] = (cPressure[e.type] || 0) + 1;
       if (!INV_EXCLUDED.has(e.type)) invCount++;
     }
     if (e.type === 'GIVE_GO' && e.partnerId === playerId) {
       partnerCount++;
+      if (underPressure) partnerPressureCount++;
       invCount++;
     }
     if (e.type === 'OPP_GOAL' && e.ownGoalById === playerId) {
@@ -631,7 +644,17 @@ function pillarPoints(playerId, events, f, gkExtras, W) {
     (c.HOLDS_BALL || 0) * pt('HOLDS_BALL_dec') +
     (c.TURNOVER || 0)   * pt('TURNOVER_dec')
   );
-  return { atk, def: dfn, dec, inv: invCount };
+  // Pressure bonus: the EXTRA DEC points (mult−1) for positive DEC actions made
+  // under pressure. Only DEC_PRESSURE_EVENTS + the give-&-go partner credit are
+  // amplified; DEC mistakes are deliberately left at base cost.
+  const decPressureBonus = (PRESSURE_DEC_MULT - 1) * (
+    (cPressure.GIVE_GO  || 0) * pt('GIVE_GO_dec') +
+    partnerPressureCount      * pt('GIVE_GO_PARTNER_dec') +
+    (cPressure.GATES    || 0) * pt('GATES_dec') +
+    (cPressure.KEY_PASS || 0) * pt('KEY_PASS_dec') +
+    (cPressure.ASSIST   || 0) * pt('ASSIST_dec')
+  );
+  return { atk, def: dfn, dec: dec + decPressureBonus, inv: invCount };
 }
 
 // Squad-average per-20-min pillar rates — the shrinkage prior. Computed with
@@ -648,6 +671,46 @@ function computeSquadRates(perPlayer, events, W) {
   }
   const ph = Math.max(totMin, 1) / 20;
   return { atk: tot.atk / ph, def: tot.def / ph, dec: tot.dec / ph, inv: tot.inv / ph };
+}
+
+// Squad DISTRIBUTION (mean + population std-dev) of each pillar's per-20-min
+// rate across the players who played — the reference for z-scoring (plan 2.4).
+// This answers "how does this player compare to the squad" rather than the raw
+// rate's absolute units. `scored` = [{ atk, def, dec, inv }] of per-player
+// pillar RATES (already shrunk — we compare the same numbers the coach sees, so
+// the comparison is self-consistent). Needs ≥2 players for a meaningful spread;
+// returns null std where it can't be computed (caller then hides the percentile).
+function computeSquadPillarStats(scored) {
+  const keys = ['atk', 'def', 'dec', 'inv'];
+  const n = scored.length;
+  const out = {};
+  for (const k of keys) {
+    if (n < 2) { out[k] = { mean: n === 1 ? scored[0][k] : 0, std: null, n }; continue; }
+    const vals = scored.map(s => Number(s[k]) || 0);
+    const mean = vals.reduce((a, b) => a + b, 0) / n;
+    const variance = vals.reduce((a, b) => a + (b - mean) * (b - mean), 0) / n;
+    out[k] = { mean, std: Math.sqrt(variance), n };
+  }
+  return out;
+}
+
+// Standard-normal CDF (Abramowitz & Stegun 7.1.26 erf approximation) → the
+// percentile for a z-score. Pure, no deps. Returns 0..100.
+function normalCdf(z) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp(-z * z / 2);
+  let p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  p = z > 0 ? 1 - p : p;
+  return p;
+}
+
+// A player's pillar rate → percentile vs squad (0..100), or null when the
+// squad spread is undefined (fewer than 2 players, or zero variance — everyone
+// identical, so "rank" is meaningless). value/stats units must match.
+function pillarPercentile(value, stat) {
+  if (!stat || stat.std == null || !(stat.std > 0)) return null;
+  const z = ((Number(value) || 0) - stat.mean) / stat.std;
+  return Math.round(normalCdf(z) * 100);
 }
 
 function computePerformanceScore(playerId, events, minutesPlayed, gkFraction, gkExtras = {}, weights, squadRates = null) {
@@ -6602,6 +6665,33 @@ function PillarMini({ label, value }) {
   );
 }
 
+// Percentile-vs-squad variant of PillarMini (plan 2.4 "vs Squad" view). `pct` is
+// 0..100 or null (squad spread undefined → too few players / everyone equal).
+// Bar fills to the percentile; color escalates with rank. Top/bottom quartiles
+// get a plain-language tag so a coach reads strength/weakness without stats.
+function PillarPct({ label, pct }) {
+  if (pct == null) {
+    return (
+      <div>
+        <div className="text-[9px] font-bold tracking-wider text-stone-400 mb-0.5">{label}</div>
+        <div className="h-2 bg-stone-900 rounded-full overflow-hidden"></div>
+        <div className="text-[10px] font-display tabular-nums text-stone-600 mt-0.5">—</div>
+      </div>
+    );
+  }
+  const color = pct >= 75 ? 'bg-lime-500' : pct >= 40 ? 'bg-sky-400' : 'bg-red-400';
+  const tag = pct >= 90 ? `top ${100 - pct}%` : pct >= 75 ? `${pct}th` : pct <= 10 ? `bottom ${pct}%` : `${pct}th`;
+  return (
+    <div>
+      <div className="text-[9px] font-bold tracking-wider text-stone-400 mb-0.5">{label}</div>
+      <div className="h-2 bg-stone-900 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(4, pct)}%` }}></div>
+      </div>
+      <div className="text-[10px] font-display tabular-nums text-stone-300 mt-0.5">{tag}</div>
+    </div>
+  );
+}
+
 /* ---------- FIELD CALIBRATION (post-game analytics) ----------
  *
  * Coach taps the 4 corners of the pitch (TL, TR, BR, BL clockwise) on the
@@ -9424,6 +9514,77 @@ const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDE
 const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
+// TEAM SHAPE (Tier 2) — surfaces the per-second team_time_series the pipeline
+// already writes (compactness / width / depth of the outfield block) but which
+// nothing rendered. Identity-ROBUST: it's the aggregate shape of team-0, so it
+// holds up even when per-player identity assignment is weak. Three sparklines
+// over match time with a half divider + each series' average — a coach reads
+// "we got stretched in the second half" or "we sat compact all game" at a glance.
+const TEAM_SHAPE_SERIES = [
+  { key: 'compactness_m', label: 'COMPACT', color: '#a3e635', hint: 'avg spacing between players — lower = tighter block' },
+  { key: 'width_m',       label: 'WIDTH',   color: '#38bdf8', hint: 'side-to-side spread' },
+  { key: 'depth_m',       label: 'DEPTH',   color: '#f59e0b', hint: 'front-to-back spread' },
+];
+
+function Sparkline({ times, values, color, halfT }) {
+  // Downsample to ~120 points so the SVG stays light on a full-match series.
+  const n = values.length;
+  if (n < 2) return null;
+  const step = Math.max(1, Math.floor(n / 120));
+  const pts = [];
+  for (let i = 0; i < n; i += step) pts.push([times[i], values[i]]);
+  if (pts[pts.length - 1][0] !== times[n - 1]) pts.push([times[n - 1], values[n - 1]]);
+  const t0 = times[0], t1 = times[n - 1] || t0 + 1;
+  const vs = pts.map(p => p[1]);
+  const vmin = Math.min(...vs), vmax = Math.max(...vs);
+  const W = 100, H = 28, pad = 2;
+  const sx = (t) => pad + (W - 2 * pad) * ((t - t0) / (t1 - t0 || 1));
+  const sy = (v) => pad + (H - 2 * pad) * (1 - (v - vmin) / (vmax - vmin || 1));
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)} ${sy(p[1]).toFixed(1)}`).join(' ');
+  const hx = halfT != null && halfT > t0 && halfT < t1 ? sx(halfT) : null;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="w-full" style={{ height: '28px' }}>
+      {hx != null && <line x1={hx} y1={0} x2={hx} y2={H} stroke="#57534e" strokeWidth="0.5" strokeDasharray="1.5 1.5" />}
+      <path d={d} fill="none" stroke={color} strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TeamShapeChart({ doc, halfLenS }) {
+  const ts = doc && doc.team_time_series;
+  const times = (ts && ts.times_s) || [];
+  if (times.length < 3) return null; // older games / too little data
+  const avg = (arr) => arr && arr.length ? arr.reduce((a, b) => a + (Number(b) || 0), 0) / arr.length : null;
+  return (
+    <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+      <div className="text-[10px] tracking-widest text-stone-400 mb-2">
+        TEAM SHAPE <span className="text-stone-600">· outfield block over the match</span>
+      </div>
+      <div className="space-y-2">
+        {TEAM_SHAPE_SERIES.map(s => {
+          const vals = (ts[s.key] || []);
+          const a = avg(vals);
+          if (a == null) return null;
+          return (
+            <div key={s.key} className="flex items-center gap-2">
+              <div className="w-14 shrink-0">
+                <div className="text-[9px] font-bold tracking-wider" style={{ color: s.color }}>{s.label}</div>
+                <div className="text-[10px] tabular-nums text-stone-300">{a.toFixed(1)}m</div>
+              </div>
+              <div className="flex-1 min-w-0" title={s.hint}>
+                <Sparkline times={times} values={vals} color={s.color} halfT={halfLenS} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-1 text-[9px] text-stone-600">
+        <span>KICKOFF</span><span>HALF</span><span>FULL TIME</span>
+      </div>
+    </div>
+  );
+}
+
 function MomentumChart({ game }) {
   const halfLenS = (game.halfLengthMin || 25) * 60;
   const totalS = halfLenS * 2;
@@ -9926,21 +10087,48 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             </div>
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
+              <TeamShapeChart doc={doc} halfLenS={(game.halfLengthMin || 25) * 60} />
               <ShotMap games={[game]} />
-              {/* 4.6 — team-centroid third occupancy: where the game lived. */}
+              {/* 4.6 — team-centroid third occupancy: where the game lived.
+                  Prefers per-half (field_tilt.byHalf, newer pipeline runs) and
+                  falls back to the game-wide bar for older docs. */}
               {doc.field_tilt && (
                 <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
                   <div className="text-[10px] tracking-widest text-stone-400 mb-2">FIELD TILT <span className="text-stone-600">· where the game lived (possession proxy)</span></div>
-                  <div className="flex h-2 rounded-full overflow-hidden mb-1">
-                    <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
-                    <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
-                    <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
-                  </div>
-                  <div className="flex justify-between text-[9px] text-stone-500">
-                    <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
-                    <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
-                    <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
-                  </div>
+                  {Array.isArray(doc.field_tilt.byHalf) && doc.field_tilt.byHalf.length ? (
+                    <div className="space-y-2">
+                      {doc.field_tilt.byHalf.map(h => (
+                        <div key={h.period}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 shrink-0 text-[9px] font-bold text-stone-400">H{h.period}</span>
+                            <div className="flex-1 flex h-2 rounded-full overflow-hidden">
+                              <div style={{ width: `${h.att_pct || 0}%`, background: '#a3e635' }} title="Their third" />
+                              <div style={{ width: `${h.mid_pct || 0}%`, background: '#eab308' }} />
+                              <div style={{ width: `${h.def_pct || 0}%`, background: '#ef4444' }} />
+                            </div>
+                          </div>
+                          <div className="flex justify-between text-[9px] text-stone-500 ml-7">
+                            <span className="text-lime-300">Their {(h.att_pct || 0).toFixed(0)}%</span>
+                            <span className="text-yellow-300">Mid {(h.mid_pct || 0).toFixed(0)}%</span>
+                            <span className="text-red-300">Ours {(h.def_pct || 0).toFixed(0)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex h-2 rounded-full overflow-hidden mb-1">
+                        <div style={{ width: `${doc.field_tilt.att_pct || 0}%`, background: '#a3e635' }} title="Their half deep" />
+                        <div style={{ width: `${doc.field_tilt.mid_pct || 0}%`, background: '#eab308' }} />
+                        <div style={{ width: `${doc.field_tilt.def_pct || 0}%`, background: '#ef4444' }} />
+                      </div>
+                      <div className="flex justify-between text-[9px] text-stone-500">
+                        <span className="text-lime-300">Their third {(doc.field_tilt.att_pct || 0).toFixed(0)}%</span>
+                        <span className="text-yellow-300">Middle {(doc.field_tilt.mid_pct || 0).toFixed(0)}%</span>
+                        <span className="text-red-300">Our third {(doc.field_tilt.def_pct || 0).toFixed(0)}%</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -10096,6 +10284,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
   const result = game.ourScore > game.oppScore ? 'WIN' : game.ourScore < game.oppScore ? 'LOSS' : 'DRAW';
   const resultColor = result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-white/70';
   const [shareMsg, setShareMsg] = useState(null);
+  const [scoreView, setScoreView] = useState('raw'); // 'raw' | 'squad' — pillar display mode
   const [taggingEvent, setTaggingEvent] = useState(null);
   const [showVideo, setShowVideo] = useState(false);
   const [seekTo, setSeekTo] = useState(null);
@@ -10542,7 +10731,23 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
       {/* Performance Scores */}
       {Object.keys(tally).length > 0 && (
         <div className="px-4 pt-5">
-          <h3 className="font-display text-xl mb-2">PERFORMANCE SCORES</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-display text-xl">PERFORMANCE SCORES</h3>
+            {/* Raw per-20 rates vs percentile-vs-squad (plan 2.4). Raw is the
+                default/public view; "vs Squad" re-expresses each pillar as a
+                percentile rank so strengths/weaknesses read at a glance. */}
+            <div className="flex rounded-lg overflow-hidden border border-stone-700 text-[11px] font-bold tracking-wider">
+              {['raw', 'squad'].map(m => (
+                <button
+                  key={m}
+                  onClick={() => setScoreView(m)}
+                  className={`px-2.5 py-1 ${scoreView === m ? 'bg-lime-600 text-stone-950' : 'bg-stone-900 text-stone-400'}`}
+                >
+                  {m === 'raw' ? 'RAW' : 'VS SQUAD'}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800">
             {(() => {
               // Squad-average pillar rates for this game — the shrinkage prior
@@ -10553,10 +10758,9 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                   .map(([pid, s]) => ({ playerId: pid, minutes: (s.seconds || 0) / 60 })),
                 events, mergeWeights(weights),
               );
-              return Object.entries(tally)
+              const scored = Object.entries(tally)
               .map(([pid, stats]) => {
                 const min = Math.round((stats.seconds || 0) / 60);
-                const player = roster.find(p => p.id === pid);
                 // Treat as GK for scoring if they served any GK time in this game.
                 const wasGKThisGame = (game.gkPlayerId === pid) || (game.gkChanges || []).some(c => c.gkPlayerId === pid);
                 const gkExtras = wasGKThisGame ? gkExtrasForGame(pid, game) : undefined;
@@ -10565,7 +10769,16 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                 const score = computePerformanceScore(pid, events, min, gkFraction, gkExtras, weights, squadRates);
                 return { pid, stats, min, score, gkExtras };
               })
-              .sort((a, b) => b.score.overall - a.score.overall)
+              .sort((a, b) => b.score.overall - a.score.overall);
+              // Squad distribution of the SHOWN pillar rates → percentiles. GK
+              // is excluded from the reference set: their pillar mix is scored
+              // on a different weighting, so mixing them skews the outfield
+              // spread. (A GK still gets a raw score; just no cross-role rank.)
+              const pillarStats = computeSquadPillarStats(
+                scored.filter(s => s.min > 0 && (s.score.attacking != null))
+                  .map(s => ({ atk: s.score.attacking, def: s.score.defending, dec: s.score.decisions, inv: s.score.involvement })),
+              );
+              return scored
               .map(({ pid, stats, min, score }) => {
                 const player = roster.find(p => p.id === pid);
                 const parts = [];
@@ -10599,10 +10812,21 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-1.5 mt-2">
-                      <PillarMini label="ATK" value={score.attacking} />
-                      <PillarMini label="DEF" value={score.defending} />
-                      <PillarMini label="DEC" value={score.decisions} />
-                      <PillarMini label="INV" value={score.involvement} />
+                      {scoreView === 'squad' ? (
+                        <>
+                          <PillarPct label="ATK" pct={pillarPercentile(score.attacking, pillarStats.atk)} />
+                          <PillarPct label="DEF" pct={pillarPercentile(score.defending, pillarStats.def)} />
+                          <PillarPct label="DEC" pct={pillarPercentile(score.decisions, pillarStats.dec)} />
+                          <PillarPct label="INV" pct={pillarPercentile(score.involvement, pillarStats.inv)} />
+                        </>
+                      ) : (
+                        <>
+                          <PillarMini label="ATK" value={score.attacking} />
+                          <PillarMini label="DEF" value={score.defending} />
+                          <PillarMini label="DEC" value={score.decisions} />
+                          <PillarMini label="INV" value={score.involvement} />
+                        </>
+                      )}
                     </div>
                   </div>
                 );
