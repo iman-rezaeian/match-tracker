@@ -36,6 +36,48 @@ log = logging.getLogger(__name__)
 PORT = 8766  # one higher than calibrate_local.py to avoid clashes
 
 
+def _refine_with_tilt(payload: dict) -> dict:
+    """Accuracy-audit B1: the browser fits a LEVEL-camera 2D similarity, leaving
+    real camera tilt smeared across the field (~1 m RMS, worst far from camera).
+    Re-solve camera pitch/roll from the clicked reference points and overwrite
+    the payload's similarity + tilt so the projector finally gets a non-zero
+    pitch/roll. Purely additive: on any failure or too-few points, the original
+    (level) payload is written unchanged — a save is never blocked.
+    """
+    try:
+        from .calibration_solve import solve_sphere_tilt
+        rp = payload.get("reference_points") or []
+        eq_w = int(payload.get("video_frame_w") or 0)
+        eq_h = int(payload.get("video_frame_h") or 0)
+        cam_h = float(payload.get("camera_height_m") or 5.0)
+        if len(rp) < 4 or not (eq_w and eq_h):
+            return payload
+        sol = solve_sphere_tilt(rp, eq_w, eq_h, cam_h=cam_h)
+        if not sol:
+            return payload
+        gs = dict(payload.get("ground_similarity") or {})
+        level_rms = gs.get("rms_m")
+        # Only adopt the tilt fit if it is at least as good as the level fit
+        # (it should always be — level is the tilt=0 special case — but guard
+        # against a pathological reference set).
+        if level_rms is not None and sol["rms_m"] > float(level_rms) + 1e-6:
+            log.info("Tilt solve (%.3f m) worse than level (%.3f m) — keeping level.",
+                     sol["rms_m"], float(level_rms))
+            return payload
+        gs.update(a=sol["a"], b=sol["b"], tx=sol["tx"], ty=sol["ty"],
+                  rms_m=sol["rms_m"], rms_level_m=level_rms,
+                  residuals=sol["per_point"], solver="tilt_lsq")
+        payload["ground_similarity"] = gs
+        payload["camera_pitch_deg"] = sol["pitch_deg"]
+        payload["camera_roll_deg"] = sol["roll_deg"]
+        log.info("Tilt-refined calibration: rms %s -> %.3f m (pitch %+.2f deg, roll %+.2f deg)",
+                 f"{float(level_rms):.3f}" if level_rms is not None else "n/a",
+                 sol["rms_m"], sol["pitch_deg"], sol["roll_deg"])
+    except Exception as e:  # never block a save on the refinement
+        log.warning("Tilt refinement skipped: %s", e)
+    return payload
+
+
 def _extract_frame(video_url: str, at_seconds: float, out_path: str) -> None:
     """Pull a single frame from the video at `at_seconds` via ffmpeg."""
     src = video_url
@@ -597,6 +639,7 @@ def calibrate_flat(game_id: str, at_seconds: float = 60.0,
             body = self.rfile.read(length)
             try:
                 payload = json.loads(body.decode("utf-8"))
+                payload = _refine_with_tilt(payload)
                 firestore_io.write_game_calibration(game_id, payload)
                 saved["payload"] = payload
                 resp = json.dumps({"ok": True}).encode("utf-8")
