@@ -39,6 +39,7 @@ class Detector:
             imgs,
             classes=classes,
             conf=conf,
+            imgsz=config.DETECT_IMGSZ,
             device=self.device,
             verbose=False,
         )
