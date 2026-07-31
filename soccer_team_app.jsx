@@ -9861,7 +9861,17 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
   const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
   const teamTopKmh = Math.max(0, ...pstats.map(p => (p.top_speed_ms || 0) * 3.6));
-  const teamSprints = pstats.reduce((s, p) => s + (p.sprint_count || 0), 0);
+  // Team top speed is a single player's single peak — most vulnerable to a
+  // swap spike / partial-view artifact. Flag it when that peak came from a
+  // low-coverage player so we can caveat it below.
+  const teamTopCovLow = pstats.some(p => {
+    const c = (p.tracked_seconds != null && (p.minutes_played || 0) > 0)
+      ? (p.tracked_seconds / 60) / p.minutes_played : null;
+    return (p.top_speed_ms || 0) * 3.6 >= teamTopKmh - 0.05 && c != null && c < 0.5;
+  });
+  // Prefer the coverage-scaled sprint estimate (parity with the per-player
+  // deck); fall back to the raw count for older docs without the estimate.
+  const teamSprints = pstats.reduce((s, p) => s + (p.sprint_est_count != null ? p.sprint_est_count : (p.sprint_count || 0)), 0);
   // minutes-weighted team thirds
   const _wsum = pstats.reduce((s, p) => s + (p.minutes_played || 0), 0) || 1;
   const teamThirds = ['pct_defensive_third', 'pct_middle_third', 'pct_attacking_third'].map(k =>
@@ -10036,6 +10046,9 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 </div>
               ))}
             </div>
+            {teamTopCovLow && (
+              <div className="text-[9px] text-stone-500 -mt-2 mb-3">📡 Top speed is a single-player peak from a partial view — treat as indicative.</div>
+            )}
             {goals.length > 0 && (
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3 mb-3">
                 <div className="text-[10px] tracking-widest text-stone-400 mb-2">GOALS</div>
@@ -10174,6 +10187,25 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 // minutes) when the doc carries them; raw sums for older docs.
                 const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
                 const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
+                // Graded honesty (Tier 3): one trust grade per movement tile from
+                // how much of the player we tracked (coverage) and how sure we are
+                // of their identity (conf). 3 = trustworthy, 2 = caveat, 1 = weak,
+                // 0 = untrustworthy (keeps today's dash). Null signals → grade 3 so
+                // older docs (no tracked_seconds / conf) never look broken.
+                const movementGrade = statsBad ? 0 : Math.min(
+                  coverage == null ? 3 : (coverage >= 0.5 ? 3 : coverage >= 0.25 ? 2 : 1),
+                  conf == null ? 3 : (conf >= 0.8 ? 3 : conf >= 0.5 ? 2 : 1),
+                );
+                // Avg speed is a RATE (mean, not a sum) → coverage-robust: it never
+                // earns the dash and only drops a grade for identity uncertainty.
+                const avgGrade = conf == null ? 3 : (conf >= 0.8 ? 3 : conf >= 0.5 ? 2 : 1);
+                const avgKmh = (s.avg_speed_ms || 0) * 3.6;
+                // grade → tile chrome: a corner dot + tinted border (no bg wash —
+                // a filled tint reads as an error state and would make a card with
+                // several caveated tiles look alarming on a phone).
+                const tileTint = (g) => g === 2 ? { border: 'border-amber-500/40', dot: 'bg-amber-400' }
+                  : g === 1 ? { border: 'border-red-500/40', dot: 'bg-red-400' }
+                  : { border: 'border-stone-700/60', dot: '' }; // g3 and g0 use the plain border
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -10193,17 +10225,31 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
                       </div>
                     </div>
-                    <div className="grid grid-cols-4 gap-2 mb-1">
-                      {[[`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', false], [distShown.toFixed(0), 'DIST m', true], [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', true], [sprintsShown, 'SPRINTS', true]].map(([v, l, movement]) => (
-                        <div key={l} className={`rounded-xl border border-stone-700/60 p-2 text-center ${statsBad && movement ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
-                          <div className="text-white font-display text-base leading-none">{statsBad && movement ? '—' : v}</div>
-                          <div className="text-[9px] text-stone-400 mt-1">{l}</div>
-                        </div>
-                      ))}
+                    <div className="grid grid-cols-5 gap-1.5 mb-1">
+                      {[
+                        [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
+                        [avgKmh.toFixed(1), 'AVG km/h', avgGrade, true],
+                        [distShown.toFixed(0), 'DIST m', movementGrade, true],
+                        [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', movementGrade, true],
+                        [sprintsShown, 'SPRINTS', movementGrade, true],
+                      ].map(([v, l, g, movement]) => {
+                        const t = tileTint(g);
+                        const dashed = movement && g === 0;
+                        return (
+                          <div key={l} className={`relative rounded-xl border ${t.border} p-2 text-center ${dashed ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
+                            {movement && t.dot && <span className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${t.dot}`} />}
+                            <div className="text-white font-display text-sm leading-none">{dashed ? '—' : v}</div>
+                            <div className="text-[8px] text-stone-400 mt-1 leading-tight">{l}</div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    {coveragePct != null && s.distance_est_m != null && !statsBad && (
+                    {coveragePct != null && (
                       <div className="text-[9px] text-stone-500 mb-2 leading-snug">
-                        📡 {coveragePct}% of minutes tracked — distance &amp; sprints are rate-based estimates
+                        📡 {coveragePct}% of minutes tracked
+                        {coverage != null && coverage < 0.5
+                          ? ' — distance, top speed & sprints are estimates from a partial view; avg speed is the most reliable'
+                          : ' — distance & sprints are rate-based estimates'}
                         {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
                       </div>
                     )}
@@ -10232,8 +10278,14 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         <span>Mid {(s.pct_middle_third || 0).toFixed(0)}%</span>
                         <span>Att {(s.pct_attacking_third || 0).toFixed(0)}%</span>
                       </div>
+                      {coveragePct != null && coverage != null && coverage < 0.5 && (
+                        <div className="text-[8px] text-stone-600 mt-0.5">of the {coveragePct}% tracked — where the camera caught them</div>
+                      )}
                     </div>
                     <div className="rounded-xl border border-stone-700/60 bg-stone-950/40">
+                      {coverage != null && coverage < 0.5 && (
+                        <div className="text-[8px] text-stone-600 px-2 pt-1">Partial view — positions shown are where the camera caught them</div>
+                      )}
                       <PlayerHeatmap grid={s.heatmap_grid} rows={s.heatmap_grid_rows} cols={s.heatmap_grid_cols} />
                     </div>
                   </div>
