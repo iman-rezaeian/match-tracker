@@ -95,6 +95,12 @@ DETECT_TILE_DEDUPE_M = 1.5     # foot positions within this distance (m)
 
 YOLO_MODEL = "yolo11s.pt"
 DETECT_CONFIDENCE = 0.30
+# YOLO inference resolution. Ultralytics defaults to 640, which downsamples
+# our 1280-wide detection tiles 2x and loses far/small players (the accuracy
+# audit's B3 — a prime source of missed far-side detections + fragmentation).
+# Set to the tile width so inference runs at native tile resolution. Ultralytics
+# resizes to a multiple of 32; 1280 is already aligned.
+DETECT_IMGSZ = 1280
 PERSON_CLASS_ID = 0
 BALL_CLASS_ID = 32                              # COCO sports ball
 
