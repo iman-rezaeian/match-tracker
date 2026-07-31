@@ -1,8 +1,12 @@
 """BoT-SORT multi-object tracker wrapper.
 
-Uses `boxmot.BotSort` with OSNet-x0.25 Re-ID embeddings. The tracker runs in
-crop pixel space (that's where YOLO detected); we attach equirectangular
-bbox coordinates to each TrackedDetection so downstream stages can use them.
+Uses `boxmot.BotSort` with OSNet-x0.25 Re-ID embeddings. NOTE: this production
+tracker associates on the EQUIRECTANGULAR frame (`pipeline.py` passes
+`sample.eq_frame` and sets `bbox_crop = bbox_eq`), i.e. in distorted equirect
+pixel space — not the rectified tile space YOLO detected on. The accuracy audit
+(B2) flags this as a fragmentation source; `tracking_field.FieldSpaceTracker` is
+the field-metric-space alternative, gated behind `config.TRACK_FIELD_SPACE`.
+Each TrackedDetection carries the equirect bbox for downstream stages.
 """
 
 from __future__ import annotations

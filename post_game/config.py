@@ -109,6 +109,12 @@ BALL_CLASS_ID = 32                              # COCO sports ball
 TRACKER_TYPE = "botsort"                         # bytetrack | botsort | deepocsort
 REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 TRACK_BUFFER_S = 20                              # how long a lost track is kept
+# Accuracy-audit B2 (PROTOTYPE, default OFF): associate tracks in field-metric
+# surrogate space instead of the distorted equirect frame. See
+# B2_FIELD_SPACE_TRACKING.md + post_game/tracking_field.py. Do NOT flip to True
+# in prod until a re-track on a GT game shows fragment count drops AND per-player
+# GT recall does not regress (needs a raw game — none currently on disk).
+TRACK_FIELD_SPACE = False
 
 # --- Identity ------------------------------------------------------------
 
