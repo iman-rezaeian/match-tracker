@@ -779,18 +779,17 @@ else:
     _fkey = _chosen["field_key"]
     _prefill_len = _chosen["length_m"]
 _map_len = sc_cols[1].number_input(
-    "Touchline length (m)", min_value=0.0, max_value=120.0, step=0.5,
+    "Field length (m)", min_value=0.0, max_value=120.0, step=0.5,
     value=float(_prefill_len),
-    help="Measure the LONG side (touchline) of the pitch on Google Maps satellite view (right-click → Measure distance). Reused for every game on this field.",
+    help="The LONG dimension of the pitch (end to end), in meters — NOT the goal-mouth width. Measure it once on Google Maps. Reused for every game on this field.",
 )
+_how = ("→ satellite view → **right-click one goal's center → Measure distance → click the far goal's center** "
+        "(straight down the long axis). That end-to-end distance is the field length. "
+        "(Tracing a full sideline corner-to-corner gives the same number if the grass lines are visible.)")
 if _pin_url:
-    st.caption(f"📍 This game's pitch on the map (from the schedule): [{_pin_url}]({_pin_url}) "
-               "→ satellite → right-click a corner → **Measure distance** → far corner along the touchline → read meters.")
+    st.caption(f"📍 This pitch on the map (from the schedule): [{_pin_url}]({_pin_url}) {_how}")
 else:
-    st.caption(
-        "📍 Google Maps → satellite → right-click a corner → **Measure distance** → click the far corner "
-        "along the touchline → read meters. Fixes absolute scale; the clicks recover the rest of the shape."
-    )
+    st.caption(f"📍 Google Maps {_how} Fixes absolute scale; the clicks recover the rest of the shape.")
 
 _cal_btn_label = "📐 Re-calibrate field" if _existing_cal else "📐 Calibrate field"
 # NOT gated on is_running: the calibrate server stays up until SAVE and closing
