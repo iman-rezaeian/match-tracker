@@ -721,17 +721,33 @@ try:
 except Exception:
     _field_scales = []
 _field_opts = ["➕ New field…"] + [f"{f['field_key']}  ({f['length_m']:g} m)" for f in _field_scales]
-# Preselect the game's already-linked field if it has one.
+# Read the game doc for an existing field link + a home/away hint we can use to
+# SUGGEST a field key (the schedule has no venue/field name, only `isHome`).
 _linked = None
+_suggested_key = ""
 try:
     _gdoc = firestore_io._team_doc().collection("games").document(game_id).get().to_dict() or {}
     _linked = _gdoc.get("fieldName")
+    import re as _re
+    if _gdoc.get("isHome"):
+        # Home games are almost always the same physical pitch → one 'home' field.
+        _suggested_key = "home"
+    else:
+        # Away: best hint is the opponent (often their home ground). A SUGGESTION,
+        # not a guarantee — different pitches / festivals need an override.
+        _opp = (_gdoc.get("opponent") or "").strip().lower()
+        _suggested_key = _re.sub(r"[^a-z0-9]+", "-", _opp).strip("-") or "away"
 except Exception:
     pass
+
+# Default the dropdown to: the linked field if any, else an EXISTING field whose
+# key matches the home/away suggestion, else "New field" (prefilled with the
+# suggestion).
 _default_idx = 0
-if _linked:
+_match_key = _linked or _suggested_key
+if _match_key:
     for i, f in enumerate(_field_scales):
-        if f["field_key"] == _linked:
+        if f["field_key"] == _match_key:
             _default_idx = i + 1
             break
 
@@ -739,11 +755,11 @@ st.markdown("**Field scale** — needed for accurate distance/speed")
 sc_cols = st.columns([2, 1])
 _pick = sc_cols[0].selectbox(
     "Field", _field_opts, index=_default_idx,
-    help="Pick the field this game was played on (reuses its saved touchline length), or add a new one.",
+    help="Auto-suggested from home/away: home games reuse your 'home' field; away games suggest the opponent's ground. Pick an existing field, or add a new one — override if this venue is different (e.g. a festival).",
 )
 if _pick == "➕ New field…":
-    _fkey = sc_cols[0].text_input("New field name", value=(_linked or ""),
-                                  placeholder="e.g. belle-river-home").strip()
+    _fkey = sc_cols[0].text_input("New field name", value=(_linked or _suggested_key),
+                                  placeholder="e.g. home or belle-river-fc").strip()
     _prefill_len = 0.0
 else:
     _chosen = _field_scales[_field_opts.index(_pick) - 1]
