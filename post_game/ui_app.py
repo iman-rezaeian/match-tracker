@@ -728,7 +728,10 @@ st.divider()
 st.markdown("### 3. Run pipeline")
 
 run_cols = st.columns([1, 1, 2])
-tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=False)
+# Default ON: --tv-view renders the full-game reel + auto-highlights the coach
+# and parents watch in the PWA. A stats-only run (no video) is the exception,
+# so this is the standing default for a normal game.
+tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=True)
 verbose = run_cols[1].checkbox("Verbose logs", value=False)
 
 smoke_cols = st.columns([1, 1, 1, 1])
