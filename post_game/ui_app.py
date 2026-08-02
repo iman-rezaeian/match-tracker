@@ -301,6 +301,22 @@ def _list_games(limit: int, only_unprocessed: bool) -> list[dict]:
     rows = firestore_io.list_recent_games_snapshots(limit=max(limit, 5))
     if only_unprocessed:
         rows = [r for r in rows if r["has_video"] and not r["has_analytics"]]
+    # Keep newest DAY first, but within a day order by kickoff ASCENDING so the
+    # list reads Game 1, Game 2, ... top-to-bottom (matching the coach's video
+    # filenames). The source list is startedAt-desc, which put a festival's
+    # LATER game above its earlier one — the confusing order. Also tag each game
+    # with its "Game N" for that date so the mapping is explicit.
+    rows.sort(key=lambda r: (r.get("date") or "", -(r.get("started_at") or 0)), reverse=True)
+    # Now assign per-date game numbers in kickoff order.
+    from collections import defaultdict
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_date[r.get("date") or ""].append(r)
+    for day_rows in by_date.values():
+        # day_rows are in the display order (kickoff desc within the day); number
+        # them by kickoff ASC so the earliest kickoff is "Game 1".
+        for n, r in enumerate(sorted(day_rows, key=lambda r: r.get("started_at") or 0), start=1):
+            r["game_no"] = n if len(day_rows) > 1 else None
     return rows[:limit]
 
 
@@ -312,7 +328,10 @@ def _format_row(r: dict) -> str:
         "📐" if r["has_calibration"] else "  ",
         "📊" if r["has_analytics"] else "  ",
     ])
-    return f"{r['date'] or '—'}  vs {r['opponent'] or '—':<20}  {score:>5}  [{r['status'] or '—':<8}]  {flags}  ({r['id']})"
+    # "Game N" for festival days with >1 game (kickoff order — matches the
+    # coach's VID_..._GameN.mp4 filenames); blank for single-game days.
+    game_no = f"Game {r['game_no']}  " if r.get("game_no") else ""
+    return f"{r['date'] or '—'}  {game_no}vs {r['opponent'] or '—':<20}  {score:>5}  [{r['status'] or '—':<8}]  {flags}  ({r['id']})"
 
 
 def _start_subprocess(kind: str, game_id: str, args: list[str]) -> None:
