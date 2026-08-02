@@ -179,20 +179,29 @@ document.getElementById('gameLabel').textContent = GAME_LABEL;
 
 // All known reference points on the field. Each: { key, label, x_m, y_m, required }
 // Field frame: x along length 0..FIELD_L, y across width 0..FIELD_W.
+// NEAR touchline = y=FIELD_W (bottom of image, closest to camera); FAR = y=0 (top).
+// ORDERED as a CLOCKWISE perimeter walk starting bottom-left (near-left corner):
+// up the LEFT edge → across the FAR/top edge → down the RIGHT edge → back across
+// the NEAR/bottom edge → center last. So placement never jumps side-to-side.
 const REF_POINTS = [
-  { key:'corner_FL', label:'FAR-LEFT corner',        x:0,         y:0,        required:true,  group:'corner' },
-  { key:'corner_FR', label:'FAR-RIGHT corner',       x:FIELD_L,   y:0,        required:true,  group:'corner' },
-  { key:'corner_NR', label:'NEAR-RIGHT corner',      x:FIELD_L,   y:FIELD_W,  required:true,  group:'corner' },
-  { key:'corner_NL', label:'NEAR-LEFT corner',       x:0,         y:FIELD_W,  required:true,  group:'corner' },
-  { key:'mid_far',   label:'CENTER ↔ FAR touchline', x:FIELD_L/2, y:0,        required:false, group:'centerline' },
-  { key:'mid_near',  label:'CENTER ↔ NEAR touchline',x:FIELD_L/2, y:FIELD_W,  required:false, group:'centerline' },
-  { key:'center',    label:'CENTER spot',            x:FIELD_L/2, y:FIELD_W/2,required:false, group:'center' },
-  { key:'goal_L_mid',label:'LEFT goal-mouth center', x:0,         y:FIELD_W/2,required:false, group:'goal' },
-  { key:'goal_R_mid',label:'RIGHT goal-mouth center',x:FIELD_L,   y:FIELD_W/2,required:false, group:'goal' },
+  // bottom-left → up the LEFT edge (near → far)
+  { key:'corner_NL', label:'NEAR-LEFT corner (start here)', x:0,       y:FIELD_W,              required:true,  group:'corner' },
   { key:'goal_L_in', label:`LEFT goal INNER post (closer to centerline)`,  x:0,       y:FIELD_W/2 + GOAL_W/2, required:false, group:'goal' },
+  { key:'goal_L_mid',label:'LEFT goal-mouth center', x:0,       y:FIELD_W/2,            required:false, group:'goal' },
   { key:'goal_L_out',label:`LEFT goal OUTER post (away from centerline)`,  x:0,       y:FIELD_W/2 - GOAL_W/2, required:false, group:'goal' },
-  { key:'goal_R_in', label:`RIGHT goal INNER post (closer to centerline)`, x:FIELD_L, y:FIELD_W/2 + GOAL_W/2, required:false, group:'goal' },
+  { key:'corner_FL', label:'FAR-LEFT corner',        x:0,       y:0,                    required:true,  group:'corner' },
+  // across the FAR/top edge (left → right)
+  { key:'mid_far',   label:'CENTER ↔ FAR touchline', x:FIELD_L/2, y:0,                  required:false, group:'centerline' },
+  { key:'corner_FR', label:'FAR-RIGHT corner',       x:FIELD_L, y:0,                    required:true,  group:'corner' },
+  // down the RIGHT edge (far → near)
   { key:'goal_R_out',label:`RIGHT goal OUTER post (away from centerline)`, x:FIELD_L, y:FIELD_W/2 - GOAL_W/2, required:false, group:'goal' },
+  { key:'goal_R_mid',label:'RIGHT goal-mouth center',x:FIELD_L, y:FIELD_W/2,            required:false, group:'goal' },
+  { key:'goal_R_in', label:`RIGHT goal INNER post (closer to centerline)`, x:FIELD_L, y:FIELD_W/2 + GOAL_W/2, required:false, group:'goal' },
+  { key:'corner_NR', label:'NEAR-RIGHT corner',      x:FIELD_L, y:FIELD_W,              required:true,  group:'corner' },
+  // back across the NEAR/bottom edge (right → left)
+  { key:'mid_near',  label:'CENTER ↔ NEAR touchline',x:FIELD_L/2, y:FIELD_W,            required:false, group:'centerline' },
+  // center last
+  { key:'center',    label:'CENTER spot',            x:FIELD_L/2, y:FIELD_W/2,          required:false, group:'center' },
 ];
 
 const wrap = document.getElementById('wrap');
@@ -211,10 +220,10 @@ function placedKeys() { return new Set(pins.map(p => p.key)); }
 function refByKey(k) { return REF_POINTS.find(r => r.key === k); }
 function nextRequiredKey() {
   const placed = placedKeys();
-  // Advance to the next UNPLACED landmark: required ones first (the 4 corners
-  // stay the priority), then flow through every optional point so placement
-  // auto-advances through all 13, not just the corners.
-  for (const r of REF_POINTS) if (r.required && !placed.has(r.key)) return r.key;
+  // Advance to the next UNPLACED landmark in LIST ORDER. REF_POINTS is a
+  // clockwise perimeter walk, so following list order keeps placement moving
+  // smoothly around the field (no side-to-side jumping) and flows through all
+  // 13 points, not just the corners.
   for (const r of REF_POINTS) if (!placed.has(r.key)) return r.key;
   return null;  // all points placed
 }
