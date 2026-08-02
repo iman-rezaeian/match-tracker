@@ -167,3 +167,99 @@ def solve_sphere_tilt(reference_points, eq_w: int, eq_h: int,
         "per_point": [{"key": k, "err_m": float(e)} for k, e in zip(keys, errs)],
         "n": int(len(dst)),
     }
+
+
+# Landmark field coordinates as a function of (L, W, goal_w). This is the single
+# source of truth mirrored from calibrate_flat.py's REF_POINTS geometry — every
+# point's field position is fully determined by the field length L, width W, and
+# the goal-mouth width. NOTE: goal width VARIES between U10 fields, so it does
+# NOT anchor absolute scale; scale comes from an external map-measured length.
+def _landmark_field_xy(key: str, L: float, W: float, goal_w: float):
+    gh = goal_w / 2.0
+    table = {
+        "corner_FL": (0.0, 0.0), "corner_FR": (L, 0.0),
+        "corner_NR": (L, W), "corner_NL": (0.0, W),
+        "mid_far": (L / 2.0, 0.0), "mid_near": (L / 2.0, W),
+        "center": (L / 2.0, W / 2.0),
+        "goal_L_mid": (0.0, W / 2.0), "goal_R_mid": (L, W / 2.0),
+        "goal_L_in": (0.0, W / 2.0 + gh), "goal_L_out": (0.0, W / 2.0 - gh),
+        "goal_R_in": (L, W / 2.0 + gh), "goal_R_out": (L, W / 2.0 - gh),
+    }
+    return table.get(key)
+
+
+def solve_sphere_scaled(reference_points, eq_w: int, eq_h: int,
+                        length_m: float, cam_h: float = 5.0, goal_w: float = 4.88,
+                        w0: float = 35.0, w_bounds=(20.0, 50.0)) -> dict | None:
+    """Solve camera (pitch, roll) + field WIDTH from the clicked landmarks, with
+    the field LENGTH FIXED to a map-measured touchline length (absolute-scale
+    anchor). This IS identifiable — unlike freely solving both L and W, which is
+    degenerate on a single grazing view (a bigger field from a steeper angle
+    projects like a smaller one). Fixing one true length pins scale; the clicks
+    then constrain the aspect ratio (width) + tilt via RMS minimization.
+
+    length_m: the field length (long touchline) in meters, read off a satellite
+        map — the per-field scale anchor. goal_w does NOT anchor scale (it varies
+        between U10 fields); it only positions the goal-post landmarks.
+    Only 3 nonlinear params (pitch, roll, W); closed-form similarity inside.
+    Needs >= 4 keyed points. Returns pitch_deg, roll_deg, cam_h_m, length_m,
+    width_m, a, b, tx, ty, rms_m, per_point, n. None if it can't solve.
+    """
+    px, py, keys = [], [], []
+    for r in reference_points or []:
+        k = r.get("key")
+        if not k or _landmark_field_xy(k, length_m, 35.0, goal_w) is None:
+            continue
+        try:
+            px.append(float(r["px"])); py.append(float(r["py"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        keys.append(k)
+    if len(keys) < 4:
+        return None
+    px = np.array(px); py = np.array(py)
+    rays = _rays_from_pixels(px, py, eq_w, eq_h)
+    L = float(length_m)  # fixed scale anchor
+
+    def linear_fit(params):
+        pitch, roll, W = params
+        ground, ok = _ground_points(rays, pitch, roll, cam_h)
+        if not ok.all():
+            return None, ground, None
+        dst = np.array([_landmark_field_xy(k, L, W, goal_w) for k in keys], dtype=np.float64)
+        sim = _umeyama_similarity(ground, dst)
+        return sim, ground, dst
+
+    def residuals(params):
+        sim, ground, dst = linear_fit(params)
+        if sim is None:
+            return np.full(len(keys) * 2, 1e3, dtype=np.float64)
+        return (_apply_similarity(ground, *sim) - dst).ravel()
+
+    x0 = np.array([0.0, 0.0, w0])
+    bounds = ([np.deg2rad(-35.0), np.deg2rad(-35.0), w_bounds[0]],
+              [np.deg2rad(35.0), np.deg2rad(35.0), w_bounds[1]])
+    try:
+        res = least_squares(residuals, x0, bounds=bounds, method="trf",
+                            max_nfev=2000, ftol=1e-10, xtol=1e-10)
+    except Exception:
+        return None
+
+    pitch, roll, W = res.x
+    sim, ground, dst = linear_fit(res.x)
+    if sim is None:
+        return None
+    a, b, tx, ty = sim
+    pred = _apply_similarity(ground, a, b, tx, ty)
+    errs = np.hypot(pred[:, 0] - dst[:, 0], pred[:, 1] - dst[:, 1])
+    rms = float(np.sqrt(np.mean(errs ** 2)))
+    return {
+        "pitch_deg": float(np.rad2deg(pitch)),
+        "roll_deg": float(np.rad2deg(roll)),
+        "cam_h_m": float(cam_h),
+        "length_m": L, "width_m": float(W),
+        "a": float(a), "b": float(b), "tx": float(tx), "ty": float(ty),
+        "rms_m": rms,
+        "per_point": [{"key": k, "err_m": float(e)} for k, e in zip(keys, errs)],
+        "n": int(len(keys)),
+    }
