@@ -721,28 +721,41 @@ try:
 except Exception:
     _field_scales = []
 _field_opts = ["➕ New field…"] + [f"{f['field_key']}  ({f['length_m']:g} m)" for f in _field_scales]
-# Read the game doc for an existing field link + a home/away hint we can use to
-# SUGGEST a field key (the schedule has no venue/field name, only `isHome`).
+# SUGGEST a field key from the SCHEDULE (teams/main.schedule), which carries the
+# pitch label (`field`, e.g. "W7"/"Field 6") and a Google-Maps `location` pin.
+# The schedule entry is a separate doc from the game — join by (date, opponent).
+# Key = date + field label so festival pitches (W7 vs W8 same day) don't collide.
 _linked = None
 _suggested_key = ""
+_pin_url = ""
 try:
+    import re as _re
     _gdoc = firestore_io._team_doc().collection("games").document(game_id).get().to_dict() or {}
     _linked = _gdoc.get("fieldName")
-    import re as _re
-    if _gdoc.get("isHome"):
-        # Home games are almost always the same physical pitch → one 'home' field.
-        _suggested_key = "home"
-    else:
-        # Away: best hint is the opponent (often their home ground). A SUGGESTION,
-        # not a guarantee — different pitches / festivals need an override.
-        _opp = (_gdoc.get("opponent") or "").strip().lower()
-        _suggested_key = _re.sub(r"[^a-z0-9]+", "-", _opp).strip("-") or "away"
+    _gdate = _gdoc.get("date")
+    _gopp = (_gdoc.get("opponent") or "").strip().lower()
+    _tm = firestore_io._team_doc().get().to_dict() or {}
+    _sched = [e for e in (_tm.get("schedule") or []) if isinstance(e, dict)]
+    _match = next((e for e in _sched
+                   if e.get("date") == _gdate
+                   and (e.get("opponent") or "").strip().lower() == _gopp), None)
+    if _match:
+        _pin_url = (_match.get("location") or "").strip()
+        _fld = (_match.get("field") or "").strip()
+        if _fld:
+            _slug = _re.sub(r"[^a-z0-9]+", "-", _fld.lower()).strip("-")
+            _suggested_key = f"{_gdate}-{_slug}" if _gdate else _slug
+    if not _suggested_key:
+        # No schedule field label — fall back to home/opponent hint.
+        if _gdoc.get("isHome"):
+            _suggested_key = "home"
+        else:
+            _suggested_key = _re.sub(r"[^a-z0-9]+", "-", _gopp).strip("-") or "away"
 except Exception:
     pass
 
 # Default the dropdown to: the linked field if any, else an EXISTING field whose
-# key matches the home/away suggestion, else "New field" (prefilled with the
-# suggestion).
+# key matches the schedule suggestion, else "New field" (prefilled with it).
 _default_idx = 0
 _match_key = _linked or _suggested_key
 if _match_key:
@@ -755,11 +768,11 @@ st.markdown("**Field scale** — needed for accurate distance/speed")
 sc_cols = st.columns([2, 1])
 _pick = sc_cols[0].selectbox(
     "Field", _field_opts, index=_default_idx,
-    help="Auto-suggested from home/away: home games reuse your 'home' field; away games suggest the opponent's ground. Pick an existing field, or add a new one — override if this venue is different (e.g. a festival).",
+    help="Auto-suggested from the schedule's pitch label (e.g. W7 / Field 6), namespaced by date so festival pitches don't collide. Pick an existing field to reuse its length, or add a new one.",
 )
 if _pick == "➕ New field…":
     _fkey = sc_cols[0].text_input("New field name", value=(_linked or _suggested_key),
-                                  placeholder="e.g. home or belle-river-fc").strip()
+                                  placeholder="e.g. 2026-07-12-w7").strip()
     _prefill_len = 0.0
 else:
     _chosen = _field_scales[_field_opts.index(_pick) - 1]
@@ -770,10 +783,14 @@ _map_len = sc_cols[1].number_input(
     value=float(_prefill_len),
     help="Measure the LONG side (touchline) of the pitch on Google Maps satellite view (right-click → Measure distance). Reused for every game on this field.",
 )
-st.caption(
-    "📍 Google Maps → satellite → right-click a corner → **Measure distance** → click the far corner "
-    "along the touchline → read meters. Fixes absolute scale; the clicks recover the rest of the shape."
-)
+if _pin_url:
+    st.caption(f"📍 This game's pitch on the map (from the schedule): [{_pin_url}]({_pin_url}) "
+               "→ satellite → right-click a corner → **Measure distance** → far corner along the touchline → read meters.")
+else:
+    st.caption(
+        "📍 Google Maps → satellite → right-click a corner → **Measure distance** → click the far corner "
+        "along the touchline → read meters. Fixes absolute scale; the clicks recover the rest of the shape."
+    )
 
 _cal_btn_label = "📐 Re-calibrate field" if _existing_cal else "📐 Calibrate field"
 # NOT gated on is_running: the calibrate server stays up until SAVE and closing
