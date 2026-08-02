@@ -336,9 +336,17 @@ def _format_row(r: dict) -> str:
 
 def _start_subprocess(kind: str, game_id: str, args: list[str]) -> None:
     """Start `python -m post_game.cli ...` and pump stdout into a queue."""
-    if st.session_state[K_PROC] is not None and st.session_state[K_PROC].poll() is None:
-        st.warning("Another job is already running. Stop it first.")
-        return
+    running = st.session_state[K_PROC] is not None and st.session_state[K_PROC].poll() is None
+    if running:
+        # The calibrate server is a long-lived interactive HTTP server that
+        # closing the browser tab does NOT stop — so a re-click must be able to
+        # relaunch it (stop the stale server, open a fresh tab). Any other job
+        # (a multi-hour tracking run) is protected: don't clobber it.
+        if kind == "calibrate" and st.session_state[K_PROC_KIND] == "calibrate":
+            _stop_running()
+        else:
+            st.warning("Another job is already running. Stop it first.")
+            return
 
     cmd = [sys.executable, "-u", "-m", "post_game.cli", *args]
     env = os.environ.copy()
@@ -705,7 +713,12 @@ else:
     st.info("No calibration yet. Click below to mark the reference landmarks.")
 
 _cal_btn_label = "📐 Re-calibrate field" if _existing_cal else "📐 Calibrate field"
-if st.button(_cal_btn_label, disabled=not current_video or is_running):
+# NOT gated on is_running: the calibrate server stays up until SAVE and closing
+# the tab doesn't stop it, so a re-click must relaunch (handled in
+# _start_subprocess, which stops a stale calibrate server first). Only blocked
+# when no video is attached.
+_cal_help = "Opens the calibration tab on :8766. It stays open until you SAVE — click again to reopen if you closed the tab."
+if st.button(_cal_btn_label, disabled=not current_video, help=_cal_help):
     _start_subprocess("calibrate", game_id, ["calibrate", "--game-id", game_id])
     st.rerun()
 
