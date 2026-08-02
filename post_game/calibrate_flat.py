@@ -211,8 +211,12 @@ function placedKeys() { return new Set(pins.map(p => p.key)); }
 function refByKey(k) { return REF_POINTS.find(r => r.key === k); }
 function nextRequiredKey() {
   const placed = placedKeys();
+  // Advance to the next UNPLACED landmark: required ones first (the 4 corners
+  // stay the priority), then flow through every optional point so placement
+  // auto-advances through all 13, not just the corners.
   for (const r of REF_POINTS) if (r.required && !placed.has(r.key)) return r.key;
-  return null;
+  for (const r of REF_POINTS) if (!placed.has(r.key)) return r.key;
+  return null;  // all points placed
 }
 
 function setStatus(msg, cls) {
