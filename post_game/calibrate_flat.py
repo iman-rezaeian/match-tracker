@@ -37,44 +37,61 @@ PORT = 8766  # one higher than calibrate_local.py to avoid clashes
 
 
 def _refine_with_tilt(payload: dict) -> dict:
-    """Accuracy-audit B1: the browser fits a LEVEL-camera 2D similarity, leaving
-    real camera tilt smeared across the field (~1 m RMS, worst far from camera).
-    Re-solve camera pitch/roll from the clicked reference points and overwrite
-    the payload's similarity + tilt so the projector finally gets a non-zero
-    pitch/roll. Purely additive: on any failure or too-few points, the original
-    (level) payload is written unchanged — a save is never blocked.
+    """Re-solve the calibration from the clicked reference points, overwriting the
+    browser's LEVEL-camera 2D similarity. Two modes (purely additive — on any
+    failure / too-few points, the original level payload is written unchanged so
+    a save is never blocked):
+
+    * SCALED (preferred, accuracy-audit B1 + scale fix): when a map-measured
+      touchline length is present (payload['map_length_m']), fix the field LENGTH
+      to it and solve camera pitch/roll + field WIDTH. This anchors absolute scale
+      (nothing in-scene has a known size — goal width varies between U10 fields)
+      while recovering the field shape from the clicks. Writes solved width_m.
+    * TILT-ONLY (fallback): no map length → solve pitch/roll at the assumed dims.
     """
     try:
-        from .calibration_solve import solve_sphere_tilt
+        from .calibration_solve import solve_sphere_tilt, solve_sphere_scaled
         rp = payload.get("reference_points") or []
         eq_w = int(payload.get("video_frame_w") or 0)
         eq_h = int(payload.get("video_frame_h") or 0)
         cam_h = float(payload.get("camera_height_m") or 5.0)
+        goal_w = float(payload.get("goal_width_m") or 4.88)
+        map_len = payload.get("map_length_m")
         if len(rp) < 4 or not (eq_w and eq_h):
             return payload
-        sol = solve_sphere_tilt(rp, eq_w, eq_h, cam_h=cam_h)
+
+        if map_len:  # SCALED: length anchored to the map, solve width + tilt
+            sol = solve_sphere_scaled(rp, eq_w, eq_h, length_m=float(map_len),
+                                      cam_h=cam_h, goal_w=goal_w,
+                                      w0=float(payload.get("width_m") or 35.0))
+            solver_tag = "scaled_lsq"
+        else:        # FALLBACK: fixed dims, tilt only
+            sol = solve_sphere_tilt(rp, eq_w, eq_h, cam_h=cam_h)
+            solver_tag = "tilt_lsq"
         if not sol:
             return payload
+
         gs = dict(payload.get("ground_similarity") or {})
         level_rms = gs.get("rms_m")
-        # Only adopt the tilt fit if it is at least as good as the level fit
-        # (it should always be — level is the tilt=0 special case — but guard
-        # against a pathological reference set).
-        if level_rms is not None and sol["rms_m"] > float(level_rms) + 1e-6:
-            log.info("Tilt solve (%.3f m) worse than level (%.3f m) — keeping level.",
-                     sol["rms_m"], float(level_rms))
-            return payload
         gs.update(a=sol["a"], b=sol["b"], tx=sol["tx"], ty=sol["ty"],
                   rms_m=sol["rms_m"], rms_level_m=level_rms,
-                  residuals=sol["per_point"], solver="tilt_lsq")
+                  residuals=sol["per_point"], solver=solver_tag)
         payload["ground_similarity"] = gs
         payload["camera_pitch_deg"] = sol["pitch_deg"]
         payload["camera_roll_deg"] = sol["roll_deg"]
-        log.info("Tilt-refined calibration: rms %s -> %.3f m (pitch %+.2f deg, roll %+.2f deg)",
+        # In scaled mode the solve also gives the field dimensions — persist them
+        # so the pipeline/projector use the recovered geometry, not the defaults.
+        if "length_m" in sol:
+            payload["length_m"] = sol["length_m"]
+        if "width_m" in sol:
+            payload["width_m"] = sol["width_m"]
+        log.info("Calibration refined (%s): rms %s -> %.3f m (pitch %+.2f°, roll %+.2f°%s)",
+                 solver_tag,
                  f"{float(level_rms):.3f}" if level_rms is not None else "n/a",
-                 sol["rms_m"], sol["pitch_deg"], sol["roll_deg"])
+                 sol["rms_m"], sol["pitch_deg"], sol["roll_deg"],
+                 f", width {sol['width_m']:.1f}m @ length {sol['length_m']:.1f}m" if "width_m" in sol else "")
     except Exception as e:  # never block a save on the refinement
-        log.warning("Tilt refinement skipped: %s", e)
+        log.warning("Calibration refinement skipped: %s", e)
     return payload
 
 
@@ -582,11 +599,24 @@ def calibrate_flat(game_id: str, at_seconds: float = 60.0,
                    field_length_m: float = 50.0,
                    field_width_m: float = 35.0,
                    goal_width_m: float = 4.88,
-                   camera_height_m: float = 5.0) -> dict:
-    """Extract a single equirect frame, serve a pan/zoom click viewer, save to Firestore."""
+                   camera_height_m: float = 5.0,
+                   map_length_m: float | None = None,
+                   field_key: str | None = None) -> dict:
+    """Extract a single equirect frame, serve a pan/zoom click viewer, save to Firestore.
+
+    map_length_m: map-measured touchline length (the per-field scale anchor). When
+        set, the saved calibration is solved with the field LENGTH fixed to it and
+        the WIDTH recovered from the clicks (see _refine_with_tilt / solve_sphere_scaled),
+        and the field's scale is persisted under field_key for reuse.
+    field_key: short label for the field (dedupes the per-field scale store)."""
     game = firestore_io.get_game(game_id)
     if not game.video_url:
         raise RuntimeError(f"Game {game_id} has no videoUrl set.")
+
+    # A map-measured length IS the field length — the browser lays out corners at
+    # x=0..field_length_m, and the scaled solve fixes L to it.
+    if map_length_m:
+        field_length_m = float(map_length_m)
 
     tmp_dir = tempfile.mkdtemp(prefix="calib_flat_")
     frame_path = os.path.join(tmp_dir, "frame.jpg")
@@ -652,8 +682,21 @@ def calibrate_flat(game_id: str, at_seconds: float = 60.0,
             body = self.rfile.read(length)
             try:
                 payload = json.loads(body.decode("utf-8"))
+                # Inject the scale anchor server-side so _refine_with_tilt uses
+                # the scaled solve (fix length, solve width) instead of tilt-only.
+                if map_length_m:
+                    payload["map_length_m"] = float(map_length_m)
+                if field_key:
+                    payload["field_key"] = field_key
                 payload = _refine_with_tilt(payload)
                 firestore_io.write_game_calibration(game_id, payload)
+                # Persist per-field scale + link the game to its field, so the
+                # map length is entered once and reused for every game here.
+                if field_key:
+                    firestore_io.set_game_field(game_id, field_key)
+                    if map_length_m:
+                        firestore_io.save_field_scale(field_key, float(map_length_m),
+                                                      source="google-maps touchline")
                 saved["payload"] = payload
                 resp = json.dumps({"ok": True}).encode("utf-8")
                 self.send_response(200)

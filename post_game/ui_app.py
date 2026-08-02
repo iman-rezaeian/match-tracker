@@ -712,14 +712,67 @@ if _existing_cal:
 else:
     st.info("No calibration yet. Click below to mark the reference landmarks.")
 
+# --- Field scale anchor (accuracy) --------------------------------------
+# Absolute distance/speed need a real-world length, but nothing in the scene
+# has a known size (goal width varies between U10 fields). The coach measures
+# the touchline ONCE on a satellite map per field; it's stored and reused.
+try:
+    _field_scales = firestore_io.list_field_scales()
+except Exception:
+    _field_scales = []
+_field_opts = ["➕ New field…"] + [f"{f['field_key']}  ({f['length_m']:g} m)" for f in _field_scales]
+# Preselect the game's already-linked field if it has one.
+_linked = None
+try:
+    _gdoc = firestore_io._team_doc().collection("games").document(game_id).get().to_dict() or {}
+    _linked = _gdoc.get("fieldName")
+except Exception:
+    pass
+_default_idx = 0
+if _linked:
+    for i, f in enumerate(_field_scales):
+        if f["field_key"] == _linked:
+            _default_idx = i + 1
+            break
+
+st.markdown("**Field scale** — needed for accurate distance/speed")
+sc_cols = st.columns([2, 1])
+_pick = sc_cols[0].selectbox(
+    "Field", _field_opts, index=_default_idx,
+    help="Pick the field this game was played on (reuses its saved touchline length), or add a new one.",
+)
+if _pick == "➕ New field…":
+    _fkey = sc_cols[0].text_input("New field name", value=(_linked or ""),
+                                  placeholder="e.g. belle-river-home").strip()
+    _prefill_len = 0.0
+else:
+    _chosen = _field_scales[_field_opts.index(_pick) - 1]
+    _fkey = _chosen["field_key"]
+    _prefill_len = _chosen["length_m"]
+_map_len = sc_cols[1].number_input(
+    "Touchline length (m)", min_value=0.0, max_value=120.0, step=0.5,
+    value=float(_prefill_len),
+    help="Measure the LONG side (touchline) of the pitch on Google Maps satellite view (right-click → Measure distance). Reused for every game on this field.",
+)
+st.caption(
+    "📍 Google Maps → satellite → right-click a corner → **Measure distance** → click the far corner "
+    "along the touchline → read meters. Fixes absolute scale; the clicks recover the rest of the shape."
+)
+
 _cal_btn_label = "📐 Re-calibrate field" if _existing_cal else "📐 Calibrate field"
 # NOT gated on is_running: the calibrate server stays up until SAVE and closing
 # the tab doesn't stop it, so a re-click must relaunch (handled in
 # _start_subprocess, which stops a stale calibrate server first). Only blocked
 # when no video is attached.
 _cal_help = "Opens the calibration tab on :8766. It stays open until you SAVE — click again to reopen if you closed the tab."
+if not _map_len or not _fkey:
+    st.caption("⚠ Enter a field name + touchline length above for accurate distance/speed. "
+               "You can still calibrate without them, but distance/speed will be scale-approximate.")
 if st.button(_cal_btn_label, disabled=not current_video, help=_cal_help):
-    _start_subprocess("calibrate", game_id, ["calibrate", "--game-id", game_id])
+    _args = ["calibrate", "--game-id", game_id]
+    if _map_len and _fkey:
+        _args += ["--map-length", str(_map_len), "--field-key", _fkey]
+    _start_subprocess("calibrate", game_id, _args)
     st.rerun()
 
 # --- 3. run pipeline ----------------------------------------------------

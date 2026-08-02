@@ -252,6 +252,10 @@ def calibrate(
     goal_width: float = typer.Option(4.88, "--goal-width", help="Goal mouth width (m). 4.88 = 16ft U10."),
     cam_height: float = typer.Option(5.0, "--cam-height",
         help="Camera height above pitch (m). Used as initial guess for the sphere fit; refined automatically. The X5-on-16ft-pole mount is ~5.0 m and changes <0.5m game to game."),
+    map_length: float = typer.Option(None, "--map-length",
+        help="Map-measured touchline length (m) — the per-field SCALE anchor. When set, the fit fixes field length to it and recovers width from the clicks (absolute distance/speed become accurate)."),
+    field_key: str = typer.Option(None, "--field-key",
+        help="Short field label. The map length is stored under it and reused for every future game on this field."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Open the multi-point sphere-projection calibration tool in your browser.
@@ -276,6 +280,7 @@ def calibrate(
         game_id, at_seconds=at,
         field_length_m=length, field_width_m=width,
         goal_width_m=goal_width, camera_height_m=cam_height,
+        map_length_m=map_length, field_key=field_key,
     )
     gs = payload.get("ground_similarity", {}) if payload else {}
     console.print_json(json.dumps({
