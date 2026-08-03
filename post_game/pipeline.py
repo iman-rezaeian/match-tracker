@@ -48,6 +48,7 @@ def run(
     reuse_tv_reel: bool = False,
     stats_only: bool = False,
     pin_partition: tuple[dict[int, int], dict[int, int]] | None = None,
+    skip_calibration_qc: bool = False,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -77,6 +78,34 @@ def run(
             raise RuntimeError(
                 f"Game {game_id} still has no calibration after the browser tool exited."
             )
+
+    # 1a. Calibration-quality gate. A present-but-bad calibration silently
+    # corrupts every field-meter stat, so hard-block BEFORE the multi-hour
+    # tracking pass rather than discover it after. Stats-only refreshes reuse
+    # cached tracks (the coach is deliberately re-deriving) and are exempt; the
+    # --skip-calibration-qc override downgrades the block to a warning.
+    if not stats_only:
+        from .calibration_qc import evaluate_calibration
+        # The evaluator needs the RAW calibration dict (solver tag + rms live in
+        # ground_similarity), not the parsed FieldCalibration.
+        _snap = firestore_io._team_doc().collection("games").document(game_id).get()
+        _doc = _snap.to_dict() or {}
+        _cal_dict = _doc.get("calibration")
+        _field_key = (_cal_dict or {}).get("field_key") or _doc.get("fieldName")
+        _prior = firestore_io.get_field_scale(_field_key) if _field_key else None
+        _verdict = evaluate_calibration(_cal_dict, _prior)
+        if not _verdict.ok:
+            if skip_calibration_qc:
+                log.warning("Calibration QC FAILED but --skip-calibration-qc set; running anyway:\n%s",
+                            _verdict.summary())
+            else:
+                raise RuntimeError(
+                    "Calibration quality gate blocked this run. Re-calibrate the field "
+                    "(or pass --skip-calibration-qc to override).\n" + _verdict.summary()
+                )
+        else:
+            log.info("Calibration QC: %s", _verdict.summary().splitlines()[0])
+
     # Stats-only refresh runs entirely off the cached tracks checkpoint, so the
     # (possibly long-deleted) source video is never needed — synthesize the bits
     # of `meta` we still use (fps, duration) from the parquet and skip the open.

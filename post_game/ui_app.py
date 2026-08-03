@@ -674,27 +674,38 @@ except Exception as e:
     _existing_cal = None
     st.caption(f"(Could not read calibration: {e})")
 
+# Calibration-quality verdict — the SAME gate the pipeline enforces. Drives the
+# Run button below so the coach can't launch a multi-hour track on a bad
+# calibration. `_calib_ok` defaults True so a missing verdict never over-blocks.
+_calib_ok = True
+_calib_verdict = None
 if _existing_cal:
     fw, fh = _existing_cal.video_frame_size
     _saved_ts = None
-    _rms_w = None
+    _raw = {}
     try:
         from post_game.firestore_io import _team_doc as _td
-        _raw = (_td().collection("games").document(game_id).get().to_dict() or {}).get("calibration") or {}
+        _doc = (_td().collection("games").document(game_id).get().to_dict() or {})
+        _raw = _doc.get("calibration") or {}
         _ts_ms = _raw.get("created_at") or _raw.get("refined_at")
         if isinstance(_ts_ms, (int, float)) and _ts_ms > 0:
             from datetime import datetime
             _saved_ts = datetime.fromtimestamp(_ts_ms / 1000).strftime("%Y-%m-%d %H:%M")
-        _gs = _raw.get("ground_similarity") or {}
-        _rms_w = _gs.get("rms_weighted_m")
     except Exception:
-        pass
+        _doc = {}
+    # Evaluate quality (RMS + width + cross-field consistency).
+    try:
+        from post_game.calibration_qc import evaluate_calibration
+        _fk = _raw.get("field_key") or _doc.get("fieldName")
+        _prior = firestore_io.get_field_scale(_fk) if _fk else None
+        _calib_verdict = evaluate_calibration(_raw, _prior)
+        _calib_ok = _calib_verdict.ok
+    except Exception:
+        _calib_ok, _calib_verdict = True, None
     _when = f" · saved {_saved_ts}" if _saved_ts else ""
     _sph = _existing_cal.sphere
     if _sph:
         _rms_str = f"RMS {_sph['rms_m']:.2f} m"
-        if isinstance(_rms_w, (int, float)) and _rms_w > 0:
-            _rms_str += f" (weighted {float(_rms_w):.2f} m)"
         st.success(
             f"✓ Sphere calibration — cam_h={_sph['cam_h_m']:.2f} m, "
             f"pitch={_sph['pitch_deg']:+.2f}°, roll={_sph['roll_deg']:+.2f}°, "
@@ -709,7 +720,14 @@ if _existing_cal:
             f" ({_existing_cal.length_m:g}×{_existing_cal.width_m:g} m field){_when}."
             " Re-calibrate to get the more accurate sphere model."
         )
+    # Surface the QC block reasons so the coach knows exactly what to fix.
+    if _calib_verdict is not None and not _calib_ok:
+        st.error(
+            "🚫 This calibration will NOT pass the quality gate — Run Analysis is "
+            "disabled until you re-calibrate:\n\n- " + "\n- ".join(_calib_verdict.reasons)
+        )
 else:
+    _calib_ok = False  # no calibration -> can't run
     st.info("No calibration yet. Click below to mark the reference landmarks.")
 
 # --- Field scale anchor (accuracy) --------------------------------------
@@ -846,7 +864,11 @@ if not current_video:
 if not game["has_calibration"]:
     st.warning("Game has no calibration — calibrate first (step 2) or the pipeline will fail.")
 
-if st.button("▶︎ Run analytics", type="primary", disabled=not current_video or is_running):
+# Hard-block: don't let the coach launch a multi-hour track on a calibration
+# that fails the quality gate. `_calib_ok` is the SAME verdict the pipeline
+# enforces (defense in depth); its block reasons are already shown above.
+if st.button("▶︎ Run analytics", type="primary",
+             disabled=not current_video or is_running or not _calib_ok):
     args = ["run", "--game-id", game_id]
     if tv_view:
         args.append("--tv-view")
