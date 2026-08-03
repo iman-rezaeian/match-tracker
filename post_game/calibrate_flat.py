@@ -692,11 +692,20 @@ def calibrate_flat(game_id: str, at_seconds: float = 60.0,
                 firestore_io.write_game_calibration(game_id, payload)
                 # Persist per-field scale + link the game to its field, so the
                 # map length is entered once and reused for every game here.
+                # Also persist the SOLVED width so the QC gate can check that the
+                # same field solves to a consistent width run-to-run. Only set a
+                # source note when the field has none yet — never clobber a
+                # specific note the coach set (e.g. "goal-to-goal (coach)").
                 if field_key:
                     firestore_io.set_game_field(game_id, field_key)
                     if map_length_m:
-                        firestore_io.save_field_scale(field_key, float(map_length_m),
-                                                      source="google-maps touchline")
+                        solved_w = payload.get("width_m")
+                        existing = firestore_io.get_field_scale(field_key)
+                        src = "" if (existing and existing.get("source")) else "google-maps"
+                        firestore_io.save_field_scale(
+                            field_key, float(map_length_m), source=src,
+                            width_m=float(solved_w) if solved_w is not None else None,
+                        )
                 saved["payload"] = payload
                 resp = json.dumps({"ok": True}).encode("utf-8")
                 self.send_response(200)
