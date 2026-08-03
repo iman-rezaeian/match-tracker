@@ -22,13 +22,17 @@ to work through this. Context for each item is in the linked files / memory.
   long balls and under-frames corners/sidelines. Generic COCO ball detection was
   18.7% at 5.7K (shelved). The reel code is ALREADY wired to swap **ball position**
   in as the primary aim once detection clears the 40% gate (`post_game/tv_view.py`).
-- **WASB-in-crop already tested at 5.7K → FAILED (0.4%), resolution-gated.** Tooling
-  is built and ready: `tracking/wasb_probe/probe.py` (WASB soccer HRNet, runs on
-  MPS). Key gotcha baked into the tool: WASB resizes inputs to 512×288, so use a
-  TIGHT `--fov 18` ball-cam (~28 px/deg), NOT the 70° broadcast crop (7 px/deg →
-  fires on background = fake hits). At 5.7K the ball is ~6px on the sphere and
-  upscaling adds no texture, so even the tight crop is blurry mush. **8K is the
-  unblock** (1.3–1.8× more px on the ball). **Action: re-run
+- **WASB-in-crop already tested at 5.7K → FAILED (0.4%), resolution-gated.** The
+  probe (`tracking/wasb_probe/`, WASB soccer HRNet on MPS) has been **removed** from
+  the tree — it reached backwards into five `post_game` production modules and the
+  ball workstream is shelved. Recover it if the 8K re-test is on:
+  `git log --diff-filter=D -- tracking/wasb_probe/probe.py` then
+  `git checkout <sha>^ -- tracking/wasb_probe/`. Key gotcha baked into the tool:
+  WASB resizes inputs to 512×288, so use a TIGHT `--fov 18` ball-cam (~28 px/deg),
+  NOT the 70° broadcast crop (7 px/deg → fires on background = fake hits). At 5.7K
+  the ball is ~6px on the sphere and upscaling adds no texture, so even the tight
+  crop is blurry mush. **8K is the unblock** (1.3–1.8× more px on the ball).
+  **Action: recover the probe (above), then re-run
   `python -m tracking.wasb_probe.probe --game-id <8k> --fov 18 --save-crops /tmp/h`.
   If it clears ~40%, build the two-crop design: tight ball-cam for tracking +
   wide view for broadcast.** Full writeup: `[[phase0-ball-tracking]]` memory.
