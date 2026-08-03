@@ -4,6 +4,42 @@ Full-stack audit (13-agent fan-out: 6 specialist lenses → adversarial verifica
 all grounded in the real code + re-measured parquets). Companion to `METRIC_ACCURACY_ROADMAP.md`
 and `METRICS_RELEVANCE_PLAN.md`. **This audit overturns the roadmap's own diagnosis.**
 
+---
+
+## ⚠ CORRECTIONS (2026-08-03, per-player coverage re-diagnosis, 11-agent verified fan-out)
+
+A focused re-diagnosis of the *coverage* question ("why is a player tracked only a fraction of
+their on-field time?") on the live GT + W7 analytics docs **confirmed this audit's central thesis**
+(upstream fragmentation is the ceiling; B2 field-space tracking is the fix) but corrected three
+specific numbers/claims. Trust these over the body below where they conflict:
+
+- **The coverage loss is ~65%, not ~97%.** Any "only ~11–14% of fragments named / 89% null" figure
+  is measured on the **pre-stitch per-track** count, which folds in force-nulled opponent/ref tracks
+  (`identity_assign.py:772-775`). At the **stitched-tracklet** level that actually feeds per-player
+  stats, the named rate is **~35% (auto)** to **~51% (coach-corrected)**, and named **tracked-MINUTES
+  are ~28–35%**. Honest phrasing for the coach: *"about a third of your tracked time gets your name;
+  ~65% is coverage loss."*
+- **The goalkeeper is NOT missing.** Garland IS in `player_stats` in all three games via the normal
+  `identity_by_track` path. `gk_player_id` reaches `stats.py:95-102` but is used **only** for pitch
+  orientation. Real GK issues: (a) **no code path emits `status="gk"`** — keepers are laundered as
+  `"auto"`/`"coach"` (`identity_assign.py:716`), so GK minutes are uncountable; (b) the automatic
+  keeper detector finds only **~55 s** of a full-game keeper (W7); the two GT keepers only have good
+  stats because they were **hand-fixed with FIX-IDS**; (c) `gk_positioning.py` (save-angle analysis)
+  is **dead code** — called nowhere, and `cli.py:57` reads a never-written `gk_positions` key (always 0).
+- **"Far-HALF" is wrong — the camera is on the SIDELINE, so both goals are equidistant.** There is
+  no far half. The genuine geometric limit is the far **touchline** (width axis compressed for
+  *everyone* — a field-wide effect, not a per-player driver). No geometry axis was a consistent
+  significant coverage driver across games; where per-player coverage varies, it tracks
+  assignment/minute-budget, not position. (Amend the "far-half per-player is rig-capped" language
+  throughout — read it as "far-touchline width compression, field-wide.")
+
+Two small **new** stat bugs surfaced (both cheap, independent of B2): the teleport-step `dt` still
+counts in `tracked_s` + `avg_speed_ms` (`stats.py:194,214`), deflating work-rate up to ~37% for
+high-`implausible_step_frac` players; and `distance_est_m` has only an absolute `tracked_min≥3.0`
+guard (`stats.py:200`), no coverage-**fraction** gate — a 19%-coverage sliver (Zaidan: 528 m real →
+2,794 m est, 5.3×) is presented as fact. Ranked fix list: field-space tracking (B2) recovers the
+~65% loss; the two stat fixes de-lie the numbers that survive.
+
 ## Verdict: the "identity assignment is the bottleneck" diagnosis is a SYMPTOM, not the cause
 
 The real accuracy ceiling is **upstream** of identity, stacked in three layers, none of which the
