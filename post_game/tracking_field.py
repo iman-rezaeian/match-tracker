@@ -17,10 +17,11 @@ pixel velocity and IoU overlap is distance-based, so boxmot's mature association
 runs in the RIGHT geometry with no library fork. The TRUE equirect bbox is carried
 through untouched for all downstream stages (foot position, stats, projection).
 
-Appearance/Re-ID de-corruption (Fix 1) is a separate lever tracked in the design
-doc; this module focuses on the motion-space fix. It reuses the same boxmot
-embedder for now (unchanged from prod), so any Re-ID gain here is purely from
-better association continuity, not better crops.
+Appearance/Re-ID (design-doc Fix 1) is de-corrupted here too: boxmot's own ReID
+model computes OSNet features from the REAL equirect crops (the true bbox_eq on
+the real frame) and we inject them as precomputed `embs`, so association gets
+both a metric-correct motion gate AND clean appearance — not the warped-equirect
+crops prod pulls. Both levers are active.
 """
 from __future__ import annotations
 
@@ -40,7 +41,15 @@ from .tracking import TrackedDetection
 # association is effectively a metric distance gate.
 SURROGATE_PX_PER_M = 20.0        # 1 m -> 20 px in the surrogate frame
 SURROGATE_MARGIN_M = 20.0        # off-field buffer (meters) folded into the origin
-SURROGATE_BOX_M = 1.0            # constant surrogate box side (meters) → 20 px box
+# Constant surrogate box side (meters). This is the key association tuning knob.
+# It must be LARGE ENOUGH that a player's per-frame field displacement still
+# overlaps their previous box, or BoT-SORT's IoU gate (match_thresh=0.8, i.e.
+# needs IoU>=0.2) drops the match and the track fragments — the exact failure
+# a 1 m box produced (a player moving 0.9 m/frame at the 9 m/s cap has ZERO
+# overlap between 1 m boxes). At 4 m the gate clears displacements up to ~2.4
+# m/frame (well past any real U10 step at 10 fps) while staying small enough
+# that genuinely separate players (U10 spacing > 4 m) don't spuriously merge.
+SURROGATE_BOX_M = 4.0            # 80 px box; tuned so IoU association survives real motion
 
 
 def _field_to_surrogate_xy(x_m: np.ndarray, y_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -52,7 +61,13 @@ def _field_to_surrogate_xy(x_m: np.ndarray, y_m: np.ndarray) -> tuple[np.ndarray
 class FieldSpaceTracker:
     """Drop-in alternative to tracking.Tracker that associates in field-metric
     surrogate space. Same update() signature + TrackedDetection output, so the
-    pipeline can swap it in behind a flag."""
+    pipeline can swap it in behind a flag.
+
+    Behavior delta vs prod: a detection whose foot ray projects above the horizon
+    (NaN field position) has no place in field space and is DROPPED (prod tracks
+    it). These are almost always off-field / horizon artifacts that the pipeline's
+    off-field filter + top-N-per-frame cap would discard anyway; the count is
+    exposed as `self.n_dropped_nan` and flagged for the deferred GT A/B."""
 
     def __init__(
         self,
@@ -64,6 +79,7 @@ class FieldSpaceTracker:
     ) -> None:
         from boxmot import BotSort
         self.projector = projector
+        self.n_dropped_nan = 0  # cumulative above-horizon dets dropped (coverage audit)
         weights_path = config.MODELS_DIR / reid_weights
         self.impl = BotSort(
             reid_weights=Path(weights_path),
@@ -79,8 +95,10 @@ class FieldSpaceTracker:
             frame_rate=frame_rate,
         )
         # Surrogate canvas dimensions (field + 2x margin), for the frame we hand
-        # boxmot. A mid-grey canvas is fine — appearance still comes from the
-        # real crops the embedder is given via the detection ROIs on this frame.
+        # boxmot's association step. A mid-grey canvas is fine: appearance does
+        # NOT come from it — we inject precomputed embeddings (see update()), so
+        # boxmot never crops from this canvas. It also makes CMC a no-op identity
+        # warp, which is correct — the surrogate "camera" is static.
         L = float(getattr(projector.cal, "length_m", 50.0))
         W = float(getattr(projector.cal, "width_m", 35.0))
         self._canvas_w = int((L + 2 * SURROGATE_MARGIN_M) * SURROGATE_PX_PER_M)
@@ -113,6 +131,7 @@ class FieldSpaceTracker:
         for d in detections:
             sb = self._surrogate_bbox(d)
             if sb is None:
+                self.n_dropped_nan += 1  # above-horizon: no field position to track
                 continue
             rows.append([sb[0], sb[1], sb[2], sb[3], d.confidence, d.cls])
             kept.append(d)
@@ -120,7 +139,22 @@ class FieldSpaceTracker:
             self.impl.update(np.empty((0, 6)), canvas)
             return []
         arr = np.array(rows, dtype=np.float64)
-        tracks = self.impl.update(arr, canvas)
+        # Appearance from the REAL equirect crops, not the grey canvas. boxmot's
+        # own ReID model crops the true bbox_eq out of the real `frame` and
+        # L2-normalizes (base_backend.get_features); we pass the result as
+        # precomputed `embs` so botsort.update skips cropping from `canvas`
+        # entirely (botsort.py: `if with_reid and embs is None: get_features(...)`
+        # else use embs). `embs` MUST be row-for-row aligned with `arr` — both are
+        # built from `kept` in the same order. Best-effort (mirrors tracking.py):
+        # on any failure fall back to motion+IoU-only rather than crash.
+        embs: Optional[np.ndarray] = None
+        if getattr(self.impl, "with_reid", False):
+            try:
+                emb_boxes = np.array([k.bbox_eq for k in kept], dtype=np.float64)[:, :4]
+                embs = self.impl.model.get_features(emb_boxes, frame)
+            except Exception:
+                embs = None
+        tracks = self.impl.update(arr, canvas, embs=embs)
 
         feat_by_id: dict[int, np.ndarray] = {}
         try:
