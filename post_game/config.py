@@ -303,6 +303,15 @@ SPEED_SMOOTH_WINDOW = 5                          # samples (≈0.5s at SAMPLE_RA
 # per-step displacement so absurd top speeds (6000+ km/h) and teleport-inflated
 # distances can't occur.
 MAX_PLAUSIBLE_SPEED_MS = 9.0                      # ~32 km/h
+# Cap on the distance_est_m extrapolation multiplier (coach_min / tracked_min).
+# The rate-based estimate scales the tracked slice up to full coach-logged
+# minutes; at low coverage that multiplier explodes (a 19%-coverage player would
+# be blown up ×5.3) and — because low-coverage tracks are activity-biased (the
+# tracker keeps a player while they're moving) — the extrapolation is inflated,
+# not just noisy. Cap it so a thin sliver yields a conservative estimate instead
+# of a fabricated headline. Binds only below ~50% coverage; above that it never
+# fires. 2.0 = "never claim more than double the tracked distance".
+DIST_EST_MAX_MULT = 2.0
 
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)
