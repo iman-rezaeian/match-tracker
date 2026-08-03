@@ -159,7 +159,19 @@ def run(
 
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
 
-    def _new_tracker() -> Tracker:
+    def _new_tracker():
+        # B2 (flag-gated, default OFF): associate in field-metric surrogate space
+        # instead of the distorted equirect frame. Same update() signature, so the
+        # call sites below are unchanged. `projector` (built at :86) is captured
+        # from the enclosing scope. Lazy import keeps the prod import graph and
+        # cold-start untouched when the flag is OFF.
+        if config.TRACK_FIELD_SPACE:
+            from .tracking_field import FieldSpaceTracker
+            return FieldSpaceTracker(
+                projector,
+                frame_rate=max(1, int(round(fps_sampled))),
+                track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
+            )
         return Tracker(
             frame_rate=max(1, int(round(fps_sampled))),
             track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
