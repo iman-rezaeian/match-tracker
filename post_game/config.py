@@ -118,6 +118,18 @@ TRACK_BUFFER_S = 20                              # how long a lost track is kept
 # per-player GT recall does not regress.
 TRACK_FIELD_SPACE = False
 
+# --- Calibration quality gate --------------------------------------------
+# "Run Analysis" hard-blocks on a calibration that fails these, so the coach
+# never spends hours tracking a bad calibration and never needs a developer to
+# eyeball it. Thresholds set from the real stored calibrations: good scaled_lsq
+# fits are 0.27-0.65 m RMS; the un-anchored legacy fits are 0.94-1.47 m. See
+# post_game/calibration_qc.py (the only consumer) + CALIBRATION_SCALE_PLAN.md.
+CALIB_MAX_RMS_M = 1.0            # scaled_lsq fit RMS above this = re-calibrate
+CALIB_WIDTH_MIN = 20.0          # plausible field width band (also the solver's bounds)
+CALIB_WIDTH_MAX = 50.0
+CALIB_WIDTH_CONSISTENCY_TOL_M = 2.5   # same field's width must agree run-to-run within this
+                                      # (two real scaled fits of adjacent fields agreed to 0.8 m)
+
 # --- Identity ------------------------------------------------------------
 
 # Fusion weights (sum to 1.0). Coach log dominates; gait/cleat dropped vs old plan.
