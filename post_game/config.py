@@ -168,11 +168,15 @@ PITCH_COLOR_COMMIT_CLIP = int(os.environ.get("PITCH_COLOR_COMMIT_CLIP", "8"))
 PITCH_COLOR_MAX_TSU = int(os.environ.get("PITCH_COLOR_MAX_TSU", "3"))
 #
 # (2) Motion clamps.
-# (a) Cap the per-frame gate's unbounded growth with time_since_update. Fresh
-#     gate is MAX_PLAUSIBLE_SPEED_MS*dt + slack (~3.9 m); the old code let it
-#     grow to ~22 m at tsu=20 (2 s lost) -> a cross-pitch grab. The cap only
-#     bites large-tsu tracks, so it CANNOT re-fragment an in-view track; it only
-#     removes stale-reacquire swaps.
+# (a) Cap the per-frame gate's unbounded growth with time_since_update. At the
+#     shipped rate (fps/SAMPLE_RATE = 30/3 = 10 fps -> dt=0.1 s, verified on W8)
+#     the fresh gate is MAX_PLAUSIBLE_SPEED_MS*dt + slack = 3.9 m and the cap
+#     first bites at tsu=2 (4.8 m stays under 6.0); the old code let it grow to
+#     ~22 m at tsu=20 (2 s lost) -> a cross-pitch grab. So the cap only bites
+#     multi-frame-stale tracks and CANNOT re-fragment an in-view one. NOTE: this
+#     6.0 m assumes dt~=0.1 s; a materially larger dt (lower fps or higher
+#     SAMPLE_RATE) shrinks the headroom above the fresh gate, so revisit the cap
+#     if the sampled frame rate changes.
 PITCH_GATE_CAP_M = float(os.environ.get("PITCH_GATE_CAP_M", "6.0"))
 # (b) Per-frame slack. Default UNCHANGED at 3.0 (== STITCH_SLACK_M) so the color
 #     gate carries swap reduction without risking re-fragmentation. Cut toward

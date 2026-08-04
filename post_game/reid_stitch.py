@@ -87,11 +87,16 @@ def _kit_sign_from_samples(samples: list, our_h: float, opp_h: float,
                            min_s: float, margin: float) -> int:
     """+1 (our kit) / -1 (opp kit) / 0 (unknown) for a whole fragment.
 
-    Votes each detection's mean-HSV green-vs-blue (nearest kit-hue anchor on the
-    hue circle, chromatic pixels only, neutral margin), then returns the SIGN of
-    the net vote only if it is decisive (>60% one way and >=3 votes). Mirrors
-    tracking_pitch._det_kit_color so the stitch's CANNOT-LINK-on-color guard uses
-    the same green-recovering logic (no grass-drop) as the tracker's gate."""
+    Votes each detection's median-hue green-vs-blue (nearest kit-hue anchor on
+    the hue circle, chromatic pixels only, neutral margin — same anchor/margin
+    decision as tracking_pitch._det_kit_color), then returns the net-vote SIGN
+    only if decisive (>=60% one way, >=3 votes). NOTE: these `samples` come from
+    team_classifier.sample_jersey_hsv, which DOES grass-drop H35-85 (with a
+    full-ROI fallback that usually recovers a pure-green torso), so this is not a
+    byte-identical mirror of the tracker's raw-ROI reader — it's the same
+    decision on the already-sampled pixels. Good enough for a CANNOT-LINK veto:
+    it only fires on CONFIDENTLY-opposite kits, and green that survives the
+    fallback still votes green."""
     g = b = 0
     for s in samples or []:
         a = np.asarray(s, dtype=np.float32)
@@ -218,17 +223,22 @@ def stitch_tracklets(
     used_succ: set[int] = set()  # a fragment already chained as someone's successor
     hsv_cache: dict[int, Optional[np.ndarray]] = {}
 
-    # Team-color CANNOT-LINK guard. When the tracker's color gate is active
-    # (PITCH_COLOR_GATE) the tracker produces color-clean but MORE-numerous
-    # fragments; a team-blind stitch would re-merge a green fragment onto a blue
-    # one across a gap and re-introduce the very cross-team mixing the gate
-    # removed (empirically: post-stitch mixed-seconds rose 7%->11% without this,
-    # 6% with it). So refuse a link between two fragments whose jersey votes are
-    # confidently OPPOSITE kits. Unknown on either side never blocks (fail-safe
-    # to geometry). Engages only when the color gate is on AND both kit hexes
-    # were passed (real per-game anchors, not a guess) AND jersey samples exist,
-    # so the equirect/prod stitch is byte-unchanged.
-    _kit_guard = (bool(config.PITCH_COLOR_GATE) and bool(track_jersey_samples)
+    # Team-color CANNOT-LINK guard. The PitchTracker's color gate produces
+    # color-clean but MORE-numerous fragments; a team-blind stitch would re-merge
+    # a green fragment onto a blue one across a gap and re-introduce the very
+    # cross-team mixing the gate removed (empirically: post-stitch mixed-seconds
+    # rose 7%->11% without this, 6% with it). So refuse a link between two
+    # fragments whose jersey votes are confidently OPPOSITE kits. Unknown on
+    # either side never blocks (fail-safe to geometry).
+    #
+    # Gated on TRACK_PITCH (NOT just PITCH_COLOR_GATE): this guard is a companion
+    # to the pitch tracker, and prod runs the equirect BoT-SORT (TRACK_PITCH off).
+    # Keying only on PITCH_COLOR_GATE would let the guard alter the equirect/prod
+    # stitch (the pipeline passes real kit hexes on every game), breaking the
+    # "prod byte-unchanged" contract. With TRACK_PITCH off the whole conjunction
+    # is False → the equirect stitch is byte-identical to before this change.
+    _kit_guard = (bool(config.TRACK_PITCH) and bool(config.PITCH_COLOR_GATE)
+                  and bool(track_jersey_samples)
                   and our_color_hex is not None and opp_color_hex is not None)
     _our_h = _hue_from_hex(our_color_hex) if our_color_hex else 71.0
     _opp_h = _hue_from_hex(opp_color_hex) if opp_color_hex else 111.0
