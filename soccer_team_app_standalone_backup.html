@@ -9465,6 +9465,13 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   // suggested player, flowing into the same overrides→save path as a manual pick.
   const draftByTl = Object.fromEntries(
     ((game.identityDrafts) || []).map(d => [String(d.trackletId), d]));
+  // Camera on-field-window corrections (analytics.sub_corrections, written by
+  // the pipeline from accepted tracklets). Keyed by player id → shown on that
+  // player's tracklet rows as "on-field logged→camera" so the coach sees the
+  // late-SUB-tap fix. `c` clock = {period, elapsed(s)}.
+  const subCorrById = Object.fromEntries(
+    ((doc && doc.sub_corrections) || []).map(c => [String(c.playerId), c]));
+  const _clkStr = (c) => c ? `${c.period === 2 ? 'H2 ' : ''}${fmt(c.elapsed)}` : null;
   // Only offer players who actually dressed for THIS game (squad), not the whole
   // team roster. Fall back to the starting lineup, then the full roster.
   const squadIds = new Set((game.squad && game.squad.length ? game.squad : (game.startingLineup || [])));
@@ -9652,6 +9659,21 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                 <div className="text-[11px] text-stone-500 mt-0.5">
                   {Math.round(tl.minutes || 0)} min · {fmt(tl.t_start_s)}–{fmt(tl.t_end_s)} <span className="text-stone-700">· #{tl.tracklet_id}</span>
                 </div>
+                {/* Camera on-field-window correction for this player (from the
+                    accepted tracklets) — shows the late-SUB-tap fix so the coach
+                    trusts the adjusted minutes. Only when an edge actually moved. */}
+                {(() => {
+                  const c = subCorrById[String(tl.player_id)];
+                  if (!c || (!c.onCorrected && !c.offCorrected)) return null;
+                  const arrow = (from, to) => `${_clkStr(from) || '?'}→${_clkStr(to)}`;
+                  const on = c.onCorrected && `on ${arrow(c.onLogged, c.onCorrected)}`;
+                  const off = c.offCorrected && `off ${arrow(c.offLogged, c.offCorrected)}`;
+                  return (
+                    <div className="text-[11px] text-violet-300/80 mt-0.5">
+                      🎥 on-field {[on, off].filter(Boolean).join(' · ')} <span className="text-violet-400/60">(camera-corrected)</span>
+                    </div>
+                  );
+                })()}
                 <select
                   value={selFor(tl)}
                   onChange={(e) => setSel(tl, e.target.value)}
@@ -14229,6 +14251,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
