@@ -49,6 +49,7 @@ def run(
     stats_only: bool = False,
     pin_partition: tuple[dict[int, int], dict[int, int]] | None = None,
     skip_calibration_qc: bool = False,
+    vlm_identity: bool | None = None,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -889,6 +890,32 @@ def run(
     # corrections come back as `identityOverrides` on the game doc.
     tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
                                              field_cal.length_m, field_cal.width_m)
+
+    # 7c-bis. VLM jersey-number identity DRAFTS (opt-in). Runs HERE, inside the
+    # run, so drafts key by THIS run's tracklet ids — the exact ids the analytics
+    # doc + PWA FIX-IDS use (a standalone tool can't reproduce them). Reads the
+    # number off number-optimized crops, writes suggestions to game.identityDrafts;
+    # never auto-applies. Off by default (needs the video + an Opus OAuth token).
+    _vlm_on = config.VLM_IDENTITY if vlm_identity is None else vlm_identity
+    if _vlm_on and tracklet_records and not stats_only:
+        try:
+            from tracking.vlm_identity import generate_drafts
+            _cur = {int(r["tracklet_id"]): (r.get("player_id"), float(r.get("minutes") or 0.0))
+                    for r in tracklet_records}
+            _drafts = generate_drafts(
+                tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
+                team_of_track=team_of_track, roster=roster, game=game,
+                video_path=str(video_path), field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m, current_of_tl=_cur,
+                model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
+                max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
+                dt=(1.0 / fps_sampled if fps_sampled else 0.1),
+                log_fn=lambda m: log.info("%s", m))
+            firestore_io.write_identity_drafts(game_id, _drafts)
+            log.info("  -> VLM identity: wrote %d draft(s) to game.identityDrafts", len(_drafts))
+        except Exception as e:
+            log.warning("VLM identity drafts failed (non-fatal): %s", e)
+
     if tracklet_records:
         try:
             thumbs = generate_tracklet_thumbnails(

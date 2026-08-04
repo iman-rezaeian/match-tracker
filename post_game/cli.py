@@ -28,6 +28,7 @@ def run(
     reuse_tv_reel: bool = typer.Option(False, "--reuse-tv-reel", help="Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of re-rendering it (the multi-hour part). Implies --tv-view. Use to recover a run that died after the reel rendered but before uploads/analytics. Auto-highlights still render fresh."),
     stats_only: bool = typer.Option(False, "--stats-only", help="Re-apply FIX-IDS overrides and recompute ONLY the identity-dependent analytics (player_stats, formation, field_tilt, tracklets, identity_assignments), then MERGE them into the existing doc. Leaves the reel, audio, broadcast index, and all public fields untouched — no re-render, no re-upload. Fast (~1-2 min/game)."),
     skip_calibration_qc: bool = typer.Option(False, "--skip-calibration-qc", help="OVERRIDE: run even if the calibration-quality gate would block (poor RMS, implausible/inconsistent width). Downgrades the hard block to a warning. Use only for a legitimately-odd field you've verified by hand."),
+    vlm_identity: bool = typer.Option(False, "--vlm-identity", help="Read each tracklet's jersey number with a VLM and write per-tracklet identity SUGGESTION drafts to game.identityDrafts (the PWA FIX-IDS Accept chips). Keyed by THIS run's tracklet ids so they match the analytics doc. Needs the raw video + an Opus-capable ANTHROPIC_OAUTH_TOKEN (ant auth). Suggestions only — never auto-applied."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -51,6 +52,7 @@ def run(
         reuse_tv_reel=reuse_tv_reel,
         stats_only=stats_only,
         skip_calibration_qc=skip_calibration_qc,
+        vlm_identity=vlm_identity,
     )
     console.print_json(json.dumps({
         "game_id": game_id,

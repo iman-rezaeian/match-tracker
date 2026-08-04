@@ -129,6 +129,18 @@ TRACK_FIELD_SPACE = os.environ.get("TRACK_FIELD_SPACE", "0") != "0"
 # default until a re-track beats the equirect baseline on fragments AND coverage.
 TRACK_PITCH = os.environ.get("TRACK_PITCH", "0") != "0"
 
+# --- VLM jersey-number identity drafts (tracking/vlm_identity.py) -------------
+# When on, the pipeline reads each our-team tracklet's jersey number with a VLM
+# after building the tracklet index, and writes per-tracklet SUGGESTION drafts to
+# game.identityDrafts (the PWA FIX-IDS view surfaces them as one-click Accept
+# chips → identityOverrides). Keyed by the run's OWN tracklet ids so they match
+# the analytics doc the coach sees. Default OFF (needs the raw video + an
+# Opus-capable ANTHROPIC_OAUTH_TOKEN, and costs VLM calls); env/CLI-overridable.
+VLM_IDENTITY = os.environ.get("VLM_IDENTITY", "0") != "0"
+VLM_IDENTITY_MODEL = os.environ.get("VLM_IDENTITY_MODEL", "claude-opus-4-8")
+VLM_IDENTITY_MIN_CONF = float(os.environ.get("VLM_IDENTITY_MIN_CONF", "0.5"))
+VLM_IDENTITY_MAX_TRACKLETS = int(os.environ.get("VLM_IDENTITY_MAX_TRACKLETS", "120"))
+
 # --- PitchTracker association gates (TRACK_PITCH only; env-overridable) -------
 # The meter-space tracker's fragment win (775->90) came partly from GLUING
 # different players into one track: 46% of its colored track-seconds were in

@@ -160,6 +160,78 @@ def read_tracklet_number(video: str, sub, tmp: Path, tracklet_id: int,
     return num, conf, votes, reasoning
 
 
+def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
+                    team_of_track: dict[int, int], roster, game, video_path: str,
+                    field_length_m: float, field_width_m: float,
+                    current_of_tl: Optional[dict[int, tuple]] = None,
+                    model: str = "claude-opus-4-8", min_conf: float = 0.5,
+                    crops: int = 3, batches: int = 1, min_tracklet_min: float = 1.0,
+                    max_tracklets: int = 120, min_onfield_frac: float = 0.6,
+                    dt: float = 0.1, log_fn: Callable[[str], None] = print) -> list[dict]:
+    """Read jersey numbers off our stitched tracklets and return identityDrafts.
+
+    THE KEYING CONTRACT: `tracklet_of_track` MUST be the SAME map that produced
+    the analytics `tracklets[]` the coach sees (the union-find roots are the
+    tracklet_ids the PWA renders). Pass the pipeline's in-scope map — drafts
+    reconstructed from a separate standalone stitch key by IDs that won't match
+    the published doc (0 overlap), so the PWA can't attach them.
+
+    tracks_df needs x_m/y_m (field coords) + x1_eq..y2_eq (crop bboxes) + time_s.
+    current_of_tl maps tracklet_id -> (current_player_id, minutes) for before/after.
+    Renders number-optimized crops from the video, votes across `batches` reads,
+    gates at `min_conf`, maps number->player (dup-number safe), squad-restricted."""
+    import tempfile
+
+    _, player_of_num, dup_numbers = build_number_map(roster)
+    roster_numbers = sorted(player_of_num) + sorted(dup_numbers)
+    valid_ids = set(game.squad) if getattr(game, "squad", None) else None
+    name_of = {r.id: f"#{getattr(r,'jersey_number','?')} {r.name}" for r in roster}
+    current_of_tl = current_of_tl or {}
+    if dup_numbers:
+        log_fn(f"  ⚠ duplicate jersey numbers (won't draft): {sorted(dup_numbers)}")
+
+    have_video = bool(video_path) and Path(video_path).exists()
+    if not have_video:
+        log_fn(f"  ⚠ raw video not on disk ({video_path!r}) — no VLM drafts.")
+        return []
+    tmp = Path(tempfile.mkdtemp(prefix="vlmid_"))
+
+    df = tracks_df.copy()
+    df["tracklet"] = df["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t)))
+    our = {int(t) for t, tm in team_of_track.items() if tm == 0}
+    our_tl = df[df["track_id"].isin(our)]
+    if our_tl.empty:
+        return []
+
+    L, W = field_length_m, field_width_m
+    on = ((our_tl["x_m"] >= -1.5) & (our_tl["x_m"] <= L + 1.5)
+          & (our_tl["y_m"] >= -1.5) & (our_tl["y_m"] <= W + 1.5))
+    onfield_frac = our_tl.assign(_on=on).groupby("tracklet")["_on"].mean()
+    tl_minutes = (our_tl.groupby("tracklet").size() * dt / 60.0).sort_values(ascending=False)
+    eligible = [int(tl) for tl, mins in tl_minutes.items()
+                if mins >= min_tracklet_min and float(onfield_frac.get(tl, 0.0)) >= min_onfield_frac]
+    if max_tracklets > 0:
+        eligible = eligible[:max_tracklets]
+    log_fn(f"  VLM-reading {len(eligible)} eligible tracklets (model={model}, "
+           f">= {min_tracklet_min}min, on-field >= {min_onfield_frac})")
+
+    drafts: list[dict] = []
+    for tl in eligible:
+        mins = float(tl_minutes[tl])
+        sub = our_tl[our_tl["tracklet"] == tl]
+        cur_pid, cur_min = current_of_tl.get(tl, (None, float(mins)))
+        num, conf, votes, reasoning = read_tracklet_number(
+            video_path, sub, tmp, tl, roster_numbers, model, crops, min_conf, batches)
+        draft = make_draft(tl, num, conf or 0.0, player_of_num, dup_numbers,
+                           valid_ids, reasoning, cur_pid, cur_min)
+        pred = name_of.get(draft["suggestedPlayerId"], "—") if draft else "—"
+        log_fn(f"  tl{tl:<6} {mins:4.1f}min read#={str(num):<5} c={conf or 0:.2f} v={votes} "
+               f"-> {pred} {'DRAFT' if draft else '—'}")
+        if draft:
+            drafts.append(draft)
+    return drafts
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -249,51 +321,23 @@ def main() -> None:
                                                        float(rec.get("minutes") or 0.0))
 
     video = (game.video_url or "").replace("file://", "")
-    have_video = bool(video) and Path(video).exists()
-    if not have_video:
-        print(f"⚠ raw video not on disk ({video!r}) — cannot render crops; no drafts.")
-    tmp = Path(tempfile.mkdtemp(prefix="vlmid_"))
+    name_of = {r.id: f"#{getattr(r,'jersey_number','?')} {r.name}" for r in roster}
 
-    print(f"game {args.game_id}: {our_tl['tracklet'].nunique()} our tracklets "
-          f"(model={args.model}, min_conf={args.min_conf}, crops={args.crops}x{args.batches})\n")
+    print("⚠ STANDALONE mode reconstructs tracklets from cached tracks — the ids may\n"
+          "  NOT match the PUBLISHED analytics doc (produced by a different run), so the\n"
+          "  PWA may not attach these drafts. For coach-actionable drafts, run the\n"
+          "  pipeline with --vlm-identity (keys by the analytics doc's own ids). This\n"
+          "  standalone path is for dry-run coverage checks.\n")
 
-    drafts: list[dict] = []
-    L, W = cal.length_m, cal.width_m
-    # Per-tracklet on-field fraction (foot inside the field box, +1.5 m tol).
-    # Near-camera sideline adults (coaches/refs) sit at y≈W and mostly outside;
-    # this drops them before we spend a VLM call reading "no number, adult".
-    on = ((our_tl["x_m"] >= -1.5) & (our_tl["x_m"] <= L + 1.5)
-          & (our_tl["y_m"] >= -1.5) & (our_tl["y_m"] <= W + 1.5))
-    onfield_frac = our_tl.assign(_on=on).groupby("tracklet")["_on"].mean()
-    # name the longest ELIGIBLE tracklets first, capped for cost
-    tl_minutes = (our_tl.groupby("tracklet").size() * dt / 60.0).sort_values(ascending=False)
-    eligible = [int(tl) for tl, mins in tl_minutes.items()
-                if mins >= args.min_tracklet_min
-                and float(onfield_frac.get(tl, 0.0)) >= args.min_onfield_frac]
-    if args.max_tracklets > 0:
-        eligible = eligible[: args.max_tracklets]
-    print(f"  VLM-reading {len(eligible)} eligible tracklets "
-          f"(>= {args.min_tracklet_min}min, on-field >= {args.min_onfield_frac})\n")
-    for tl in eligible:
-        mins = float(tl_minutes[tl])
-        sub = our_tl[our_tl["tracklet"] == tl]
-        cur_pid, cur_min = current_of_tl.get(tl, (None, float(mins)))
-        num = conf = votes = None
-        reasoning = "no-video"
-        if have_video:
-            num, conf, votes, reasoning = read_tracklet_number(
-                video, sub, tmp, tl, roster_numbers, args.model,
-                args.crops, args.min_conf, args.batches)
-        draft = make_draft(tl, num, conf or 0.0, player_of_num, dup_numbers,
-                            valid_ids, reasoning, cur_pid, cur_min)
-        pred = name_of.get(draft["suggestedPlayerId"], "—") if draft else "—"
-        cur = name_of.get(cur_pid, "—") if cur_pid else "—"
-        print(f"  tl{tl:<6} {mins:4.1f}min  read#={str(num):<5} c={conf or 0:.2f} v={votes} "
-              f"-> {pred:<20} (was {cur}) {'DRAFT' if draft else '—'}")
-        if draft:
-            drafts.append(draft)
+    drafts = generate_drafts(
+        tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
+        team_of_track=team_of_track, roster=roster, game=game, video_path=video,
+        field_length_m=cal.length_m, field_width_m=cal.width_m,
+        current_of_tl=current_of_tl, model=args.model, min_conf=args.min_conf,
+        crops=args.crops, batches=args.batches, min_tracklet_min=args.min_tracklet_min,
+        max_tracklets=args.max_tracklets, min_onfield_frac=args.min_onfield_frac, dt=dt)
 
-    print(f"\n=== {len(drafts)} identity drafts (of {len(eligible)} VLM-read tracklets) ===")
+    print(f"\n=== {len(drafts)} identity drafts ===")
     for d in sorted(drafts, key=lambda x: -x["minutes"]):
         print(f"  tl{d['trackletId']:<6} -> {name_of.get(d['suggestedPlayerId'],'?'):<20} "
               f"c={d['confidence']} ({d['minutes']}min)")
