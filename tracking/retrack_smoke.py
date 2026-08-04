@@ -35,7 +35,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game-id", required=True)
-    ap.add_argument("--window", required=True, help="'a-b' video seconds, e.g. 760-880")
+    ap.add_argument("--window", default=None, help="'a-b' video seconds, e.g. 760-880")
+    ap.add_argument("--full-game", action="store_true",
+                    help="re-track BOTH half windows (from half_windows) with a halftime "
+                         "tracker reset, mirroring the pipeline — for a faithful full-game "
+                         "coverage A/B without any Firestore writes. Overrides --window.")
     ap.add_argument("--tag", default="smoke",
                     help="checkpoint suffix: writes tracks_raw.<tag>.parquet + "
                          "jersey_samples.<tag>.npz (default 'smoke')")
@@ -55,7 +59,6 @@ def main() -> None:
     from post_game.tracking import Tracker, TrackedDetection, to_dataframe
     from post_game.video import crop_bbox_to_equirect, iter_frames, open_video, render_perspective
 
-    a, b = (float(x) for x in args.window.split("-"))
     game = firestore_io.get_game(args.game_id)
     cal = firestore_io.get_game_calibration(args.game_id)
     if cal is None:
@@ -67,6 +70,18 @@ def main() -> None:
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
     tile_aims = compute_tile_aims(projector, cal.length_m, cal.width_m,
                                   n_tiles=config.DETECT_N_TILES, fov_deg=config.DETECT_TILE_FOV_DEG)
+
+    # Window list: --full-game re-tracks both halves (with a halftime reset,
+    # like the pipeline); otherwise the single --window. Each window gets its own
+    # fresh tracker so ids never bridge a reset boundary.
+    if args.full_game:
+        from post_game.identity import half_windows
+        windows = [(float(x), float(y)) for (x, y) in half_windows(game, meta["duration_s"])]
+    elif args.window:
+        a, b = (float(x) for x in args.window.split("-"))
+        windows = [(a, b)]
+    else:
+        raise SystemExit("pass --window 'a-b' or --full-game")
 
     # Build the tracker exactly as pipeline._new_tracker does (flag-gated).
     def _new_tracker():
@@ -82,41 +97,53 @@ def main() -> None:
         return Tracker(frame_rate=max(1, int(round(fps_sampled))),
                        track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled))
 
-    log.info("Re-track smoke: game=%s window=%.0f-%.0fs TRACK_PITCH=%s COLOR_GATE=%s CAP=%.1f PX=%.0f tag=%s",
-             args.game_id, a, b, config.TRACK_PITCH, config.PITCH_COLOR_GATE,
-             config.PITCH_GATE_CAP_M, config.PITCH_PX_GATE, args.tag)
+    log.info("Re-track smoke: game=%s windows=%s TRACK_PITCH=%s COLOR_GATE=%s CAP=%.1f PX=%.0f tag=%s",
+             args.game_id, [(round(a), round(b)) for a, b in windows], config.TRACK_PITCH,
+             config.PITCH_COLOR_GATE, config.PITCH_GATE_CAP_M, config.PITCH_PX_GATE, args.tag)
 
     detector = Detector()
-    tracker = _new_tracker()
     all_tracks: list[TrackedDetection] = []
     track_jersey_samples: dict[int, list[np.ndarray]] = {}
     t0 = time.time()
     n = 0
-    for sample in iter_frames(str(video_path), sample_rate=config.SAMPLE_RATE,
-                              windows=[(a, b)], render_crop=False):
-        n += 1
-        tile_crops = [render_perspective(sample.eq_frame, lon, lat, fov, config.CROP_W, config.CROP_H)
-                      for (lon, lat, fov) in tile_aims]
-        det_lists = detector.detect_persons(tile_crops)
-        dets = []
-        for crop_idx, det_list in enumerate(det_lists):
-            lon, lat, fov = tile_aims[crop_idx]
-            for d in det_list:
-                d.frame_index = sample.frame_index
-                d.bbox_eq = crop_bbox_to_equirect(d.bbox_crop, lon, lat, fov,
-                                                   eq_w, eq_h, config.CROP_W, config.CROP_H)
-                d.bbox_crop = d.bbox_eq
-                dets.append(d)
-        dets = dedupe_detections_by_field_position(dets, projector, config.DETECT_TILE_DEDUPE_M)
-        tracked = tracker.update(sample.eq_frame, dets, time_s=sample.time_s)
-        for t in tracked:
-            all_tracks.append(t)
-            hsv = sample_jersey_hsv(sample.eq_frame, t.bbox_eq)
-            if len(hsv) > 0:
-                track_jersey_samples.setdefault(t.track_id, []).append(hsv)
-        if n % 200 == 0:
-            log.info("  %d samples, %d tracks, %.0fs elapsed", n,
-                     len({t.track_id for t in all_tracks}), time.time() - t0)
+    next_id_carry = 1  # keep track ids globally unique across the halftime reset
+    for wi, (a, b) in enumerate(windows):
+        tracker = _new_tracker()   # fresh tracker per half — ids never bridge a reset
+        # Carry the id counter forward so H2 ids don't COLLIDE with H1 ids (a
+        # shared id would fold two different players' detections + jersey colors
+        # into one "track" across the halftime gap). Only PitchTracker exposes
+        # _next_id; other trackers are used only in prod (equirect) baselines.
+        if hasattr(tracker, "_next_id"):
+            tracker._next_id = next_id_carry
+        log.info("  window %d/%d: %.0f-%.0fs (tracker reset, next_id=%d)",
+                 wi + 1, len(windows), a, b, next_id_carry)
+        for sample in iter_frames(str(video_path), sample_rate=config.SAMPLE_RATE,
+                                  windows=[(a, b)], render_crop=False):
+            n += 1
+            tile_crops = [render_perspective(sample.eq_frame, lon, lat, fov, config.CROP_W, config.CROP_H)
+                          for (lon, lat, fov) in tile_aims]
+            det_lists = detector.detect_persons(tile_crops)
+            dets = []
+            for crop_idx, det_list in enumerate(det_lists):
+                lon, lat, fov = tile_aims[crop_idx]
+                for d in det_list:
+                    d.frame_index = sample.frame_index
+                    d.bbox_eq = crop_bbox_to_equirect(d.bbox_crop, lon, lat, fov,
+                                                       eq_w, eq_h, config.CROP_W, config.CROP_H)
+                    d.bbox_crop = d.bbox_eq
+                    dets.append(d)
+            dets = dedupe_detections_by_field_position(dets, projector, config.DETECT_TILE_DEDUPE_M)
+            tracked = tracker.update(sample.eq_frame, dets, time_s=sample.time_s)
+            for t in tracked:
+                all_tracks.append(t)
+                hsv = sample_jersey_hsv(sample.eq_frame, t.bbox_eq)
+                if len(hsv) > 0:
+                    track_jersey_samples.setdefault(t.track_id, []).append(hsv)
+            if n % 200 == 0:
+                log.info("  %d samples, %d tracks, %.0fs elapsed", n,
+                         len({t.track_id for t in all_tracks}), time.time() - t0)
+        # carry the (advanced) id counter into the next half so ids stay unique
+        next_id_carry = getattr(tracker, "_next_id", next_id_carry)
 
     tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
     ckpt = config.OUTPUTS_DIR / args.game_id
