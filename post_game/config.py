@@ -129,6 +129,62 @@ TRACK_FIELD_SPACE = os.environ.get("TRACK_FIELD_SPACE", "0") != "0"
 # default until a re-track beats the equirect baseline on fragments AND coverage.
 TRACK_PITCH = os.environ.get("TRACK_PITCH", "0") != "0"
 
+# --- PitchTracker association gates (TRACK_PITCH only; env-overridable) -------
+# The meter-space tracker's fragment win (775->90) came partly from GLUING
+# different players into one track: 46% of its colored track-seconds were in
+# color-MIXED (green+blue) tracks vs the equirect baseline's 16% — i.e. it
+# swaps between our (green) and opponent (blue) players in the U10 swarm. These
+# gates attack that. All read only when TRACK_PITCH is on; prod is untouched.
+#
+# (1) Team-color association gate. Green (ours) vs blue (opp) is the ONE
+# cross-team signal that survives on same-kit U10s (OSNet is noise). A track
+# that has committed to one kit refuses a detection of the other kit. The
+# anchors are the two kit hues (derived per-game from the hexes at construction,
+# compared nearest-of-two on the OpenCV hue circle 0-179), so no team_id
+# assignment is needed at tracking time. The tracker samples color with its OWN
+# raw-ROI reader (_det_kit_color), NOT sample_jersey_hsv: that fn grass-drops
+# H35-85 (team_classifier.py:253), which would delete our green kit (H71 sits in
+# that band) and make the gate blue-only.
+PITCH_COLOR_GATE = os.environ.get("PITCH_COLOR_GATE", "1") != "0"
+# Per-pixel S floor for the color decision — deliberately LOW so a grass-washed
+# green still reads green-vs-blue (decoupled from any downstream saturation bar).
+PITCH_COLOR_MIN_S = float(os.environ.get("PITCH_COLOR_MIN_S", "35"))
+PITCH_COLOR_MIN_PIXELS = int(os.environ.get("PITCH_COLOR_MIN_PIXELS", "10"))
+# Nearest-anchor margin (hue-deg): the pixel-median must be at least this much
+# closer to one kit anchor than the other to count as that kit; inside the
+# margin -> UNKNOWN (never rejects). Green(71)/blue(111) are ~40 apart, midpoint
+# ~91; a small margin claims each basin while leaving a neutral dead-zone around
+# the desaturated ~H90-107 collapse center so a washed track can't flip.
+PITCH_COLOR_MARGIN_DEG = float(os.environ.get("PITCH_COLOR_MARGIN_DEG", "6.0"))
+# A track "commits" to a kit only after this many NET votes (green +1 / blue -1),
+# so one mis-sampled frame can't lock it; the running score is clipped to
+# +/-COMMIT_CLIP so a genuinely wrong early commit can be out-voted within ~1 s.
+PITCH_COLOR_COMMIT_VOTES = int(os.environ.get("PITCH_COLOR_COMMIT_VOTES", "3"))
+PITCH_COLOR_COMMIT_CLIP = int(os.environ.get("PITCH_COLOR_COMMIT_CLIP", "8"))
+# A STALE track has no business asserting color authority (its color memory is
+# frozen at its last match). Above this time_since_update the color gate is
+# disabled for that track -> motion + cap decide, and it can re-acquire and
+# re-vote instead of dead-locking (refusing the only dets that would un-commit).
+PITCH_COLOR_MAX_TSU = int(os.environ.get("PITCH_COLOR_MAX_TSU", "3"))
+#
+# (2) Motion clamps.
+# (a) Cap the per-frame gate's unbounded growth with time_since_update. Fresh
+#     gate is MAX_PLAUSIBLE_SPEED_MS*dt + slack (~3.9 m); the old code let it
+#     grow to ~22 m at tsu=20 (2 s lost) -> a cross-pitch grab. The cap only
+#     bites large-tsu tracks, so it CANNOT re-fragment an in-view track; it only
+#     removes stale-reacquire swaps.
+PITCH_GATE_CAP_M = float(os.environ.get("PITCH_GATE_CAP_M", "6.0"))
+# (b) Per-frame slack. Default UNCHANGED at 3.0 (== STITCH_SLACK_M) so the color
+#     gate carries swap reduction without risking re-fragmentation. Cut toward
+#     1.5 ONLY as a fallback if color under-delivers (see fix-design memory).
+PITCH_SLACK_M = float(os.environ.get("PITCH_SLACK_M", "3.0"))
+# (c) NaN/unprojectable pixel-fallback: shrink 150->80 px and forbid stale
+#     tracks. A NaN det carries no meters, so pixel proximity is the only guard;
+#     only a just-seen track (tsu<=NAN_MAX_TSU) may absorb one, color-gated like
+#     any other match.
+PITCH_PX_GATE = float(os.environ.get("PITCH_PX_GATE", "80"))
+PITCH_NAN_MAX_TSU = int(os.environ.get("PITCH_NAN_MAX_TSU", "1"))
+
 # --- Calibration quality gate --------------------------------------------
 # "Run Analysis" hard-blocks on a calibration that fails these, so the coach
 # never spends hours tracking a bad calibration and never needs a developer to

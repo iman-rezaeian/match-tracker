@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import cv2
 import numpy as np
 
 from . import config
@@ -42,6 +43,68 @@ from .tracking import TrackedDetection
 def _foot_px(bbox_eq: tuple[float, float, float, float]) -> tuple[float, float]:
     x1, y1, x2, y2 = bbox_eq
     return (x1 + x2) / 2.0, y2
+
+
+def _hue_from_hex(hex_str: str) -> float:
+    """OpenCV hue (0-179) of a kit hex — the tracker's team-color anchor."""
+    h = (hex_str or "").lstrip("#")
+    if len(h) != 6:
+        return 90.0
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    bgr = np.uint8([[[b, g, r]]])
+    return float(cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)[0, 0, 0])
+
+
+def _circ_dist(a: float, b: float) -> float:
+    """Distance between two OpenCV hues on the 0-179 circle."""
+    d = abs(a - b) % 180.0
+    return min(d, 180.0 - d)
+
+
+def _det_kit_color(frame: np.ndarray, bbox_eq, our_h: float, opp_h: float,
+                   min_s: float, min_px: int, margin: float) -> int:
+    """+1 = our kit, -1 = opp kit, 0 = UNKNOWN, for ONE detection's jersey ROI.
+
+    Discriminates OUR kit vs OPP kit by which of the two kit-hue anchors the
+    ROI's saturated-pixel median hue is nearer to on the hue circle — an
+    assignment-free green-vs-blue decision, NOT an absolute team_id.
+
+    Crucially it does NOT grass-drop. sample_jersey_hsv drops H35-85 with S>60,
+    which deletes our GREEN kit (#16a34a is H71 S221 — the kit itself is
+    saturated green, indistinguishable from pitch grass by hue+saturation). So a
+    grass drop here would erase exactly the class we most need to detect. Instead
+    we sample the CENTRAL TORSO ROI (where the jersey dominates and grass/skin is
+    minimal) and let the nearest-anchor decision carry it: a green player's torso
+    reads ~H71 -> +1, a blue player's ~H111 -> -1. A neutral `margin` around the
+    green/blue midpoint (~91) makes desaturated/washed frames ABSTAIN (return 0,
+    never reject) — the fail-safe: we reject only on the *presence of the wrong*
+    kit, never on the absence of color.
+    """
+    x1, y1, x2, y2 = (int(round(v)) for v in bbox_eq)
+    h_box, w_box = y2 - y1, x2 - x1
+    if h_box < 14 or w_box < 4:
+        return 0
+    jy1 = y1 + int(0.18 * h_box)
+    jy2 = y1 + int(0.50 * h_box)
+    jx1 = x1 + int(0.28 * w_box)
+    jx2 = x2 - int(0.28 * w_box)
+    jy1 = max(0, jy1); jx1 = max(0, jx1)
+    jy2 = min(frame.shape[0], jy2); jx2 = min(frame.shape[1], jx2)
+    if jx2 <= jx1 or jy2 <= jy1:
+        return 0
+    hsv = cv2.cvtColor(frame[jy1:jy2, jx1:jx2], cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(np.float32)
+    h, s = hsv[:, 0], hsv[:, 1]
+    keep = s >= min_s   # only chromatic pixels carry a hue; NO grass drop (see above)
+    if int(keep.sum()) < min_px:
+        return 0
+    hue = float(np.median(h[keep]))
+    d_our = _circ_dist(hue, our_h)
+    d_opp = _circ_dist(hue, opp_h)
+    if d_opp - d_our >= margin:
+        return 1
+    if d_our - d_opp >= margin:
+        return -1
+    return 0
 
 
 class _KalmanMeters:
@@ -82,7 +145,7 @@ class _KalmanMeters:
 
 class _Track:
     __slots__ = ("track_id", "kf", "time_since_update", "hits", "confirmed",
-                 "last_px", "unprojectable")
+                 "last_px", "unprojectable", "color_score")
 
     def __init__(self, track_id: int, kf: Optional[_KalmanMeters],
                  last_px: tuple[float, float], unprojectable: bool):
@@ -93,6 +156,10 @@ class _Track:
         self.confirmed = False
         self.last_px = last_px           # last equirect foot pixel (fallback for NaN dets)
         self.unprojectable = unprojectable
+        # Running team-color vote: +1 per matched our-kit(green) frame, -1 per
+        # opp-kit(blue) frame, 0 for unknown. Clipped in update(); a track only
+        # asserts color once |score| >= commit threshold. Seeded at spawn.
+        self.color_score = 0
 
 
 class PitchTracker:
@@ -103,19 +170,44 @@ class PitchTracker:
     # measurement / process noise for the meter Kalman (metres, metres/s^2-ish)
     MEAS_NOISE_M = 0.5
     PROC_NOISE = 4.0
-    # pixel-distance gate for the rare all-NaN (unprojectable) association fallback
-    PX_GATE = 150.0
 
-    def __init__(self, projector, *, frame_rate: int = 10, track_buffer_frames: int = 200):
+    def __init__(self, projector, *, frame_rate: int = 10, track_buffer_frames: int = 200,
+                 our_color_hex: Optional[str] = None, opp_color_hex: Optional[str] = None):
         self.projector = projector
         self.frame_rate = max(1, int(frame_rate))
         self.max_age = int(track_buffer_frames)
-        self.slack_m = float(config.STITCH_SLACK_M)
+        # slack + gate cap: PITCH_* under TRACK_PITCH (env-overridable), else the
+        # legacy STITCH_SLACK_M so a non-flagged construction is byte-unchanged.
+        self.slack_m = float(config.PITCH_SLACK_M if config.TRACK_PITCH else config.STITCH_SLACK_M)
+        self.gate_cap_m = float(config.PITCH_GATE_CAP_M)
         self.max_speed = float(config.MAX_PLAUSIBLE_SPEED_MS)
         self._tracks: list[_Track] = []
         self._next_id = 1
         self._last_time_s: Optional[float] = None
         self.n_kept_unprojectable = 0   # dets with no field pos we KEPT (not dropped)
+        # NaN pixel-fallback clamp.
+        self.px_gate = float(config.PITCH_PX_GATE)
+        self.nan_max_tsu = int(config.PITCH_NAN_MAX_TSU)
+        # Team-color association gate (needs both kit hexes; else stays motion-only).
+        self.color_gate = (bool(config.PITCH_COLOR_GATE)
+                           and our_color_hex is not None and opp_color_hex is not None)
+        self.our_h = _hue_from_hex(our_color_hex) if our_color_hex else 71.0
+        self.opp_h = _hue_from_hex(opp_color_hex) if opp_color_hex else 111.0
+        self.c_min_s = float(config.PITCH_COLOR_MIN_S)
+        self.c_min_px = int(config.PITCH_COLOR_MIN_PIXELS)
+        self.c_margin = float(config.PITCH_COLOR_MARGIN_DEG)
+        self.c_commit = int(config.PITCH_COLOR_COMMIT_VOTES)
+        self.c_clip = int(config.PITCH_COLOR_COMMIT_CLIP)
+        self.c_max_tsu = int(config.PITCH_COLOR_MAX_TSU)
+
+    def _track_color(self, t: _Track) -> int:
+        """A track's asserted kit sign (+1 our / -1 opp / 0 none) for gating.
+
+        Only a COMMITTED (|score| >= c_commit) and not-too-stale track asserts
+        color; a stale track's frozen color memory must not veto a reacquire."""
+        if abs(t.color_score) >= self.c_commit and t.time_since_update <= self.c_max_tsu:
+            return 1 if t.color_score > 0 else -1
+        return 0
 
     def _project(self, det: Detection) -> tuple[Optional[float], Optional[float], tuple[float, float]]:
         fx, fy = _foot_px(det.bbox_eq)
@@ -139,11 +231,17 @@ class PitchTracker:
         self._last_time_s = time_s
         frame_index = detections[0].frame_index
 
-        # 1. Project detections to meters (keep pixel fallback for NaN ones).
-        meas = []  # (mx|None, my|None, px, det)
+        # 1. Project detections to meters (keep pixel fallback for NaN ones) and
+        #    read each detection's kit color once (green/blue/unknown) for the
+        #    team-color association gate. Sampling here (not per-pair) keeps it
+        #    one cv2 call per detection.
+        meas = []  # (mx|None, my|None, px, det, col)
         for d in detections:
             mx, my, px = self._project(d)
-            meas.append((mx, my, px, d))
+            col = (_det_kit_color(frame, d.bbox_eq, self.our_h, self.opp_h,
+                                  self.c_min_s, self.c_min_px, self.c_margin)
+                   if self.color_gate else 0)
+            meas.append((mx, my, px, d, col))
 
         # 2. Predict all tracks forward to this frame.
         for t in self._tracks:
@@ -171,9 +269,19 @@ class PitchTracker:
             gated = np.zeros_like(cost, dtype=bool)
             for r, t in enumerate(layer):
                 tx, ty = t.kf.pos
-                gate = self.max_speed * dt * (t.time_since_update + 1) + self.slack_m
+                # Cap the gate's growth with staleness so a long-lost track can't
+                # reach across the pitch and grab a wrong body (the stale-reacquire
+                # swap vector). The cap only bites large-tsu tracks.
+                gate = min(self.max_speed * dt * (t.time_since_update + 1) + self.slack_m,
+                           self.gate_cap_m)
+                t_col = self._track_color(t)
                 for c, di in enumerate(dets_here):
-                    mx, my, _, _ = meas[di]
+                    mx, my, _, _, dcol = meas[di]
+                    # Team-color reject: a committed green track can't absorb a
+                    # blue detection (and vice-versa). Unknown on either side ->
+                    # no color veto (fail-safe to motion).
+                    if t_col != 0 and dcol != 0 and t_col != dcol:
+                        continue
                     d = float(np.hypot(mx - tx, my - ty))
                     if d <= gate:
                         cost[r, c] = d
@@ -190,13 +298,22 @@ class PitchTracker:
         #     proximity (fallback) rather than drop — B2's drop bled coverage.
         by_id = {t.track_id: t for t in self._tracks}
         for di in list(unmatched_det):
-            mx, my, px, d = meas[di]
+            mx, my, px, d, dcol = meas[di]
             if mx is not None:
                 continue
             self.n_kept_unprojectable += 1
-            best_t, best_d = None, self.PX_GATE
+            best_t, best_d = None, self.px_gate
             for t in self._tracks:
                 if t.track_id in assigned.values():
+                    continue
+                # A NaN det carries no meters, so pixel proximity is the only
+                # guard — only a just-seen track may absorb one (stale tracks
+                # reacquiring on raw pixel distance is a swap vector), and it's
+                # color-gated like any real match.
+                if t.time_since_update > self.nan_max_tsu:
+                    continue
+                t_col = self._track_color(t)
+                if t_col != 0 and dcol != 0 and t_col != dcol:
                     continue
                 pd_ = float(np.hypot(px[0] - t.last_px[0], px[1] - t.last_px[1]))
                 if pd_ < best_d:
@@ -205,16 +322,20 @@ class PitchTracker:
                 assigned[di] = best_t.track_id
                 unmatched_det.discard(di)
 
-        # 4. Apply matches: KF update + bookkeeping.
+        # 4. Apply matches: KF update + bookkeeping + team-color vote.
         matched_tids = set(assigned.values())
         for di, tid in assigned.items():
             t = by_id[tid]
-            mx, my, px, d = meas[di]
+            mx, my, px, d, dcol = meas[di]
             if t.kf is not None and mx is not None:
                 t.kf.update(mx, my)
             t.time_since_update = 0
             t.hits += 1
             t.last_px = px
+            # Accumulate the kit vote, clipped so an early wrong commit can be
+            # out-voted within ~a second rather than locking the track.
+            if dcol:
+                t.color_score = int(np.clip(t.color_score + dcol, -self.c_clip, self.c_clip))
             if t.hits >= self.N_INIT:
                 t.confirmed = True
 
@@ -225,12 +346,13 @@ class PitchTracker:
 
         # 6. Spawn new tracks for still-unmatched detections.
         for di in list(unmatched_det):
-            mx, my, px, d = meas[di]
+            mx, my, px, d, dcol = meas[di]
             kf = None
             unproj = mx is None
             if mx is not None:
                 kf = _KalmanMeters(mx, my, self.MEAS_NOISE_M, self.PROC_NOISE)
             t = _Track(self._next_id, kf, px, unproj)
+            t.color_score = int(dcol)   # seed the kit vote from the spawning frame
             self._next_id += 1
             self._tracks.append(t)
             assigned[di] = t.track_id
@@ -240,7 +362,7 @@ class PitchTracker:
 
         # 8. Emit one TrackedDetection per detection, carrying the TRUE bbox_eq.
         out: list[TrackedDetection] = []
-        for di, (mx, my, px, d) in enumerate(meas):
+        for di, (mx, my, px, d, dcol) in enumerate(meas):
             tid = assigned.get(di)
             if tid is None:
                 continue  # (shouldn't happen — every det is matched or spawned)

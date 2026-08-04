@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from . import config
+from .tracking_pitch import _hue_from_hex
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +83,40 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
+def _kit_sign_from_samples(samples: list, our_h: float, opp_h: float,
+                           min_s: float, margin: float) -> int:
+    """+1 (our kit) / -1 (opp kit) / 0 (unknown) for a whole fragment.
+
+    Votes each detection's mean-HSV green-vs-blue (nearest kit-hue anchor on the
+    hue circle, chromatic pixels only, neutral margin), then returns the SIGN of
+    the net vote only if it is decisive (>60% one way and >=3 votes). Mirrors
+    tracking_pitch._det_kit_color so the stitch's CANNOT-LINK-on-color guard uses
+    the same green-recovering logic (no grass-drop) as the tracker's gate."""
+    g = b = 0
+    for s in samples or []:
+        a = np.asarray(s, dtype=np.float32)
+        if a.ndim != 2 or a.size == 0:
+            continue
+        chroma = a[a[:, 1] >= min_s]
+        if len(chroma) < 4:
+            continue
+        hue = float(np.median(chroma[:, 0]))
+        d_our = min(abs(hue - our_h) % 180.0, 180.0 - abs(hue - our_h) % 180.0)
+        d_opp = min(abs(hue - opp_h) % 180.0, 180.0 - abs(hue - opp_h) % 180.0)
+        if d_opp - d_our >= margin:
+            g += 1
+        elif d_our - d_opp >= margin:
+            b += 1
+    tot = g + b
+    if tot < 3:
+        return 0
+    if g / tot >= 0.60:
+        return 1
+    if b / tot >= 0.60:
+        return -1
+    return 0
+
+
 def stitch_tracklets(
     tracks_df: pd.DataFrame,
     team_of_track: dict[int, int],
@@ -96,6 +131,8 @@ def stitch_tracklets(
     must_link: Optional[dict[int, object]] = None,
     must_link_dist_cap_m: float = config.STITCH_DIST_CAP_M,
     mode: Optional[str] = None,
+    our_color_hex: Optional[str] = None,
+    opp_color_hex: Optional[str] = None,
 ) -> dict[int, int]:
     """Return {track_id: tracklet_id} merging `target_team` fragments.
 
@@ -181,6 +218,29 @@ def stitch_tracklets(
     used_succ: set[int] = set()  # a fragment already chained as someone's successor
     hsv_cache: dict[int, Optional[np.ndarray]] = {}
 
+    # Team-color CANNOT-LINK guard. When the tracker's color gate is active
+    # (PITCH_COLOR_GATE) the tracker produces color-clean but MORE-numerous
+    # fragments; a team-blind stitch would re-merge a green fragment onto a blue
+    # one across a gap and re-introduce the very cross-team mixing the gate
+    # removed (empirically: post-stitch mixed-seconds rose 7%->11% without this,
+    # 6% with it). So refuse a link between two fragments whose jersey votes are
+    # confidently OPPOSITE kits. Unknown on either side never blocks (fail-safe
+    # to geometry). Engages only when the color gate is on AND both kit hexes
+    # were passed (real per-game anchors, not a guess) AND jersey samples exist,
+    # so the equirect/prod stitch is byte-unchanged.
+    _kit_guard = (bool(config.PITCH_COLOR_GATE) and bool(track_jersey_samples)
+                  and our_color_hex is not None and opp_color_hex is not None)
+    _our_h = _hue_from_hex(our_color_hex) if our_color_hex else 71.0
+    _opp_h = _hue_from_hex(opp_color_hex) if opp_color_hex else 111.0
+    kit_cache: dict[int, int] = {}
+
+    def _kit(t: int) -> int:
+        if t not in kit_cache:
+            kit_cache[t] = _kit_sign_from_samples(
+                track_jersey_samples.get(t, []), _our_h, _opp_h,
+                config.PITCH_COLOR_MIN_S, config.PITCH_COLOR_MARGIN_DEG)
+        return kit_cache[t]
+
     def appearance_ok(a: int, b: int) -> tuple[bool, float]:
         ea, eb = track_embeddings.get(a), track_embeddings.get(b)
         if ea is not None and eb is not None:
@@ -220,6 +280,11 @@ def stitch_tracklets(
         ia, ib = comp_ident.get(find(a)), comp_ident.get(find(b))
         if ia is not None and ib is not None and ia != ib:
             return None
+        # CANNOT-LINK on team color: refuse confidently-opposite kits (see guard note).
+        if _kit_guard:
+            ka, kb = _kit(a), _kit(b)
+            if ka != 0 and kb != 0 and ka != kb:
+                return None
         ok, cos = appearance_ok(a, b)
         if not ok:
             return None

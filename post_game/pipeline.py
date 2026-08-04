@@ -201,6 +201,10 @@ def run(
                 projector,
                 frame_rate=max(1, int(round(fps_sampled))),
                 track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
+                # kit hexes feed the team-color association gate (green vs blue is
+                # the one cross-team signal that survives on same-kit U10s).
+                our_color_hex=_our_color(game),
+                opp_color_hex=game.away_color,
             )
         if config.TRACK_FIELD_SPACE:
             from .tracking_field import FieldSpaceTracker
@@ -509,6 +513,9 @@ def run(
             tracks_df, team_of_track,
             track_embeddings=track_embeddings,
             track_jersey_samples=track_jersey_samples,
+            # kit hexes enable the team-color CANNOT-LINK guard (only engages
+            # under the PitchTracker color gate; equirect/prod stitch unchanged).
+            our_color_hex=_our_color(game), opp_color_hex=game.away_color,
         )
         _ss = stitch_stats(tracklet_of_track, team_of_track)
         log.info("  -> stitching: %d our fragments -> %d tracklets (%d merged, largest=%d frags)",

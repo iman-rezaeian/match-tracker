@@ -13,10 +13,18 @@ import numpy as np
 
 from .calibration import FieldCalibration, FieldProjector
 from .detection import Detection
-from .tracking_pitch import PitchTracker
+from .tracking_pitch import PitchTracker, _det_kit_color, _hue_from_hex
 
 EQ_W, EQ_H = 5760, 2880
 L, W = 54.0, 34.0
+
+# The two Stompers-vs-blue kit hexes this fix is tuned on (green H71 / blue H111).
+OUR_GREEN_HEX = "#16a34a"
+OPP_BLUE_HEX = "#2563eb"
+# BGR fills for painting jersey ROIs in a synthetic frame.
+GREEN_BGR = (0x4a, 0xa3, 0x16)   # #16a34a
+BLUE_BGR = (0xeb, 0x63, 0x25)    # #2563eb
+GRASS_BGR = (60, 140, 40)        # a saturated pitch-green (must NOT read as our kit)
 
 
 def _projector() -> FieldProjector:
@@ -160,6 +168,142 @@ def test_bbox_eq_invariant_and_contract():
     assert out[0].bbox_eq == d.bbox_eq            # true equirect box preserved
     assert out[0].frame_index == 0
     assert out[0].appearance_embedding is None    # v1 motion-only
+
+
+# --------------------------------------------------------------------------
+# Team-color association gate (PITCH_COLOR_GATE). These paint real green/blue
+# jersey pixels into a synthetic frame so _det_kit_color actually reads them.
+# --------------------------------------------------------------------------
+
+def _frame() -> np.ndarray:
+    """A blank equirect-sized frame to paint jersey ROIs into (BGR)."""
+    return np.zeros((EQ_H, EQ_W, 3), np.uint8)
+
+
+def _paint_jersey(frame: np.ndarray, bbox_eq, bgr) -> None:
+    """Fill a detection's jersey ROI (the same 0.18-0.50h x 0.28-0.72w window
+    _det_kit_color samples) with a solid BGR color."""
+    x1, y1, x2, y2 = (int(round(v)) for v in bbox_eq)
+    h_box, w_box = y2 - y1, x2 - x1
+    jy1 = max(0, y1 + int(0.18 * h_box)); jy2 = min(frame.shape[0], y1 + int(0.50 * h_box))
+    jx1 = max(0, x1 + int(0.28 * w_box)); jx2 = min(frame.shape[1], x2 - int(0.28 * w_box))
+    frame[jy1:jy2, jx1:jx2] = bgr
+
+
+def _cdet(proj, x_m, y_m, fi, frame, bgr):
+    """A detection at (x_m,y_m) whose jersey ROI is painted `bgr` in `frame`."""
+    d = _det(proj, x_m, y_m, fi)
+    _paint_jersey(frame, d.bbox_eq, bgr)
+    return d
+
+
+def test_det_kit_color_reads_green_not_just_blue():
+    """THE grass-drop regression: our GREEN kit (#16a34a, H71 S221) must read +1.
+    A naive grass drop (H35-85 & S>60, as sample_jersey_hsv does) would delete
+    the saturated-green kit entirely and make this a blue-only gate — this test
+    fails loudly if that drop ever creeps back in. Blue reads -1; a truly
+    desaturated (grey) ROI abstains (0)."""
+    proj = _projector()
+    our_h, opp_h = _hue_from_hex(OUR_GREEN_HEX), _hue_from_hex(OPP_BLUE_HEX)
+    assert 65 <= our_h <= 78, our_h     # green really is ~71
+    assert 104 <= opp_h <= 118, opp_h   # blue really is ~111
+    box = (1000, 1000, 1000 + 16, 1000 + 40)  # >=14 px tall, >=4 wide
+
+    fr = _frame(); _paint_jersey(fr, box, GREEN_BGR)
+    assert _det_kit_color(fr, box, our_h, opp_h, 35.0, 10, 6.0) == +1, "green kit read as not-ours"
+
+    fr = _frame(); _paint_jersey(fr, box, BLUE_BGR)
+    assert _det_kit_color(fr, box, our_h, opp_h, 35.0, 10, 6.0) == -1, "blue kit read as not-opp"
+
+    # Grass shares green's hue basin and is inseparable from the green kit by
+    # color alone — the CENTRAL TORSO ROI (mostly jersey) is what keeps grass
+    # from dominating, not a hue filter. Grass therefore reads +1 ("our-ish"),
+    # which is acceptable (it never flips a green player to blue). Documented so
+    # the intent is explicit, not an accidental pass.
+    fr = _frame(); _paint_jersey(fr, box, GRASS_BGR)
+    assert _det_kit_color(fr, box, our_h, opp_h, 35.0, 10, 6.0) != -1, "grass read as OPP kit"
+
+    fr = _frame(); _paint_jersey(fr, box, (90, 90, 90))  # grey / desaturated
+    assert _det_kit_color(fr, box, our_h, opp_h, 35.0, 10, 6.0) == 0, "desaturated frame voted a kit"
+
+
+def test_committed_green_track_rejects_a_colocated_blue_detection():
+    """The swap-prevention core: a track that has committed to GREEN must NOT
+    absorb a BLUE detection that appears right where it is (well inside the
+    motion gate) — it must spawn a new track instead. This is the exact
+    green<->blue mixing the fix targets."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100,
+                       our_color_hex=OUR_GREEN_HEX, opp_color_hex=OPP_BLUE_HEX)
+    assert trk.color_gate
+    # Build a green track over enough frames to COMMIT (|score| >= 3).
+    for f in range(6):
+        fr = _frame()
+        d = _cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)
+        trk.update(fr, [d], time_s=f / 10.0)
+    green_ids = {t.track_id for t in trk._tracks}
+    assert green_ids and max(abs(t.color_score) for t in trk._tracks) >= 3
+
+    # Next frame: a BLUE detection appears 0.5 m away (well inside the ~3.9 m gate).
+    fr = _frame()
+    dblue = _cdet(proj, 20.5, 17.0, 6, fr, BLUE_BGR)
+    out = trk.update(fr, [dblue], time_s=0.6)
+    assert len(out) == 1
+    new_id = out[0].track_id
+    assert new_id not in green_ids, "committed green track absorbed a blue detection (SWAP)"
+
+
+def test_color_gate_off_when_no_kit_colors_given():
+    """Motion-only fallback: constructing without kit hexes disables the color
+    gate entirely (prod byte-behaviour), so a blue det right on a green track
+    WOULD be absorbed (no color veto) — proving the gate is what changes it."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100)  # no colors
+    assert not trk.color_gate
+    for f in range(6):
+        fr = _frame()
+        trk.update(fr, [_cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)], time_s=f / 10.0)
+    ids_before = {t.track_id for t in trk._tracks}
+    fr = _frame()
+    out = trk.update(fr, [_cdet(proj, 20.3, 17.0, 6, fr, BLUE_BGR)], time_s=0.6)
+    # motion-only: the near det continues the existing track (no color veto)
+    assert out[0].track_id in ids_before, "color gate leaked into the no-color path"
+
+
+def test_unknown_color_detection_never_rejected():
+    """Fail-safe: a desaturated/ambiguous detection (color unknown) must be
+    matched on motion alone — color never rejects on absence of color."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100,
+                       our_color_hex=OUR_GREEN_HEX, opp_color_hex=OPP_BLUE_HEX)
+    for f in range(6):
+        fr = _frame()
+        trk.update(fr, [_cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)], time_s=f / 10.0)
+    ids_before = {t.track_id for t in trk._tracks}
+    fr = _frame()
+    # grey jersey -> unknown color; sits on the green track
+    out = trk.update(fr, [_cdet(proj, 20.2, 17.0, 6, fr, (90, 90, 90))], time_s=0.6)
+    assert out[0].track_id in ids_before, "unknown-color det was rejected instead of matched on motion"
+
+
+def test_gate_cap_bounds_stale_track_reach():
+    """The gate-growth cap: a track lost for ~2 s must NOT reacquire a body far
+    enough away that the UNCAPPED gate (9*0.1*(tsu+1)+3 ~ 22 m at tsu=20) would
+    have admitted but the cap (6 m) forbids. Without color (isolate the cap)."""
+    import numpy as _np
+    proj = _projector()
+    # No kit colors -> color gate OFF, so this isolates the motion gate cap.
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=300)  # long buffer
+    # establish a track at (20,17)
+    for f in range(4):
+        trk.update(_np.zeros((10, 10, 3), _np.uint8), [_det(proj, 20.0, 17.0, f)], time_s=f / 10.0)
+    est_ids = {t.track_id for t in trk._tracks}
+    # 25 empty frames -> the track goes stale (tsu ~ 25) but stays alive (buffer)
+    for f in range(4, 29):
+        trk.update(_np.zeros((10, 10, 3), _np.uint8), [], time_s=f / 10.0)
+    # a detection appears 10 m away: uncapped gate (~26 m) would grab it; cap (6 m) must not.
+    out = trk.update(_np.zeros((10, 10, 3), _np.uint8), [_det(proj, 30.0, 17.0, 29)], time_s=2.9)
+    assert out[0].track_id not in est_ids, "stale track reached 10 m past the gate cap (swap)"
 
 
 if __name__ == "__main__":
