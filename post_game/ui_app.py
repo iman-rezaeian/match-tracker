@@ -324,7 +324,8 @@ def _format_row(r: dict) -> str:
     score = f"{r['our_score']}-{r['opp_score']}"
     flags = "".join([
         "🎥" if r["has_video"] else "  ",
-        "⏱" if r.get("has_video_offset") else "  ",
+        # ⏱ only when BOTH half kickoffs are confirmed (the Run-Analysis gate).
+        "⏱" if (r.get("video_offset_h1_confirmed") and r.get("video_offset_h2_confirmed")) else "  ",
         "📐" if r["has_calibration"] else "  ",
         "📊" if r["has_analytics"] else "  ",
     ])
@@ -439,7 +440,7 @@ if not rows:
     st.warning("No games found.")
     st.stop()
 
-st.markdown("**Legend**: 🎥 video attached · ⏱ 1st-half kickoff set · 📐 calibrated · 📊 analytics ran")
+st.markdown("**Legend**: 🎥 video attached · ⏱ both kickoffs confirmed · 📐 calibrated · 📊 analytics ran")
 labels = [_format_row(r) for r in rows]
 idx = st.radio("Pick a game", range(len(rows)), format_func=lambda i: labels[i])
 game = rows[idx]
@@ -595,49 +596,75 @@ else:
     st.caption("(Attach a video above to enable the inline scrub preview.)")
 
 current_offset = float(game.get("video_offset_h1_kickoff_s") or 0.0)
+_h1_confirmed = bool(game.get("video_offset_h1_confirmed"))
+st.caption(("\u2705 1st-half kickoff CONFIRMED" if _h1_confirmed
+            else "\u26a0\ufe0f 1st-half kickoff NOT confirmed \u2014 required before Run Analysis"))
 offset_str = st.text_input(
     "1st-half kickoff timestamp in the source video",
     value=_seconds_to_hms(current_offset) if current_offset else "",
     placeholder="00:01:23  or  83",
-    help="Where in the recording the ref blew the 1st-half kickoff whistle.",
+    help="Where in the recording the ref blew the 1st-half kickoff whistle. "
+         "Enter 0 (or leave blank) if the video starts exactly at the whistle \u2014 "
+         "then Confirm. Confirmation is mandatory: this anchors every player's minutes.",
 )
-
-if st.button("Save kickoff offset", disabled=is_running or not offset_str.strip()):
+if st.button("Confirm 1st-half kickoff", disabled=is_running):
     try:
-        seconds = _parse_offset_str(offset_str)
+        seconds = _parse_offset_str(offset_str) if offset_str.strip() else 0.0
         if seconds < 0:
             raise ValueError("Offset must be non-negative.")
-        firestore_io.set_video_offset_h1_kickoff_s(game_id, seconds)
-        st.success(f"\u2713 1st-half kickoff @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
+        firestore_io.set_video_offset_h1_kickoff_s(game_id, seconds, confirmed=True)
+        st.success(f"\u2713 1st-half kickoff CONFIRMED @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
         _list_games.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Bad timestamp: {e}")
 
-# Optional 2nd-half kickoff override (when the "start 2nd half" button was
-# pressed late, etc.). Leave blank / 0 to fall back to the wallclock-derived
-# H2 start.
+# 2nd-half kickoff \u2014 MANDATORY confirm. Either enter a timestamp override, or
+# accept the wallclock-auto-derived H2 start. Either way the coach must confirm.
 current_h2_offset = float(game.get("video_offset_h2_kickoff_s") or 0.0)
+_h2_confirmed = bool(game.get("video_offset_h2_confirmed"))
+# auto-derived H2 start (what half_windows would use when no override): shown so
+# the coach can accept it rather than eyeball a timestamp.
+_h2_auto = None
+try:
+    from post_game.identity import half_windows as _half_windows
+    _g = firestore_io.get_game(game_id)
+    # half_windows clamps to the video length; a generous duration is fine here
+    # (we only want the auto-derived H2 START for display).
+    _hw = _half_windows(_g, 1e9)
+    _h2_auto = _hw[1][0] if _hw and len(_hw) > 1 else None
+except Exception:
+    _h2_auto = None
+st.caption(("\u2705 2nd-half kickoff CONFIRMED" if _h2_confirmed
+            else "\u26a0\ufe0f 2nd-half kickoff NOT confirmed \u2014 required before Run Analysis"))
+if _h2_auto is not None:
+    st.caption(f"Auto-derived 2nd-half kickoff: {_seconds_to_hms(_h2_auto)} ({_h2_auto:.0f}s) "
+               "\u2014 accept it, or enter an override below.")
 h2_offset_str = st.text_input(
-    "2nd-half kickoff timestamp in the source video (optional override)",
+    "2nd-half kickoff timestamp in the source video (blank = accept auto-derived)",
     value=_seconds_to_hms(current_h2_offset) if current_h2_offset else "",
     placeholder="00:39:12  or  2352",
-    help="Override when 'start 2nd half' was pressed late. Leave blank to auto-derive from halftime wallclock.",
+    help="Enter the H2 kickoff timestamp to OVERRIDE, or leave blank to accept the "
+         "auto-derived value shown above. Either way, Confirm \u2014 it's mandatory.",
 )
-if st.button("Save 2nd-half kickoff override", disabled=is_running):
+_c1, _c2 = st.columns(2)
+if _c1.button("Confirm 2nd-half kickoff (override)", disabled=is_running or not h2_offset_str.strip()):
     try:
-        seconds = _parse_offset_str(h2_offset_str) if h2_offset_str.strip() else 0.0
+        seconds = _parse_offset_str(h2_offset_str)
         if seconds < 0:
             raise ValueError("Offset must be non-negative.")
-        firestore_io.set_video_offset_h2_kickoff_s(game_id, seconds)
-        if seconds > 0:
-            st.success(f"\u2713 2nd-half kickoff override @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
-        else:
-            st.success("\u2713 Cleared 2nd-half override (back to auto-derived)")
+        firestore_io.set_video_offset_h2_kickoff_s(game_id, seconds, confirmed=True)
+        st.success(f"\u2713 2nd-half kickoff CONFIRMED (override) @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
         _list_games.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Bad timestamp: {e}")
+if _c2.button("Confirm auto-derived 2nd-half", disabled=is_running):
+    # accept the auto-derived H2 (clear any override \u2192 0) and mark confirmed
+    firestore_io.set_video_offset_h2_kickoff_s(game_id, 0.0, confirmed=True)
+    st.success("\u2713 2nd-half kickoff CONFIRMED (auto-derived)")
+    _list_games.clear()
+    st.rerun()
 
 # Show derived boundaries so the user can sanity-check
 if current_offset > 0:
@@ -873,11 +900,24 @@ if not current_video:
 if not game["has_calibration"]:
     st.warning("Game has no calibration — calibrate first (step 2) or the pipeline will fail.")
 
+# Hard-block: both half kickoffs must be marked AND confirmed by the coach —
+# the offsets anchor every player's on-field window / minutes; an unconfirmed
+# (silent default-0) offset shifts everyone. Same verdict the pipeline enforces.
+_kick_ok = bool(game.get("video_offset_h1_confirmed")) and bool(game.get("video_offset_h2_confirmed"))
+if not _kick_ok:
+    _need = []
+    if not game.get("video_offset_h1_confirmed"):
+        _need.append("1st-half")
+    if not game.get("video_offset_h2_confirmed"):
+        _need.append("2nd-half")
+    st.warning(f"🚫 Confirm the {' & '.join(_need)} kickoff in step 1.5 before running "
+               "— it anchors every player's minutes / on-field time.")
+
 # Hard-block: don't let the coach launch a multi-hour track on a calibration
 # that fails the quality gate. `_calib_ok` is the SAME verdict the pipeline
 # enforces (defense in depth); its block reasons are already shown above.
 if st.button("▶︎ Run analytics", type="primary",
-             disabled=not current_video or is_running or not _calib_ok):
+             disabled=not current_video or is_running or not _calib_ok or not _kick_ok):
     args = ["run", "--game-id", game_id]
     if tv_view:
         args.append("--tv-view")

@@ -107,6 +107,24 @@ def run(
         else:
             log.info("Calibration QC: %s", _verdict.summary().splitlines()[0])
 
+        # 1b. Kickoff-confirmation gate. Every on-field window (and thus minutes,
+        # distance, formation, identity budget) is anchored on the H1/H2 kickoff
+        # offsets. An UNconfirmed offset is likely a silent default 0 that shifts
+        # every player's window (a bench player reads as on-field, etc.). Require
+        # the coach to have deliberately confirmed BOTH halves in calibration.
+        # Same --skip-calibration-qc override; stats-only exempt (reuses cache).
+        _missing = [h for h, ok in (("1st", game.video_offset_h1_confirmed),
+                                    ("2nd", game.video_offset_h2_confirmed)) if not ok]
+        if _missing:
+            _msg = (f"Kickoff not confirmed for the {' & '.join(_missing)} half. "
+                    "Mark + confirm both kickoffs in the calibration step "
+                    "(their offsets anchor every player's on-field time / minutes) "
+                    "or pass --skip-calibration-qc to override.")
+            if skip_calibration_qc:
+                log.warning("Kickoff-confirmation gate: %s (overridden)", _msg)
+            else:
+                raise RuntimeError(_msg)
+
     # Stats-only refresh runs entirely off the cached tracks checkpoint, so the
     # (possibly long-deleted) source video is never needed — synthesize the bits
     # of `meta` we still use (fps, duration) from the parquet and skip the open.

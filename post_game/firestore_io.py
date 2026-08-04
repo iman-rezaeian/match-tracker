@@ -79,6 +79,12 @@ class GameDoc:
     # H2 start. Use this when the "start 2nd half" button was pressed late
     # (sub chaos, distracted coach, etc.).
     video_offset_h2_kickoff_s: float = 0.0
+    # Coach explicitly confirmed each half's kickoff position in the calibration
+    # step. An UNconfirmed kickoff (default) means the offset may be a silent 0
+    # that shifts every player's on-field window — the Run-Analysis gate blocks
+    # until BOTH are confirmed. H2 may be confirmed with the auto-derived start.
+    video_offset_h1_confirmed: bool = False
+    video_offset_h2_confirmed: bool = False
     # Per-game coach identity corrections, written by the PWA IdentityFixView:
     # { "<tracklet_id>": "<player_id>" | None }. A player_id force-assigns that
     # stitched tracklet to that roster player (status="coach", confidence=1.0);
@@ -179,6 +185,8 @@ def get_game(game_id: str) -> GameDoc:
         field_name=d.get("fieldName"),
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
+        video_offset_h1_confirmed=bool(d.get("videoOffsetH1Confirmed", False)),
+        video_offset_h2_confirmed=bool(d.get("videoOffsetH2Confirmed", False)),
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
         identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
     )
@@ -218,6 +226,8 @@ def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
             "has_video_offset": d.get("videoOffsetH1KickoffS") is not None,
             "video_offset_h1_kickoff_s": float(d.get("videoOffsetH1KickoffS") or 0.0),
             "video_offset_h2_kickoff_s": float(d.get("videoOffsetH2KickoffS") or 0.0),
+            "video_offset_h1_confirmed": bool(d.get("videoOffsetH1Confirmed", False)),
+            "video_offset_h2_confirmed": bool(d.get("videoOffsetH2Confirmed", False)),
             "has_analytics": has_analytics,
             "started_at": int(d.get("startedAt", 0)),
         })
@@ -613,22 +623,32 @@ def set_video_url(game_id: str, url: str) -> None:
     )
 
 
-def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float) -> None:
-    """Persist the seconds-into-source-video of the 1st-half kickoff whistle."""
+def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float,
+                                  confirmed: bool = True) -> None:
+    """Persist the seconds-into-source-video of the 1st-half kickoff whistle.
+
+    `confirmed` marks that the coach deliberately set/verified it (default True —
+    a coach saving from the UI is confirming). The Run-Analysis gate requires
+    confirmation so a silent default-0 offset can't shift every on-field window."""
     _team_doc().collection("games").document(game_id).set(
-        {"videoOffsetH1KickoffS": float(offset_s)}, merge=True
+        {"videoOffsetH1KickoffS": float(offset_s),
+         "videoOffsetH1Confirmed": bool(confirmed)}, merge=True
     )
 
 
-def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float) -> None:
+def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float,
+                                  confirmed: bool = True) -> None:
     """Persist a manual override for the 2nd-half kickoff (source-video seconds).
 
     When > 0, overrides the wallclock-derived H2 start in `half_windows()`
     and `period_clock_to_video_time_factory()`. Set to 0 to fall back to the
-    auto-derived value.
+    auto-derived value. `confirmed` records that the coach verified the H2 start
+    (either by entering a timestamp or accepting the auto-derived one) — the
+    Run-Analysis gate requires it.
     """
     _team_doc().collection("games").document(game_id).set(
-        {"videoOffsetH2KickoffS": float(offset_s)}, merge=True
+        {"videoOffsetH2KickoffS": float(offset_s),
+         "videoOffsetH2Confirmed": bool(confirmed)}, merge=True
     )
 
 
