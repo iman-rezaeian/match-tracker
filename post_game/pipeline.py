@@ -48,6 +48,7 @@ def run(
     reuse_tv_reel: bool = False,
     stats_only: bool = False,
     pin_partition: tuple[dict[int, int], dict[int, int]] | None = None,
+    skip_calibration_qc: bool = False,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -77,6 +78,34 @@ def run(
             raise RuntimeError(
                 f"Game {game_id} still has no calibration after the browser tool exited."
             )
+
+    # 1a. Calibration-quality gate. A present-but-bad calibration silently
+    # corrupts every field-meter stat, so hard-block BEFORE the multi-hour
+    # tracking pass rather than discover it after. Stats-only refreshes reuse
+    # cached tracks (the coach is deliberately re-deriving) and are exempt; the
+    # --skip-calibration-qc override downgrades the block to a warning.
+    if not stats_only:
+        from .calibration_qc import evaluate_calibration
+        # The evaluator needs the RAW calibration dict (solver tag + rms live in
+        # ground_similarity), not the parsed FieldCalibration.
+        _snap = firestore_io._team_doc().collection("games").document(game_id).get()
+        _doc = _snap.to_dict() or {}
+        _cal_dict = _doc.get("calibration")
+        _field_key = (_cal_dict or {}).get("field_key") or _doc.get("fieldName")
+        _prior = firestore_io.get_field_scale(_field_key) if _field_key else None
+        _verdict = evaluate_calibration(_cal_dict, _prior)
+        if not _verdict.ok:
+            if skip_calibration_qc:
+                log.warning("Calibration QC FAILED but --skip-calibration-qc set; running anyway:\n%s",
+                            _verdict.summary())
+            else:
+                raise RuntimeError(
+                    "Calibration quality gate blocked this run. Re-calibrate the field "
+                    "(or pass --skip-calibration-qc to override).\n" + _verdict.summary()
+                )
+        else:
+            log.info("Calibration QC: %s", _verdict.summary().splitlines()[0])
+
     # Stats-only refresh runs entirely off the cached tracks checkpoint, so the
     # (possibly long-deleted) source video is never needed — synthesize the bits
     # of `meta` we still use (fps, duration) from the parquet and skip the open.
@@ -159,7 +188,31 @@ def run(
 
     fps_sampled = meta["fps"] / config.SAMPLE_RATE
 
-    def _new_tracker() -> Tracker:
+    def _new_tracker():
+        # Flag-gated trackers (default OFF): associate in field METERS instead of
+        # the distorted equirect frame. Same update() signature, so the call sites
+        # below are unchanged. `projector` (built at :86) is captured from the
+        # enclosing scope. Lazy imports keep the prod import graph untouched when
+        # the flags are OFF. TRACK_PITCH (the DeepSORT-on-pitch rebuild) wins over
+        # the older B2 surrogate if both are somehow set.
+        if config.TRACK_PITCH:
+            from .tracking_pitch import PitchTracker
+            return PitchTracker(
+                projector,
+                frame_rate=max(1, int(round(fps_sampled))),
+                track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
+                # kit hexes feed the team-color association gate (green vs blue is
+                # the one cross-team signal that survives on same-kit U10s).
+                our_color_hex=_our_color(game),
+                opp_color_hex=game.away_color,
+            )
+        if config.TRACK_FIELD_SPACE:
+            from .tracking_field import FieldSpaceTracker
+            return FieldSpaceTracker(
+                projector,
+                frame_rate=max(1, int(round(fps_sampled))),
+                track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
+            )
         return Tracker(
             frame_rate=max(1, int(round(fps_sampled))),
             track_buffer_frames=int(config.TRACK_BUFFER_S * fps_sampled),
@@ -235,8 +288,17 @@ def run(
             n_samples += 1
             # Reset tracker at halftime — track IDs must not bridge halves
             # (players swap ends, teams swap sides, anyone could be off the field).
+            # But CARRY the id counter across the reset: a fresh tracker restarts
+            # ids at 1 (boxmot resets BaseTrack._count in __init__; PitchTracker
+            # resets self._next_id), so without this, half-2 ids collide with
+            # half-1 ids and two different players get folded into one track_id —
+            # corrupting team classification and per-player coverage/stats. All
+            # three tracker types expose `_next_id` (see _new_tracker), so this is
+            # uniform. Mirrors tracking/retrack_smoke.py's --full-game path.
             if current_half == 1 and sample.time_s >= h1_end_s:
+                next_id_carry = tracker._next_id
                 tracker = _new_tracker()
+                tracker._next_id = next_id_carry
                 current_half = 2
 
             # --- Multi-tile detection ---
@@ -460,6 +522,9 @@ def run(
             tracks_df, team_of_track,
             track_embeddings=track_embeddings,
             track_jersey_samples=track_jersey_samples,
+            # kit hexes enable the team-color CANNOT-LINK guard (only engages
+            # under the PitchTracker color gate; equirect/prod stitch unchanged).
+            our_color_hex=_our_color(game), opp_color_hex=game.away_color,
         )
         _ss = stitch_stats(tracklet_of_track, team_of_track)
         log.info("  -> stitching: %d our fragments -> %d tracklets (%d merged, largest=%d frags)",

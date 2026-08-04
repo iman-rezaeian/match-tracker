@@ -332,6 +332,71 @@ def save_field(field_cal: FieldCalibration) -> None:
     )
 
 
+# --- Per-field SCALE anchor (accuracy: map-measured touchline length) ---------
+# Absolute scale can't be recovered from a single grazing camera (goal size
+# varies between U10 fields, so nothing in-scene has a known length). The coach
+# reads the touchline length off a satellite map ONCE per field; it's stored
+# here keyed by a short field label and reused for every future game on that
+# field. See CALIBRATION_SCALE_PLAN.md + calibration_solve.solve_sphere_scaled.
+
+def list_field_scales() -> list[dict]:
+    """All stored per-field scale anchors: [{field_key, length_m, width_m, source}].
+
+    `width_m` is the solver-recovered field width (None on older entries that
+    predate width persistence); it feeds the calibration-QC consistency check.
+    """
+    out = []
+    for snap in _team_doc().collection("fields").stream():
+        d = snap.to_dict() or {}
+        if d.get("map_length_m") is not None:
+            w = d.get("map_width_m")
+            out.append({
+                "field_key": snap.id,
+                "length_m": float(d["map_length_m"]),
+                "width_m": float(w) if w is not None else None,
+                "source": d.get("map_source", ""),
+            })
+    return sorted(out, key=lambda r: r["field_key"])
+
+
+def get_field_scale(field_key: str) -> Optional[dict]:
+    """The stored map-measured length (+ solved width, if recorded) for a field."""
+    snap = _team_doc().collection("fields").document(field_key).get()
+    if not snap.exists:
+        return None
+    d = snap.to_dict() or {}
+    if d.get("map_length_m") is None:
+        return None
+    w = d.get("map_width_m")
+    return {"field_key": field_key, "length_m": float(d["map_length_m"]),
+            "width_m": float(w) if w is not None else None,
+            "source": d.get("map_source", "")}
+
+
+def save_field_scale(field_key: str, length_m: float, source: str = "",
+                     width_m: Optional[float] = None) -> None:
+    """Persist the map-measured length (+ solved width) for a field (merge, so it
+    coexists with any legacy FieldCalibration on the same doc).
+
+    `source` is only written when non-empty, so a specific note the coach set
+    earlier (e.g. "goal-to-goal (coach)") is never clobbered by a generic
+    default on a later save.
+    """
+    payload: dict[str, Any] = {"map_length_m": float(length_m)}
+    if source:
+        payload["map_source"] = source
+    if width_m is not None:
+        payload["map_width_m"] = float(width_m)
+    _team_doc().collection("fields").document(field_key).set(payload, merge=True)
+
+
+def set_game_field(game_id: str, field_key: str) -> None:
+    """Link a game to the field it was played on (so its scale is reusable)."""
+    _team_doc().collection("games").document(game_id).set(
+        {"fieldName": field_key}, merge=True
+    )
+
+
 def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
     _team_doc().collection("games").document(game_id).collection("analytics").document(
         config.ANALYTICS_DOC_VERSION

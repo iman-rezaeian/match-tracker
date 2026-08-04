@@ -6,12 +6,17 @@ Companion to `METRICS_RELEVANCE_PLAN.md` (identity bottleneck) and `ANALYTICS_IM
 helping players and coaches find individual and team strengths/weaknesses and plan growth —
 and prioritizes by ROI × how-blocked.
 
-**STATUS (2026-07-13): Tiers 1 & 2 shipped to `beta`.**
-- Tier 1 DONE: pressure multiplier (DEC ×1.5) + "vs Squad" percentile toggle (commit 667f426).
-- Tier 2 DONE: TEAM SHAPE sparkline card (surfaced the hidden `team_time_series`) + per-half
+**STATUS: Tiers 1–3 shipped to `beta` (1 & 2 promoted to main 2026-07-13).**
+- Tier 1 DONE (main): pressure multiplier (DEC ×1.5) + "vs Squad" percentile toggle (commit 667f426).
+- Tier 2 DONE (main): TEAM SHAPE sparkline card (surfaced the hidden `team_time_series`) + per-half
   `field_tilt` (pipeline fix + both 8K games re-run stats-only, `byHalf` confirmed live) (commit 00d63ed).
-- NEXT: Tier 3 (honest-reporting finish) — then Tier 4 (identity recall, VLM-gated).
-Both tiers await coach validation on `beta.match-tracker-843.pages.dev` before promotion to main.
+- Tier 3 DONE (beta, commit 0241fe7): graded honesty for per-player tracking metrics — a
+  coverage+confidence tint (dot/border, grade 3/2/1/0) replaces the old binary bare-vs-dashed;
+  added AVG km/h (coverage-robust) as an honest headline; coverage caveat always-on incl top speed;
+  spatial-metric partial-view sub-labels; team-summary sprint/top-speed parity fixes. Display-only,
+  no pipeline change, no GT re-run. Decision locked: physical metrics NOT shrunk toward mean.
+- NEXT: Tier 4 (identity recall — coach FIX-ID UX / leftover-pass tuning / VLM, VLM-gated).
+Tier 3 awaits coach validation on `beta.match-tracker-843.pages.dev` before promotion to main.
 
 ## The core finding: two metric systems, opposite accuracy profiles
 

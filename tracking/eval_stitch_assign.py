@@ -40,6 +40,12 @@ def main() -> None:
     ap.add_argument("--split-gap-s", type=float, default=None)
     ap.add_argument("--app-weight", type=float, default=None, help="override STITCH_APP_WEIGHT")
     ap.add_argument("--dist-cap-m", type=float, default=None, help="override STITCH_DIST_CAP_M")
+    ap.add_argument("--stitch-mode", choices=["greedy", "global"], default="greedy",
+                    help="tracklet chaining: greedy (shipped) or global min-cost-flow")
+    ap.add_argument("--ckpt-suffix", default="",
+                    help="checkpoint suffix to score, e.g. 'smoke' -> tracks_raw.smoke.parquet "
+                         "+ jersey_samples.smoke.npz (for validating a re-track on a smoke window "
+                         "without clobbering the full-game cache)")
     args = ap.parse_args()
     os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
@@ -68,12 +74,16 @@ def main() -> None:
         raise SystemExit("No calibration — can't project to field.")
     L, W = cal.length_m, cal.width_m
     ckpt = config.OUTPUTS_DIR / args.game_id
+    sfx = f".{args.ckpt_suffix}" if args.ckpt_suffix else ""
 
-    tracks_df = pd.read_parquet(ckpt / "tracks_raw.parquet")
-    jersey = _load_jersey_medians(ckpt / "jersey_samples.npz")
+    tracks_path = ckpt / f"tracks_raw{sfx}.parquet"
+    if not tracks_path.exists():
+        raise SystemExit(f"no tracks checkpoint at {tracks_path}")
+    tracks_df = pd.read_parquet(tracks_path)
+    jersey = _load_jersey_medians(ckpt / f"jersey_samples{sfx}.npz")
     embeddings = {}
-    if (ckpt / "embeddings.npz").exists():
-        with np.load(ckpt / "embeddings.npz", allow_pickle=True) as nz:
+    if (ckpt / f"embeddings{sfx}.npz").exists():
+        with np.load(ckpt / f"embeddings{sfx}.npz", allow_pickle=True) as nz:
             embeddings = {int(k): np.asarray(nz[k], dtype=np.float32) for k in nz.files}
 
     # stage 3: project + off-field + top-20/frame (mirrors pipeline.py)
@@ -103,7 +113,9 @@ def main() -> None:
         tracks_df, jersey, our_home_color_hex=_our_color(game),
         opp_color_hex=game.away_color, ref_color_hex=game.ref_color)
     tracklet_of_track = stitch_tracklets(
-        tracks_df, team_of_track, track_embeddings=embeddings, track_jersey_samples=jersey)
+        tracks_df, team_of_track, track_embeddings=embeddings, track_jersey_samples=jersey,
+        mode=args.stitch_mode,
+        our_color_hex=_our_color(game), opp_color_hex=game.away_color)
     ss = stitch_stats(tracklet_of_track, team_of_track)
 
     play_windows = half_windows(game, float(tracks_df["time_s"].max()) + 1.0)

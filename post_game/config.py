@@ -95,6 +95,12 @@ DETECT_TILE_DEDUPE_M = 1.5     # foot positions within this distance (m)
 
 YOLO_MODEL = "yolo11s.pt"
 DETECT_CONFIDENCE = 0.30
+# YOLO inference resolution. Ultralytics defaults to 640, which downsamples
+# our 1280-wide detection tiles 2x and loses far/small players (the accuracy
+# audit's B3 — a prime source of missed far-side detections + fragmentation).
+# Set to the tile width so inference runs at native tile resolution. Ultralytics
+# resizes to a multiple of 32; 1280 is already aligned.
+DETECT_IMGSZ = 1280
 PERSON_CLASS_ID = 0
 BALL_CLASS_ID = 32                              # COCO sports ball
 
@@ -103,6 +109,109 @@ BALL_CLASS_ID = 32                              # COCO sports ball
 TRACKER_TYPE = "botsort"                         # bytetrack | botsort | deepocsort
 REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 TRACK_BUFFER_S = 20                              # how long a lost track is kept
+# Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate
+# space instead of the distorted equirect frame. See B2_FIELD_SPACE_TRACKING.md +
+# post_game/tracking_field.py. Re-ID de-corruption (real crops via boxmot embs) +
+# _new_tracker wiring + surrogate-velocity unit test have landed; the tracker is
+# correct and swappable. Env-overridable (like the other tuning flags below) so a
+# validation re-track can enable it for ONE run without flipping the prod default.
+# Do NOT change the default to True until a re-track on a game with a fresh raw
+# video AND blind GT labels shows the fragment count drops AND per-player GT
+# recall does not regress.
+TRACK_FIELD_SPACE = os.environ.get("TRACK_FIELD_SPACE", "0") != "0"
+# Accuracy rebuild: the DeepSORT-on-pitch tracker (post_game/tracking_pitch.py).
+# Associates in field-METERS with a point-distance gate + matching cascade + a
+# per-track Kalman in meters — the standard fixed-camera-sports method. Unlike the
+# B2 surrogate (constant-box IoU, which merged neighbors in the U10 swarm and
+# regressed), a point gate at ~1 m sits far below U10 spacing so it can't swap
+# neighbors. Independent of TRACK_FIELD_SPACE; if both set, TRACK_PITCH wins.
+# Default OFF, env-overridable for a single validation re-track; do NOT flip the
+# default until a re-track beats the equirect baseline on fragments AND coverage.
+TRACK_PITCH = os.environ.get("TRACK_PITCH", "0") != "0"
+
+# --- PitchTracker association gates (TRACK_PITCH only; env-overridable) -------
+# The meter-space tracker's fragment win (775->90) came partly from GLUING
+# different players into one track: 46% of its colored track-seconds were in
+# color-MIXED (green+blue) tracks vs the equirect baseline's 16% — i.e. it
+# swaps between our (green) and opponent (blue) players in the U10 swarm. These
+# gates attack that. All read only when TRACK_PITCH is on; prod is untouched.
+#
+# (1) Team-color association gate. Green (ours) vs blue (opp) is the ONE
+# cross-team signal that survives on same-kit U10s (OSNet is noise). A track
+# that has committed to one kit refuses a detection of the other kit. The
+# anchors are the two kit hues (derived per-game from the hexes at construction,
+# compared nearest-of-two on the OpenCV hue circle 0-179), so no team_id
+# assignment is needed at tracking time. The tracker samples color with its OWN
+# raw-ROI reader (_det_kit_color), NOT sample_jersey_hsv: that fn grass-drops
+# H35-85 (team_classifier.py:253), which would delete our green kit (H71 sits in
+# that band) and make the gate blue-only.
+PITCH_COLOR_GATE = os.environ.get("PITCH_COLOR_GATE", "1") != "0"
+# Per-pixel S floor for the color decision — deliberately LOW so a grass-washed
+# green still reads green-vs-blue (decoupled from any downstream saturation bar).
+PITCH_COLOR_MIN_S = float(os.environ.get("PITCH_COLOR_MIN_S", "35"))
+PITCH_COLOR_MIN_PIXELS = int(os.environ.get("PITCH_COLOR_MIN_PIXELS", "10"))
+# Nearest-anchor margin (hue-deg): the pixel-median must be at least this much
+# closer to one kit anchor than the other to count as that kit; inside the
+# margin -> UNKNOWN (never rejects). Green(71)/blue(111) are ~40 apart, midpoint
+# ~91; a small margin claims each basin while leaving a neutral dead-zone around
+# the desaturated ~H90-107 collapse center so a washed track can't flip.
+PITCH_COLOR_MARGIN_DEG = float(os.environ.get("PITCH_COLOR_MARGIN_DEG", "6.0"))
+# Cross-team association cost. A committed track seeing a CONFIDENT opposite-kit
+# detection adds this many METERS of cost to that pair instead of hard-rejecting
+# it. SOFT (a penalty) not HARD (a veto), because a hard veto shatters a track
+# whenever an opponent transiently occludes it or a frame mis-samples color: the
+# track's own continuation gets refused, it ages, and the detection spawns a new
+# track -> a full-game re-track exploded 90 fragments -> 6399 (54% <5 s) and
+# overshot the team split to 79% ours. The penalty (>> the ~6 m gate cap) keeps
+# the solver STRONGLY preferring same-kit, so a real cross-team grab still loses
+# to any same-kit alternative, but a track with ONLY an opposite-kit detection
+# in range still holds its id through the occlusion instead of fragmenting. Set
+# to inf to restore the old hard-reject behaviour for comparison.
+PITCH_COLOR_PENALTY_M = float(os.environ.get("PITCH_COLOR_PENALTY_M", "50.0"))
+# A track "commits" to a kit only after this many NET votes (green +1 / blue -1),
+# so one mis-sampled frame can't lock it; the running score is clipped to
+# +/-COMMIT_CLIP so a genuinely wrong early commit can be out-voted within ~1 s.
+PITCH_COLOR_COMMIT_VOTES = int(os.environ.get("PITCH_COLOR_COMMIT_VOTES", "3"))
+PITCH_COLOR_COMMIT_CLIP = int(os.environ.get("PITCH_COLOR_COMMIT_CLIP", "8"))
+# A STALE track has no business asserting color authority (its color memory is
+# frozen at its last match). Above this time_since_update the color gate is
+# disabled for that track -> motion + cap decide, and it can re-acquire and
+# re-vote instead of dead-locking (refusing the only dets that would un-commit).
+PITCH_COLOR_MAX_TSU = int(os.environ.get("PITCH_COLOR_MAX_TSU", "3"))
+#
+# (2) Motion clamps.
+# (a) Cap the per-frame gate's unbounded growth with time_since_update. At the
+#     shipped rate (fps/SAMPLE_RATE = 30/3 = 10 fps -> dt=0.1 s, verified on W8)
+#     the fresh gate is MAX_PLAUSIBLE_SPEED_MS*dt + slack = 3.9 m and the cap
+#     first bites at tsu=2 (4.8 m stays under 6.0); the old code let it grow to
+#     ~22 m at tsu=20 (2 s lost) -> a cross-pitch grab. So the cap only bites
+#     multi-frame-stale tracks and CANNOT re-fragment an in-view one. NOTE: this
+#     6.0 m assumes dt~=0.1 s; a materially larger dt (lower fps or higher
+#     SAMPLE_RATE) shrinks the headroom above the fresh gate, so revisit the cap
+#     if the sampled frame rate changes.
+PITCH_GATE_CAP_M = float(os.environ.get("PITCH_GATE_CAP_M", "6.0"))
+# (b) Per-frame slack. Default UNCHANGED at 3.0 (== STITCH_SLACK_M) so the color
+#     gate carries swap reduction without risking re-fragmentation. Cut toward
+#     1.5 ONLY as a fallback if color under-delivers (see fix-design memory).
+PITCH_SLACK_M = float(os.environ.get("PITCH_SLACK_M", "3.0"))
+# (c) NaN/unprojectable pixel-fallback: shrink 150->80 px and forbid stale
+#     tracks. A NaN det carries no meters, so pixel proximity is the only guard;
+#     only a just-seen track (tsu<=NAN_MAX_TSU) may absorb one, color-gated like
+#     any other match.
+PITCH_PX_GATE = float(os.environ.get("PITCH_PX_GATE", "80"))
+PITCH_NAN_MAX_TSU = int(os.environ.get("PITCH_NAN_MAX_TSU", "1"))
+
+# --- Calibration quality gate --------------------------------------------
+# "Run Analysis" hard-blocks on a calibration that fails these, so the coach
+# never spends hours tracking a bad calibration and never needs a developer to
+# eyeball it. Thresholds set from the real stored calibrations: good scaled_lsq
+# fits are 0.27-0.65 m RMS; the un-anchored legacy fits are 0.94-1.47 m. See
+# post_game/calibration_qc.py (the only consumer) + CALIBRATION_SCALE_PLAN.md.
+CALIB_MAX_RMS_M = 1.0            # scaled_lsq fit RMS above this = re-calibrate
+CALIB_WIDTH_MIN = 20.0          # plausible field width band (also the solver's bounds)
+CALIB_WIDTH_MAX = 50.0
+CALIB_WIDTH_CONSISTENCY_TOL_M = 2.5   # same field's width must agree run-to-run within this
+                                      # (two real scaled fits of adjacent fields agreed to 0.8 m)
 
 # --- Identity ------------------------------------------------------------
 
@@ -176,6 +285,12 @@ STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
 # Absolute cap (m) on the A-end -> B-start move, on top of speed*gap+slack. Bounds
 # over-merge when the gap is large. inf = no-op (current behavior).
 STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
+# Stitch chaining mode: "greedy" (each fragment grabs its locally-cheapest
+# successor — the shipped behavior) or "global" (min-cost bipartite matching over
+# the same gated edges, so a locally-cheap link never orphans a fragment that had
+# a better global pairing). Both use the IDENTICAL gates + cost; only the chaining
+# differs. Env-overridable for A/B; default greedy so prod is unchanged.
+STITCH_MODE = os.environ.get("STITCH_MODE", "greedy")
 
 # --- Iterative anchor-coupled re-stitch (post_game/iterative_identity.py) -----
 # Couple stitching and identity: stitch (geometry-only) → seed identities from
@@ -291,6 +406,15 @@ SPEED_SMOOTH_WINDOW = 5                          # samples (≈0.5s at SAMPLE_RA
 # per-step displacement so absurd top speeds (6000+ km/h) and teleport-inflated
 # distances can't occur.
 MAX_PLAUSIBLE_SPEED_MS = 9.0                      # ~32 km/h
+# Cap on the distance_est_m extrapolation multiplier (coach_min / tracked_min).
+# The rate-based estimate scales the tracked slice up to full coach-logged
+# minutes; at low coverage that multiplier explodes (a 19%-coverage player would
+# be blown up ×5.3) and — because low-coverage tracks are activity-biased (the
+# tracker keeps a player while they're moving) — the extrapolation is inflated,
+# not just noisy. Cap it so a thin sliver yields a conservative estimate instead
+# of a fabricated headline. Binds only below ~50% coverage; above that it never
+# fires. 2.0 = "never claim more than double the tracked distance".
+DIST_EST_MAX_MULT = 2.0
 
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)

@@ -301,6 +301,22 @@ def _list_games(limit: int, only_unprocessed: bool) -> list[dict]:
     rows = firestore_io.list_recent_games_snapshots(limit=max(limit, 5))
     if only_unprocessed:
         rows = [r for r in rows if r["has_video"] and not r["has_analytics"]]
+    # Keep newest DAY first, but within a day order by kickoff ASCENDING so the
+    # list reads Game 1, Game 2, ... top-to-bottom (matching the coach's video
+    # filenames). The source list is startedAt-desc, which put a festival's
+    # LATER game above its earlier one — the confusing order. Also tag each game
+    # with its "Game N" for that date so the mapping is explicit.
+    rows.sort(key=lambda r: (r.get("date") or "", -(r.get("started_at") or 0)), reverse=True)
+    # Now assign per-date game numbers in kickoff order.
+    from collections import defaultdict
+    by_date: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_date[r.get("date") or ""].append(r)
+    for day_rows in by_date.values():
+        # day_rows are in the display order (kickoff desc within the day); number
+        # them by kickoff ASC so the earliest kickoff is "Game 1".
+        for n, r in enumerate(sorted(day_rows, key=lambda r: r.get("started_at") or 0), start=1):
+            r["game_no"] = n if len(day_rows) > 1 else None
     return rows[:limit]
 
 
@@ -312,14 +328,25 @@ def _format_row(r: dict) -> str:
         "📐" if r["has_calibration"] else "  ",
         "📊" if r["has_analytics"] else "  ",
     ])
-    return f"{r['date'] or '—'}  vs {r['opponent'] or '—':<20}  {score:>5}  [{r['status'] or '—':<8}]  {flags}  ({r['id']})"
+    # "Game N" for festival days with >1 game (kickoff order — matches the
+    # coach's VID_..._GameN.mp4 filenames); blank for single-game days.
+    game_no = f"Game {r['game_no']}  " if r.get("game_no") else ""
+    return f"{r['date'] or '—'}  {game_no}vs {r['opponent'] or '—':<20}  {score:>5}  [{r['status'] or '—':<8}]  {flags}  ({r['id']})"
 
 
 def _start_subprocess(kind: str, game_id: str, args: list[str]) -> None:
     """Start `python -m post_game.cli ...` and pump stdout into a queue."""
-    if st.session_state[K_PROC] is not None and st.session_state[K_PROC].poll() is None:
-        st.warning("Another job is already running. Stop it first.")
-        return
+    running = st.session_state[K_PROC] is not None and st.session_state[K_PROC].poll() is None
+    if running:
+        # The calibrate server is a long-lived interactive HTTP server that
+        # closing the browser tab does NOT stop — so a re-click must be able to
+        # relaunch it (stop the stale server, open a fresh tab). Any other job
+        # (a multi-hour tracking run) is protected: don't clobber it.
+        if kind == "calibrate" and st.session_state[K_PROC_KIND] == "calibrate":
+            _stop_running()
+        else:
+            st.warning("Another job is already running. Stop it first.")
+            return
 
     cmd = [sys.executable, "-u", "-m", "post_game.cli", *args]
     env = os.environ.copy()
@@ -647,27 +674,38 @@ except Exception as e:
     _existing_cal = None
     st.caption(f"(Could not read calibration: {e})")
 
+# Calibration-quality verdict — the SAME gate the pipeline enforces. Drives the
+# Run button below so the coach can't launch a multi-hour track on a bad
+# calibration. `_calib_ok` defaults True so a missing verdict never over-blocks.
+_calib_ok = True
+_calib_verdict = None
 if _existing_cal:
     fw, fh = _existing_cal.video_frame_size
     _saved_ts = None
-    _rms_w = None
+    _raw = {}
     try:
         from post_game.firestore_io import _team_doc as _td
-        _raw = (_td().collection("games").document(game_id).get().to_dict() or {}).get("calibration") or {}
+        _doc = (_td().collection("games").document(game_id).get().to_dict() or {})
+        _raw = _doc.get("calibration") or {}
         _ts_ms = _raw.get("created_at") or _raw.get("refined_at")
         if isinstance(_ts_ms, (int, float)) and _ts_ms > 0:
             from datetime import datetime
             _saved_ts = datetime.fromtimestamp(_ts_ms / 1000).strftime("%Y-%m-%d %H:%M")
-        _gs = _raw.get("ground_similarity") or {}
-        _rms_w = _gs.get("rms_weighted_m")
     except Exception:
-        pass
+        _doc = {}
+    # Evaluate quality (RMS + width + cross-field consistency).
+    try:
+        from post_game.calibration_qc import evaluate_calibration
+        _fk = _raw.get("field_key") or _doc.get("fieldName")
+        _prior = firestore_io.get_field_scale(_fk) if _fk else None
+        _calib_verdict = evaluate_calibration(_raw, _prior)
+        _calib_ok = _calib_verdict.ok
+    except Exception:
+        _calib_ok, _calib_verdict = True, None
     _when = f" · saved {_saved_ts}" if _saved_ts else ""
     _sph = _existing_cal.sphere
     if _sph:
         _rms_str = f"RMS {_sph['rms_m']:.2f} m"
-        if isinstance(_rms_w, (int, float)) and _rms_w > 0:
-            _rms_str += f" (weighted {float(_rms_w):.2f} m)"
         st.success(
             f"✓ Sphere calibration — cam_h={_sph['cam_h_m']:.2f} m, "
             f"pitch={_sph['pitch_deg']:+.2f}°, roll={_sph['roll_deg']:+.2f}°, "
@@ -682,12 +720,109 @@ if _existing_cal:
             f" ({_existing_cal.length_m:g}×{_existing_cal.width_m:g} m field){_when}."
             " Re-calibrate to get the more accurate sphere model."
         )
+    # Surface the QC block reasons so the coach knows exactly what to fix.
+    if _calib_verdict is not None and not _calib_ok:
+        st.error(
+            "🚫 This calibration will NOT pass the quality gate — Run Analysis is "
+            "disabled until you re-calibrate:\n\n- " + "\n- ".join(_calib_verdict.reasons)
+        )
 else:
+    _calib_ok = False  # no calibration -> can't run
     st.info("No calibration yet. Click below to mark the reference landmarks.")
 
+# --- Field scale anchor (accuracy) --------------------------------------
+# Absolute distance/speed need a real-world length, but nothing in the scene
+# has a known size (goal width varies between U10 fields). The coach measures
+# the touchline ONCE on a satellite map per field; it's stored and reused.
+try:
+    _field_scales = firestore_io.list_field_scales()
+except Exception:
+    _field_scales = []
+_field_opts = ["➕ New field…"] + [f"{f['field_key']}  ({f['length_m']:g} m)" for f in _field_scales]
+# SUGGEST a field key from the SCHEDULE (teams/main.schedule), which carries the
+# pitch label (`field`, e.g. "W7"/"Field 6") and a Google-Maps `location` pin.
+# The schedule entry is a separate doc from the game — join by (date, opponent).
+# Key = date + field label so festival pitches (W7 vs W8 same day) don't collide.
+_linked = None
+_suggested_key = ""
+_pin_url = ""
+try:
+    import re as _re
+    _gdoc = firestore_io._team_doc().collection("games").document(game_id).get().to_dict() or {}
+    _linked = _gdoc.get("fieldName")
+    _gdate = _gdoc.get("date")
+    _gopp = (_gdoc.get("opponent") or "").strip().lower()
+    _tm = firestore_io._team_doc().get().to_dict() or {}
+    _sched = [e for e in (_tm.get("schedule") or []) if isinstance(e, dict)]
+    _match = next((e for e in _sched
+                   if e.get("date") == _gdate
+                   and (e.get("opponent") or "").strip().lower() == _gopp), None)
+    if _match:
+        _pin_url = (_match.get("location") or "").strip()
+        _fld = (_match.get("field") or "").strip()
+        if _fld:
+            _slug = _re.sub(r"[^a-z0-9]+", "-", _fld.lower()).strip("-")
+            _suggested_key = f"{_gdate}-{_slug}" if _gdate else _slug
+    if not _suggested_key:
+        # No schedule field label — fall back to home/opponent hint.
+        if _gdoc.get("isHome"):
+            _suggested_key = "home"
+        else:
+            _suggested_key = _re.sub(r"[^a-z0-9]+", "-", _gopp).strip("-") or "away"
+except Exception:
+    pass
+
+# Default the dropdown to: the linked field if any, else an EXISTING field whose
+# key matches the schedule suggestion, else "New field" (prefilled with it).
+_default_idx = 0
+_match_key = _linked or _suggested_key
+if _match_key:
+    for i, f in enumerate(_field_scales):
+        if f["field_key"] == _match_key:
+            _default_idx = i + 1
+            break
+
+st.markdown("**Field scale** — needed for accurate distance/speed")
+sc_cols = st.columns([2, 1])
+_pick = sc_cols[0].selectbox(
+    "Field", _field_opts, index=_default_idx,
+    help="Auto-suggested from the schedule's pitch label (e.g. W7 / Field 6), namespaced by date so festival pitches don't collide. Pick an existing field to reuse its length, or add a new one.",
+)
+if _pick == "➕ New field…":
+    _fkey = sc_cols[0].text_input("New field name", value=(_linked or _suggested_key),
+                                  placeholder="e.g. 2026-07-12-w7").strip()
+    _prefill_len = 0.0
+else:
+    _chosen = _field_scales[_field_opts.index(_pick) - 1]
+    _fkey = _chosen["field_key"]
+    _prefill_len = _chosen["length_m"]
+_map_len = sc_cols[1].number_input(
+    "Field length (m)", min_value=0.0, max_value=120.0, step=0.5,
+    value=float(_prefill_len),
+    help="The LONG dimension of the pitch (end to end), in meters — NOT the goal-mouth width. Measure it once on Google Maps. Reused for every game on this field.",
+)
+_how = ("→ satellite view → **right-click one goal's center → Measure distance → click the far goal's center** "
+        "(straight down the long axis). That end-to-end distance is the field length. "
+        "(Tracing a full sideline corner-to-corner gives the same number if the grass lines are visible.)")
+if _pin_url:
+    st.caption(f"📍 This pitch on the map (from the schedule): [{_pin_url}]({_pin_url}) {_how}")
+else:
+    st.caption(f"📍 Google Maps {_how} Fixes absolute scale; the clicks recover the rest of the shape.")
+
 _cal_btn_label = "📐 Re-calibrate field" if _existing_cal else "📐 Calibrate field"
-if st.button(_cal_btn_label, disabled=not current_video or is_running):
-    _start_subprocess("calibrate", game_id, ["calibrate", "--game-id", game_id])
+# NOT gated on is_running: the calibrate server stays up until SAVE and closing
+# the tab doesn't stop it, so a re-click must relaunch (handled in
+# _start_subprocess, which stops a stale calibrate server first). Only blocked
+# when no video is attached.
+_cal_help = "Opens the calibration tab on :8766. It stays open until you SAVE — click again to reopen if you closed the tab."
+if not _map_len or not _fkey:
+    st.caption("⚠ Enter a field name + touchline length above for accurate distance/speed. "
+               "You can still calibrate without them, but distance/speed will be scale-approximate.")
+if st.button(_cal_btn_label, disabled=not current_video, help=_cal_help):
+    _args = ["calibrate", "--game-id", game_id]
+    if _map_len and _fkey:
+        _args += ["--map-length", str(_map_len), "--field-key", _fkey]
+    _start_subprocess("calibrate", game_id, _args)
     st.rerun()
 
 # --- 3. run pipeline ----------------------------------------------------
@@ -696,7 +831,10 @@ st.divider()
 st.markdown("### 3. Run pipeline")
 
 run_cols = st.columns([1, 1, 2])
-tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=False)
+# Default ON: --tv-view renders the full-game reel + auto-highlights the coach
+# and parents watch in the PWA. A stats-only run (no video) is the exception,
+# so this is the standing default for a normal game.
+tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=True)
 verbose = run_cols[1].checkbox("Verbose logs", value=False)
 
 smoke_cols = st.columns([1, 1, 1, 1])
@@ -726,7 +864,11 @@ if not current_video:
 if not game["has_calibration"]:
     st.warning("Game has no calibration — calibrate first (step 2) or the pipeline will fail.")
 
-if st.button("▶︎ Run analytics", type="primary", disabled=not current_video or is_running):
+# Hard-block: don't let the coach launch a multi-hour track on a calibration
+# that fails the quality gate. `_calib_ok` is the SAME verdict the pipeline
+# enforces (defense in depth); its block reasons are already shown above.
+if st.button("▶︎ Run analytics", type="primary",
+             disabled=not current_video or is_running or not _calib_ok):
     args = ["run", "--game-id", game_id]
     if tv_view:
         args.append("--tv-view")

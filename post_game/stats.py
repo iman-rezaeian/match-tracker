@@ -31,9 +31,15 @@ class PlayerStats:
     # numbers are therefore rate × coach-logged minutes; the raw sums stay
     # for the 8K before/after comparison. Estimates fall back to the raw
     # value when tracked time is too thin to trust a rate (< 3 tracked min).
-    tracked_seconds: float = 0.0          # actual time with detections
-    distance_est_m: float = 0.0           # (distance_m / tracked_min) × coach_min
-    sprint_est_count: int = 0             # (sprint_count / tracked_min) × coach_min
+    tracked_seconds: float = 0.0          # actual time with detections (real steps)
+    distance_est_m: float = 0.0           # (distance_m / tracked_min) × coach_min, mult-capped
+    sprint_est_count: int = 0             # (sprint_count / tracked_min) × coach_min, mult-capped
+    # Fraction of coach-logged minutes we actually tracked (tracked_min/coach_min).
+    # THE trust dial for distance_est_m: ≳0.5 is solid, <0.25 is a sliver.
+    coverage_frac: float = 0.0
+    # True when the coverage-fraction cap held distance_est_m below the naive
+    # coach_min/tracked_min extrapolation — i.e. an indicative, not measured, number.
+    dist_est_capped: bool = False
     # Personalized sprint threshold actually used for THIS game (plan 4.5).
     sprint_threshold_ms: float = 0.0
     # Fraction of inter-detection steps that exceeded the physical speed cap —
@@ -132,6 +138,15 @@ def compute_player_stats(
         seg_dist = np.where(teleport, 0.0, raw_seg)
         speed = np.where(teleport, 0.0, raw_seg / dt)  # real speeds, all <= cap
         speed_s = _smooth(speed, config.SPEED_SMOOTH_WINDOW)
+        # A teleport step is a GAP, not standstill: the player wasn't observed
+        # moving slowly, they weren't cleanly observed at all. So its dt must not
+        # count as "tracked time", and its zeroed speed must not drag down the
+        # average. Keeping them (the old behaviour) deflated tracked_s, avg_speed,
+        # work-rate, and the dist_est rate by up to ~implausible_frac (e.g. ~37%
+        # for a heavily swap-polluted track). `real` masks the true-motion steps.
+        real = ~teleport
+        real_speed = speed[real]        # unsmoothed real-step speeds (for the mean)
+        real_speed_s = speed_s[real]    # smoothed, real steps only (for the p99)
 
         # Sprints: continuous run above threshold for >= 0.5s. The threshold
         # is personalized when season history exists (plan 4.5) — a fixed bar
@@ -186,20 +201,39 @@ def compute_player_stats(
         rate = []
         for m in range(minutes):
             lo, hi = t[0] + m * 60, t[0] + (m + 1) * 60
-            mask = (t[:-1] >= lo) & (t[:-1] < hi)
+            # Restrict each minute's work-rate to real-motion steps so a minute
+            # polluted by teleport gaps isn't reported as low effort.
+            mask = (t[:-1] >= lo) & (t[:-1] < hi) & real
             rate.append(float(np.mean(speed_s[mask])) if mask.any() else 0.0)
 
         coach_min = float((played_minutes or {}).get(str(pid), (t[-1] - t[0]) / 60.0))
         dist_raw = float(seg_dist.sum())
-        tracked_s = float(dt.sum())
+        # tracked_s counts only REAL-motion steps (teleport gaps excluded) so the
+        # per-tracked-minute rates below aren't diluted by unobserved time.
+        tracked_s = float(dt[real].sum())
         tracked_min = tracked_s / 60.0
+        # Coverage = fraction of the coach-logged minutes we actually tracked.
+        # This is THE trust dial for the rate-based estimates below.
+        coverage_frac = (tracked_min / coach_min) if coach_min > 0 else 0.0
         # Rate-based estimates (plan 4.4): scale per-tracked-minute rates to
-        # coach-logged minutes. Below 3 tracked minutes a rate is a coin flip
-        # off a sliver — keep the raw value and let the UI's low-tracking
-        # warning carry the message.
+        # coach-logged minutes. Two guards make the estimate honest:
+        #   1. Absolute floor (>= 3 tracked min): below a sliver the rate itself
+        #      is a coin flip, so keep the raw sum.
+        #   2. Coverage-FRACTION cap: the naive multiplier is coach_min/tracked_min,
+        #      which at low coverage explodes (Zaidan: 19% coverage ⇒ ×5.3, 528 m →
+        #      2794 m — a number the data cannot support and which reads as fact in
+        #      the UI). Cap the extrapolation multiplier so we never claim more than
+        #      DIST_EST_MAX_MULT× the tracked distance. At healthy coverage (≳50%)
+        #      the cap never binds; only thin-coverage players are held back to a
+        #      conservative estimate. `dist_est_capped` flags when the cap bit so
+        #      the PWA can mark it indicative rather than measured.
+        dist_est_capped = False
         if tracked_min >= 3.0 and coach_min > 0:
-            dist_est = dist_raw / tracked_min * coach_min
-            sprint_est = int(round(sprint_count / tracked_min * coach_min))
+            mult = coach_min / tracked_min
+            capped_mult = min(mult, config.DIST_EST_MAX_MULT)
+            dist_est_capped = capped_mult < mult
+            dist_est = dist_raw * capped_mult
+            sprint_est = int(round(sprint_count * capped_mult))
         else:
             dist_est = dist_raw
             sprint_est = int(sprint_count)
@@ -210,8 +244,13 @@ def compute_player_stats(
             # track time span. Track spans over-count when identity is imperfect.
             minutes_played=coach_min,
             distance_m=dist_raw,
-            top_speed_ms=float(np.percentile(speed_s, 99)) if len(speed_s) else 0.0,
-            avg_speed_ms=float(np.mean(speed_s)) if len(speed_s) else 0.0,
+            # p99 of the SMOOTHED speed (unchanged semantics), but over real
+            # steps only so teleport zeros can't shift the percentile.
+            top_speed_ms=float(np.percentile(real_speed_s, 99)) if len(real_speed_s) else 0.0,
+            # Average over REAL-motion steps only — the teleport zeros are gaps,
+            # not slow play, and including them deflated avg_speed by up to
+            # ~implausible_step_frac.
+            avg_speed_ms=float(np.mean(real_speed)) if len(real_speed) else 0.0,
             sprint_count=int(sprint_count),
             sprint_distance_m=float(sprint_dist),
             implausible_step_frac=implausible_frac,
@@ -224,5 +263,7 @@ def compute_player_stats(
             distance_est_m=float(dist_est),
             sprint_est_count=sprint_est,
             sprint_threshold_ms=sprint_thr,
+            coverage_frac=float(coverage_frac),
+            dist_est_capped=bool(dist_est_capped),
         ))
     return out

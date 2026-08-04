@@ -27,6 +27,7 @@ def run(
     skip_upload: bool = typer.Option(False, "--skip-upload", help="Skip R2 uploads of clips / TV reel / highlights. Files stay local under outputs/<game>/."),
     reuse_tv_reel: bool = typer.Option(False, "--reuse-tv-reel", help="Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of re-rendering it (the multi-hour part). Implies --tv-view. Use to recover a run that died after the reel rendered but before uploads/analytics. Auto-highlights still render fresh."),
     stats_only: bool = typer.Option(False, "--stats-only", help="Re-apply FIX-IDS overrides and recompute ONLY the identity-dependent analytics (player_stats, formation, field_tilt, tracklets, identity_assignments), then MERGE them into the existing doc. Leaves the reel, audio, broadcast index, and all public fields untouched — no re-render, no re-upload. Fast (~1-2 min/game)."),
+    skip_calibration_qc: bool = typer.Option(False, "--skip-calibration-qc", help="OVERRIDE: run even if the calibration-quality gate would block (poor RMS, implausible/inconsistent width). Downgrades the hard block to a warning. Use only for a legitimately-odd field you've verified by hand."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -49,6 +50,7 @@ def run(
         smoke_windows=[tuple(map(float, w.split("-"))) for w in smoke_window] if smoke_window else None,
         reuse_tv_reel=reuse_tv_reel,
         stats_only=stats_only,
+        skip_calibration_qc=skip_calibration_qc,
     )
     console.print_json(json.dumps({
         "game_id": game_id,
@@ -252,6 +254,10 @@ def calibrate(
     goal_width: float = typer.Option(4.88, "--goal-width", help="Goal mouth width (m). 4.88 = 16ft U10."),
     cam_height: float = typer.Option(5.0, "--cam-height",
         help="Camera height above pitch (m). Used as initial guess for the sphere fit; refined automatically. The X5-on-16ft-pole mount is ~5.0 m and changes <0.5m game to game."),
+    map_length: float = typer.Option(None, "--map-length",
+        help="Map-measured touchline length (m) — the per-field SCALE anchor. When set, the fit fixes field length to it and recovers width from the clicks (absolute distance/speed become accurate)."),
+    field_key: str = typer.Option(None, "--field-key",
+        help="Short field label. The map length is stored under it and reused for every future game on this field."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Open the multi-point sphere-projection calibration tool in your browser.
@@ -276,6 +282,7 @@ def calibrate(
         game_id, at_seconds=at,
         field_length_m=length, field_width_m=width,
         goal_width_m=goal_width, camera_height_m=cam_height,
+        map_length_m=map_length, field_key=field_key,
     )
     gs = payload.get("ground_similarity", {}) if payload else {}
     console.print_json(json.dumps({
