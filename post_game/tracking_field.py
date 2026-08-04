@@ -104,6 +104,23 @@ class FieldSpaceTracker:
         self._canvas_w = int((L + 2 * SURROGATE_MARGIN_M) * SURROGATE_PX_PER_M)
         self._canvas_h = int((W + 2 * SURROGATE_MARGIN_M) * SURROGATE_PX_PER_M)
 
+    @property
+    def _next_id(self) -> int:
+        """The id the tracker will assign to its NEXT new track.
+
+        Like the prod Tracker, ids come from boxmot's class-level
+        `BaseTrack._count` (reset to 0 in `BotSort.__init__`). Exposing `_next_id`
+        gives the pipeline a uniform hook to carry the counter across the halftime
+        reset so half-2 ids stay disjoint from half-1. See pipeline._new_tracker.
+        """
+        from boxmot.trackers.botsort.basetrack import BaseTrack
+        return int(BaseTrack._count) + 1
+
+    @_next_id.setter
+    def _next_id(self, value: int) -> None:
+        from boxmot.trackers.botsort.basetrack import BaseTrack
+        BaseTrack._count = int(value) - 1
+
     def _surrogate_bbox(self, det: Detection) -> Optional[tuple[float, float, float, float]]:
         """Foot point of the equirect bbox → field meters → surrogate bbox."""
         x1, y1, x2, y2 = det.bbox_eq

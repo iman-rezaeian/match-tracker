@@ -111,8 +111,9 @@ def main() -> None:
         tracker = _new_tracker()   # fresh tracker per half — ids never bridge a reset
         # Carry the id counter forward so H2 ids don't COLLIDE with H1 ids (a
         # shared id would fold two different players' detections + jersey colors
-        # into one "track" across the halftime gap). Only PitchTracker exposes
-        # _next_id; other trackers are used only in prod (equirect) baselines.
+        # into one "track" across the halftime gap). All three tracker types
+        # expose `_next_id` (boxmot-backed for prod/field, instance counter for
+        # pitch), mirroring pipeline._new_tracker's halftime carry.
         if hasattr(tracker, "_next_id"):
             tracker._next_id = next_id_carry
         log.info("  window %d/%d: %.0f-%.0fs (tracker reset, next_id=%d)",
