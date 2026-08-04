@@ -113,10 +113,12 @@ TRACK_BUFFER_S = 20                              # how long a lost track is kept
 # space instead of the distorted equirect frame. See B2_FIELD_SPACE_TRACKING.md +
 # post_game/tracking_field.py. Re-ID de-corruption (real crops via boxmot embs) +
 # _new_tracker wiring + surrogate-velocity unit test have landed; the tracker is
-# correct and swappable. Do NOT flip to True in prod until a re-track on a game
-# with a fresh raw video AND blind GT labels shows the fragment count drops AND
-# per-player GT recall does not regress.
-TRACK_FIELD_SPACE = False
+# correct and swappable. Env-overridable (like the other tuning flags below) so a
+# validation re-track can enable it for ONE run without flipping the prod default.
+# Do NOT change the default to True until a re-track on a game with a fresh raw
+# video AND blind GT labels shows the fragment count drops AND per-player GT
+# recall does not regress.
+TRACK_FIELD_SPACE = os.environ.get("TRACK_FIELD_SPACE", "0") != "0"
 
 # --- Calibration quality gate --------------------------------------------
 # "Run Analysis" hard-blocks on a calibration that fails these, so the coach
