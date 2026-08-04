@@ -537,6 +537,40 @@ def run(
     # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
+
+    # --- camera-corrected on-field windows (sub_correct) ---------------------
+    # Coaches tap SUB late during multi-sub moments, biasing the logged on/off
+    # times that drive minutes/distance/identity. Use the tracklets the coach
+    # ACCEPTED (identity_overrides → player) as ground truth: the union of a
+    # player's accepted tracklet spans corrects their on-field window. ADDITIVE
+    # (SUB events untouched), recomputed each run, guarded (half-clamp +
+    # plausibility). Derived from COACH accepts (not the greedy pass's output)
+    # and BEFORE assign, so the corrected minute budget reflects confirmed
+    # presence, not the assignment we're about to make. Empty → no-op (default).
+    sub_corrections: dict[str, dict] = {}
+    if game.identity_overrides:
+        from .sub_correct import compute_sub_corrections
+        _tl_span = (tracks_df.assign(
+            _tl=tracks_df["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t))))
+            .groupby("_tl")["time_s"].agg(["min", "max"]))
+        _accepted: dict[str, list[tuple[float, float]]] = {}
+        for _k, _pid in game.identity_overrides.items():
+            if not _pid or str(_pid).startswith("__"):
+                continue  # non-player sentinel / drop
+            try:
+                _tl = int(_k)
+            except (TypeError, ValueError):
+                continue
+            if _tl in _tl_span.index:
+                _accepted.setdefault(str(_pid), []).append(
+                    (float(_tl_span.loc[_tl, "min"]), float(_tl_span.loc[_tl, "max"])))
+        _logged = _onfield_intervals(game.starting_lineup, game.events, clock_to_video)
+        sub_corrections = compute_sub_corrections(
+            _accepted, play_windows, _logged)
+        if sub_corrections:
+            log.info("  -> sub-timeline: camera-corrected on-field window for %d player(s)",
+                     len(sub_corrections))
+
     # Board orientation per period, resolved by the identity search — reused by
     # the tag pre-fill (3.3) to map field meters back to coach zone vocab.
     board_flips: dict[int, tuple] = {}
@@ -559,6 +593,7 @@ def run(
         squad=game.squad,
         resolved_flips_out=board_flips,
         orientation_ambiguous_out=board_orient_ambiguous,
+        onfield_corrections=sub_corrections or None,
     )
     if game.identity_overrides:
         log.info("  -> %d coach identity override(s) loaded from game doc",
@@ -596,7 +631,10 @@ def run(
     attack_dir = _attack_direction(game, tracks_df, identity_by_track, field_cal.length_m)
     # Coach-logged minutes per player (ground truth) = on-field intervals
     # (lineup + subs) clipped to the play windows. Used for minutes_played.
-    _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video)
+    # `sub_corrections` (camera-derived, from accepted tracklets) override a late
+    # SUB tap on the relevant edge; empty → identical to the pure coach log.
+    _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video,
+                              corrections=sub_corrections or None)
     played_minutes: dict[str, float] = {}
     for _pid, _ivs in _onf.items():
         _tot = 0.0
@@ -606,6 +644,29 @@ def run(
                 if _hi > _lo:
                     _tot += _hi - _lo
         played_minutes[str(_pid)] = _tot / 60.0
+
+    # Analytics echo of the camera-corrections, for the PWA to SHOW the coach
+    # (before→after) and to source the corrected minutes from (its own
+    # playerSeconds uses a different, wall-clock axis). Times converted back to
+    # game-clock (period+elapsed) for display; correctedSeconds = the corrected
+    # on-field length clipped to play windows (matches played_minutes*60).
+    sub_corrections_echo: list[dict] = []
+    if sub_corrections:
+        from .sub_correct import video_time_to_period_clock_factory
+        _v2c = video_time_to_period_clock_factory(play_windows, clock_to_video)
+        def _clk(vs):
+            if vs is None:
+                return None
+            p, e = _v2c(float(vs))
+            return {"period": p, "elapsed": round(e, 1)}
+        for _pid, _c in sub_corrections.items():
+            sub_corrections_echo.append({
+                "playerId": _pid,
+                "correctedSeconds": round(played_minutes.get(str(_pid), 0.0) * 60.0, 1),
+                "onCorrected": _clk(_c.get("onS")), "offCorrected": _clk(_c.get("offS")),
+                "onLogged": _clk(_c.get("loggedOnS")), "offLogged": _clk(_c.get("loggedOffS")),
+            })
+
     # Personalized sprint thresholds (plan 4.5): per player,
     # max(floor, frac × season speed) from prior games' analytics docs.
     # Median of per-game p99s, dropping cap-pinned (swap-polluted) games.
@@ -714,6 +775,7 @@ def run(
             ],
             "team_time_series": asdict(team_ts),
             "field_tilt": field_tilt,
+            "sub_corrections": sub_corrections_echo,
             "generated_at_ms": int(time.time() * 1000),
         }
         if board_orient_ambiguous:
@@ -960,6 +1022,7 @@ def run(
         "review_labels_url": review_labels_url,
         # Team-centroid third occupancy (4.6) — no-ball possession proxy.
         "field_tilt": field_tilt,
+        "sub_corrections": sub_corrections_echo,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.

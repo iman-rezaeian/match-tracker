@@ -145,10 +145,17 @@ def _onfield_intervals(
     events: list[CoachEvent],
     period_clock_to_video_time: Callable[[int, int], float],
     video_end_s: float = 1e9,
+    corrections: Optional[dict[str, dict]] = None,
 ) -> dict[str, list[tuple[float, float]]]:
     """Per-player [start, end] video-second intervals they were ON THE FIELD,
     reconstructed from the starting lineup + timed SUB events. Used to constrain
-    identity: a track can only be a player who was actually playing then."""
+    identity: a track can only be a player who was actually playing then.
+
+    `corrections` (optional): {player_id: {"onS": float|None, "offS": float|None}}
+    from sub_correct.compute_sub_corrections — camera-derived on/off times that
+    override a late/early SUB tap on the player's first-interval start / last-
+    interval end. ADDITIVE and non-destructive (the SUB events are untouched);
+    default None reproduces the pre-correction behaviour exactly."""
     intervals: dict[str, list[tuple[float, float]]] = {}
     on: dict[str, float] = {}
     t0 = float(period_clock_to_video_time(1, 0))
@@ -169,6 +176,9 @@ def _onfield_intervals(
             on[on_pid] = tv
     for pid, since in on.items():
         intervals.setdefault(pid, []).append((since, video_end_s))
+    if corrections:
+        from .sub_correct import apply_corrections_to_intervals
+        intervals = apply_corrections_to_intervals(intervals, corrections)
     return intervals
 
 

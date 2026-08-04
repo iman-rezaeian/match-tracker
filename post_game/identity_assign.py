@@ -291,6 +291,7 @@ def assign_identities_v2(
     resolved_flips_out: Optional[dict] = None,
     orientation_ambiguous_out: Optional[list] = None,
     anchor_seeds_out: Optional[dict] = None,
+    onfield_corrections: Optional[dict] = None,
 ) -> list[IdentityAssignment]:
     """Return per-original-track IdentityAssignment. periods_video = [(t0,t1)]
     video-second spans per period (half_windows).
@@ -332,7 +333,8 @@ def assign_identities_v2(
             continue
     has_xy = {"x_m", "y_m"}.issubset(tracks_df.columns)
     lifetimes = _track_lifetimes(tracks_df)
-    onfield = _onfield_intervals(starting_lineup, events, period_clock_to_video_time)
+    onfield = _onfield_intervals(starting_lineup, events, period_clock_to_video_time,
+                                 corrections=onfield_corrections)
 
     # our-team tracks → tracklet id
     our_tracks = {int(t) for t, tm in team_of_track.items() if tm == 0}

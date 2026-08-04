@@ -87,6 +87,11 @@ class GameDoc:
     # NOTE: tracklet ids are stable only while the Stage-2 track cache is
     # unchanged — a full re-track regenerates them and invalidates overrides.
     identity_overrides: dict = field(default_factory=dict)
+    # Reserved for a FUTURE manual coach override of the camera on-field
+    # correction ({player_id: {onS, offS} in video s}). v1 derives corrections
+    # in-pipeline from identity_overrides + tracklet spans (sub_correct.py) and
+    # writes nothing here; parsed read-only so the field round-trips if set.
+    identity_sub_corrections: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -175,6 +180,7 @@ def get_game(game_id: str) -> GameDoc:
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
+        identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
     )
 
 
