@@ -76,6 +76,7 @@ def stitch_tracklets(
     geom_dist_cap_m: float = config.STITCH_DIST_CAP_M,
     must_link: Optional[dict[int, object]] = None,
     must_link_dist_cap_m: float = config.STITCH_DIST_CAP_M,
+    mode: Optional[str] = None,
 ) -> dict[int, int]:
     """Return {track_id: tracklet_id} merging `target_team` fragments.
 
@@ -177,42 +178,101 @@ def stitch_tracklets(
             return (c >= config.STITCH_HSV_COS, c)
         return (True, 0.0)  # no appearance signal → rely on spatiotemporal gate
 
-    for i, a in enumerate(ids):
-        sa = summ[a]
-        best_b, best_cost = None, float("inf")
-        for b in ids[i + 1:]:
-            sb = summ[b]
-            gap = sb["t0"] - sa["t1"]
-            if gap < -0.5:
-                continue  # b starts before a ends (overlap) — not a continuation
-            if gap > max_gap_s:
-                break  # ids sorted by t0 → no later b can be closer
-            if b in used_succ:
-                continue
-            # plausible displacement during the gap
-            dx = sb["p0"][0] - sa["p1"][0]
-            dy = sb["p0"][1] - sa["p1"][1]
-            dist = float(np.hypot(dx, dy))
-            max_move = min(config.MAX_PLAUSIBLE_SPEED_MS * max(gap, 0.0) + slack_m,
-                           geom_dist_cap_m)
-            if dist > max_move:
-                continue
-            # CANNOT-LINK: never merge two fragments with different confirmed
-            # identities, however geometrically plausible the move looks.
-            ia, ib = comp_ident.get(find(a)), comp_ident.get(find(b))
-            if ia is not None and ib is not None and ia != ib:
-                continue
-            ok, cos = appearance_ok(a, b)
-            if not ok:
-                continue
-            if find(a) == find(b):
-                continue
-            cost = dist + config.STITCH_GAP_WEIGHT * gap + config.STITCH_APP_WEIGHT * (1.0 - cos)
-            if cost < best_cost:
-                best_cost, best_b = cost, b
-        if best_b is not None:
-            union(a, best_b)
-            used_succ.add(best_b)
+    def _edge_cost(a: int, b: int) -> Optional[float]:
+        """Cost of chaining a→b if the pair passes every gate, else None.
+
+        Identical gates + cost formula for both greedy and global modes — only the
+        chaining strategy that consumes these differs. `a` precedes `b` in time.
+        """
+        sa, sb = summ[a], summ[b]
+        gap = sb["t0"] - sa["t1"]
+        if gap < -0.5:
+            return None  # overlap — not a continuation
+        if gap > max_gap_s:
+            return None
+        dx = sb["p0"][0] - sa["p1"][0]
+        dy = sb["p0"][1] - sa["p1"][1]
+        dist = float(np.hypot(dx, dy))
+        max_move = min(config.MAX_PLAUSIBLE_SPEED_MS * max(gap, 0.0) + slack_m,
+                       geom_dist_cap_m)
+        if dist > max_move:
+            return None
+        # CANNOT-LINK: never merge two fragments with different confirmed identities.
+        ia, ib = comp_ident.get(find(a)), comp_ident.get(find(b))
+        if ia is not None and ib is not None and ia != ib:
+            return None
+        ok, cos = appearance_ok(a, b)
+        if not ok:
+            return None
+        return dist + config.STITCH_GAP_WEIGHT * gap + config.STITCH_APP_WEIGHT * (1.0 - cos)
+
+    stitch_mode = (mode or config.STITCH_MODE or "greedy").lower()
+
+    if stitch_mode == "global":
+        # Global min-cost path cover via min-cost FLOW (the GTA-Link formulation).
+        # Greedy commits each a to its cheapest successor in start-time order, which
+        # orphans a fragment whose only plausible successor was already taken. Flow
+        # optimizes TOTAL link cost instead, and — unlike a forced full matching —
+        # leaves a fragment UNLINKED when linking it would cost more than the value
+        # of the link, so it never fabricates a bad chain to satisfy the solver.
+        #
+        # Graph: for each fragment f, a node f_out and f_in. Edge f_out→g_in with
+        # capacity 1 and cost = gated _edge_cost(f, g) minus a per-link REWARD, so a
+        # link is only "worth it" when its cost is below the reward (i.e. a genuinely
+        # plausible continuation). A super source→every f_out and every f_in→sink with
+        # capacity 1, cost 0, let a fragment start/end a chain freely. Min-cost flow of
+        # value = #fragments then selects the globally cheapest set of continuations.
+        import networkx as nx
+        # REWARD sets how eager we are to link: a link is chosen only if its cost is
+        # below it. Use the plausible-move ceiling (speed*max_gap + slack) so any gated
+        # edge (all of which are below that geometrically) can be selected, and the
+        # solver picks the CHEAPEST consistent set. Scale to int (flow needs ints).
+        SCALE = 1000
+        reward = int((config.MAX_PLAUSIBLE_SPEED_MS * max_gap_s + slack_m) * SCALE) + 1
+        edges = []
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                if summ[b]["t0"] - summ[a]["t1"] > max_gap_s:
+                    break
+                c = _edge_cost(a, b)
+                if c is not None:
+                    edges.append((a, b, int(round(c * SCALE)) - reward))
+        if edges:
+            G = nx.DiGraph()
+            SRC, SNK = "__src__", "__snk__"
+            for t in ids:
+                G.add_edge(SRC, ("out", t), capacity=1, weight=0)
+                G.add_edge(("in", t), SNK, capacity=1, weight=0)
+                # a fragment need not be continued — allow its out/in to pass through
+                # at zero cost so the flow can route around it (start/end of a chain).
+                G.add_edge(("out", t), SNK, capacity=1, weight=0)
+                G.add_edge(SRC, ("in", t), capacity=1, weight=0)
+            for a, b, w in edges:
+                G.add_edge(("out", a), ("in", b), capacity=1, weight=w)
+            G.nodes[SRC]["demand"] = -len(ids)
+            G.nodes[SNK]["demand"] = len(ids)
+            flow = nx.min_cost_flow(G)
+            # union along chosen continuation edges (out,a)->(in,b) with flow 1
+            for a in ids:
+                for tgt, f in flow.get(("out", a), {}).items():
+                    if f == 1 and isinstance(tgt, tuple) and tgt[0] == "in":
+                        b = tgt[1]
+                        if find(a) != find(b):
+                            union(a, b)
+    else:
+        for i, a in enumerate(ids):
+            best_b, best_cost = None, float("inf")
+            for b in ids[i + 1:]:
+                if summ[b]["t0"] - summ[a]["t1"] > max_gap_s:
+                    break  # sorted by t0 → no later b can be closer
+                if b in used_succ or find(a) == find(b):
+                    continue
+                c = _edge_cost(a, b)
+                if c is not None and c < best_cost:
+                    best_cost, best_b = c, b
+            if best_b is not None:
+                union(a, best_b)
+                used_succ.add(best_b)
 
     # Build {track_id: tracklet_id} for ALL tracks (non-our-team = singleton).
     mapping: dict[int, int] = {}

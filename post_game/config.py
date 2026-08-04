@@ -204,6 +204,12 @@ STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
 # Absolute cap (m) on the A-end -> B-start move, on top of speed*gap+slack. Bounds
 # over-merge when the gap is large. inf = no-op (current behavior).
 STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
+# Stitch chaining mode: "greedy" (each fragment grabs its locally-cheapest
+# successor — the shipped behavior) or "global" (min-cost bipartite matching over
+# the same gated edges, so a locally-cheap link never orphans a fragment that had
+# a better global pairing). Both use the IDENTICAL gates + cost; only the chaining
+# differs. Env-overridable for A/B; default greedy so prod is unchanged.
+STITCH_MODE = os.environ.get("STITCH_MODE", "greedy")
 
 # --- Iterative anchor-coupled re-stitch (post_game/iterative_identity.py) -----
 # Couple stitching and identity: stitch (geometry-only) → seed identities from

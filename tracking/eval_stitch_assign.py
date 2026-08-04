@@ -40,6 +40,8 @@ def main() -> None:
     ap.add_argument("--split-gap-s", type=float, default=None)
     ap.add_argument("--app-weight", type=float, default=None, help="override STITCH_APP_WEIGHT")
     ap.add_argument("--dist-cap-m", type=float, default=None, help="override STITCH_DIST_CAP_M")
+    ap.add_argument("--stitch-mode", choices=["greedy", "global"], default="greedy",
+                    help="tracklet chaining: greedy (shipped) or global min-cost-flow")
     args = ap.parse_args()
     os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
@@ -103,7 +105,8 @@ def main() -> None:
         tracks_df, jersey, our_home_color_hex=_our_color(game),
         opp_color_hex=game.away_color, ref_color_hex=game.ref_color)
     tracklet_of_track = stitch_tracklets(
-        tracks_df, team_of_track, track_embeddings=embeddings, track_jersey_samples=jersey)
+        tracks_df, team_of_track, track_embeddings=embeddings, track_jersey_samples=jersey,
+        mode=args.stitch_mode)
     ss = stitch_stats(tracklet_of_track, team_of_track)
 
     play_windows = half_windows(game, float(tracks_df["time_s"].max()) + 1.0)
