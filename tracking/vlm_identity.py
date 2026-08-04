@@ -134,30 +134,48 @@ def _tallest_rows(sub, k: int):
 # --------------------------------------------------------------------------
 # Orchestration (I/O). Kept thin so the pure logic above carries the tests.
 # --------------------------------------------------------------------------
+def vote_team(reads: list[dict]) -> str:
+    """Majority team across a tracklet's reads: 'ours' | 'opponent' | 'other'.
+    Ties / no reads default to 'other' (fail-safe: don't draft what we're unsure
+    is ours)."""
+    from collections import Counter
+    c = Counter((r.get("team") or "other") for r in (reads or []))
+    if not c:
+        return "other"
+    # prefer a decisive plurality; on a tie, 'other' (conservative)
+    top, n = c.most_common(1)[0]
+    if sum(1 for _, v in c.items() if v == n) > 1:
+        return "other"
+    return top
+
+
 def read_tracklet_number(video: str, sub, tmp: Path, tracklet_id: int,
                          roster_numbers: list[int], model: str, crops: int,
                          min_conf: float, batches: int,
+                         our_color: Optional[str] = None, opp_color: Optional[str] = None,
                          read_fn: Callable = _read_number,
-                         render_fn: Callable = _render_crops) -> tuple[Optional[int], float, int, str]:
-    """Render number-optimized crops for one tracklet and vote a number across
-    `batches` independent VLM reads. Returns (number|None, confidence, votes,
-    reasoning). read_fn/render_fn are injectable for tests."""
+                         render_fn: Callable = _render_crops) -> tuple[Optional[int], float, int, str, str]:
+    """Render number-optimized crops for one tracklet, identify its TEAM by kit
+    colour, and vote a number across `batches` independent VLM reads. Returns
+    (number|None, confidence, votes, reasoning, team). read_fn/render_fn are
+    injectable for tests."""
     tall = _tallest_rows(sub, crops * batches)
     if tall.empty:
-        return None, 0.0, 0, "no-crops"
+        return None, 0.0, 0, "no-crops", "other"
     imgs = render_fn(video, tall, crops * batches, tmp, tracklet_id)
     if not imgs:
-        return None, 0.0, 0, "no-crops"
+        return None, 0.0, 0, "no-crops", "other"
     # split the rendered crops into `batches` groups, one VLM read each -> vote
     groups = [imgs[i::batches] for i in range(batches)]
-    reads = [read_fn(g, roster_numbers, model) for g in groups if g]
+    reads = [read_fn(g, roster_numbers, model, our_color, opp_color) for g in groups if g]
+    team = vote_team(reads)
     num, conf, votes = vote_number(reads, min_conf)
     reasoning = ""
     for r in reads:
         if int(r.get("number") or 0) == (num or -1):
             reasoning = r.get("reasoning") or ""
             break
-    return num, conf, votes, reasoning
+    return num, conf, votes, reasoning, team
 
 
 def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
@@ -182,11 +200,19 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
     gates at `min_conf`, maps number->player (dup-number safe), squad-restricted."""
     import tempfile
 
+    from post_game.pipeline import _our_color
+    from post_game.team_color import color_family
     _, player_of_num, dup_numbers = build_number_map(roster)
     roster_numbers = sorted(player_of_num) + sorted(dup_numbers)
     valid_ids = set(game.squad) if getattr(game, "squad", None) else None
     name_of = {r.id: f"#{getattr(r,'jersey_number','?')} {r.name}" for r in roster}
     current_of_tl = current_of_tl or {}
+    # Coarse kit-colour NAMES from the coach's rough picks — passed to the VLM so
+    # it decides each player's team by colour (green vs blue), and only OUR
+    # players become drafts. "green means green": a family name, not fine hue.
+    our_color = color_family(hex=_our_color(game))
+    opp_color = color_family(hex=game.away_color) if game.away_color else None
+    log_fn(f"  team colours: ours={our_color} opponent={opp_color}")
     if dup_numbers:
         log_fn(f"  ⚠ duplicate jersey numbers (won't draft): {sorted(dup_numbers)}")
 
@@ -220,13 +246,18 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
         mins = float(tl_minutes[tl])
         sub = our_tl[our_tl["tracklet"] == tl]
         cur_pid, cur_min = current_of_tl.get(tl, (None, float(mins)))
-        num, conf, votes, reasoning = read_tracklet_number(
-            video_path, sub, tmp, tl, roster_numbers, model, crops, min_conf, batches)
-        draft = make_draft(tl, num, conf or 0.0, player_of_num, dup_numbers,
-                           valid_ids, reasoning, cur_pid, cur_min)
+        num, conf, votes, reasoning, team = read_tracklet_number(
+            video_path, sub, tmp, tl, roster_numbers, model, crops, min_conf, batches,
+            our_color=our_color, opp_color=opp_color)
+        # TEAM-COLOUR GATE: only OUR-team reads become drafts. A read the VLM
+        # calls 'opponent'/'other' (by kit colour) is dropped — this is what
+        # stops an opponent's #17 being mapped onto our roster.
+        draft = (make_draft(tl, num, conf or 0.0, player_of_num, dup_numbers,
+                            valid_ids, reasoning, cur_pid, cur_min)
+                 if team == "ours" else None)
         pred = name_of.get(draft["suggestedPlayerId"], "—") if draft else "—"
-        log_fn(f"  tl{tl:<6} {mins:4.1f}min read#={str(num):<5} c={conf or 0:.2f} v={votes} "
-               f"-> {pred} {'DRAFT' if draft else '—'}")
+        log_fn(f"  tl{tl:<6} {mins:4.1f}min team={team:<8} read#={str(num):<5} "
+               f"c={conf or 0:.2f} v={votes} -> {pred} {'DRAFT' if draft else '—'}")
         if draft:
             drafts.append(draft)
     return drafts

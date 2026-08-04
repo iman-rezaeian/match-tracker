@@ -26,6 +26,7 @@ import base64
 import csv
 import json
 import os
+from typing import Optional
 from pathlib import Path
 
 # Default to Haiku 4.5: it supports vision + structured output, is the cost lever
@@ -39,30 +40,46 @@ LABELS_ROOT = Path(__file__).resolve().parent / "labels"
 _SCHEMA = {
     "type": "object",
     "properties": {
+        "team": {"type": "string", "enum": ["ours", "opponent", "other"],
+                 "description": "Which team this player's KIT COLOR belongs to: "
+                                "ours, opponent, or other (ref/coach/unclear)"},
         "number": {"type": "integer",
                    "description": "Jersey number if legible on the shirt, else 0"},
         "confidence": {"type": "number", "description": "0..1 legibility confidence"},
         "reasoning": {"type": "string", "description": "<=15 words"},
     },
-    "required": ["number", "confidence", "reasoning"],
+    "required": ["team", "number", "confidence", "reasoning"],
     "additionalProperties": False,
 }
 
 
-def _read_number(imgs: list[str], roster_numbers: list[int], model: str) -> dict:
-    """One VLM call: read the jersey number from a tracklet's crop(s)."""
+def _read_number(imgs: list[str], roster_numbers: list[int], model: str,
+                 our_color: Optional[str] = None, opp_color: Optional[str] = None) -> dict:
+    """One VLM call: identify the player's TEAM (by kit color) and read the
+    jersey number from a tracklet's crop(s).
+
+    our_color / opp_color are the coach's rough kit-color names ("green",
+    "blue") — used to decide `team` from the KIT COLOR the model actually sees.
+    This is the coarse-color gate: only OUR-team reads become identity drafts,
+    so an opponent's #17 is never mapped onto our roster."""
     nums = ", ".join(str(n) for n in sorted(roster_numbers))
+    our = our_color or "our team's color"
+    opp = opp_color or "a different color"
     system = (
-        "You read jersey numbers off youth soccer players from cropped frames. "
-        "The images show the SAME player in a dark kit across a few moments. "
-        f"Valid squad numbers: {nums}. Report a number ONLY if you can actually "
-        "read the digit(s) on the shirt (front or back) — do NOT guess from "
-        "build/hair/position. If no digit is legible in any crop, return 0. "
-        "Prefer 0 over a low-confidence guess."
+        "You identify youth soccer players from cropped frames. The images show "
+        "the SAME player across a few moments. "
+        f"OUR team wears {our}; the OPPONENT wears {opp}. "
+        "First decide `team` from the KIT COLOUR you see: 'ours' if the shirt is "
+        f"{our}, 'opponent' if it is {opp}, else 'other' (referee/coach/unclear). "
+        f"Then, ONLY for OUR players, read the jersey number. Valid squad numbers: "
+        f"{nums}. Report a number ONLY if you can actually read the digit(s) on "
+        "the shirt (front or back) — do NOT guess from build/hair/position. If "
+        "the player is not ours, or no digit is legible, return number 0. Prefer "
+        "0 over a low-confidence guess."
     )
     content = [{"type": "image", "source": {"type": "base64",
                 "media_type": "image/jpeg", "data": b}} for b in imgs]
-    content.append({"type": "text", "text": "Read this player's jersey number."})
+    content.append({"type": "text", "text": "Identify this player's team, then their jersey number."})
     payload = {
         "model": model,
         "max_tokens": 200,
@@ -74,9 +91,9 @@ def _read_number(imgs: list[str], roster_numbers: list[int], model: str) -> dict
     try:
         return json.loads(_call(payload))
     except (json.JSONDecodeError, TypeError):
-        return {"number": 0, "confidence": 0.0, "reasoning": "parse-fail"}
+        return {"team": "other", "number": 0, "confidence": 0.0, "reasoning": "parse-fail"}
     except RuntimeError as e:
-        return {"number": 0, "confidence": 0.0, "reasoning": f"api-error {e}"[:60]}
+        return {"team": "other", "number": 0, "confidence": 0.0, "reasoning": f"api-error {e}"[:60]}
 
 
 def _render_crops(video: str, sub, k: int, tmp: Path, tl: int) -> list[str]:

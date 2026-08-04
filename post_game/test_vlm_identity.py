@@ -107,38 +107,56 @@ def _sub(n=12):
     })
 
 
+def _render_all(video, tall, k, tmp, tl):
+    return [f"img{i}" for i in range(len(tall))]
+
+
 def test_read_tracklet_votes_across_batches():
-    # render returns one fake crop per requested; two batches both read #7
+    # render returns one fake crop per requested; two batches both read our #7
     calls = {"n": 0}
-    def fake_render(video, tall, k, tmp, tl):
-        return [f"img{i}" for i in range(len(tall))]
-    def fake_read(imgs, nums, model):
+    def fake_read(imgs, nums, model, our=None, opp=None):
         calls["n"] += 1
-        return {"number": 7, "confidence": 0.7, "reasoning": "seven"}
-    num, conf, votes, reason = read_tracklet_number(
+        return {"team": "ours", "number": 7, "confidence": 0.7, "reasoning": "seven"}
+    num, conf, votes, reason, team = read_tracklet_number(
         "vid.mp4", _sub(), Path("/tmp"), 5, [7, 11], "m", crops=3, min_conf=0.5,
-        batches=2, read_fn=fake_read, render_fn=fake_render)
-    assert num == 7 and votes == 2 and conf == 0.7 and reason == "seven"
+        batches=2, read_fn=fake_read, render_fn=_render_all)
+    assert num == 7 and votes == 2 and conf == 0.7 and reason == "seven" and team == "ours"
     assert calls["n"] == 2                       # one read per batch
 
 
 def test_read_tracklet_no_crops_is_none():
-    num, conf, votes, reason = read_tracklet_number(
+    num, conf, votes, reason, team = read_tracklet_number(
         "vid.mp4", _sub(), Path("/tmp"), 5, [7], "m", crops=3, min_conf=0.5,
-        batches=2, read_fn=lambda *a: {"number": 7, "confidence": 0.9},
+        batches=2, read_fn=lambda *a, **k: {"team": "ours", "number": 7, "confidence": 0.9},
         render_fn=lambda *a: [])
-    assert num is None and votes == 0 and reason == "no-crops"
+    assert num is None and votes == 0 and reason == "no-crops" and team == "other"
 
 
 def test_read_tracklet_gate_filters_disagreeing_lowconf():
     # batch1 reads 7 high-conf, batch2 reads 11 low-conf -> 11 dropped, 7 wins
-    seq = iter([{"number": 7, "confidence": 0.8, "reasoning": "7"},
-                {"number": 11, "confidence": 0.3, "reasoning": "11?"}])
-    num, conf, votes, _ = read_tracklet_number(
+    seq = iter([{"team": "ours", "number": 7, "confidence": 0.8, "reasoning": "7"},
+                {"team": "ours", "number": 11, "confidence": 0.3, "reasoning": "11?"}])
+    num, conf, votes, _r, team = read_tracklet_number(
         "vid.mp4", _sub(), Path("/tmp"), 5, [7, 11], "m", crops=3, min_conf=0.5,
-        batches=2, read_fn=lambda *a: next(seq),
-        render_fn=lambda video, tall, k, tmp, tl: [f"i{i}" for i in range(len(tall))])
-    assert num == 7 and votes == 1
+        batches=2, read_fn=lambda *a, **k: next(seq), render_fn=_render_all)
+    assert num == 7 and votes == 1 and team == "ours"
+
+
+def test_read_tracklet_reports_opponent_team():
+    # both batches read an opponent → team 'opponent' (caller must NOT draft it)
+    num, conf, votes, _r, team = read_tracklet_number(
+        "vid.mp4", _sub(), Path("/tmp"), 5, [7], "m", crops=3, min_conf=0.5,
+        batches=2, render_fn=_render_all,
+        read_fn=lambda *a, **k: {"team": "opponent", "number": 7, "confidence": 0.9, "reasoning": "blue"})
+    assert team == "opponent"
+
+
+def test_vote_team_majority_and_tie():
+    from tracking.vlm_identity import vote_team
+    assert vote_team([{"team": "ours"}, {"team": "ours"}, {"team": "opponent"}]) == "ours"
+    assert vote_team([{"team": "ours"}, {"team": "opponent"}]) == "other"   # tie → conservative
+    assert vote_team([]) == "other"
+    assert vote_team([{"team": "opponent"}, {"team": "opponent"}]) == "opponent"
 
 
 if __name__ == "__main__":

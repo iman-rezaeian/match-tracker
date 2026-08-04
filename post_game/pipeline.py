@@ -753,7 +753,10 @@ def run(
     # broadcast-index (identity-independent) untouched — no re-render, no re-upload.
     if stats_only:
         _tlrecs = _build_tracklet_index(tracks_df, tracklet_of_track, assignments,
-                                        fps_sampled, field_cal.length_m, field_cal.width_m)
+                                        fps_sampled, field_cal.length_m, field_cal.width_m,
+                                        track_jersey_samples=track_jersey_samples,
+                                        our_color_hex=_our_color(game),
+                                        opp_color_hex=game.away_color)
         try:  # preserve existing thumbnail URLs (crops don't change with identity)
             _prev = firestore_io.read_analytics(game_id) or {}
             _thumbs = {t.get("tracklet_id"): t.get("thumb_url")
@@ -951,7 +954,10 @@ def run(
     # with its current player + a representative crop so the coach can fix swaps;
     # corrections come back as `identityOverrides` on the game doc.
     tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
-                                             field_cal.length_m, field_cal.width_m)
+                                             field_cal.length_m, field_cal.width_m,
+                                             track_jersey_samples=track_jersey_samples,
+                                             our_color_hex=_our_color(game),
+                                             opp_color_hex=game.away_color)
 
     # 7c-bis. VLM jersey-number identity DRAFTS (opt-in). Runs HERE, inside the
     # run, so drafts key by THIS run's tracklet ids — the exact ids the analytics
@@ -1389,7 +1395,10 @@ def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dic
 
 
 def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled: float,
-                          field_length_m: float, field_width_m: float) -> list[dict]:
+                          field_length_m: float, field_width_m: float,
+                          track_jersey_samples: Optional[dict] = None,
+                          our_color_hex: Optional[str] = None,
+                          opp_color_hex: Optional[str] = None) -> list[dict]:
     """Aggregate the per-track identity assignments into per-tracklet records for
     the coach IdentityFixView. Our-team tracklets only (opponent tracks carry no
     `breakdown.tracklet`). Sorted worst-confidence first so the coach reviews the
@@ -1416,6 +1425,31 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
         inb = ((df["x_m"] >= -m) & (df["x_m"] <= field_length_m + m)
                & (df["y_m"] >= -m) & (df["y_m"] <= field_width_m + m))
         onpitch_frac = df.assign(_inb=inb).groupby("tracklet")["_inb"].mean().to_dict()
+    # Coarse OPPONENT-colour prune: the fine-hue team classifier mis-teams
+    # opponents into our team (66% of the W8 review list was opp/coach). When we
+    # can CONFIDENTLY bucket a tracklet's jersey to the OPPONENT's coarse colour
+    # family (e.g. blue), drop it from the review list. Conservative: a washed /
+    # achromatic / unsure tracklet returns None → stays (never hide a real player
+    # we're unsure about). Only prunes UNASSIGNED tracklets (an assigned/coach
+    # tracklet is a decision to keep visible).
+    opp_family = None
+    tl_family: dict[int, str] = {}
+    if opp_color_hex and track_jersey_samples:
+        from .team_color import color_family, tracklet_family
+        opp_family = color_family(hex=opp_color_hex)
+        our_family = color_family(hex=our_color_hex) if our_color_hex else None
+        if opp_family and opp_family != our_family:   # only if the kits differ coarsely
+            members: dict[int, list[int]] = {}
+            for _t, _r in tracklet_of_track.items():
+                members.setdefault(int(_r), []).append(int(_t))
+            for _tl in set(tracklet_of_track.values()):
+                _samps = []
+                for _m in members.get(int(_tl), [int(_tl)]):
+                    _samps.extend(track_jersey_samples.get(_m, []))
+                _fam = tracklet_family(_samps)
+                if _fam is not None:
+                    tl_family[int(_tl)] = _fam
+
     by_tl: dict[int, object] = {}
     for a in assignments:
         tl = (a.breakdown or {}).get("tracklet")
@@ -1439,6 +1473,8 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
                 continue
             if onpitch_frac and onpitch_frac.get(tl, 1.0) < config.TRACKLET_REVIEW_ONPITCH_FRAC:
                 continue  # mostly off-pitch → not one of our players
+            if opp_family and tl_family.get(tl) == opp_family:
+                continue  # confidently the opponent's kit colour → not ours
         out.append({
             "tracklet_id": int(tl),
             "player_id": a.player_id,
