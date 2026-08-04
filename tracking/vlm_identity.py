@@ -185,7 +185,8 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
                     model: str = "claude-opus-4-8", min_conf: float = 0.5,
                     crops: int = 3, batches: int = 1, min_tracklet_min: float = 1.0,
                     max_tracklets: int = 120, min_onfield_frac: float = 0.6,
-                    dt: float = 0.1, log_fn: Callable[[str], None] = print) -> list[dict]:
+                    dt: float = 0.1, log_fn: Callable[[str], None] = print,
+                    team_out: Optional[dict] = None) -> list[dict]:
     """Read jersey numbers off our stitched tracklets and return identityDrafts.
 
     THE KEYING CONTRACT: `tracklet_of_track` MUST be the SAME map that produced
@@ -249,6 +250,8 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
         num, conf, votes, reasoning, team = read_tracklet_number(
             video_path, sub, tmp, tl, roster_numbers, model, crops, min_conf, batches,
             our_color=our_color, opp_color=opp_color)
+        if team_out is not None:
+            team_out[int(tl)] = team   # per-tracklet VLM team verdict → review-list prune
         # TEAM-COLOUR GATE: only OUR-team reads become drafts. A read the VLM
         # calls 'opponent'/'other' (by kit colour) is dropped — this is what
         # stops an opponent's #17 being mapped onto our roster.

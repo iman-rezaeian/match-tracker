@@ -970,6 +970,7 @@ def run(
             from tracking.vlm_identity import generate_drafts
             _cur = {int(r["tracklet_id"]): (r.get("player_id"), float(r.get("minutes") or 0.0))
                     for r in tracklet_records}
+            _vlm_team: dict[int, str] = {}
             _drafts = generate_drafts(
                 tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
                 team_of_track=team_of_track, roster=roster, game=game,
@@ -978,9 +979,25 @@ def run(
                 model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
                 max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
                 dt=(1.0 / fps_sampled if fps_sampled else 0.1),
-                log_fn=lambda m: log.info("%s", m))
+                log_fn=lambda m: log.info("%s", m), team_out=_vlm_team)
             firestore_io.write_identity_drafts(game_id, _drafts)
             log.info("  -> VLM identity: wrote %d draft(s) to game.identityDrafts", len(_drafts))
+            # VLM team-read prune: the VLM reliably tags each tracklet's team by
+            # kit colour. Drop UNASSIGNED tracklets it calls opponent/other from
+            # the review list (the coarse-pixel prune misses washed opponents;
+            # the VLM read catches them). Coach-decided tracklets stay visible.
+            if _vlm_team:
+                _kept, _dropped = [], 0
+                for _r in tracklet_records:
+                    _t = _vlm_team.get(int(_r["tracklet_id"]))
+                    if not _r.get("player_id") and _t in ("opponent", "other"):
+                        _dropped += 1
+                        continue
+                    _kept.append(_r)
+                if _dropped:
+                    log.info("  -> VLM team-read pruned %d opponent/coach tracklet(s) from review list",
+                             _dropped)
+                tracklet_records = _kept
         except Exception as e:
             log.warning("VLM identity drafts failed (non-fatal): %s", e)
 
