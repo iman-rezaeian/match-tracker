@@ -263,8 +263,11 @@ def main() -> None:
     from post_game.reid_stitch import stitch_tracklets
     from post_game.team_classifier import classify_tracks
 
-    if not (os.environ.get("ANTHROPIC_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")):
-        raise SystemExit("Set ANTHROPIC_OAUTH_TOKEN (ant auth) for Opus, or ANTHROPIC_API_KEY.")
+    from tracking.vlm_number_probe import _ant_bearer
+    if not (os.environ.get("ANTHROPIC_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+            or _ant_bearer()):
+        raise SystemExit("No Anthropic auth: set ANTHROPIC_OAUTH_TOKEN, run `ant auth login` "
+                         "(for Opus), or set ANTHROPIC_API_KEY.")
 
     game = firestore_io.get_game(args.game_id)
     roster = firestore_io.get_roster()

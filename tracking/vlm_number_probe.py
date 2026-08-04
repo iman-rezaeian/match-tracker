@@ -107,6 +107,33 @@ def _render_crops(video: str, sub, k: int, tmp: Path, tl: int) -> list[str]:
     return out
 
 
+_ANT_BEARER_CACHE: dict[str, object] = {}
+
+
+def _ant_bearer() -> str | None:
+    """OAuth bearer minted from the `ant` CLI, when no ANTHROPIC_OAUTH_TOKEN is
+    set in the env. Lets a Streamlit/CLI run reach Opus hands-free (no manual
+    `export`) as long as the user has run `ant auth login` once — and mints it
+    FRESH at call time so an hour-long pipeline run doesn't hit an expired token.
+    Cached for the process; returns None if `ant` is absent or not logged in."""
+    if "tok" in _ANT_BEARER_CACHE:
+        return _ANT_BEARER_CACHE["tok"]  # type: ignore[return-value]
+    import shutil
+    import subprocess
+    tok = None
+    if shutil.which("ant"):
+        try:
+            r = subprocess.run(["ant", "auth", "print-credentials", "--access-token"],
+                               capture_output=True, text=True, timeout=20)
+            t = (r.stdout or "").strip()
+            if r.returncode == 0 and t.startswith("sk-ant-"):
+                tok = t
+        except Exception:
+            tok = None
+    _ANT_BEARER_CACHE["tok"] = tok
+    return tok
+
+
 def _call(payload: dict, _tries: int = 5) -> str:
     """SDK when importable, else raw HTTPS (corp-VPN route) — as voice_clean.
     Retries transient 429/5xx with exponential backoff."""
@@ -124,10 +151,11 @@ def _call(payload: dict, _tries: int = 5) -> str:
     # limited to Haiku (instant 429 on Opus/Sonnet), but the OAuth token — same
     # SSO that grants Claude Code its Opus — reaches Opus. Prefer the bearer when
     # present; it needs the oauth beta header.
-    oauth = os.environ.get("ANTHROPIC_OAUTH_TOKEN")
+    oauth = os.environ.get("ANTHROPIC_OAUTH_TOKEN") or _ant_bearer()
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not oauth and not key:
-        raise SystemExit("Set ANTHROPIC_OAUTH_TOKEN (ant auth) or ANTHROPIC_API_KEY.")
+        raise SystemExit("No Anthropic auth: set ANTHROPIC_OAUTH_TOKEN, run `ant auth login`, "
+                         "or set ANTHROPIC_API_KEY.")
     if oauth:
         headers = {"Authorization": f"Bearer {oauth}",
                    "anthropic-version": "2023-06-01",

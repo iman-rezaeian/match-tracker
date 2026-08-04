@@ -836,6 +836,15 @@ run_cols = st.columns([1, 1, 2])
 # so this is the standing default for a normal game.
 tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=True)
 verbose = run_cols[1].checkbox("Verbose logs", value=False)
+# Default ON: read each tracklet's jersey number with a VLM and write per-tracklet
+# identity SUGGESTION drafts (the FIX PLAYER IDS Accept chips). Keyed to THIS run's
+# tracklets so they match. Needs `ant auth login` once for Opus; auto-mints the
+# token and skips silently if unavailable, so a normal run never breaks on it.
+vlm_identity = run_cols[2].checkbox(
+    "--vlm-identity (jersey-number ID suggestions)", value=True,
+    help="Reads each player's jersey number with Opus and pre-fills the FIX PLAYER IDS "
+         "Accept chips. Suggestions only — never auto-applied. Adds a few min of VLM calls; "
+         "needs `ant auth login` once (skips cleanly if not set up).")
 
 smoke_cols = st.columns([1, 1, 1, 1])
 smoke_test = smoke_cols[0].checkbox(
@@ -882,6 +891,8 @@ if st.button("▶︎ Run analytics", type="primary",
         args.append("--skip-clips")
     if skip_upload:
         args.append("--skip-upload")
+    if vlm_identity:
+        args.append("--vlm-identity")
     _start_subprocess("run", game_id, args)
     st.rerun()
 
