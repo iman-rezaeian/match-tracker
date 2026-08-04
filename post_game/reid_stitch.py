@@ -50,10 +50,29 @@ def _track_summaries(tracks_df: pd.DataFrame, track_ids: set[int]) -> dict[int, 
 
 
 def _hsv_mean(samples: list) -> Optional[np.ndarray]:
+    """Mean HSV over a track's jersey samples.
+
+    Each element is one detection's `sample_jersey_hsv` result — an (N_i, 3) array
+    whose row count N_i (pixels sampled) VARIES with box size. So collapse each
+    detection to its own (3,) mean first, then average those; stacking the raw
+    ragged (N_i, 3) arrays directly raises an inhomogeneous-shape ValueError.
+    (Only reached when a track has no OSNet embedding — e.g. the pitch tracker,
+    which is motion-only; the boxmot path populated embeddings and skipped here.)
+    """
     if not samples:
         return None
-    arr = np.asarray([np.asarray(s, dtype=np.float32) for s in samples], dtype=np.float32)
-    return arr.mean(axis=0) if len(arr) else None
+    per_det = []
+    for s in samples:
+        a = np.asarray(s, dtype=np.float32)
+        if a.size == 0:
+            continue
+        if a.ndim == 2:      # (N_i, 3) pixel samples -> per-detection mean
+            per_det.append(a.mean(axis=0))
+        elif a.ndim == 1:    # already a (3,) vector
+            per_det.append(a)
+    if not per_det:
+        return None
+    return np.asarray(per_det, dtype=np.float32).mean(axis=0)
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:

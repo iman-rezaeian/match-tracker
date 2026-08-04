@@ -95,6 +95,21 @@ def test_global_does_not_merge_across_teams():
     assert glob[1] == glob[2]  # our two fragments chained
 
 
+def test_hsv_mean_handles_ragged_pixel_samples():
+    """Regression: each detection's jersey sample is an (N_i, 3) array whose row
+    count varies with box size. _hsv_mean must average per-detection means, not
+    stack the ragged arrays (which raised an inhomogeneous-shape ValueError when a
+    track had no OSNet embedding — e.g. the motion-only pitch tracker)."""
+    from post_game.reid_stitch import _hsv_mean
+    out = _hsv_mean([np.random.rand(120, 3).astype("f4"),
+                     np.random.rand(88, 3).astype("f4")])
+    assert out is not None and out.shape == (3,)
+    assert _hsv_mean([]) is None
+    # empties skipped, a bare (3,) vector accepted
+    got = _hsv_mean([np.empty((0, 3), "f4"), np.array([1, 2, 3], "f4")])
+    assert got is not None and got.shape == (3,)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]
