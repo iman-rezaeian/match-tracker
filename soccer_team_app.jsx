@@ -9243,6 +9243,12 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   }, [game?.id]);
 
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
+  // VLM jersey-number identity suggestions (game.identityDrafts, written by
+  // tracking/vlm_identity.py). Keyed by tracklet_id → shown as a one-click
+  // Accept chip on undecided tracklets; accepting just calls setSel with the
+  // suggested player, flowing into the same overrides→save path as a manual pick.
+  const draftByTl = Object.fromEntries(
+    ((game.identityDrafts) || []).map(d => [String(d.trackletId), d]));
   // Only offer players who actually dressed for THIS game (squad), not the whole
   // team roster. Fall back to the starting lineup, then the full roster.
   const squadIds = new Set((game.squad && game.squad.length ? game.squad : (game.startingLineup || [])));
@@ -9460,6 +9466,29 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                     <option value="__other__">🚫 Coach / spectator / other</option>
                   </optgroup>
                 </select>
+                {/* VLM jersey-number suggestion: one-click Accept sets the picker
+                    to the read player. Only on UNDECIDED tracklets whose suggested
+                    player exists — the coach still reviews (it's a suggestion). */}
+                {(() => {
+                  const d = draftByTl[String(tl.tracklet_id)];
+                  if (!d || !d.suggestedPlayerId || selFor(tl) !== '__auto__') return null;
+                  if (!rosterById[d.suggestedPlayerId]) return null;
+                  return (
+                    <button
+                      onClick={() => setSel(tl, d.suggestedPlayerId)}
+                      className="mt-2 w-full flex items-center justify-between gap-2 rounded-lg border border-violet-500/40 bg-violet-500/10 px-2 py-1.5 text-left active:scale-[0.99]"
+                    >
+                      <span className="text-[12px] text-violet-200 truncate">
+                        <span className="font-bold">🔎 #{d.jerseyNumber}</span> {pname(d.suggestedPlayerId)}
+                        {d.reasoning ? <span className="text-violet-300/70"> — {d.reasoning}</span> : null}
+                      </span>
+                      <span className="shrink-0 flex items-center gap-1.5">
+                        {confBadge(d.confidence)}
+                        <span className="px-2 py-0.5 rounded bg-violet-500/30 text-violet-100 text-[11px] font-bold">Accept</span>
+                      </span>
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           );
