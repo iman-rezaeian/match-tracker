@@ -161,8 +161,14 @@ class PitchTracker:
             dets_here = [i for i in unmatched_det if meas[i][0] is not None]
             if not layer or not dets_here:
                 continue
-            # cost = metric distance; gate grows with how long a track's been unseen
-            cost = np.full((len(layer), len(dets_here)), np.inf, dtype=float)
+            # cost = metric distance; gate grows with how long a track's been unseen.
+            # linear_sum_assignment raises on an all-infinite row/col, which happens
+            # whenever a track has NO in-gate detection this layer. So use a large
+            # FINITE sentinel for out-of-gate pairs (the solver always succeeds),
+            # then reject any assignment that landed on a sentinel (never in-gate).
+            BIG = 1e6
+            cost = np.full((len(layer), len(dets_here)), BIG, dtype=float)
+            gated = np.zeros_like(cost, dtype=bool)
             for r, t in enumerate(layer):
                 tx, ty = t.kf.pos
                 gate = self.max_speed * dt * (t.time_since_update + 1) + self.slack_m
@@ -171,10 +177,11 @@ class PitchTracker:
                     d = float(np.hypot(mx - tx, my - ty))
                     if d <= gate:
                         cost[r, c] = d
+                        gated[r, c] = True
             from scipy.optimize import linear_sum_assignment
             rows, cols = linear_sum_assignment(cost)
             for r, c in zip(rows, cols):
-                if np.isfinite(cost[r, c]):
+                if gated[r, c]:   # a real in-gate match, not a sentinel filler
                     di = dets_here[c]
                     assigned[di] = layer[r].track_id
                     unmatched_det.discard(di)

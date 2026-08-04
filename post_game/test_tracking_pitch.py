@@ -117,6 +117,38 @@ def test_above_horizon_detection_is_kept_not_dropped():
     assert trk.n_kept_unprojectable == 1
 
 
+def test_track_with_no_in_gate_detection_does_not_crash():
+    """Regression: linear_sum_assignment raises on an all-infinite row, which
+    happens when an existing track has NO detection within its gate this frame
+    (common on real data). The tracker must handle it — the track goes unmatched
+    (ages toward lost), the far detection spawns its own track, no exception."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100)
+    # establish a track at ~(20,17)
+    for f in range(4):
+        trk.update(np.zeros((10, 10, 3), np.uint8), [_det(proj, 20.0, 17.0, f)], time_s=f / 10.0)
+    # next frame: the ONLY detection is far away (out of the established track's gate)
+    out = trk.update(np.zeros((10, 10, 3), np.uint8), [_det(proj, 40.0, 25.0, 4)], time_s=0.4)
+    assert len(out) == 1                      # emitted the far det (as a new track)
+    assert len(trk._tracks) >= 2              # old track kept (aging), new one spawned
+
+
+def test_many_frames_stress_no_crash():
+    """Drive a moderately dense scene for many frames with players entering/leaving
+    to exercise all-inf rows, empty layers, spawns and deletions — must not raise."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=30)
+    for f in range(60):
+        dets = []
+        # 4 steady players + 1 that blinks in/out every few frames
+        for pi in range(4):
+            dets.append(_det(proj, 15.0 + pi * 6 + 0.2 * np.sin(f / 5), 17.0, f))
+        if f % 7 < 4:
+            dets.append(_det(proj, 45.0, 10.0, f))  # intermittent far player
+        trk.update(np.zeros((10, 10, 3), np.uint8), dets, time_s=f / 10.0)
+    # no assertion beyond "did not raise"; a smoke stress test
+
+
 def test_bbox_eq_invariant_and_contract():
     """bbox_eq is passed through untouched; empty-in returns []."""
     proj = _projector()
