@@ -118,9 +118,24 @@ def _call(payload: dict, _tries: int = 5) -> str:
     except ImportError:
         pass
     import requests
+    # Two auth channels: an OAuth BEARER token (ANTHROPIC_OAUTH_TOKEN, minted by
+    # `ant auth print-credentials --access-token`) OR a raw x-api-key
+    # (ANTHROPIC_API_KEY). On the Rocket corp account the raw key is entitlement-
+    # limited to Haiku (instant 429 on Opus/Sonnet), but the OAuth token — same
+    # SSO that grants Claude Code its Opus — reaches Opus. Prefer the bearer when
+    # present; it needs the oauth beta header.
+    oauth = os.environ.get("ANTHROPIC_OAUTH_TOKEN")
     key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise SystemExit("ANTHROPIC_API_KEY not set.")
+    if not oauth and not key:
+        raise SystemExit("Set ANTHROPIC_OAUTH_TOKEN (ant auth) or ANTHROPIC_API_KEY.")
+    if oauth:
+        headers = {"Authorization": f"Bearer {oauth}",
+                   "anthropic-version": "2023-06-01",
+                   "anthropic-beta": "oauth-2025-04-20",
+                   "content-type": "application/json"}
+    else:
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
     # Corp VPN does TLS interception → trust the corp CA bundle if provided
     # (same var R2 uploads use). Falls back to default trust store off-VPN.
     verify = (os.environ.get("REQUESTS_CA_BUNDLE")
@@ -133,8 +148,7 @@ def _call(payload: dict, _tries: int = 5) -> str:
     for attempt in range(_tries):
         r = requests.post(
             f"{base}/v1/messages",
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
+            headers=headers,
             json=payload, timeout=120, verify=verify)
         if r.status_code in (429, 500, 502, 503, 529) and attempt < _tries - 1:
             wait = float(r.headers.get("retry-after", 2 ** attempt))

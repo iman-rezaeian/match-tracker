@@ -534,6 +534,22 @@ def write_voice_drafts(game_id: str, drafts: list[dict]) -> None:
         {"voiceDrafts": drafts}, merge=True)
 
 
+def write_identity_drafts(game_id: str, drafts: list[dict]) -> None:
+    """Write VLM jersey-number identity suggestions to `game.identityDrafts`.
+
+    Each draft maps a stitched tracklet to a suggested roster player (read off
+    the jersey number by the VLM). The PWA FIX-IDS view surfaces these as
+    per-tracklet Accept suggestions; on accept the coach's choice flows into
+    `identityOverrides` via the existing saveOverrides path and is applied on the
+    next pipeline re-run. These drafts are SUGGESTIONS ONLY — never auto-applied.
+
+    Additive and reversible: a new sibling field on the game doc; does NOT touch
+    `events`/scores/stats/`identityOverrides`. Overwrites the field (a re-run
+    replaces the draft set — the deterministic per-tracklet `id` prevents dupes)."""
+    _team_doc().collection("games").document(game_id).set(
+        {"identityDrafts": drafts}, merge=True)
+
+
 def set_public_reels(game_id: str, fields: dict[str, Any]) -> None:
     """Merge public-safe broadcast-reel fields onto the game doc.
 
