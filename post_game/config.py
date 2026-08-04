@@ -119,6 +119,15 @@ TRACK_BUFFER_S = 20                              # how long a lost track is kept
 # video AND blind GT labels shows the fragment count drops AND per-player GT
 # recall does not regress.
 TRACK_FIELD_SPACE = os.environ.get("TRACK_FIELD_SPACE", "0") != "0"
+# Accuracy rebuild: the DeepSORT-on-pitch tracker (post_game/tracking_pitch.py).
+# Associates in field-METERS with a point-distance gate + matching cascade + a
+# per-track Kalman in meters — the standard fixed-camera-sports method. Unlike the
+# B2 surrogate (constant-box IoU, which merged neighbors in the U10 swarm and
+# regressed), a point gate at ~1 m sits far below U10 spacing so it can't swap
+# neighbors. Independent of TRACK_FIELD_SPACE; if both set, TRACK_PITCH wins.
+# Default OFF, env-overridable for a single validation re-track; do NOT flip the
+# default until a re-track beats the equirect baseline on fragments AND coverage.
+TRACK_PITCH = os.environ.get("TRACK_PITCH", "0") != "0"
 
 # --- Calibration quality gate --------------------------------------------
 # "Run Analysis" hard-blocks on a calibration that fails these, so the coach
