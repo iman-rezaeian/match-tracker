@@ -288,8 +288,17 @@ def run(
             n_samples += 1
             # Reset tracker at halftime — track IDs must not bridge halves
             # (players swap ends, teams swap sides, anyone could be off the field).
+            # But CARRY the id counter across the reset: a fresh tracker restarts
+            # ids at 1 (boxmot resets BaseTrack._count in __init__; PitchTracker
+            # resets self._next_id), so without this, half-2 ids collide with
+            # half-1 ids and two different players get folded into one track_id —
+            # corrupting team classification and per-player coverage/stats. All
+            # three tracker types expose `_next_id` (see _new_tracker), so this is
+            # uniform. Mirrors tracking/retrack_smoke.py's --full-game path.
             if current_half == 1 and sample.time_s >= h1_end_s:
+                next_id_carry = tracker._next_id
                 tracker = _new_tracker()
+                tracker._next_id = next_id_carry
                 current_half = 2
 
             # --- Multi-tile detection ---

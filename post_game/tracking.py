@@ -58,6 +58,26 @@ class Tracker:
             frame_rate=frame_rate,
         )
 
+    @property
+    def _next_id(self) -> int:
+        """The id the tracker will assign to its NEXT new track.
+
+        boxmot ids come from the class-level `BaseTrack._count` counter, which
+        `BotSort.__init__` resets to 0 — so a fresh tracker restarts ids at 1.
+        Exposing this as `_next_id` gives all three tracker types (prod, field,
+        pitch) one uniform hook the pipeline can carry across the halftime reset,
+        so half-2 ids never collide with half-1 ids (which would fold two
+        different players into one track_id). See pipeline._new_tracker.
+        """
+        from boxmot.trackers.botsort.basetrack import BaseTrack
+        return int(BaseTrack._count) + 1
+
+    @_next_id.setter
+    def _next_id(self, value: int) -> None:
+        from boxmot.trackers.botsort.basetrack import BaseTrack
+        # next_id() pre-increments, so _count = value - 1 makes the next id `value`.
+        BaseTrack._count = int(value) - 1
+
     def update(
         self,
         frame: np.ndarray,
