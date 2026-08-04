@@ -156,6 +156,18 @@ PITCH_COLOR_MIN_PIXELS = int(os.environ.get("PITCH_COLOR_MIN_PIXELS", "10"))
 # ~91; a small margin claims each basin while leaving a neutral dead-zone around
 # the desaturated ~H90-107 collapse center so a washed track can't flip.
 PITCH_COLOR_MARGIN_DEG = float(os.environ.get("PITCH_COLOR_MARGIN_DEG", "6.0"))
+# Cross-team association cost. A committed track seeing a CONFIDENT opposite-kit
+# detection adds this many METERS of cost to that pair instead of hard-rejecting
+# it. SOFT (a penalty) not HARD (a veto), because a hard veto shatters a track
+# whenever an opponent transiently occludes it or a frame mis-samples color: the
+# track's own continuation gets refused, it ages, and the detection spawns a new
+# track -> a full-game re-track exploded 90 fragments -> 6399 (54% <5 s) and
+# overshot the team split to 79% ours. The penalty (>> the ~6 m gate cap) keeps
+# the solver STRONGLY preferring same-kit, so a real cross-team grab still loses
+# to any same-kit alternative, but a track with ONLY an opposite-kit detection
+# in range still holds its id through the occlusion instead of fragmenting. Set
+# to inf to restore the old hard-reject behaviour for comparison.
+PITCH_COLOR_PENALTY_M = float(os.environ.get("PITCH_COLOR_PENALTY_M", "50.0"))
 # A track "commits" to a kit only after this many NET votes (green +1 / blue -1),
 # so one mis-sampled frame can't lock it; the running score is clipped to
 # +/-COMMIT_CLIP so a genuinely wrong early commit can be out-voted within ~1 s.

@@ -199,6 +199,7 @@ class PitchTracker:
         self.c_commit = int(config.PITCH_COLOR_COMMIT_VOTES)
         self.c_clip = int(config.PITCH_COLOR_COMMIT_CLIP)
         self.c_max_tsu = int(config.PITCH_COLOR_MAX_TSU)
+        self.color_penalty_m = float(config.PITCH_COLOR_PENALTY_M)
 
     def _track_color(self, t: _Track) -> int:
         """A track's asserted kit sign (+1 our / -1 opp / 0 none) for gating.
@@ -277,15 +278,20 @@ class PitchTracker:
                 t_col = self._track_color(t)
                 for c, di in enumerate(dets_here):
                     mx, my, _, _, dcol = meas[di]
-                    # Team-color reject: a committed green track can't absorb a
-                    # blue detection (and vice-versa). Unknown on either side ->
-                    # no color veto (fail-safe to motion).
-                    if t_col != 0 and dcol != 0 and t_col != dcol:
-                        continue
                     d = float(np.hypot(mx - tx, my - ty))
-                    if d <= gate:
-                        cost[r, c] = d
-                        gated[r, c] = True
+                    if d > gate:
+                        continue
+                    # Team-color penalty (SOFT): a committed track seeing a
+                    # CONFIDENT opposite-kit detection pays a large cost so the
+                    # solver prefers a same-kit alternative, but the pair stays
+                    # selectable — a hard veto shattered tracks on transient
+                    # occlusion/mis-sample. Unknown on either side = no penalty
+                    # (fail-safe to motion).
+                    cross = (t_col != 0 and dcol != 0 and t_col != dcol)
+                    if cross and not np.isfinite(self.color_penalty_m):
+                        continue  # inf penalty == old hard-reject (comparison mode)
+                    cost[r, c] = d + (self.color_penalty_m if cross else 0.0)
+                    gated[r, c] = True
             from scipy.optimize import linear_sum_assignment
             rows, cols = linear_sum_assignment(cost)
             for r, c in zip(rows, cols):

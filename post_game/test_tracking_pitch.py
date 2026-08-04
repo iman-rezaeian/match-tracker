@@ -227,30 +227,54 @@ def test_det_kit_color_reads_green_not_just_blue():
     assert _det_kit_color(fr, box, our_h, opp_h, 35.0, 10, 6.0) == 0, "desaturated frame voted a kit"
 
 
-def test_committed_green_track_rejects_a_colocated_blue_detection():
-    """The swap-prevention core: a track that has committed to GREEN must NOT
-    absorb a BLUE detection that appears right where it is (well inside the
-    motion gate) — it must spawn a new track instead. This is the exact
-    green<->blue mixing the fix targets."""
+def test_committed_green_track_prefers_green_over_a_closer_blue():
+    """The swap-prevention core (SOFT gate): when a committed-GREEN track sees
+    BOTH a slightly-farther green detection and a slightly-closer blue one, the
+    color penalty must make it take the GREEN one — the blue is a different
+    (opponent) player. (The gate is soft, not a hard veto — see the occlusion
+    test below — so we prove the PREFERENCE, which is what stops swaps when an
+    honest same-team continuation exists.)"""
     proj = _projector()
     trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100,
                        our_color_hex=OUR_GREEN_HEX, opp_color_hex=OPP_BLUE_HEX)
     assert trk.color_gate
-    # Build a green track over enough frames to COMMIT (|score| >= 3).
     for f in range(6):
         fr = _frame()
-        d = _cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)
-        trk.update(fr, [d], time_s=f / 10.0)
+        trk.update(fr, [_cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)], time_s=f / 10.0)
     green_ids = {t.track_id for t in trk._tracks}
     assert green_ids and max(abs(t.color_score) for t in trk._tracks) >= 3
 
-    # Next frame: a BLUE detection appears 0.5 m away (well inside the ~3.9 m gate).
+    # Next frame: a BLUE det 0.2 m away (closer) and a GREEN det 0.6 m away.
+    # Motion alone would take the blue; the color penalty must flip it to green.
     fr = _frame()
-    dblue = _cdet(proj, 20.5, 17.0, 6, fr, BLUE_BGR)
-    out = trk.update(fr, [dblue], time_s=0.6)
-    assert len(out) == 1
-    new_id = out[0].track_id
-    assert new_id not in green_ids, "committed green track absorbed a blue detection (SWAP)"
+    dblue = _cdet(proj, 20.2, 17.0, 6, fr, BLUE_BGR)
+    dgreen = _cdet(proj, 20.6, 17.0, 6, fr, GREEN_BGR)
+    out = trk.update(fr, [dblue, dgreen], time_s=0.6)
+    # the green track must have continued onto the GREEN detection
+    green_track = next(t for t in trk._tracks if t.track_id in green_ids)
+    gx, gy = proj.field_to_pixel(20.6, 17.0)
+    cont = next(td for td in out if td.track_id == green_track.track_id)
+    fx = (cont.bbox_eq[0] + cont.bbox_eq[2]) / 2
+    assert abs(fx - gx) < 5, "committed green track took the closer BLUE det over the green one (swap)"
+
+
+def test_committed_track_holds_id_through_opponent_occlusion():
+    """Soft-gate anti-fragmentation: a committed-GREEN track whose ONLY in-gate
+    detection this frame reads BLUE (a passing opponent occludes it / a frame
+    mis-samples color) must still HOLD its id on that detection rather than drop
+    and re-spawn — the hard-veto version shattered tracks this way (90 -> 6399
+    fragments on the full game)."""
+    proj = _projector()
+    trk = PitchTracker(proj, frame_rate=10, track_buffer_frames=100,
+                       our_color_hex=OUR_GREEN_HEX, opp_color_hex=OPP_BLUE_HEX)
+    for f in range(6):
+        fr = _frame()
+        trk.update(fr, [_cdet(proj, 20.0, 17.0, f, fr, GREEN_BGR)], time_s=f / 10.0)
+    green_ids = {t.track_id for t in trk._tracks}
+    # one frame with ONLY a blue-reading detection right on the track
+    fr = _frame()
+    out = trk.update(fr, [_cdet(proj, 20.1, 17.0, 6, fr, BLUE_BGR)], time_s=0.6)
+    assert out[0].track_id in green_ids, "soft gate dropped the track on a transient opposite-color frame"
 
 
 def test_color_gate_off_when_no_kit_colors_given():
