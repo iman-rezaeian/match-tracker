@@ -743,7 +743,14 @@ def assign_identities_v2(
         if tl in tracklet_members and tl not in forced:
             kpid = keeper_assign.get(tl)
             if kpid and kpid in valid_ids:
-                tracklet_assign[tl] = (kpid, 0.95, "auto")
+                # status="gk", not "auto": these come from goal-line geometry (see
+                # the anchor-provenance note above), which is the one individuating
+                # signal that actually works on same-kit U10s — stronger evidence
+                # than a generic greedy match. Laundering them as "auto" made
+                # keeper time indistinguishable downstream, so GK minutes could not
+                # be counted or excluded. Consumers only ever compare status against
+                # "opponent" or display it, so a new value is additive.
+                tracklet_assign[tl] = (kpid, 0.95, "gk")
                 assigned_min[kpid] = assigned_min.get(kpid, 0.0) + tl_rank.get(tl, {}).get("minutes", 0.0)
 
     # 2. Everyone else by descending confidence, respecting per-player budgets.
