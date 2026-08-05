@@ -137,6 +137,32 @@ def apply_corrections_to_intervals(
     return out
 
 
+def clock_or_none_factory(
+    half_windows: list[tuple[float, float]],
+    period_clock_to_video_time: Callable[[int, int], float],
+    *,
+    end_pad_s: float = 60.0,
+) -> Callable[[Optional[float]], Optional[dict]]:
+    """Coach-facing echo of a correction edge as {"period","elapsed"} — or None.
+
+    A player who's never subbed off carries the "played to the final whistle"
+    sentinel (identity._onfield_intervals video_end_s=1e9). That's a marker, not
+    a real clock time, so any edge at/beyond the last half's end (+pad) echoes as
+    None (the PWA renders a None edge as "to end") rather than a garbage clock
+    time like 999998311s. None in → None out.
+    """
+    to_clock = video_time_to_period_clock_factory(half_windows, period_clock_to_video_time)
+    end_sentinel = (half_windows[-1][1] if half_windows else 0.0) + end_pad_s
+
+    def f(video_s: Optional[float]) -> Optional[dict]:
+        if video_s is None or float(video_s) >= end_sentinel:
+            return None
+        p, e = to_clock(float(video_s))
+        return {"period": p, "elapsed": round(e, 1)}
+
+    return f
+
+
 def video_time_to_period_clock_factory(
     half_windows: list[tuple[float, float]],
     period_clock_to_video_time: Callable[[int, int], float],

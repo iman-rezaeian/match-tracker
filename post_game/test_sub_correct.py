@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from post_game.sub_correct import (
     compute_sub_corrections, apply_corrections_to_intervals,
-    video_time_to_period_clock_factory,
+    video_time_to_period_clock_factory, clock_or_none_factory,
 )
 
 # Two halves, video seconds: H1 [0,1500], H2 [1600,3100].
@@ -106,6 +106,29 @@ def test_video_to_clock_inverse():
     for (p, e) in [(1, 0.0), (1, 900.0), (2, 0.0), (2, 1200.0)]:
         pp, ee = inv(fwd(p, e))
         assert pp == p and abs(ee - e) < 1e-6
+
+
+# ---- clock_or_none (echo, with played-to-end sentinel) ------------------
+def test_clock_or_none_regular_edge():
+    fwd = lambda p, e: (0.0 + e) if p == 1 else (1600.0 + e)
+    clk = clock_or_none_factory(HW, fwd)
+    assert clk(300.0) == {"period": 1, "elapsed": 300.0}
+    assert clk(1750.0) == {"period": 2, "elapsed": 150.0}
+
+
+def test_clock_or_none_none_in_none_out():
+    fwd = lambda p, e: (0.0 + e) if p == 1 else (1600.0 + e)
+    assert clock_or_none_factory(HW, fwd)(None) is None
+
+
+def test_clock_or_none_played_to_end_sentinel():
+    # the 1e9 "never subbed off" marker (and anything past the last half's end)
+    # must echo as None, NOT a 999998311s garbage clock.
+    fwd = lambda p, e: (0.0 + e) if p == 1 else (1600.0 + e)
+    clk = clock_or_none_factory(HW, fwd)
+    assert clk(1e9) is None
+    assert clk(3100.0 + 61.0) is None      # just past end+pad → sentinel
+    assert clk(3100.0) is not None         # exactly at final whistle → real
 
 
 if __name__ == "__main__":

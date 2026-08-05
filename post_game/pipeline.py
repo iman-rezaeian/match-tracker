@@ -670,13 +670,11 @@ def run(
     # on-field length clipped to play windows (matches played_minutes*60).
     sub_corrections_echo: list[dict] = []
     if sub_corrections:
-        from .sub_correct import video_time_to_period_clock_factory
-        _v2c = video_time_to_period_clock_factory(play_windows, clock_to_video)
-        def _clk(vs):
-            if vs is None:
-                return None
-            p, e = _v2c(float(vs))
-            return {"period": p, "elapsed": round(e, 1)}
+        from .sub_correct import clock_or_none_factory
+        # Renders a correction edge as a game clock, or None for the "played to
+        # the final whistle" sentinel (never-subbed-off), so the echo never
+        # carries a 1e9-derived garbage clock time.
+        _clk = clock_or_none_factory(play_windows, clock_to_video)
         for _pid, _c in sub_corrections.items():
             sub_corrections_echo.append({
                 "playerId": _pid,
