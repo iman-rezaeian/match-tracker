@@ -400,6 +400,16 @@ ASSIGN_GK_BONUS = 3.0          # (legacy) GK now handled separately, not via bon
 ASSIGN_MATCH_MAX_FRAC = 0.55   # reject a tracklet↔player window-match beyond this
                                # fraction of field length (kills far-fetched votes)
 ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
+# How far OUTSIDE his coach-logged on-field window a player stays eligible for a
+# tracklet during assignment (identity_assign: per-window candidate gate and the
+# per-tracklet vote filter). The historical value is 240 s — four minutes — which
+# at U10 sub intervals leaves nearly every squad member eligible in nearly every
+# window, so the coach's SUB log barely constrains the decision where it is made.
+# The log then bites AFTERWARDS, at exact boundaries, in stats._drop_offwindow,
+# which deletes ~30% of attributed detections as the wrong child. Lowering this
+# moves the log from a post-hoc filter to a real assignment constraint.
+# Default 240.0 reproduces the previous behaviour exactly (no-op).
+ID_ONFIELD_TOLERANCE_S = float(os.environ.get("ID_ONFIELD_TOLERANCE_S", "240.0"))
 # Tag pre-fill (Phase 3.3): suggestedPressure = an opponent within this radius
 # of the assigned player at the action moment. ~3 m ≈ closing-down range at U10.
 SUGGEST_PRESSURE_RADIUS_M = 3.0

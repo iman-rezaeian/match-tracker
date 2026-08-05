@@ -38,7 +38,6 @@ from . import config
 from .firestore_io import CoachEvent, RosterPlayer
 from .identity import (
     IdentityAssignment,
-    ONFIELD_TOLERANCE_S,
     _find_gk_track,
     _onfield_intervals,
     _is_onfield,
@@ -505,10 +504,10 @@ def assign_identities_v2(
                         # goal RIGHT NOW — not the whole-game starting GK,
                         # who may be outfield after a swap), tolerant window
                         wmid = 0.5 * (w0 + w1)
+                        _tol = config.ID_ONFIELD_TOLERANCE_S
                         cand = [p for p in exp
                                 if not _is_gk_at(p, wmid)
-                                and _is_onfield(onfield, p, wmid - ONFIELD_TOLERANCE_S,
-                                                wmid + ONFIELD_TOLERANCE_S)]
+                                and _is_onfield(onfield, p, wmid - _tol, wmid + _tol)]
                         if not tls or not cand:
                             continue
                         gate2 = (field_length_m * config.ASSIGN_MATCH_MAX_FRAC) ** 2
@@ -653,9 +652,10 @@ def assign_identities_v2(
         votes = match_count.get(tl, {})
         span = (min(lifetimes.get(m, (0, 0))[0] for m in members),
                 max(lifetimes.get(m, (0, 0))[1] for m in members))
+        _tol = config.ID_ONFIELD_TOLERANCE_S
         votes = {p: v for p, v in votes.items()
-                 if p in valid_ids and _is_onfield(onfield, p, span[0] - ONFIELD_TOLERANCE_S,
-                                                    span[1] + ONFIELD_TOLERANCE_S)}
+                 if p in valid_ids and _is_onfield(onfield, p, span[0] - _tol,
+                                                    span[1] + _tol)}
         if votes:
             ordered = sorted(votes.values(), reverse=True)
             total = sum(ordered)  # # of windows (≈WINDOW_S each) that matched this tracklet
