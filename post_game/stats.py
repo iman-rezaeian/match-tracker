@@ -59,9 +59,62 @@ def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(arr, kernel, mode="same")
 
 
+def _drop_offwindow(df: pd.DataFrame,
+                    onfield: dict[str, list[tuple[float, float]]],
+                    report: dict[str, dict]) -> pd.DataFrame:
+    """Drop detections credited to a player OUTSIDE his own on-field window.
+
+    The coach's SUB taps are independent evidence the software never produced: a
+    human recorded when each child came on and off. Measured on W8, **30.0% of all
+    attributed detections (40,032 of 133,637) fall in minutes that log says the
+    player was on the BENCH** — Qian 50.6%, Rezaeian 44.0%, Hahn 43.7% — so his
+    "running" included another child's. The control validates the test: Garland,
+    who never subs off and therefore cannot leak, measures exactly 0.0%.
+
+    This is a pure attribution error, independent of the physics conflict check
+    (which only catches a player in two places SIMULTANEOUSLY; a track that is
+    simply the wrong child at a time nobody else was named is invisible to it).
+
+    Note the asymmetry that makes this safe: `coach_min` — the coverage
+    denominator and extrapolation base — comes from the SAME SUB taps and is NOT
+    touched here. Only the numerator shrinks, so coverage correctly falls: that
+    time was never really tracked for this player.
+    """
+    if not onfield:
+        return df
+    keep = np.zeros(len(df), dtype=bool)
+    pid_col = df["player_id"].astype(str).to_numpy()
+    t_col = df["time_s"].astype(float).to_numpy()
+    for pid in np.unique(pid_col):
+        ivs = onfield.get(str(pid))
+        sel = pid_col == pid
+        if not ivs:
+            keep |= sel          # no logged window (coach never logged him) → keep
+            continue
+        inside = np.zeros(len(df), dtype=bool)
+        for (lo, hi) in ivs:
+            inside |= sel & (t_col >= lo) & (t_col <= hi)
+        n_out = int((sel & ~inside).sum())
+        if n_out:
+            n_tot = int(sel.sum())
+            r = report.setdefault(str(pid), {})
+            r["offwindow_detections"] = n_out
+            r["offwindow_frac"] = round(n_out / max(1, n_tot), 3)
+        keep |= inside
+    n_drop = len(df) - int(keep.sum())
+    if n_drop:
+        log.warning(
+            "  stats: dropped %d of %d attributed detections credited OUTSIDE the "
+            "player's own on-field window (coach SUB taps say he was on the bench) "
+            "— %.1f%% of attributed time was another child's",
+            n_drop, len(df), 100.0 * n_drop / max(1, len(df)))
+    return df[keep]
+
+
 def _per_player_trajectory(
     tracks_field_df: pd.DataFrame, identity_by_track: dict[int, str],
     tracklet_of_track: Optional[dict[int, int]] = None,
+    onfield_intervals: Optional[dict[str, list[tuple[float, float]]]] = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     """Per-player trajectory rows, with physically impossible instants REMOVED.
 
@@ -81,11 +134,18 @@ def _per_player_trajectory(
     df["player_id"] = df["track_id"].map(identity_by_track)
     df = df[df["player_id"].notna()]
 
+    # Attribution first: a detection credited to a player while the coach's SUB
+    # taps say he was on the bench is simply the wrong child, whatever else is
+    # true of it. Removing those BEFORE the physics check keeps the conflict
+    # numbers about genuine simultaneous-presence merges rather than bench rows.
+    report: dict[str, dict] = {}
+    if onfield_intervals:
+        df = _drop_offwindow(df, onfield_intervals, report)
+
     samples = list(zip(df["player_id"].astype(str), df["time_s"].astype(float),
                        df["track_id"].astype(int),
                        df["x_m"].astype(float), df["y_m"].astype(float)))
     conflicts = find_conflicts(samples)
-    report: dict[str, dict] = {}
     if conflicts:
         summ = conflict_summary(conflicts)
         blame = blame_tracks(samples, conflicts)
@@ -103,7 +163,7 @@ def _per_player_trajectory(
                 s["worst_tracklets"] = [
                     {"tracklet_id": r, "instants": n}
                     for r, n in sorted(per_tl.items(), key=lambda kv: -kv[1])]
-            report[pid] = s
+            report.setdefault(pid, {}).update(s)   # keep any offwindow_* keys
         # Vectorized drop: build the (player, time) pairs to remove once and use
         # a MultiIndex membership test — a row-wise apply over ~500k rows is slow.
         bad = conflicted_times(conflicts)
@@ -140,12 +200,13 @@ def compute_player_stats(
     sprint_thresholds: Optional[dict[str, float]] = None,
     conflicts_out: Optional[dict[str, dict]] = None,
     tracklet_of_track: Optional[dict[int, int]] = None,
+    onfield_intervals: Optional[dict[str, list[tuple[float, float]]]] = None,
 ) -> list[PlayerStats]:
     """`conflicts_out`: if given, filled with the per-player physically-impossible
     (same player in 2+ places) report — see player_conflicts. Those instants are
     excluded from every stat below rather than silently averaged in."""
     per_player, conflict_report = _per_player_trajectory(
-        tracks_field_df, identity_by_track, tracklet_of_track)
+        tracks_field_df, identity_by_track, tracklet_of_track, onfield_intervals)
     if conflicts_out is not None:
         conflicts_out.update(conflict_report)
     third_low, third_high = config.THIRDS_FRACTIONS

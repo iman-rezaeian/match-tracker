@@ -722,15 +722,32 @@ def run(
         sprint_thresholds=sprint_thresholds,
         conflicts_out=player_conflicts,
         tracklet_of_track=tracklet_of_track,
+        # The coach's SUB taps as an independent filter: a detection credited to a
+        # player while the log says he was on the bench is the wrong child.
+        onfield_intervals={str(k): v for k, v in _onf.items()},
     )
+    # The report mixes two independent defect kinds per player, so every read is
+    # .get(): `conflict_seconds` (physically impossible — two places at once) and
+    # `offwindow_frac` (credited while the SUB log says he was on the bench). A
+    # player can have either, both, or neither.
     if player_conflicts:
-        _cs = sum(v.get("conflict_seconds", 0) for v in player_conflicts.values())
-        log.warning("  identity CONFLICTS: %d player(s), %.0fs of provably "
-                    "impossible time excluded from stats (worst: %s)",
-                    len(player_conflicts), _cs,
-                    ", ".join(f"{p}={v['conflict_seconds']}s" for p, v in
-                              sorted(player_conflicts.items(),
-                                     key=lambda kv: -kv[1]["conflict_seconds"])[:3]))
+        _conf = {p: v for p, v in player_conflicts.items() if v.get("conflict_seconds")}
+        _off = {p: v for p, v in player_conflicts.items() if v.get("offwindow_detections")}
+        if _conf:
+            _cs = sum(v.get("conflict_seconds", 0) for v in _conf.values())
+            log.warning("  identity CONFLICTS: %d player(s), %.0fs of provably "
+                        "impossible time excluded from stats (worst: %s)",
+                        len(_conf), _cs,
+                        ", ".join(f"{p}={v.get('conflict_seconds', 0)}s" for p, v in
+                                  sorted(_conf.items(),
+                                         key=lambda kv: -kv[1].get("conflict_seconds", 0))[:3]))
+        if _off:
+            log.warning("  BENCH-TIME leak: %d player(s) had detections credited while "
+                        "the SUB log says they were off (worst: %s)",
+                        len(_off),
+                        ", ".join(f"{p}={100*v.get('offwindow_frac', 0):.0f}%" for p, v in
+                                  sorted(_off.items(),
+                                         key=lambda kv: -kv[1].get("offwindow_frac", 0))[:3]))
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
