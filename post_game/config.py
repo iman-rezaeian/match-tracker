@@ -428,6 +428,16 @@ MAX_PLAUSIBLE_SPEED_MS = 9.0                      # ~32 km/h
 # fires. 2.0 = "never claim more than double the tracked distance".
 DIST_EST_MAX_MULT = 2.0
 
+# Below this tracked/logged coverage fraction, don't extrapolate distance or
+# sprints AT ALL — report the real tracked slice and flag it. The MAX_MULT cap
+# above bounds how far a rate is stretched, but a rate measured on a thin,
+# activity-biased sliver is unreliable at any multiplier: at 20% coverage we'd be
+# characterising a whole game from a few minutes the tracker happened to hold,
+# which skew fast. Reporting a smaller honest number beats publishing a
+# confident-looking projection the data cannot support. `dist_est_capped` is set
+# so the UI marks these indicative rather than measured.
+DIST_EST_MIN_COVERAGE = float(os.environ.get("DIST_EST_MIN_COVERAGE", "0.25"))
+
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)
 

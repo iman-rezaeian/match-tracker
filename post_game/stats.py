@@ -227,8 +227,20 @@ def compute_player_stats(
         #      the cap never binds; only thin-coverage players are held back to a
         #      conservative estimate. `dist_est_capped` flags when the cap bit so
         #      the PWA can mark it indicative rather than measured.
+        #   3. Coverage-FRACTION floor: the cap bounds how far we stretch, but a
+        #      rate measured on a thin sliver is unreliable at ANY multiplier —
+        #      we'd be projecting a whole game from a few unrepresentative
+        #      minutes (and the tracker preferentially keeps a player while
+        #      they're MOVING, so the sliver is biased fast). Below
+        #      DIST_EST_MIN_COVERAGE, don't extrapolate at all: report the real
+        #      tracked distance and flag it, rather than publish a projection the
+        #      data can't support.
         dist_est_capped = False
-        if tracked_min >= 3.0 and coach_min > 0:
+        if coverage_frac < config.DIST_EST_MIN_COVERAGE:
+            dist_est = dist_raw
+            sprint_est = int(sprint_count)
+            dist_est_capped = True      # UI: indicative / under-reported, not measured
+        elif tracked_min >= 3.0 and coach_min > 0:
             mult = coach_min / tracked_min
             capped_mult = min(mult, config.DIST_EST_MAX_MULT)
             dist_est_capped = capped_mult < mult
