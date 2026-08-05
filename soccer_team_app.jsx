@@ -8285,9 +8285,9 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         if (!pid) return;
         let row = byPid.get(pid);
         if (!row) {
-          row = { pid, games: 0, minutes: 0, distance: 0, topSpeed: 0, sprints: 0,
+          row = { pid, games: 0, minutes: 0, distance: 0, sprints: 0,
                   attPct: 0, midPct: 0, defPct: 0,
-                  distSeries: [], speedSeries: [], sprintSeries: [] };
+                  distSeries: [], sprintSeries: [] };
           byPid.set(pid, row);
         }
         // 4.4: rate-based estimates when present (fairer across players with
@@ -8297,13 +8297,11 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         row.games += 1;
         row.minutes += s.minutes_played || 0;
         row.distance += dist;
-        row.topSpeed = Math.max(row.topSpeed, s.top_speed_ms || 0);
         row.sprints += sprints;
         row.attPct += s.pct_attacking_third || 0;
         row.midPct += s.pct_middle_third || 0;
         row.defPct += s.pct_defensive_third || 0;
         row.distSeries.push(dist);
-        row.speedSeries.push((s.top_speed_ms || 0) * 3.6);
         row.sprintSeries.push(sprints);
       });
     });
@@ -8311,7 +8309,6 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
       ...r,
       avgMin: r.games ? r.minutes / r.games : 0,
       avgDist: r.games ? r.distance / r.games : 0,
-      topSpeedKmh: r.topSpeed * 3.6,
       avgSprints: r.games ? r.sprints / r.games : 0,
       avgAttPct: r.games ? r.attPct / r.games : 0,
       avgMidPct: r.games ? r.midPct / r.games : 0,
@@ -8424,7 +8421,6 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
               <div className="flex gap-1 text-[10px]">
                 {[
                   ['avgDist', 'DIST'],
-                  ['topSpeedKmh', 'TOP'],
                   ['avgSprints', 'SPR'],
                   ['avgMin', 'MIN'],
                   ['name', 'A-Z'],
@@ -8445,7 +8441,6 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                     <th className="text-right py-1 px-1">GP</th>
                     <th className="text-right py-1 px-1">Min</th>
                     <th className="text-right py-1 px-1">Dist/g</th>
-                    <th className="text-right py-1 px-1">Top</th>
                     <th className="text-right py-1 px-1">Spr/g</th>
                     <th className="text-right py-1 pl-1">Trend</th>
                   </tr>
@@ -8463,16 +8458,14 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                           <td className="text-right px-1 tabular-nums">{p.games}</td>
                           <td className="text-right px-1 tabular-nums">{p.avgMin.toFixed(0)}</td>
                           <td className="text-right px-1 tabular-nums">{p.avgDist.toFixed(0)}m</td>
-                          <td className="text-right px-1 tabular-nums">{p.topSpeedKmh.toFixed(1)}</td>
                           <td className="text-right px-1 tabular-nums">{p.avgSprints.toFixed(1)}</td>
                           <td className="text-right pl-1"><Sparkline values={p.distSeries} color="#a3e635" /></td>
                         </tr>
                         {expanded && (
                           <tr className="bg-stone-800/30">
-                            <td colSpan={7} className="px-2 py-3">
-                              <div className="grid grid-cols-3 gap-3">
+                            <td colSpan={6} className="px-2 py-3">
+                              <div className="grid grid-cols-2 gap-3">
                                 <SparkBlock label="Distance (m)" values={p.distSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
-                                <SparkBlock label="Top speed (km/h)" values={p.speedSeries} color="#60a5fa" fmt={v => v.toFixed(1)} />
                                 <SparkBlock label="Sprints" values={p.sprintSeries} color="#fbbf24" fmt={v => v.toFixed(0)} />
                               </div>
                               <div className="mt-3 pt-3 border-t border-stone-700 grid grid-cols-3 gap-2 text-center text-[11px]">
@@ -9941,15 +9934,9 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
   const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
-  const teamTopKmh = Math.max(0, ...pstats.map(p => (p.top_speed_ms || 0) * 3.6));
-  // Team top speed is a single player's single peak — most vulnerable to a
-  // swap spike / partial-view artifact. Flag it when that peak came from a
-  // low-coverage player so we can caveat it below.
-  const teamTopCovLow = pstats.some(p => {
-    const c = (p.tracked_seconds != null && (p.minutes_played || 0) > 0)
-      ? (p.tracked_seconds / 60) / p.minutes_played : null;
-    return (p.top_speed_ms || 0) * 3.6 >= teamTopKmh - 0.05 && c != null && c < 0.5;
-  });
+  // Team minutes come from the coach's SUB taps, so unlike a tracked peak they
+  // don't depend on identity or coverage at all.
+  const teamMinutes = pstats.reduce((s, p) => s + (p.minutes_played || 0), 0);
   // Prefer the coverage-scaled sprint estimate (parity with the per-player
   // deck); fall back to the raw count for older docs without the estimate.
   const teamSprints = pstats.reduce((s, p) => s + (p.sprint_est_count != null ? p.sprint_est_count : (p.sprint_count || 0)), 0);
@@ -10120,16 +10107,16 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
               </div>
             </div>
             <div className="grid grid-cols-4 gap-2 mb-3">
-              {[[teamKm.toFixed(1), 'KM TOTAL'], [teamTopKmh.toFixed(1), 'TOP KM/H'], [teamSprints, 'SPRINTS'], [pstats.length, 'PLAYERS']].map(([v, l]) => (
+              {/* TOP KM/H removed: it is one player's single peak, the least
+                  reproducible number we had (repeatability 0.476). Replaced by
+                  total minutes, which comes from the coach's own taps. */}
+              {[[teamKm.toFixed(1), 'KM TOTAL'], [teamMinutes.toFixed(0), 'MINUTES'], [teamSprints, 'SPRINTS'], [pstats.length, 'PLAYERS']].map(([v, l]) => (
                 <div key={l} className="rounded-xl border border-stone-700/60 p-2 text-center" style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
                   <div className="text-white font-display text-lg leading-none">{v}</div>
                   <div className="text-[9px] text-stone-400 mt-1">{l}</div>
                 </div>
               ))}
             </div>
-            {teamTopCovLow && (
-              <div className="text-[9px] text-stone-500 -mt-2 mb-3">📡 Top speed is a single-player peak from a partial view — treat as indicative.</div>
-            )}
             {goals.length > 0 && (
               <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3 mb-3">
                 <div className="text-[10px] tracking-widest text-stone-400 mb-2">GOALS</div>
@@ -10313,12 +10300,24 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         {conflictSec >= 10 && <div className="text-[9px] font-bold text-sky-400 mt-1">🧹 CLEANED</div>}
                       </div>
                     </div>
-                    <div className="grid grid-cols-5 gap-1.5 mb-1">
+                    {/* TOP km/h was removed here on purpose. It is the p99 of a
+                        smoothed speed series over a player's REAL-motion steps, so
+                        for anyone with thin coverage it is effectively one sample:
+                        split-half repeatability measured 0.476, and the raw-max
+                        variant scored -0.20 (worse than chance). It rendered as the
+                        most authoritative number on the card while being the least
+                        reproducible. `top_speed_ms` still ships in the analytics doc
+                        because the personalized sprint threshold is derived from the
+                        median of prior games' values (firestore_io
+                        .collect_prior_player_top_speeds) — it just isn't shown.
+                        A p95-speed replacement (repeatability 0.651) is the intended
+                        successor but is not computed yet; don't add a headline number
+                        back until it is validated on the two ground-truth games. */}
+                    <div className="grid grid-cols-4 gap-1.5 mb-1">
                       {[
                         [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
                         [avgKmh.toFixed(1), 'AVG km/h', avgGrade, true],
                         [distShown.toFixed(0), 'DIST m', movementGrade, true],
-                        [((s.top_speed_ms || 0) * 3.6).toFixed(1), 'TOP km/h', movementGrade, true],
                         [sprintsShown, 'SPRINTS', movementGrade, true],
                       ].map(([v, l, g, movement]) => {
                         const t = tileTint(g);
