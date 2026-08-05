@@ -287,12 +287,26 @@ def calibrate(
         map_length_m=map_length, field_key=field_key,
     )
     gs = payload.get("ground_similarity", {}) if payload else {}
+    # `rms_weighted_m` was reported here for a long time but NOTHING ever wrote
+    # it, so the field always printed null (accuracy-audit B6). Report what the
+    # solve genuinely produces instead: the level-fit RMS before the tilt solve
+    # and the RMS after, which together show whether solving camera pitch/roll
+    # actually helped, plus the worst single reference point — a near-zero mean
+    # RMS can still hide one badly-placed far-side point, and that point is
+    # where field-position error is largest.
+    resid = gs.get("residuals") or []
+    worst = max(resid, key=lambda r: r.get("err_m") or 0.0) if resid else None
     console.print_json(json.dumps({
         "game_id": game_id,
         "calibration_saved": bool(payload),
         "reference_points": len(payload.get("reference_points", [])) if payload else 0,
+        "solver": gs.get("solver"),
         "rms_m": gs.get("rms_m"),
-        "rms_weighted_m": gs.get("rms_weighted_m"),
+        "rms_level_m": gs.get("rms_level_m"),
+        "camera_pitch_deg": payload.get("camera_pitch_deg") if payload else None,
+        "camera_roll_deg": payload.get("camera_roll_deg") if payload else None,
+        "worst_point": worst.get("key") if worst else None,
+        "worst_point_err_m": round(worst["err_m"], 3) if worst else None,
     }))
 
 
