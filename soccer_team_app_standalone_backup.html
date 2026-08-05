@@ -8432,7 +8432,7 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
   const [docs, setDocs] = useState({}); // gameId -> analytics doc
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState('season'); // 'season' | 'rolling'
-  const [sortKey, setSortKey] = useState('distance');
+  const [sortKey, setSortKey] = useState('workRate');
   const [expandedId, setExpandedId] = useState(null);
 
   // Swipe-back closes the modal (coordinated with nested modals + view stack).
@@ -8503,6 +8503,10 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         if (!row) {
           row = { pid, games: 0, minutes: 0, distance: 0, sprints: 0,
                   attPct: 0, midPct: 0, defPct: 0,
+                  // rawDist/trkMin accumulate MEASURED distance over MEASURED time so
+                  // the season work rate is a true pooled rate, never a sum of
+                  // per-game extrapolations (which compound each game's coverage error).
+                  rawDist: 0, trkMin: 0,
                   distSeries: [], sprintSeries: [] };
           byPid.set(pid, row);
         }
@@ -8513,6 +8517,8 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         row.games += 1;
         row.minutes += s.minutes_played || 0;
         row.distance += dist;
+        row.rawDist += s.distance_m || 0;
+        row.trkMin += (s.tracked_seconds || 0) / 60;
         row.sprints += sprints;
         row.attPct += s.pct_attacking_third || 0;
         row.midPct += s.pct_middle_third || 0;
@@ -8525,6 +8531,9 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
       ...r,
       avgMin: r.games ? r.minutes / r.games : 0,
       avgDist: r.games ? r.distance / r.games : 0,
+      // Pooled across the window: total measured metres / total measured minutes.
+      // Needs >=2 min of tracking in the window before it means anything.
+      workRate: r.trkMin >= 2 ? r.rawDist / r.trkMin : null,
       avgSprints: r.games ? r.sprints / r.games : 0,
       avgAttPct: r.games ? r.attPct / r.games : 0,
       avgMidPct: r.games ? r.midPct / r.games : 0,
@@ -8636,6 +8645,7 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
               <div className="text-xs text-stone-500 uppercase">Players</div>
               <div className="flex gap-1 text-[10px]">
                 {[
+                  ['workRate', 'M/MIN'],
                   ['avgDist', 'DIST'],
                   ['avgSprints', 'SPR'],
                   ['avgMin', 'MIN'],
@@ -8656,6 +8666,7 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                     <th className="text-left py-1 pr-2">Player</th>
                     <th className="text-right py-1 px-1">GP</th>
                     <th className="text-right py-1 px-1">Min</th>
+                    <th className="text-right py-1 px-1">m/min</th>
                     <th className="text-right py-1 px-1">Dist/g</th>
                     <th className="text-right py-1 px-1">Spr/g</th>
                     <th className="text-right py-1 pl-1">Trend</th>
@@ -8673,13 +8684,14 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
                           <td className="py-1.5 pr-2 truncate max-w-[120px]">{playerName(p.pid)}</td>
                           <td className="text-right px-1 tabular-nums">{p.games}</td>
                           <td className="text-right px-1 tabular-nums">{p.avgMin.toFixed(0)}</td>
-                          <td className="text-right px-1 tabular-nums">{p.avgDist.toFixed(0)}m</td>
+                          <td className="text-right px-1 tabular-nums font-bold text-lime-300">{p.workRate == null ? '—' : p.workRate.toFixed(0)}</td>
+                          <td className="text-right px-1 tabular-nums text-stone-500">{p.avgDist.toFixed(0)}m</td>
                           <td className="text-right px-1 tabular-nums">{p.avgSprints.toFixed(1)}</td>
                           <td className="text-right pl-1"><Sparkline values={p.distSeries} color="#a3e635" /></td>
                         </tr>
                         {expanded && (
                           <tr className="bg-stone-800/30">
-                            <td colSpan={6} className="px-2 py-3">
+                            <td colSpan={7} className="px-2 py-3">
                               <div className="grid grid-cols-2 gap-3">
                                 <SparkBlock label="Distance (m)" values={p.distSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
                                 <SparkBlock label="Sprints" values={p.sprintSeries} color="#fbbf24" fmt={v => v.toFixed(0)} />
@@ -10475,6 +10487,10 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const conflictSec = conflict ? (conflict.conflict_seconds || 0) : 0;
                 // 4.4: rate-based estimates (distance/sprints scaled to coach
                 // minutes) when the doc carries them; raw sums for older docs.
+                // Full-game distance estimate. No longer a headline tile (M/MIN replaced
+                // it): with median coverage ~30% this is mostly extrapolation, and
+                // `dist_est_capped` fires for nearly every player. Shown in the caption
+                // as context for the rate, not as a fact to quote.
                 const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
                 const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
                 // Graded honesty (Tier 3): one trust grade per movement tile from
@@ -10490,6 +10506,16 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 // earns the dash and only drops a grade for identity uncertainty.
                 const avgGrade = conf == null ? 3 : (conf >= 0.8 ? 3 : conf >= 0.5 ? 2 : 1);
                 const avgKmh = (s.avg_speed_ms || 0) * 3.6;
+                // WORK RATE (m/min) — metres covered per minute we actually SAW the
+                // player: raw distance / tracked time, never the coverage-extrapolated
+                // estimate. Being a rate it is coverage-robust the same way AVG km/h is,
+                // so it carries avgGrade (identity only) rather than movementGrade.
+                // This is the honest unit for comparing players and weeks: on W8 (median
+                // coverage 30%) the rate still clustered to an 18% stdev/mean spread
+                // while DIST m — the same data multiplied up to full minutes — is capped
+                // for 11 of 12 players. Needs >=60s of tracking to mean anything.
+                const trkMin = (s.tracked_seconds || 0) / 60;
+                const workRate = trkMin >= 1 ? (s.distance_m || 0) / trkMin : null;
                 // grade → tile chrome: a corner dot + tinted border (no bg wash —
                 // a filled tint reads as an error state and would make a card with
                 // several caveated tiles look alarming on a phone).
@@ -10533,7 +10559,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                       {[
                         [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
                         [avgKmh.toFixed(1), 'AVG km/h', avgGrade, true],
-                        [distShown.toFixed(0), 'DIST m', movementGrade, true],
+                        [workRate == null ? '—' : workRate.toFixed(0), 'M/MIN', avgGrade, true],
                         [sprintsShown, 'SPRINTS', movementGrade, true],
                       ].map(([v, l, g, movement]) => {
                         const t = tileTint(g);
@@ -10550,9 +10576,9 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     {coveragePct != null && (
                       <div className="text-[9px] text-stone-500 mb-2 leading-snug">
                         📡 {coveragePct}% of minutes tracked
-                        {coverage != null && coverage < 0.5
-                          ? ' — distance, top speed & sprints are estimates from a partial view; avg speed is the most reliable'
-                          : ' — distance & sprints are rate-based estimates'}
+                        {' — '}<span className="text-stone-400">M/MIN &amp; AVG km/h are measured over that
+                        tracked time, so they compare fairly between players and weeks.</span>
+                        {workRate != null && ` ≈${(distShown / 1000).toFixed(1)}km over the full game if he held that rate — an extrapolation, not a measurement.`}
                         {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
                       </div>
                     )}
@@ -14296,6 +14322,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
