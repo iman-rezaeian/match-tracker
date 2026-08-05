@@ -27,6 +27,25 @@ coach hand-labels **and** video still on disk at
 identity change gets measured this way. Coverage is not a valid score — the VLM
 run raised named coverage while r stayed flat (0.004 → −0.027).
 
+> **⚠ 2026-08-05 amendment — the headline r is UNDERPOWERED on one game.**
+> The scorer now exists (`tracking/half_split_r.py`) and its odd/even control
+> reproduces the ceiling exactly (**+0.980** on W8, +0.994 / +0.991 on two other
+> games), so the instrument is sound. But per-player half-to-half on a SINGLE
+> game rests on n≈6–9 players, and at that n it is not a usable score:
+>
+> | | |
+> |---|---|
+> | W8 baseline, single game | r = **+0.381**, bootstrap 95% CI **[−0.71, +0.95]** |
+> | leave-one-out range on those same 7 players | **−0.206 … +0.832** |
+> | changing only the tracked-time floor (60 s → 0 s, adds 1 player) | **+0.381 → −0.242** |
+> | pooled over 3 games (within-game z-scored, n=22) | r = **+0.329**, CI **[−0.06, +0.65]** |
+>
+> The doc's original **+0.004 is inside the noise band of +0.381** — they are the
+> same measurement at different filter settings, not a contradiction. Dropping
+> one player moves r by more than a full correlation unit, so **never report a
+> single-game r**. Pool across games (z-scored within game) and quote the CI;
+> even pooled, only changes of roughly ≥0.3 are resolvable.
+
 ### The naming gap
 | | |
 |---|---|
@@ -140,12 +159,49 @@ players ARE in green, so the coach label is wrong there. But drafts cover only
 **~10% of on-field time**, and applying them moved r 0.004 → −0.027.
 **Verdict: a label spell-checker, not a metrics fix. Keep `VLM_IDENTITY` off.**
 
+## Lever 2, part 1: tightening the on-field gate — MEASURED, DOES NOT WORK
+
+The assigner was never a pure "assign freely, then filter". It already consults
+the log during assignment, but with `ONFIELD_TOLERANCE_S = 240.0` — a **four
+minute** tolerance (`identity_assign.py` per-window candidate gate + per-tracklet
+vote filter). At U10 sub intervals that leaves nearly every squad member eligible
+in nearly every window, so the log barely constrains the decision where it is
+made; it then bites at exact boundaries afterwards in `stats._drop_offwindow`.
+
+Made the tolerance configurable (`config.ID_ONFIELD_TOLERANCE_S`, default 240.0 =
+verified byte-for-byte no-op) and swept it on 3 games:
+
+| tolerance | pooled r (n) | 95% CI | W8 off-window drop rate |
+|---|---|---|---|
+| 240 s (today) | **+0.329** (22) | [−0.06, +0.65] | 34.4% |
+| 120 s | +0.069 (25) | [−0.34, +0.48] | — |
+| 60 s | −0.040 (28) | [−0.41, +0.36] | 13.1% |
+| 30 s | −0.114 (28) | [−0.46, +0.32] | — |
+| 10 s | +0.102 (29) | [−0.30, +0.51] | 11.0% |
+
+**The mechanism engaged and the outcome did not improve.** Off-window violations
+fell 34.4% → 11.0%, exactly as intended — the log now binds during assignment —
+yet r did not rise at any setting, and every tightened value sits at or below
+baseline. More players get named (n rises 22 → 29) while r stays flat: the same
+completeness-without-correctness trap as the VLM run.
+
+**Interpretation:** the wrong-child attributions are *not* mostly bench-window
+leakage that a tighter temporal gate can catch. Making the log bind changes WHICH
+wrong child gets picked, not WHETHER one does — consistent with the doc's own
+finding that 72.3% of bad detections are >60 s from any sub. The binding
+constraint is that within a legal on-field set of 7 same-kit children, nothing in
+the current signal distinguishes them.
+
+Kept as a no-op default knob (the sweep is reproducible); **not shipped as a
+behaviour change**.
+
 ## Ranked levers
 1. **Name the tracks we already have** — 6.3 available vs 3.55 named. The whole game.
-2. **Use the SUB log as a hard 7-slot constraint per second**, not a post-hoc
-   filter. Today the assigner assigns freely then deletes the 30% that violates
-   the log. Caveat: completeness ≠ correctness — forcing 7 names hits 7/7 by
-   construction, so only per-player **r** decides if it worked.
+2. ~~**Use the SUB log as a hard 7-slot constraint per second**~~ — the temporal
+   half of this is now MEASURED DEAD (above). What remains untested is the
+   *structural* half: splitting tracklets at sub boundaries so one tracklet can't
+   span two children, and per-second slot feasibility. Note the caveat that still
+   applies — forcing 7 names hits 7/7 by construction, so only **r** decides.
 3. **Size-aware detection threshold** so 48 px far players aren't dropped at
    conf 0.58. Attacks fragment creation rather than repairing it.
 4. Stitch-conflict trace (open thread above).
