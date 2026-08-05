@@ -248,15 +248,53 @@ def compute_player_stats(
                 return i
         return 1
 
+    # The old anchor was the NAMED keeper's median x, which is circular (it depends
+    # on the identity we're trying to trust) and was measurably broken: on W8 the
+    # keeper's named track spans x = 1.6 -> 31.7 m within one half, which no keeper
+    # does, so the median landed mid-pitch and the sign was a coin flip. A wrong
+    # sign MIRRORS every heatmap and swaps attacking/defensive third.
+    #
+    # Replaced by an IDENTITY-FREE anchor: someone stands in front of a goal for
+    # essentially the whole half, and that is our keeper. Count, per half and per
+    # end, the number of distinct seconds with a body parked in the central
+    # goal-mouth band. Measured on W8: H1 end0 1461 s vs endL 1231 s (weak, 1.19x);
+    # H2 end0 737 s vs endL 1474/1505 s = 98% of the half (decisive, 2.00x). Take
+    # the most confident half and ALTERNATE (teams switch at the break), which
+    # agrees with an independent derivation from team positional mass.
     our_net_at_x0: dict[int, bool] = {}
-    gk_sub = per_player.get(str(gk_player_id)) if gk_player_id else None
-    for pi, (a, b) in enumerate(periods or [(0.0, 1e12)], start=1):
-        if gk_sub is not None:
-            m = gk_sub[(gk_sub["time_s"] >= a) & (gk_sub["time_s"] <= b)]
-            if len(m) >= 5:
-                our_net_at_x0[pi] = float(m["x_m"].median()) < field_length_m / 2.0
-                continue
-        our_net_at_x0[pi] = bool(we_attack_right)  # attack +x ⇒ our net at x=0
+    orientation_confidence: dict[int, float] = {}
+    _per = list(periods or [(0.0, 1e12)])
+    _all = tracks_field_df
+    _band = ((_all["y_m"] > field_width_m * 0.25) & (_all["y_m"] < field_width_m * 0.75))
+    _votes: dict[int, tuple[int, int]] = {}
+    for pi, (a, b) in enumerate(_per, start=1):
+        _s = _all[(_all["time_s"] >= a) & (_all["time_s"] <= b) & _band]
+        if _s.empty:
+            continue
+        s0 = _s.loc[_s["x_m"] < 6.0, "time_s"].round(0).nunique()
+        sL = _s.loc[_s["x_m"] > field_length_m - 6.0, "time_s"].round(0).nunique()
+        if s0 or sL:
+            _votes[pi] = (int(s0), int(sL))
+    if _votes:
+        def _strength(v):
+            return max(v) / max(1, min(v))
+        _best = max(_votes, key=lambda k: _strength(_votes[k]))
+        _s0, _sL = _votes[_best]
+        _anchor = _s0 > _sL          # our net at x=0 in the anchor period
+        for pi in range(1, len(_per) + 1):
+            our_net_at_x0[pi] = _anchor if ((pi - _best) % 2 == 0) else (not _anchor)
+            orientation_confidence[pi] = round(_strength(_votes.get(pi, (1, 1))), 2)
+        if _strength(_votes[_best]) < config.ORIENT_MIN_CONFIDENCE:
+            log.warning("  stats: pitch orientation is AMBIGUOUS (best half only "
+                        "%.2fx goal-occupancy) — heatmaps/thirds may be mirrored",
+                        _strength(_votes[_best]))
+        else:
+            log.info("  stats: pitch orientation anchored on period %d (%.2fx "
+                     "goal-occupancy), halves alternate", _best, _strength(_votes[_best]))
+    else:
+        for pi in range(1, len(_per) + 1):
+            our_net_at_x0[pi] = bool(we_attack_right)   # last-resort fallback
+            orientation_confidence[pi] = 0.0
 
     out: list[PlayerStats] = []
     for pid, sub in per_player.items():

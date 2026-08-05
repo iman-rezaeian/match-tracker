@@ -470,6 +470,13 @@ DIST_POS_SMOOTH_WINDOW = int(os.environ.get("DIST_POS_SMOOTH_WINDOW", "7"))
 # invent a straight-line path the player never walked.
 DIST_POS_SMOOTH_MAX_GAP_S = float(os.environ.get("DIST_POS_SMOOTH_MAX_GAP_S", "0.5"))
 
+# Minimum goal-occupancy ratio between the two ends for the pitch-orientation
+# anchor to be considered decided. Below this, heatmaps/thirds are flagged as
+# possibly mirrored rather than presented as fact. On W8 the decisive half scores
+# 2.00x (a body in front of one goal for 1474 of 1505 s) while the other half is
+# only 1.19x — hence anchoring on the confident half and alternating.
+ORIENT_MIN_CONFIDENCE = float(os.environ.get("ORIENT_MIN_CONFIDENCE", "1.5"))
+
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)
 
