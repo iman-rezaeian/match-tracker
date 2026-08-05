@@ -351,6 +351,14 @@ function loadYouTubeIframeApi() {
 // Bundle, or to 'youtube' to use the free @Stompers2016 auto-detect path.
 const LIVE_MODE = 'off';
 
+// Minimum tracked-time coverage before the M/MIN work rate is shown at all.
+// A rate divides coverage out only while the tracked sample REPRESENTS the
+// player's minutes; detection favours a moving player, so a sliver sample skews
+// high (W8 keeper: 83 m/min from 10% coverage vs a 4.6 km/h average). Matches
+// post_game/config.py DIST_EST_MIN_COVERAGE, the same floor the pipeline uses
+// before it will extrapolate a distance.
+const WORK_RATE_MIN_COVERAGE = 0.25;
+
 // ---- Usage tracking (feeds the owner-only VIEWERS page) ----
 // The app owner is excluded from ALL tracking (he lives in the app building
 // it, so his events are pure noise) and is the only one who sees the
@@ -8517,8 +8525,17 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         row.games += 1;
         row.minutes += s.minutes_played || 0;
         row.distance += dist;
-        row.rawDist += s.distance_m || 0;
-        row.trkMin += (s.tracked_seconds || 0) / 60;
+        // Pool the work-rate numerator/denominator ONLY from games whose coverage
+        // is thick enough for the rate to be representative. A sliver game is
+        // motion-biased (see WORK_RATE_MIN_COVERAGE) and would drag the pooled
+        // season rate up, which is worse here than on a single card: the squad
+        // table is sortable, so a keeper's 10%-coverage game could top M/MIN.
+        const gameCov = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
+          ? (s.tracked_seconds / 60) / s.minutes_played : null;
+        if (gameCov == null || gameCov >= WORK_RATE_MIN_COVERAGE) {
+          row.rawDist += s.distance_m || 0;
+          row.trkMin += (s.tracked_seconds || 0) / 60;
+        }
         row.sprints += sprints;
         row.attPct += s.pct_attacking_third || 0;
         row.midPct += s.pct_middle_third || 0;
@@ -10515,7 +10532,20 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 // while DIST m — the same data multiplied up to full minutes — is capped
                 // for 11 of 12 players. Needs >=60s of tracking to mean anything.
                 const trkMin = (s.tracked_seconds || 0) / 60;
-                const workRate = trkMin >= 1 ? (s.distance_m || 0) / trkMin : null;
+                // ...but "coverage-robust" assumes the tracked sample is REPRESENTATIVE
+                // of the player's minutes. At very low coverage it isn't: detection
+                // preferentially catches a player while he is MOVING (a still player
+                // far-side is missed), so the surviving instants are motion-biased and
+                // the rate reads high. This bites the keeper hardest — measured on W8,
+                // Garland showed 83 m/min (an outfielder's rate) from 5.0 tracked of
+                // 49.1 coach minutes, while his AVG speed was 4.6 km/h, a keeper's
+                // amble. Both cannot describe the same player. The GK is exempt from
+                // `lowTrack` (he legitimately covers little), so nothing else caught it.
+                // Gate the RATE on coverage, not on position: the same bias applies to
+                // any sliver-coverage player, the keeper is just where it is worst.
+                const wrCoverageOk = coverage == null || coverage >= WORK_RATE_MIN_COVERAGE;
+                const workRate = (trkMin >= 1 && wrCoverageOk)
+                  ? (s.distance_m || 0) / trkMin : null;
                 // grade → tile chrome: a corner dot + tinted border (no bg wash —
                 // a filled tint reads as an error state and would make a card with
                 // several caveated tiles look alarming on a phone).
@@ -10576,8 +10606,12 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     {coveragePct != null && (
                       <div className="text-[9px] text-stone-500 mb-2 leading-snug">
                         📡 {coveragePct}% of minutes tracked
-                        {' — '}<span className="text-stone-400">M/MIN &amp; AVG km/h are measured over that
-                        tracked time, so they compare fairly between players and weeks.</span>
+                        {workRate != null
+                          ? <span className="text-stone-400">{' — '}M/MIN &amp; AVG km/h are measured over that
+                            tracked time, so they compare fairly between players and weeks.</span>
+                          : <span className="text-stone-400">{' — '}too thin to quote a work rate: what little we
+                            tracked is mostly the moments he was moving, which reads high. AVG km/h still
+                            holds (it counts his standing time too).</span>}
                         {workRate != null && ` ≈${(distShown / 1000).toFixed(1)}km over the full game if he held that rate — an extrapolation, not a measurement.`}
                         {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
                       </div>
@@ -14322,6 +14356,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
