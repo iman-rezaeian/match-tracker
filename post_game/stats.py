@@ -59,6 +59,31 @@ def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(arr, kernel, mode="same")
 
 
+def _smooth_edge_safe(arr: np.ndarray, window: int) -> np.ndarray:
+    """Boxcar that does NOT distort the ends — required for POSITION.
+
+    `_smooth` uses np.convolve(mode="same"), which ZERO-PADS: a player standing
+    still at x=10 m is smoothed to 6 m at the first sample and 8 m at the second,
+    i.e. the pad invents a 4 m displacement at every run boundary. Harmless-ish on
+    a speed series (it dips toward 0), catastrophic on a coordinate that is then
+    differenced into distance — it made total distance rise from 86 km to 249 km.
+    Here the signal is edge-replicated before convolving, so a constant input is
+    returned unchanged.
+    """
+    if window <= 1 or len(arr) < 3:
+        return arr.astype(float)
+    w = min(int(window), len(arr))
+    if w % 2 == 0:                      # need an odd window for a centred mean
+        w -= 1
+    if w <= 1:
+        return arr.astype(float)
+    pad = w // 2
+    padded = np.concatenate([np.full(pad, arr[0], dtype=float),
+                             arr.astype(float),
+                             np.full(pad, arr[-1], dtype=float)])
+    return np.convolve(padded, np.ones(w) / w, mode="valid")
+
+
 def _drop_offwindow(df: pd.DataFrame,
                     onfield: dict[str, list[tuple[float, float]]],
                     report: dict[str, dict]) -> pd.DataFrame:
@@ -240,6 +265,25 @@ def compute_player_stats(
         x = sub["x_m"].to_numpy()
         y = sub["y_m"].to_numpy()
         t = sub["time_s"].to_numpy()
+        # Smooth POSITION before integrating distance. Distance was a raw sum of
+        # per-frame steps, and each step carries projection jitter that never
+        # cancels — it always adds length. Measured on W8 across 7,121 windows
+        # where a player barely moved (net 0.18 m over 2 s), the summed path was
+        # 1.27 m: a 7.2x over-count, i.e. a STANDING player is credited ~1.3 m of
+        # running every 2 seconds. The existing 5-tap boxcar was applied to SPEED
+        # only, which fixes the reported rate but not the integral.
+        # Smoothing runs WITHIN contiguous runs only: bridging a multi-second gap
+        # would invent a straight-line path across unobserved time.
+        if config.DIST_POS_SMOOTH_WINDOW > 1 and len(t) >= 3:
+            _gapped = np.diff(t) > config.DIST_POS_SMOOTH_MAX_GAP_S
+            _run = np.concatenate([[0], np.cumsum(_gapped)])
+            xs, ys = x.astype(float).copy(), y.astype(float).copy()
+            for _r in np.unique(_run):
+                _m = _run == _r
+                if int(_m.sum()) >= 3:
+                    xs[_m] = _smooth_edge_safe(x[_m], config.DIST_POS_SMOOTH_WINDOW)
+                    ys[_m] = _smooth_edge_safe(y[_m], config.DIST_POS_SMOOTH_WINDOW)
+            x, y = xs, ys
         dt = np.diff(t)
         # Floor dt at a realistic frame interval (not 1ms) so a near-zero gap
         # can't manufacture an enormous speed; cap large gaps at 2s.

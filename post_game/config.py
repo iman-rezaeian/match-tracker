@@ -451,6 +451,25 @@ DIST_EST_MAX_MULT = 2.0
 # so the UI marks these indicative rather than measured.
 DIST_EST_MIN_COVERAGE = float(os.environ.get("DIST_EST_MIN_COVERAGE", "0.25"))
 
+# Boxcar width (samples) applied to POSITION before the distance integral. Raw
+# per-frame projection jitter never cancels — it only adds path length. Measured
+# on W8 over 7,121 near-stationary 2 s windows: true net displacement 0.18 m but
+# summed path 1.27 m, a 7.2x over-count. Calibrated by sweeping the window against
+# TWO opposing tests — phantom on standing players (want -> 0.18) and path/net on
+# genuinely fast runs (want -> 1.0, i.e. real sprints keep their length):
+#     win   standing   fast path/net   total
+#       1     1.274 m      1.328x      86.4 km   <- today
+#       5     0.530 m      1.047x      54.8 km
+#       7     0.433 m      1.033x      51.7 km   <- chosen; returns flatten here
+#      11     0.333 m      1.020x      48.4 km
+# 7 removes ~2/3 of the standing-still phantom while costing real motion almost
+# nothing. >=15% of the distance total is provably phantom; the total drop is
+# larger and part of that excess IS real direction change, so claim only the 15%.
+DIST_POS_SMOOTH_WINDOW = int(os.environ.get("DIST_POS_SMOOTH_WINDOW", "7"))
+# Never smooth across a gap longer than this — bridging unobserved time would
+# invent a straight-line path the player never walked.
+DIST_POS_SMOOTH_MAX_GAP_S = float(os.environ.get("DIST_POS_SMOOTH_MAX_GAP_S", "0.5"))
+
 # Field thirds (defensive / mid / attacking) split along long axis
 THIRDS_FRACTIONS = (1 / 3, 2 / 3)
 
