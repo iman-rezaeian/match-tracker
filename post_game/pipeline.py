@@ -705,6 +705,10 @@ def run(
     except Exception as e:
         log.warning("Personalized sprint thresholds failed (using fixed %.1f): %s",
                     config.SPRINT_THRESHOLD_MS, e)
+    # Physically-impossible instants (one player in two places at once — a
+    # tracker/stitch merge) are dropped from every stat and reported here so the
+    # coach can see which of his labelled tracklets are in conflict.
+    player_conflicts: dict[str, dict] = {}
     player_stats = compute_player_stats(
         tracks_field_df=tracks_df,
         identity_by_track=identity_by_track,
@@ -716,7 +720,16 @@ def run(
         gk_player_id=game.gk_player_id,
         played_minutes=played_minutes,
         sprint_thresholds=sprint_thresholds,
+        conflicts_out=player_conflicts,
     )
+    if player_conflicts:
+        _cs = sum(v.get("conflict_seconds", 0) for v in player_conflicts.values())
+        log.warning("  identity CONFLICTS: %d player(s), %.0fs of provably "
+                    "impossible time excluded from stats (worst: %s)",
+                    len(player_conflicts), _cs,
+                    ", ".join(f"{p}={v['conflict_seconds']}s" for p, v in
+                              sorted(player_conflicts.items(),
+                                     key=lambda kv: -kv[1]["conflict_seconds"])[:3]))
     formation_snaps, team_ts = compute_formation(
         tracks_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
@@ -795,6 +808,10 @@ def run(
             "team_time_series": asdict(team_ts),
             "field_tilt": field_tilt,
             "sub_corrections": sub_corrections_echo,
+            # Provably-impossible spans (one player in two places at once) that
+            # were EXCLUDED from the stats above, so the coach can see which of
+            # his labelled tracklets conflict instead of trusting a silent average.
+            "player_conflicts": player_conflicts,
             "generated_at_ms": int(time.time() * 1000),
         }
         if board_orient_ambiguous:
@@ -1062,6 +1079,8 @@ def run(
         # Team-centroid third occupancy (4.6) — no-ball possession proxy.
         "field_tilt": field_tilt,
         "sub_corrections": sub_corrections_echo,
+        # See the stats-only branch: impossible spans excluded from every stat.
+        "player_conflicts": player_conflicts,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.

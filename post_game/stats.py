@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -9,6 +10,8 @@ import numpy as np
 import pandas as pd
 
 from . import config
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,15 +61,57 @@ def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
 
 def _per_player_trajectory(
     tracks_field_df: pd.DataFrame, identity_by_track: dict[int, str]
-) -> dict[str, pd.DataFrame]:
+) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
+    """Per-player trajectory rows, with physically impossible instants REMOVED.
+
+    A merge in the tracker/stitcher can put two different children under one
+    identity. Then the same player appears in two places at the same instant —
+    measured at 12.2% of player-frames on W8, a median 15.2 m apart — and every
+    stat downstream silently averages a stranger's running into his. Nothing in
+    the data can say WHICH of the two is really him (appearance is a coin flip on
+    same-kit teammates), so guessing would just relabel the corruption; instead
+    those instants are dropped and reported. Returns (trajectories, conflict
+    report keyed by player).
+    """
+    from .player_conflicts import (find_conflicts, conflict_summary,
+                                   conflicted_times, blame_tracks)
+
     df = tracks_field_df.copy()
     df["player_id"] = df["track_id"].map(identity_by_track)
     df = df[df["player_id"].notna()]
+
+    samples = list(zip(df["player_id"].astype(str), df["time_s"].astype(float),
+                       df["track_id"].astype(int),
+                       df["x_m"].astype(float), df["y_m"].astype(float)))
+    conflicts = find_conflicts(samples)
+    report: dict[str, dict] = {}
+    if conflicts:
+        summ = conflict_summary(conflicts)
+        blame = blame_tracks(samples, conflicts)
+        for pid, s in summ.items():
+            s["worst_tracks"] = [{"track_id": t, "instants": n}
+                                 for t, n in blame.get(pid, [])]
+            report[pid] = s
+        # Vectorized drop: build the (player, time) pairs to remove once and use
+        # a MultiIndex membership test — a row-wise apply over ~500k rows is slow.
+        bad = conflicted_times(conflicts)
+        bad_pairs = {(pid, t) for pid, ts in bad.items() for t in ts}
+        n_before = len(df)
+        if bad_pairs:
+            keys = pd.MultiIndex.from_arrays(
+                [df["player_id"].astype(str), df["time_s"].astype(float)])
+            df = df[~keys.isin(bad_pairs)]
+        log.warning(
+            "  stats: dropped %d of %d player-detections as physically impossible "
+            "(same player in 2+ places >1.5m apart) across %d player(s) — these "
+            "are tracker/stitch merges; excluded from distance/speed/heatmap",
+            n_before - len(df), n_before, len(report))
+
     out: dict[str, pd.DataFrame] = {}
     for pid, sub in df.groupby("player_id"):
         sub = sub.sort_values("time_s").reset_index(drop=True)
         out[str(pid)] = sub
-    return out
+    return out, report
 
 
 def compute_player_stats(
@@ -81,8 +126,15 @@ def compute_player_stats(
     gk_player_id: Optional[str] = None,
     played_minutes: Optional[dict[str, float]] = None,
     sprint_thresholds: Optional[dict[str, float]] = None,
+    conflicts_out: Optional[dict[str, dict]] = None,
 ) -> list[PlayerStats]:
-    per_player = _per_player_trajectory(tracks_field_df, identity_by_track)
+    """`conflicts_out`: if given, filled with the per-player physically-impossible
+    (same player in 2+ places) report — see player_conflicts. Those instants are
+    excluded from every stat below rather than silently averaged in."""
+    per_player, conflict_report = _per_player_trajectory(
+        tracks_field_df, identity_by_track)
+    if conflicts_out is not None:
+        conflicts_out.update(conflict_report)
     third_low, third_high = config.THIRDS_FRACTIONS
     boundaries_x = (field_length_m * third_low, field_length_m * third_high)
 
