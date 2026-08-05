@@ -9255,6 +9255,21 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
   // late-SUB-tap fix. `c` clock = {period, elapsed(s)}.
   const subCorrById = Object.fromEntries(
     ((doc && doc.sub_corrections) || []).map(c => [String(c.playerId), c]));
+  // Physically-impossible spans (analytics.player_conflicts): moments where this
+  // player was detected in two places at once, i.e. two different kids welded
+  // under one identity by a tracker/stitch merge. The pipeline already EXCLUDED
+  // these from distance/speed/heatmap; we surface them so the coach knows which
+  // of his labelled tracklets are in conflict rather than trusting a silent gap.
+  const conflictByPlayer = (doc && doc.player_conflicts) || {};
+  // tracklet_id → player, for the stitched tracklets most implicated in that
+  // player's conflicts. Keyed by TRACKLET (what FIX-IDS rows are), not raw
+  // track_id — the pipeline publishes both, and they are different id spaces.
+  const conflictTracks = {};
+  Object.entries(conflictByPlayer).forEach(([pid, v]) => {
+    ((v && v.worst_tracklets) || []).forEach(w => {
+      conflictTracks[String(w.tracklet_id)] = pid;
+    });
+  });
   const _clkStr = (c) => c ? `${c.period === 2 ? 'H2 ' : ''}${fmt(c.elapsed)}` : null;
   // Only offer players who actually dressed for THIS game (squad), not the whole
   // team roster. Fall back to the starting lineup, then the full roster.
@@ -9455,6 +9470,21 @@ function IdentityFixView({ doc, roster, game, onSave, onClose }) {
                   return (
                     <div className="text-[11px] text-violet-300/80 mt-0.5">
                       🎥 on-field {[on, off].filter(Boolean).join(' · ')} <span className="text-violet-400/60">(camera-corrected)</span>
+                    </div>
+                  );
+                })()}
+                {/* Physics conflict: this tracklet is one of the tracks that put a
+                    player in two places at once, so it has two different kids in it.
+                    Worth re-checking before trusting the label. */}
+                {(() => {
+                  const cpid = conflictTracks[String(tl.tracklet_id)];
+                  if (!cpid) return null;
+                  const c = conflictByPlayer[cpid] || {};
+                  return (
+                    <div className="text-[11px] text-sky-300/80 mt-0.5">
+                      🧹 conflicts with another track of {pname(cpid)}
+                      {c.median_separation_m ? ` (~${c.median_separation_m}m apart)` : ''} —
+                      <span className="text-sky-400/60"> likely two players in this clip</span>
                     </div>
                   );
                 })()}
@@ -10234,6 +10264,12 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 &&
                   (artFrac != null ? artFrac >= 0.30 : ((s.top_speed_ms || 0) * 3.6) >= 30);
                 const statsBad = lowTrack || swapPolluted;
+                // analytics.player_conflicts: time where this player was detected in
+                // two places at once (two kids merged under one identity). Already
+                // EXCLUDED from the numbers below by the pipeline — shown so a large
+                // exclusion reads as "we removed bad data", not a silent shortfall.
+                const conflict = ((doc && doc.player_conflicts) || {})[String(s.player_id)];
+                const conflictSec = conflict ? (conflict.conflict_seconds || 0) : 0;
                 // 4.4: rate-based estimates (distance/sprints scaled to coach
                 // minutes) when the doc carries them; raw sums for older docs.
                 const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
@@ -10274,6 +10310,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         <div className={`text-xs font-bold ${confColor}`}>{conf == null ? '—' : `● ${(conf * 100).toFixed(0)}%`}</div>
                         {swapPolluted && <div className="text-[9px] font-bold text-rose-400 mt-1">⚠ INFLATED</div>}
                         {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
+                        {conflictSec >= 10 && <div className="text-[9px] font-bold text-sky-400 mt-1">🧹 CLEANED</div>}
                       </div>
                     </div>
                     <div className="grid grid-cols-5 gap-1.5 mb-1">
@@ -10302,6 +10339,15 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                           ? ' — distance, top speed & sprints are estimates from a partial view; avg speed is the most reliable'
                           : ' — distance & sprints are rate-based estimates'}
                         {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
+                      </div>
+                    )}
+                    {conflictSec >= 10 && (
+                      <div className="text-[9px] text-sky-400/80 mb-2 leading-snug">
+                        🧹 Removed {Math.round(conflictSec)}s where the camera saw this
+                        player in two places at once{conflict.median_separation_m
+                          ? ` (typically ${conflict.median_separation_m}m apart)` : ''} —
+                        another player's track had merged into his. These numbers exclude
+                        that time, so they're lower but real.
                       </div>
                     )}
                     {lowTrack && (

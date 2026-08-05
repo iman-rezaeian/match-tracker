@@ -721,6 +721,7 @@ def run(
         played_minutes=played_minutes,
         sprint_thresholds=sprint_thresholds,
         conflicts_out=player_conflicts,
+        tracklet_of_track=tracklet_of_track,
     )
     if player_conflicts:
         _cs = sum(v.get("conflict_seconds", 0) for v in player_conflicts.values())

@@ -60,7 +60,8 @@ def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
 
 
 def _per_player_trajectory(
-    tracks_field_df: pd.DataFrame, identity_by_track: dict[int, str]
+    tracks_field_df: pd.DataFrame, identity_by_track: dict[int, str],
+    tracklet_of_track: Optional[dict[int, int]] = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, dict]]:
     """Per-player trajectory rows, with physically impossible instants REMOVED.
 
@@ -91,6 +92,17 @@ def _per_player_trajectory(
         for pid, s in summ.items():
             s["worst_tracks"] = [{"track_id": t, "instants": n}
                                  for t, n in blame.get(pid, [])]
+            # Also blame at TRACKLET level: the coach reviews stitched tracklets in
+            # FIX-IDS, not raw tracks, so a track_id alone can't be surfaced there.
+            if tracklet_of_track:
+                per_tl: dict[int, int] = {}
+                for t, n in blame.get(pid, []):
+                    r = tracklet_of_track.get(int(t))
+                    if r is not None:
+                        per_tl[int(r)] = per_tl.get(int(r), 0) + n
+                s["worst_tracklets"] = [
+                    {"tracklet_id": r, "instants": n}
+                    for r, n in sorted(per_tl.items(), key=lambda kv: -kv[1])]
             report[pid] = s
         # Vectorized drop: build the (player, time) pairs to remove once and use
         # a MultiIndex membership test — a row-wise apply over ~500k rows is slow.
@@ -127,12 +139,13 @@ def compute_player_stats(
     played_minutes: Optional[dict[str, float]] = None,
     sprint_thresholds: Optional[dict[str, float]] = None,
     conflicts_out: Optional[dict[str, dict]] = None,
+    tracklet_of_track: Optional[dict[int, int]] = None,
 ) -> list[PlayerStats]:
     """`conflicts_out`: if given, filled with the per-player physically-impossible
     (same player in 2+ places) report — see player_conflicts. Those instants are
     excluded from every stat below rather than silently averaged in."""
     per_player, conflict_report = _per_player_trajectory(
-        tracks_field_df, identity_by_track)
+        tracks_field_df, identity_by_track, tracklet_of_track)
     if conflicts_out is not None:
         conflicts_out.update(conflict_report)
     third_low, third_high = config.THIRDS_FRACTIONS
