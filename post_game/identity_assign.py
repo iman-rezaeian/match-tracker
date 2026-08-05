@@ -363,7 +363,15 @@ def assign_identities_v2(
         # opponent goal). Disambiguate by which end has the most deep+stationary
         # presence: the real keeper is there the whole half, so OUR goal = the
         # end with more keeper-candidate samples. Only flag tracklets on that end.
-        for (pstart, pend) in (periods_video or [(0.0, 1e12)]):
+        # Teams SWITCH ENDS at halftime, so the two periods MUST resolve to
+        # OPPOSITE ends. Voting each period independently violated that: on a real
+        # game both halves voted the same end (H1 near0/nearL 31433/49162 = a weak
+        # 1.56x, H2 13457/51249 = a decisive 3.81x), so the weak half hunted the
+        # keeper at the OPPONENT's goal and credited a non-keeper tracklet. Decide
+        # ONCE from the most confident period, then alternate.
+        _periods = list(periods_video or [(0.0, 1e12)])
+        _votes: dict[int, tuple[int, int, list]] = {}
+        for _pi, (pstart, pend) in enumerate(_periods):
             pdf = _dft[(_dft["time_s"] >= pstart) & (_dft["time_s"] <= pend)]
             cands = []  # (tracklet, median_x, n_samples)
             for tl, sub in pdf.groupby("tracklet"):
@@ -377,7 +385,27 @@ def assign_identities_v2(
                 continue
             near0 = sum(n for _t, mx, n in cands if mx < L / 2)
             nearL = sum(n for _t, mx, n in cands if mx >= L / 2)
-            our_end_is_0 = near0 >= nearL  # our goal = end with more keeper presence
+            _votes[_pi] = (near0, nearL, cands)
+        # Strongest vote wins (largest ratio between the two ends), then the other
+        # periods alternate from it. A single period behaves exactly as before.
+        _anchor_end0: Optional[bool] = None
+        if _votes:
+            def _strength(v):
+                a, b, _ = v
+                return max(a, b) / max(1, min(a, b))
+            _pi_best = max(_votes, key=lambda k: _strength(_votes[k]))
+            _a, _b, _ = _votes[_pi_best]
+            _anchor_end0 = _a >= _b
+            if len(_votes) > 1:
+                log.info("  identity: GK end anchored on period %d (%.2fx) → "
+                         "halves alternate", _pi_best + 1, _strength(_votes[_pi_best]))
+        for _pi, (pstart, pend) in enumerate(_periods):
+            if _pi not in _votes or _anchor_end0 is None:
+                continue
+            pdf = _dft[(_dft["time_s"] >= pstart) & (_dft["time_s"] <= pend)]
+            cands = _votes[_pi][2]
+            # opposite end every other period, counted from the anchor period
+            our_end_is_0 = _anchor_end0 if ((_pi - _pi_best) % 2 == 0) else (not _anchor_end0)
             # Per GK window overlapping this period: there's exactly ONE keeper
             # at a time, so take the single most-present deep+stationary
             # tracklet on our end WITHIN the window and credit it to that
