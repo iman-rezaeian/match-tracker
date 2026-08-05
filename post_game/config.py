@@ -307,6 +307,16 @@ STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
 # differs. Env-overridable for A/B; default greedy so prod is unchanged.
 STITCH_MODE = os.environ.get("STITCH_MODE", "greedy")
 
+# May two fragments be chained when their [t0,t1] envelopes intersect but they
+# never actually coexist (b lives inside a's interior gap)? That IS a legal
+# continuation, and the shipped endpoint rule wrongly refuses it — on W8 the
+# endpoint rule rejected 99123 of 103819 candidate pairs vs 17288 under the
+# interior test, so this is a large slice of the fragmentation. But permitting
+# them is a far bigger behavioural change than the overlap BUG FIX (which is
+# always on), and it measured 52.1% -> 49.0% named-coverage in a first A/B, so
+# it stays OFF until validated on GT rather than on coverage alone.
+STITCH_JOIN_ACROSS_HOLES = os.environ.get("STITCH_JOIN_ACROSS_HOLES", "0") != "0"
+
 # --- Iterative anchor-coupled re-stitch (post_game/iterative_identity.py) -----
 # Couple stitching and identity: stitch (geometry-only) → seed identities from
 # individuating coach-log anchors (event/SUB/keeper) → use those seeds as

@@ -46,8 +46,57 @@ def _track_summaries(tracks_df: pd.DataFrame, track_ids: set[int]) -> dict[int, 
             "p0": (float(x[0]), float(y[0])),
             "p1": (float(x[-1]), float(y[-1])),
             "n": int(len(sub)),
+            # Sample timestamps, kept for the interior-overlap test. t0/t1 alone
+            # describe only the ENVELOPE: a fragment with an internal hole looks
+            # continuous, so two fragments that genuinely coexist inside that hole
+            # pass an endpoint-only gap check and get welded into one tracklet —
+            # i.e. one "player" in two places at once. See _overlaps_in_time.
+            "ts": t,
         }
     return out
+
+
+def _overlaps_in_time(sa: dict, sb: dict, tol_s: float = 0.15,
+                      envelope_tol_s: float = 0.5) -> bool:
+    """True if two fragments are genuinely alive at the same time.
+
+    Endpoint envelopes are only a cheap pre-filter: real tracks have interior
+    gaps, so [t0,t1] overlap does NOT imply co-existence (b may live entirely
+    inside a's hole — that IS a legal continuation). When the envelopes do
+    intersect we compare actual sample times.
+
+    Two tolerances, deliberately different:
+      * `envelope_tol_s` — how close the envelopes must come to be worth
+        checking at all (loose; a single-sample fragment has t0 == t1).
+      * `tol_s` — how close two SAMPLES must be to count as the same instant,
+        i.e. two bodies. This must stay BELOW a normal frame interval-ish gap so
+        an ordinary continuation (fragment a ends, b starts 0.3 s later) is not
+        misread as coexistence. At 10 Hz sampling, 0.15 s ≈ 1.5 frames.
+    """
+    lo, hi = max(sa["t0"], sb["t0"]), min(sa["t1"], sb["t1"])
+    # Envelopes must come within envelope_tol_s to be worth checking. (Not
+    # `hi-lo <= 0`: a single-sample fragment has t0 == t1, so two of them at the
+    # same instant would touch at a point and be dismissed — yet that is exactly
+    # two bodies detected simultaneously.)
+    if hi - lo < -envelope_tol_s:
+        return False                     # envelopes clearly disjoint
+    ta, tb = sa.get("ts"), sb.get("ts")
+    if ta is None or tb is None:         # summaries without samples: envelope only
+        return (hi - lo) > envelope_tol_s
+    ia = ta[(ta >= lo - envelope_tol_s) & (ta <= hi + envelope_tol_s)]
+    ib = tb[(tb >= lo - envelope_tol_s) & (tb <= hi + envelope_tol_s)]
+    if len(ia) == 0 or len(ib) == 0:
+        return False                     # one is absent here (living in the hole)
+    # Both present in the shared window — coexisting only if their samples
+    # actually interleave rather than sitting in each other's gaps. Nearest
+    # neighbour via searchsorted (both arrays are time-sorted): O(n log n), no
+    # pairwise matrix.
+    idx = np.searchsorted(ib, ia)
+    best = np.inf
+    for off in (0, -1):                  # candidate on either side of the insert
+        j = np.clip(idx + off, 0, len(ib) - 1)
+        best = min(best, float(np.abs(ia - ib[j]).min()))
+    return bool(best <= tol_s)
 
 
 def _hsv_mean(samples: list) -> Optional[np.ndarray]:
@@ -211,8 +260,10 @@ def stitch_tracklets(
             for cur in members[1:]:
                 sp, sc = summ[prev], summ[cur]
                 gap = sc["t0"] - sp["t1"]
-                if gap < -0.5:
-                    continue  # temporal overlap → can't be the same instance; skip
+                if _overlaps_in_time(sp, sc):
+                    continue  # coexist in time → two bodies; can't be one instance
+                if not config.STITCH_JOIN_ACROSS_HOLES and gap < -0.5:
+                    continue  # legacy: any envelope overlap blocks the join
                 dist = float(np.hypot(sc["p0"][0] - sp["p1"][0], sc["p0"][1] - sp["p1"][1]))
                 if dist > must_link_dist_cap_m:
                     prev = cur  # too far to bridge even for a confident identity
@@ -275,8 +326,17 @@ def stitch_tracklets(
         """
         sa, sb = summ[a], summ[b]
         gap = sb["t0"] - sa["t1"]
-        if gap < -0.5:
-            return None  # overlap — not a continuation
+        # Two bodies alive at once can never be one player. The interior test is
+        # strictly SAFER than the legacy endpoint rule (it catches 265 merges on
+        # W8 that `gap < -0.5` let through, because a fragment's hole hides the
+        # overlap), so it always applies. Whether an envelope intersection with
+        # NO sample coexistence — b living inside a's hole — may now be joined is
+        # the loosening, and that is flag-gated: it would permit ~82k joins the
+        # old rule blocked, a far bigger behavioural change than the bug fix.
+        if _overlaps_in_time(sa, sb):
+            return None  # coexist in time → two bodies, not a continuation
+        if not config.STITCH_JOIN_ACROSS_HOLES and gap < -0.5:
+            return None  # legacy: any envelope overlap blocks the join
         if gap > max_gap_s:
             return None
         dx = sb["p0"][0] - sa["p1"][0]
