@@ -195,6 +195,54 @@ the current signal distinguishes them.
 Kept as a no-op default knob (the sweep is reproducible); **not shipped as a
 behaviour change**.
 
+## The tracklet is not the object we think it is (2026-08-05, measured)
+
+Probing the sub-boundary idea (`tracking/sub_straddle_probe.py`) turned up
+something bigger than the thing being probed.
+
+**Tracklets are mostly welded across halftime.** On 3 games, **71–92% of our
+tracked time** sits in tracklets whose span crosses the halftime break. The
+median substantial (≥60 s) tracklet spans ~31 minutes of wallclock while holding
+only ~100 s of detections — a **4–7% duty cycle**.
+
+The cause is NOT the stitcher. `STITCH_MAX_GAP_S = 10.0` refuses links beyond
+10 s, but single **BoT-SORT `track_id`s** already span the break by themselves —
+e.g. W8 track 1327 runs 429 s → 2283 s with exactly one 1759 s gap and nothing
+else; track 222 (80→1759 s, one 1348 s gap); track 3487 (1156→3194 s, one 1791 s
+gap). Five of W8's six largest tracklets are welded across halftime this way.
+
+`GAP_SPLIT_ENABLED` — the existing stage-3.5 fix for precisely this — **defaults
+to OFF** (`config.py`, `os.environ.get(...) == "1"`), and neither `eval_identity`
+nor the scorer invoked it.
+
+Consequence for the sub-log idea: 87–95% of tracked time is in tracklets that
+straddle a SUB, and ~86–100% of substantial ones do. Assignment is
+tracklet-global, so one player label per tracklet is wrong for part of nearly
+every tracklet. But naive splitting at every boundary yields 96% sub-30 s crumbs
+(median piece 0.0 s) — the pieces are too small to name.
+
+### Turning gap-split on: looks like a win, is a regression
+
+| comparison | baseline | gap-split 30 s |
+|---|---|---|
+| pooled **headline** (2 games) | +0.396 (n=16) | **+0.572** (n=12) |
+| pooled on the **SAME 11 player-halves** | **+0.733** | **+0.370** |
+
+Delta on common players **−0.363, 95% CI [−0.734, −0.026] — excludes zero, a
+resolvable REGRESSION**, and it also fails to name 5 players the baseline named.
+The headline "improvement" was pure composition: it dropped exactly the
+hard-to-name children (Qian, Yaacoub, Sharma, Zaidan) and the correlation over
+the easy remainder looked better.
+
+**This is the single most important methodological lesson so far: never compare
+headline r between runs.** Two runs name different players. Use
+`tracking/half_split_compare.py`, which intersects the rosters and bootstraps the
+difference. Composition effects here were LARGER than the effect being measured
+and pointed the opposite way.
+
+(Only 2 games could be tested — `mpyo67cl4uflh` and others had their multi-GB
+`jersey_samples.npz` pruned, and re-splitting needs it for team classification.)
+
 ## Ranked levers
 1. **Name the tracks we already have** — 6.3 available vs 3.55 named. The whole game.
 2. ~~**Use the SUB log as a hard 7-slot constraint per second**~~ — the temporal
@@ -213,8 +261,26 @@ input, coach-log outfield anchors (~0.3 precision), bulk hand-labelling (57 labe
 → 22.3% coverage at 19.3% purity, curve flat after ~20).
 
 ## Kit note
-Two kit sets: **all green** and **all black**. Everything above is from a GREEN
-game. On a black-kit game the colour separation that team classification and the
+
+> **⚠ 2026-08-05 correction: most of the corpus is ALREADY black-kit.** Checked
+> `_our_color` on all six cached games: **4 of 6 are all-black** (`#0a0a0a`) —
+> mqcf9axlvtuyt, mqcjsjugchb2i, mpyo67cl4uflh, and W7 mrhvbvwi1gjpn (vs a GREEN
+> opponent, `#28bb40`, i.e. the inverse of W8). Only W8 and mq01kuce2i81r are
+> green. So "everything measured is from a green game" is wrong.
+>
+> Reassuringly, **repeatability does not separate by kit** — the black games sit
+> at both ends (−0.141 and +0.408) — so kit colour is not the confound; that
+> scatter is the underpowered-metric noise documented above.
+>
+> Worth knowing about the coach's colour picker: the hex is only ever an
+> **anchor**, never the classifier. With no ref colour logged (true for all six
+> games) `classify_tracks` runs KMeans over *measured* jersey HSV and the coarse
+> hex only decides **which cluster is "us"**. The measured pixels do the
+> separating, so a coarse pick is fine — but it also cannot rescue a game whose
+> jersey samples were pruned.
+
+Two kit sets: **all green** and **all black**. The original numbers below are
+from a GREEN game. On a black-kit game the colour separation that team classification and the
 VLM both rely on will degrade badly — players, refs and coaches all dark. Height
 is the backup signal there: on-pitch p90 1.43 m vs an off-pitch adult tail at
 1.69 m. Adults are near-sideline (median y=28.9 m of 30.3) vs players mid-pitch
