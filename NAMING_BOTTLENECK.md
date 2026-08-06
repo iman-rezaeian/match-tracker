@@ -243,6 +243,41 @@ and pointed the opposite way.
 (Only 2 games could be tested — `mpyo67cl4uflh` and others had their multi-GB
 `jersey_samples.npz` pruned, and re-splitting needs it for team classification.)
 
+## ⚠ The half-to-half metric is itself contaminated by the welds
+
+Cutting ONLY at halftime (`post_game/halftime_split.py`, the narrow version —
+one cut at the break instead of gap-split's cut at every hole) makes the
+tracklets objectively **better** and the score objectively **worse**:
+
+| | baseline | halftime-split |
+|---|---|---|
+| our tracklets | 314 | 290 |
+| median substantial (≥30 s) tracklet | 72 s | **87 s** |
+| tracklets ≥120 s | 30 | **35** |
+| total tracked time | 231 min | 230 min (preserved) |
+| headline r | +0.381 | +0.608 |
+| **r on the SAME 10 player-halves** | **+0.742** | **+0.410** |
+
+Longer, cleaner tracklets; no time lost; and per-player repeatability falls.
+
+**Why — and this invalidates the baseline, not the split.** 178 of W8's 314
+tracklets span halftime. A welded tracklet appears in BOTH halves *by
+construction*, so its H1 and H2 values are not two independent measurements —
+they are one identity decision counted twice, which correlates the halves for
+free. Traced concretely: Qian (H1 77.9 / H2 107.2) and Yaacoub (H1 77.4 / H2
+25.9) each held one welded tracklet; after the cut each is named in only ONE
+half, because only one half's evidence actually earns the name.
+
+So **the baseline r is optimistically biased**, and the drop to +0.410 is the
+bias being removed, not accuracy being lost. Naming is not reduced overall
+(H1+H2 named: 8+9 → 8+8); it is redistributed onto whichever half has real
+evidence.
+
+**Consequence: every r in this document computed on welded tracklets — including
+the +0.004, the +0.381 and the pooled +0.153 — is measured on partly
+non-independent halves.** Any future comparison should be run with the halftime
+split ON for BOTH arms, so the welds cannot flatter either side.
+
 ## Ranked levers
 1. **Name the tracks we already have** — 6.3 available vs 3.55 named. The whole game.
 2. ~~**Use the SUB log as a hard 7-slot constraint per second**~~ — the temporal
