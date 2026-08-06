@@ -14340,9 +14340,14 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     : 'text-[10px]';
 
   // Privacy: first name + jersey number only — never last names on public pages.
+  // The roster is signed-in-only now (it holds every child's full name and
+  // photo), so a signed-out visitor has an empty one and every scorer would
+  // read "Unknown". Events carry only playerId — no name, no number — so there
+  // is nothing to fall back to here; say "Player" rather than "Unknown", which
+  // reads like a failure. Signed-in viewers still get "First #7" as before.
   const nameOf = (pid) => {
     const p = roster.find((r) => r.id === pid);
-    if (!p) return 'Unknown';
+    if (!p) return 'Player';
     const first = (p.name || '').split(/\s+/)[0] || p.name || 'Player';
     return `${first} #${p.number || '?'}`;
   };
@@ -14442,6 +14447,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
