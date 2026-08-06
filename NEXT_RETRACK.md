@@ -185,3 +185,36 @@ is comfortably above that floor.
 - Sub-tap slack (`post_game/sub_slack.py`) — off-window drops 23.8% → 10.6%.
 - Cache provenance sidecar — warns when a reused checkpoint predates the current
   tracking code, the gap that let the halftime collision go unnoticed for months.
+
+---
+
+## 5. The VLM is a stitch-purity oracle — use it (found 2026-08-06)
+
+Re-running the number read with facing-aware crop selection raised coverage
+35% → 51%, but the more useful result was an accident: **5 of the 26 tracklets
+drafted by both runs came back with a DIFFERENT player**, and on 3 of those the
+two runs had read the *same raw track* only seconds apart.
+
+    tl1232  track 1350 @ t=440 -> "18" (0.97)   @ t=447 -> "15" (0.97)
+    tl1198  track 1351 @ t=441 -> "15" (0.90)   @ t=447 -> "7"  (0.95)
+
+Both reads describe a number "clearly visible on the back" at high confidence.
+One of each pair is wrong, and confidence does not say which.
+
+**Why this matters more than the coverage gain.** 96% of the tracklets shown to
+the coach are built from more than one raw track (median 7, max 29). The
+concurrency test in `stint_purity_confirm` reports them clean — but it can only
+catch merges where two tracks are alive at the SAME INSTANT. A stitch that
+chains one child's track onto another's *sequentially* is invisible to it by
+construction. The VLM reading two different numbers off one tracklet is
+independent evidence of exactly that failure, and it is nearly free.
+
+**Proposed check:** read numbers at 2+ well-separated times per tracklet and
+flag disagreement as a probable bad merge. That gives a purity signal on the
+97 multi-track tracklets that no existing test covers, and it can be run over a
+cached game without re-tracking.
+
+Do NOT treat the 51% coverage as 51% correct until this is settled — the
+denominator improved, but some share of the drafts name the wrong child, and
+the disagreement rate (5/26 = 19% where both runs drafted) is the best estimate
+of that error rate available today.
