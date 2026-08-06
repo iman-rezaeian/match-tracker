@@ -253,6 +253,7 @@ def run(
     jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
     emb_ckpt = ckpt_dir / f"embeddings{ckpt_suffix}.npz"
     prov_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.provenance.json"
+    votes_ckpt = ckpt_dir / f"kit_votes{ckpt_suffix}.npz"
 
     # A pinned-partition refresh skips classify+stitch, so the (multi-GB,
     # often-deleted) jersey npz isn't needed — only tracks_raw is.
@@ -275,10 +276,36 @@ def run(
             with np.load(emb_ckpt, allow_pickle=True) as nz:
                 track_embeddings = {int(k): np.asarray(nz[k], dtype=np.float32) for k in nz.files}
             log.info("  -> loaded Re-ID embeddings for %d tracks", len(track_embeddings))
+        # Kit-hue votes (sidecar; absent on caches taken before kit voting →
+        # classification falls back to the jersey-HSV path).
+        kit_votes: dict[int, tuple[int, int]] = {}
+        if votes_ckpt.exists():
+            with np.load(votes_ckpt) as nz:
+                kit_votes = {int(k): (int(nz[k][0]), int(nz[k][1])) for k in nz.files}
+            log.info("  -> loaded kit votes for %d tracks", len(kit_votes))
     else:
         detector = Detector()
         tracker = _new_tracker()
         current_half = 1
+
+        # Per-track kit-hue tally: track_id -> (n_our, n_opp). Filled from the
+        # video frame during tracking; consumed by classify_from_kit_votes.
+        kit_votes: dict[int, tuple[int, int]] = {}
+        _kit_vote_on = config.KIT_VOTE_ENABLED and bool(game.away_color)
+        if _kit_vote_on:
+            from .kit_vote import hex_to_hsv, pick_axis, vote_detection
+            _our_hex, _opp_hex = _our_color(game), game.away_color
+            # The team owns a green kit and a black one, and they need different
+            # discriminators: green separates from a blue opponent by HUE, black
+            # from a white/grey one only by BRIGHTNESS (S0 — it has no hue). The
+            # axis is chosen from the two anchors so both regimes work.
+            _kit_axis = pick_axis(_our_hex, _opp_hex)
+            log.info("  kit vote ON: ours %s %s vs opp %s %s — deciding on %s",
+                     _our_hex, tuple(int(v) for v in hex_to_hsv(_our_hex)),
+                     _opp_hex, tuple(int(v) for v in hex_to_hsv(_opp_hex)),
+                     _kit_axis.upper())
+        elif config.KIT_VOTE_ENABLED:
+            log.warning("  kit vote OFF: game has no awayColor to compare against")
 
         all_tracks: list[TrackedDetection] = []
         track_jersey_samples: dict[int, list[np.ndarray]] = {}
@@ -370,6 +397,21 @@ def run(
                     track_jersey_samples.setdefault(t.track_id, []).append(hsv)
                 if t.appearance_embedding is not None:
                     track_embeddings[t.track_id] = t.appearance_embedding
+                # Kit vote, taken here because it needs the FRAME: which of the
+                # two kit hues is this torso nearer? sample_jersey_hsv above
+                # can't answer it — it drops the grass band, and our green kit
+                # lives inside that band while the opponent's blue does not, so
+                # its samples are missing exactly the colour that identifies us.
+                if _kit_vote_on:
+                    _v = vote_detection(sample.eq_frame, t.bbox_eq,
+                                        _our_hex, _opp_hex, axis=_kit_axis,
+                                        min_s=config.PITCH_COLOR_MIN_S,
+                                        min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                        hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                        value_margin=config.KIT_VOTE_VALUE_MARGIN)
+                    if _v:
+                        _o, _p = kit_votes.get(t.track_id, (0, 0))
+                        kit_votes[t.track_id] = (_o + (_v == 1), _p + (_v == -1))
 
             # Debug-frame dump (cheap; runs only when requested). Renders a
             # downscaled equirect preview with ALL detection bboxes drawn,
@@ -435,6 +477,9 @@ def run(
         )
         if track_embeddings:
             np.savez(emb_ckpt, **{str(k): v for k, v in track_embeddings.items()})
+        if kit_votes:
+            np.savez(votes_ckpt, **{str(k): np.array(v, dtype=np.int32)
+                                    for k, v in kit_votes.items()})
         _write_tracks_provenance(prov_ckpt)
         log.info("  -> checkpoint written: %s + %s%s", tracks_ckpt.name, jersey_ckpt.name,
                  (" + " + emb_ckpt.name) if track_embeddings else " (no embeddings captured)")
@@ -561,12 +606,26 @@ def run(
     else:
         log.info("Stage 4/6: team classification...")
         our_color = _our_color(game)
-        team_of_track = classify_tracks(
-            tracks_df, track_jersey_samples,
-            our_home_color_hex=our_color,
-            opp_color_hex=game.away_color,
-            ref_color_hex=game.ref_color,
-        )
+        # Prefer the kit-hue votes taken during tracking. They see the raw torso
+        # pixels; the jersey-HSV path below sees them after the grass drop has
+        # removed our green kit's own colour, which splits the teams ~3.9:1
+        # instead of the ~1:1 a 7v7 game must produce. Falls back automatically
+        # for caches taken before voting existed.
+        if kit_votes:
+            from .team_classifier import classify_from_kit_votes
+            team_of_track = classify_from_kit_votes(tracks_df, kit_votes)
+            _vc = sum(1 for v in team_of_track.values() if v == 0)
+            _vo = sum(1 for v in team_of_track.values() if v == 1)
+            log.info("  -> kit-hue votes: %d ours / %d opp / %d unknown (ratio %.2f:1)",
+                     _vc, _vo, sum(1 for v in team_of_track.values() if v == -1),
+                     (_vc / _vo) if _vo else float("inf"))
+        else:
+            team_of_track = classify_tracks(
+                tracks_df, track_jersey_samples,
+                our_home_color_hex=our_color,
+                opp_color_hex=game.away_color,
+                ref_color_hex=game.ref_color,
+            )
         _team_counts: dict[int, int] = {}
         for _t in team_of_track.values():
             _team_counts[_t] = _team_counts.get(_t, 0) + 1

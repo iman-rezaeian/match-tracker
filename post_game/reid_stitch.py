@@ -346,6 +346,17 @@ def stitch_tracklets(
                        geom_dist_cap_m)
         if dist > max_move:
             return None
+        # `slack_m` is ADDED above, so at short gaps it becomes the whole budget
+        # and the speed term stops mattering: 3 m of slack across a 0.2 s gap is
+        # 24 m/s, across 0.1 s it is 39 m/s. Measured on a clean cache, 48 of
+        # 1358 joins (4%) needed >9 m/s — up to 23.7 m/s — and every one sat at a
+        # 0.2-0.3 s gap. Cap the implied speed too, with a dt floor so a
+        # sub-frame gap can't divide its way past the check. The slack still
+        # absorbs foot-position jitter; it just no longer licenses a teleport.
+        if config.STITCH_SPEED_CAP_ENABLED:
+            _dt = max(gap, config.STITCH_SPEED_CAP_MIN_DT_S)
+            if dist / _dt > config.MAX_PLAUSIBLE_SPEED_MS:
+                return None
         # CANNOT-LINK: never merge two fragments with different confirmed identities.
         ia, ib = comp_ident.get(find(a)), comp_ident.get(find(b))
         if ia is not None and ib is not None and ia != ib:

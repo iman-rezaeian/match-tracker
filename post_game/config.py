@@ -289,6 +289,15 @@ MIN_BBOX_H_FOR_FACE = 90       # px
 # --- Tracklet stitching (reid_stitch.py) ---
 STITCH_MAX_GAP_S = 10.0        # max temporal gap between fragments to consider linking
 STITCH_SLACK_M = 3.0           # plausible-move slack for near-zero gaps (foot-pos noise)
+# The slack above is ADDED to the speed budget, so at short gaps it IS the
+# budget and the physics gate stops filtering: at a 0.1 s gap it permits 39 m/s,
+# at 0.2 s it permits 24 m/s — exactly where adjacent fragments are most
+# confusable. Measured: 48 of 1358 joins (4%) require >9 m/s, up to 23.7 m/s,
+# every one at a 0.2-0.3 s gap. This caps the IMPLIED SPEED as well, so the
+# slack still absorbs foot-position jitter but can't license a teleport. The
+# floor keeps a sub-frame gap from dividing by ~0.
+STITCH_SPEED_CAP_ENABLED = os.environ.get("STITCH_SPEED_CAP_ENABLED", "1") != "0"
+STITCH_SPEED_CAP_MIN_DT_S = float(os.environ.get("STITCH_SPEED_CAP_MIN_DT_S", "0.5"))
 STITCH_APPEARANCE_COS = 0.55   # OSNet Re-ID cosine ≥ this → same player (appearance gate)
 STITCH_HSV_COS = 0.90          # jersey-HSV cosine gate (fallback; mainly rejects cross-color)
 STITCH_GAP_WEIGHT = 0.5        # link-cost weight on temporal gap (s)
@@ -456,6 +465,29 @@ SUB_SLACK_CLUSTER_GAP_S = float(os.environ.get("SUB_SLACK_CLUSTER_GAP_S", "90.0"
 # Ceiling on the spread credited to any one moment, so a pathological log can't
 # widen a window until the filter stops filtering.
 SUB_SLACK_MAX_S = float(os.environ.get("SUB_SLACK_MAX_S", "150.0"))
+
+# --- Kit-hue team vote (pipeline stage 2 -> 4) --------------------------------
+# team_classifier.sample_jersey_hsv drops the grass band (35<=H<=85, S>60, V>50)
+# to stop pitch pixels dominating a small player's ROI. Our kit #16a34a is H71
+# S221 V163 — INSIDE that band — while the opponent's #2563eb is H110, outside
+# it. The filter is therefore asymmetric by construction: it deletes exactly one
+# team's defining colour, and when the drop removes almost everything the
+# fallback returns the unfiltered ROI, so a green player ends up characterised
+# by grass, skin and shorts. Measured consequence: the classifier splits
+# 2479 ours : 634 opp (3.9:1, 14 vs 2 bodies per frame) where 7v7 needs ~1:1.
+# Deciding instead by WHICH kit hue the torso is nearer needs no grass drop at
+# all; on the same frames that splits 1.11:1 with 8 ours / 7 opp per frame
+# (tracking/grass_filter_probe.py). The vote has to be taken during tracking
+# because it needs the video frame, not the stored post-drop samples.
+KIT_VOTE_ENABLED = os.environ.get("KIT_VOTE_ENABLED", "1") != "0"
+# The team owns TWO kits and they need different discriminators. Green
+# (#16a34a, S221) separates from a blue opponent by hue. Black (#0a0a0a, S0)
+# has no hue at all, and neither do the white (#f5f5f4, S1) and light-grey
+# (#d4d4d4, S0) kits it has been played against — for those, BRIGHTNESS is the
+# entire signal (V10 vs V245/V212, a huge margin). kit_vote.pick_axis reads the
+# two anchors and chooses; this is the neutral dead-zone for the value axis,
+# in V units, inside which a detection abstains instead of guessing.
+KIT_VOTE_VALUE_MARGIN = float(os.environ.get("KIT_VOTE_VALUE_MARGIN", "25.0"))
 # Tag pre-fill (Phase 3.3): suggestedPressure = an opponent within this radius
 # of the assigned player at the action moment. ~3 m ≈ closing-down range at U10.
 SUGGEST_PRESSURE_RADIUS_M = 3.0
