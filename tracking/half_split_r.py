@@ -150,6 +150,10 @@ def main() -> None:
                     help="ignore a player in a half with less tracked time than this")
     ap.add_argument("--onfield-tolerance-s", type=float, default=None,
                     help="override ID_ONFIELD_TOLERANCE_S for this run (sweep knob)")
+    ap.add_argument("--gap-split", type=float, default=None, metavar="SECONDS",
+                    help="split each track at internal gaps longer than this before "
+                         "classify+stitch (pipeline stage 3.5, normally off). Uses a "
+                         "SEPARATE stage-4 cache so the baseline cache is untouched.")
     args = ap.parse_args()
 
     if args.onfield_tolerance_s is not None:
@@ -166,8 +170,11 @@ def main() -> None:
 
     # --- stages 3-4, sharing eval_identity's cache (identical construction) ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    s4_parquet = OUT_DIR / f"{args.game_id}.stage4.parquet"
-    s4_maps = OUT_DIR / f"{args.game_id}.stage4.json"
+    # A gap-split run reclassifies and re-stitches a DIFFERENT track universe, so
+    # it must not read or overwrite the baseline stage-4 cache.
+    _sfx = "" if args.gap_split is None else f".gs{args.gap_split:g}"
+    s4_parquet = OUT_DIR / f"{args.game_id}.stage4{_sfx}.parquet"
+    s4_maps = OUT_DIR / f"{args.game_id}.stage4{_sfx}.json"
     if s4_parquet.exists() and s4_maps.exists():
         tracks_df = pd.read_parquet(s4_parquet)
         maps = json.loads(s4_maps.read_text())
@@ -198,6 +205,20 @@ def main() -> None:
         ranked = tracks_df.sort_values(["frame", "_rank_score"], ascending=[True, False])
         tracks_df = (ranked.groupby("frame", group_keys=False).head(20)
                      .drop(columns=["_rank_score", "track_lifetime"]).reset_index(drop=True))
+
+        # Stage 3.5 (pipeline.py:490-499), normally OFF. BoT-SORT keeps a track id
+        # alive across long gaps, so a single track_id can span halftime and weld
+        # two different children together — measured at 71-92% of our tracked time.
+        # Splitting at internal gaps rebuilds a clean track universe before
+        # classify+stitch, exactly as the pipeline would.
+        if args.gap_split is not None:
+            from post_game.gap_split import gap_split_tracks
+            _n0 = tracks_df["track_id"].nunique()
+            tracks_df, jersey, embeddings, _ = gap_split_tracks(
+                tracks_df, jersey, embeddings, split_gap_s=float(args.gap_split))
+            print(f"gap-split @ {args.gap_split:g}s: {_n0} tracks -> "
+                  f"{tracks_df['track_id'].nunique()} sub-tracks")
+
         team_of_track = classify_tracks(
             tracks_df, jersey,
             our_home_color_hex=_our_color(game),
@@ -292,9 +313,15 @@ def main() -> None:
     for pid, x, y in sorted(zip(ids, a, b), key=lambda t: -abs(t[2] - t[1])):
         print(f"{(name_of.get(pid) or pid)[:21]:<22}{x:>10.1f}{y:>10.1f}{y - x:>+9.1f}")
 
+    # `players` is what makes an honest before/after possible: two runs can only
+    # be compared on the players BOTH named. A change that drops the hard-to-name
+    # children raises r purely by composition — measured on gap-split, which
+    # looked like +0.396 -> +0.572 until the common-player subset showed
+    # +0.733 -> +0.370. Always diff on this list, never on the headline alone.
     result = {
         "game_id": args.game_id,
         "label": args.label,
+        "players": ids,
         "onfield_tolerance_s": (float(tol) if tol is not None else None),
         "min_tracked_s": args.min_tracked_s,
         "r_half_to_half": r_half,
