@@ -805,7 +805,30 @@ function TournamentChip({ value }) {
   );
 }
 
-const R2_WORKER_KEY = 'ManUtd2016'; // API key for R2 upload worker auth
+// Auth for the R2/Stream worker. This bundle is a public static file, so it
+// cannot hold a secret — anything constant here is readable by anyone who opens
+// devtools. Send the signed-in user's Firebase ID token instead; the worker
+// verifies it against Google's public certs, which makes access per-user and
+// revocable. Returns {} when signed out, so the worker answers 401 rather than
+// the call failing in some other, more confusing way.
+async function workerAuth() {
+  try {
+    const u = window.fbAuth && window.fbAuth.currentUser;
+    if (u) return { idToken: await u.getIdToken() };
+  } catch (e) {}
+  return {};
+}
+
+// POST to the worker with the caller's ID token merged into the body. Returns a
+// promise, so it drops into both `await workerPost(...)` and `.then()` chains —
+// several call sites are fire-and-forget and can't be made async.
+function workerPost(path, body = {}) {
+  return workerAuth().then(auth => fetch(`${R2_UPLOAD_WORKER}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...auth, ...body }),
+  }));
+}
 
 /* ---------- ROUTER (client-side, 2026-06-12) ----------
  * Every surface lives in this one bundle, yet navigation used to go through
@@ -1482,21 +1505,13 @@ function CoachApp() {
     // game disappears from the public list; orphan R2 files can be cleaned
     // up by re-running this action or the audit script.
     try {
-      await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/videos/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: R2_WORKER_KEY }),
-      });
+      await workerPost(`/game/${gameId}/videos/delete`);
     } catch (e) { console.warn('R2 wipe failed (continuing):', e); }
     // Voice recordings die with the game (privacy) — separate route so
     // "Delete videos only" keeps them. Best-effort until the worker with
     // this route is deployed.
     try {
-      await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/voice/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: R2_WORKER_KEY }),
-      });
+      await workerPost(`/game/${gameId}/voice/delete`);
     } catch (e) { console.warn('voice wipe failed (continuing):', e); }
 
     try {
@@ -1525,11 +1540,7 @@ function CoachApp() {
     // analytics subcollection (per-player stats, GK positioning, etc.) so
     // you can re-render the videos later by re-running the pipeline.
     try {
-      const r = await fetch(`${R2_UPLOAD_WORKER}/game/${gameId}/videos/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: R2_WORKER_KEY }),
-      });
+      const r = await workerPost(`/game/${gameId}/videos/delete`);
       if (!r.ok) throw new Error(`worker returned ${r.status}`);
     } catch (e) {
       console.error('R2 wipe failed:', e);
@@ -3374,11 +3385,7 @@ function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSave
     if (ytBusy) return;
     setYtBusy(true);
     setYtErr(null);
-    fetch(`${R2_UPLOAD_WORKER}/youtube-live`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY }),
-    })
+    workerPost(`/youtube-live`)
       .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.error || 'detection failed')))
       .then((data) => {
         if (data.live && data.videoId) {
@@ -3400,11 +3407,7 @@ function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSave
     if (liveBusy) return;
     setLiveBusy(true);
     setLiveErr(null);
-    fetch(`${R2_UPLOAD_WORKER}/live-input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY, name: 'stompers-team-live' }),
-    })
+    workerPost(`/live-input`, { name: 'stompers-team-live' })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
       .then((info) => {
         setPendingSetup({ ...info, createdAt: Date.now() });
@@ -3426,11 +3429,7 @@ function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSave
     // User backed out before confirming — delete the freshly-created live
     // input so we don't leave orphans in Cloudflare Stream.
     if (pendingSetup?.uid) {
-      fetch(`${R2_UPLOAD_WORKER}/live-input/${pendingSetup.uid}/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: R2_WORKER_KEY }),
-      }).catch(() => {});
+      workerPost(`/live-input/${pendingSetup.uid}/delete`).catch(() => {});
     }
     setPendingSetup(null);
     setShowSetup(false);
@@ -3441,11 +3440,7 @@ function StartingLineupView({ roster, games, squad, setup, teamLiveInput, onSave
     if (!ok) return;
     if (teamLiveInput?.uid) {
       try {
-        await fetch(`${R2_UPLOAD_WORKER}/live-input/${teamLiveInput.uid}/delete`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: R2_WORKER_KEY }),
-        });
+        await workerPost(`/live-input/${teamLiveInput.uid}/delete`);
       } catch (e) {}
     }
     await onSaveTeamLiveInput(null);
@@ -4508,11 +4503,7 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
   // which has an unpublished /put proxy): /upload-url returns a PRESIGNED
   // direct-to-R2 PUT. Content-Type is part of the signature — the PUT must
   // send exactly the type we asked to sign. Mirrors the video upload flow.
-  const r = await fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: R2_WORKER_KEY, filename, contentType }),
-  });
+  const r = await workerPost(`/upload-url`, { filename, contentType });
   if (!r.ok) throw new Error(`upload-url ${r.status}`);
   const { uploadUrl, publicUrl } = await r.json();
   const put = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob });
@@ -10615,11 +10606,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
     if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
     setLiveBusy(true);
     setLiveErr(null);
-    fetch(`${R2_UPLOAD_WORKER}/live-input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY, name: `stompers-${game.id}` }),
-    })
+    workerPost('/live-input', { name: `stompers-${game.id}` })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
       .then((info) => {
         onUpdateGame({ liveInput: { ...info, createdAt: Date.now() } });
@@ -10633,11 +10620,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
   const stopLive = () => {
     if (!game.liveInput?.uid) { onUpdateGame({ liveInput: null }); return; }
     setLiveBusy(true);
-    fetch(`${R2_UPLOAD_WORKER}/live-input/${game.liveInput.uid}/delete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY }),
-    })
+    workerPost(`/live-input/${game.liveInput.uid}/delete`)
       .catch(() => {})
       .finally(() => {
         onUpdateGame({ liveInput: null });
@@ -10656,11 +10639,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
     const base = file.name.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40);
     const filename = `${game.id}-${base}${ext}`;
     const contentType = file.type || 'video/mp4';
-    fetch(`${R2_UPLOAD_WORKER}/upload-url`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: R2_WORKER_KEY, filename, contentType }),
-    })
+    workerPost(`/upload-url`, { filename, contentType })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'upload-url failed')))
       .then(({ uploadUrl, publicUrl }) => new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
