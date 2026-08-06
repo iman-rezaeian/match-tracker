@@ -38,10 +38,14 @@ CONTENT_TYPE="video/mp4"
 echo "📤 Uploading $(du -h "$FILE" | cut -f1) → $KEY"
 echo ""
 
-HTTP_CODE=$(curl -X PUT "${R2_ENDPOINT}/${R2_BUCKET}/${KEY}" \
+# Credentials go in on stdin, not argv: --user on the command line is visible
+# in `ps` to every account on the machine for the whole upload, which for an 8K
+# game file is hours.
+HTTP_CODE=$(printf 'user = "%s:%s"\n' "${R2_ACCESS_KEY_ID}" "${R2_SECRET_ACCESS_KEY}" \
+  | curl -X PUT "${R2_ENDPOINT}/${R2_BUCKET}/${KEY}" \
   --header "Content-Type: ${CONTENT_TYPE}" \
   --aws-sigv4 "aws:amz:auto:s3" \
-  --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
+  --config - \
   --upload-file "$FILE" \
   --progress-bar -o /dev/null -w "%{http_code}")
 

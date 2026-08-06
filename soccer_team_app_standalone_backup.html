@@ -6744,6 +6744,10 @@ function VideoPlayer360({ videoUrl, seekTo, onClose, events = [], gameInfo, dots
           {duration > 0 && events.filter(e => {
             if (e.elapsed <= 0 || e.elapsed > duration) return false;
             if (dotsMode === 'goals') return e.type === 'GOAL' || e.type === 'OPP_GOAL';
+            // Silent events aren't coach actions and don't belong on the
+            // scrubber. Naming SUB/GK_CHANGE here missed POSITION, which the
+            // tactical board emits on every drag — hundreds of dots a game.
+            if (EVENT_TYPES[e.type]?.silent) return false;
             return e.type !== 'SUB' && e.type !== 'GK_CHANGE';
           }).map(e => {
             const pct = (e.elapsed / duration) * 100;
@@ -14438,6 +14442,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

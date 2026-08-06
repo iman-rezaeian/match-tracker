@@ -230,6 +230,11 @@ def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
             "video_offset_h2_confirmed": bool(d.get("videoOffsetH2Confirmed", False)),
             "has_analytics": has_analytics,
             "started_at": int(d.get("startedAt", 0)),
+            # The calibration UI reads this to place its 2nd-half preview seek.
+            # It was absent from this projection, so the UI silently fell back
+            # to 30 while the real default is 25 — landing the preview ~5 min
+            # past kickoff. Default mirrors GameDoc's.
+            "half_length_min": int(d.get("halfLengthMin", 25)),
         })
     out.sort(key=lambda r: r["started_at"], reverse=True)
     return out

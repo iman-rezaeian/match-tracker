@@ -543,7 +543,7 @@ if _preview_path is not None:
         # Estimate auto-derived H2 to use as default seek for the player.
         _h1_for_seek = float(game.get("video_offset_h1_kickoff_s") or 0.0)
         _h2_auto_guess = max(
-            _h1_for_seek + float(game.get("half_length_min") or 30) * 60 + 300.0,
+            _h1_for_seek + float(game.get("half_length_min") or 25) * 60 + 300.0,
             _h1_for_seek + 60.0,
         )
         _start_at = int(_h2_auto_guess) if _h1_for_seek > 0 else 0
