@@ -150,6 +150,10 @@ def main() -> None:
                     help="ignore a player in a half with less tracked time than this")
     ap.add_argument("--onfield-tolerance-s", type=float, default=None,
                     help="override ID_ONFIELD_TOLERANCE_S for this run (sweep knob)")
+    ap.add_argument("--halftime-split", action="store_true",
+                    help="enforce that no track spans halftime, cutting at the "
+                         "break DETECTED in the footage (falls back to the coach's "
+                         "logged break if detection is inconclusive)")
     ap.add_argument("--gap-split", type=float, default=None, metavar="SECONDS",
                     help="split each track at internal gaps longer than this before "
                          "classify+stitch (pipeline stage 3.5, normally off). Uses a "
@@ -173,6 +177,8 @@ def main() -> None:
     # A gap-split run reclassifies and re-stitches a DIFFERENT track universe, so
     # it must not read or overwrite the baseline stage-4 cache.
     _sfx = "" if args.gap_split is None else f".gs{args.gap_split:g}"
+    if args.halftime_split:
+        _sfx += ".hts"
     s4_parquet = OUT_DIR / f"{args.game_id}.stage4{_sfx}.parquet"
     s4_maps = OUT_DIR / f"{args.game_id}.stage4{_sfx}.json"
     if s4_parquet.exists() and s4_maps.exists():
@@ -218,6 +224,31 @@ def main() -> None:
                 tracks_df, jersey, embeddings, split_gap_s=float(args.gap_split))
             print(f"gap-split @ {args.gap_split:g}s: {_n0} tracks -> "
                   f"{tracks_df['track_id'].nunique()} sub-tracks")
+
+        # A player cannot be one continuous body across the break, so any track
+        # that survives it welds two children together. Cut at the break found in
+        # the FOOTAGE — the coach's tap rides on the game clock, which is offset
+        # from video time by the kickoff-sync error.
+        if args.halftime_split:
+            from post_game.halftime_split import (detect_halftime_break,
+                                                  split_tracks_at_halftime)
+            _hw = half_windows(game, float(tracks_df["time_s"].max()) + 1.0)
+            _logged = (_hw[0][1], _hw[1][0]) if len(_hw) >= 2 else None
+            _brk = detect_halftime_break(tracks_df, logged_break=_logged)
+            if _brk is None and _logged is not None:
+                print(f"halftime: detection inconclusive — using logged "
+                      f"{_logged[0]:.0f}..{_logged[1]:.0f}s")
+                _brk = _logged
+            if _brk is not None:
+                if _logged is not None:
+                    print(f"halftime: logged {_logged[0]:.0f}..{_logged[1]:.0f}s "
+                          f"-> using {_brk[0]:.0f}..{_brk[1]:.0f}s "
+                          f"({_brk[0] - _logged[0]:+.0f}s start)")
+                _n0 = tracks_df["track_id"].nunique()
+                tracks_df, jersey, embeddings, _p = split_tracks_at_halftime(
+                    tracks_df, _brk, jersey, embeddings)
+                print(f"halftime split: {_n0} tracks -> "
+                      f"{tracks_df['track_id'].nunique()} ({len(_p)} cut)")
 
         team_of_track = classify_tracks(
             tracks_df, jersey,
