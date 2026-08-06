@@ -68,17 +68,20 @@ CONTROL_R_EXPECTED = 0.984
 CONTROL_R_TOLERANCE = 0.15
 
 
-def _load_jersey_medians(npz_path: Path) -> dict[int, list]:
-    """{track_id: [median_hsv]} — same reduction classify_tracks applies."""
-    out: dict[int, list] = {}
+def _load_jersey_samples(npz_path: Path) -> dict[int, list]:
+    """{track_id: [raw HSV sample arrays]} — exactly what the pipeline passes.
+
+    Do NOT pre-reduce these to a per-track median. `classify_tracks` runs its own
+    `_median_hsv`, whose circular-hue guard needs the full sample distribution; a
+    plain median collapses a hue that straddles the 0/180 wrap to mid-axis (the
+    trap `team_classifier._median_hsv` documents). Pre-medianing INVERTED the
+    team split on W8 — 775 ours / 2087 opponent, against production's correct
+    1955 / 510 — which silently scored every metric on the wrong partition.
+
+    Mirrors pipeline.py's `{int(k): list(nz[k]) for k in nz.files}`.
+    """
     with np.load(npz_path, allow_pickle=True) as nz:
-        for k in nz.files:
-            samples = nz[k]
-            if len(samples) == 0:
-                continue
-            stacked = np.vstack([np.asarray(s, dtype=np.float32) for s in samples])
-            out[int(k)] = [np.median(stacked, axis=0)]
-    return out
+        return {int(k): list(nz[k]) for k in nz.files if len(nz[k])}
 
 
 def _pearson(a: list[float], b: list[float]) -> float | None:
@@ -191,7 +194,7 @@ def main() -> None:
     else:
         ckpt = config.OUTPUTS_DIR / args.game_id
         tracks_df = pd.read_parquet(ckpt / "tracks_raw.parquet")
-        jersey = _load_jersey_medians(ckpt / "jersey_samples.npz")
+        jersey = _load_jersey_samples(ckpt / "jersey_samples.npz")
         embeddings = {}
         if (ckpt / "embeddings.npz").exists():
             with np.load(ckpt / "embeddings.npz", allow_pickle=True) as nz:

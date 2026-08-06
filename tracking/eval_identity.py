@@ -14,8 +14,10 @@ Usage:
 Re-run with the same --game-id before/after identity changes and diff the
 JSON in tracking/outputs/identity_eval/.
 
-Memory note: jersey_samples.npz can be multi-GB; we stream it key-by-key and
-keep only each track's median HSV (exactly what classify_tracks reduces to).
+Memory note: jersey_samples.npz can be multi-GB and is loaded in full — the RAW
+per-detection HSV samples, which is what classify_tracks needs. An older version
+pre-reduced each track to a median here and silently INVERTED the team split; see
+_load_jersey_samples.
 """
 
 from __future__ import annotations
@@ -41,17 +43,26 @@ from post_game.team_classifier import classify_tracks
 OUT_DIR = Path(__file__).resolve().parent / "outputs" / "identity_eval"
 
 
-def _load_jersey_medians(npz_path: Path) -> dict[int, list]:
-    """{track_id: [median_hsv_3vec]} — same reduction classify_tracks applies."""
-    out: dict[int, list] = {}
+def _load_jersey_samples(npz_path: Path) -> dict[int, list]:
+    """{track_id: [raw HSV sample arrays]} — exactly what the pipeline passes.
+
+    This used to pre-reduce each track to a single median, claiming it was "the
+    same reduction classify_tracks applies". It is NOT: classify_tracks calls
+    `_median_hsv`, whose circular-hue guard needs the full sample distribution,
+    because a plain median collapses a wrap-straddling hue to mid-axis (see the
+    warning in team_classifier._median_hsv).
+
+    Measured on W8 with identical input: pre-medianed gave 775 ours / 2087
+    opponent, raw samples give 1955 / 510 — the latter reproducing the live
+    analytics doc exactly. The bug INVERTED the team split, so every offline
+    identity metric was scored on a partition where most real players were filed
+    as opponents. Mirrors pipeline.py's `{int(k): list(nz[k]) for k in nz.files}`.
+
+    Memory note: the npz can be multi-GB. Holding raw samples costs more RAM than
+    the old per-track median, but correctness requires it.
+    """
     with np.load(npz_path, allow_pickle=True) as nz:
-        for k in nz.files:
-            samples = nz[k]
-            if len(samples) == 0:
-                continue
-            stacked = np.vstack([np.asarray(s, dtype=np.float32) for s in samples])
-            out[int(k)] = [np.median(stacked, axis=0)]
-    return out
+        return {int(k): list(nz[k]) for k in nz.files if len(nz[k])}
 
 
 def main() -> None:
@@ -87,12 +98,12 @@ def main() -> None:
         ckpt = config.OUTPUTS_DIR / args.game_id
         tracks_df = pd.read_parquet(ckpt / "tracks_raw.parquet")
         print(f"checkpoint: {len(tracks_df)} detections, {tracks_df['track_id'].nunique()} tracks")
-        jersey = _load_jersey_medians(ckpt / "jersey_samples.npz")
+        jersey = _load_jersey_samples(ckpt / "jersey_samples.npz")
         embeddings = {}
         if (ckpt / "embeddings.npz").exists():
             with np.load(ckpt / "embeddings.npz", allow_pickle=True) as nz:
                 embeddings = {int(k): np.asarray(nz[k], dtype=np.float32) for k in nz.files}
-        print(f"jersey medians for {len(jersey)} tracks, embeddings for {len(embeddings)}")
+        print(f"jersey samples for {len(jersey)} tracks, embeddings for {len(embeddings)}")
 
         # --- stage 3: pixel -> field + off-field filter + top-20 (mirrors pipeline.py)
         projector = FieldProjector(field_cal)
