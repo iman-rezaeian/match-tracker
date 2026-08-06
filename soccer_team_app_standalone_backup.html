@@ -586,6 +586,18 @@ function computeElapsed(game) {
   return game.elapsedAtPause;
 }
 
+// Is the game sitting at the halftime break? Prefers the explicit `halftime`
+// flag set by pauseHalfTime; falls back to the old inference for games started
+// before the flag existed (and for any doc where it was never written). The
+// inference alone cannot distinguish the break from an injury pause, which is
+// why the flag exists — see resumeClock.
+function isHalfTime(game) {
+  if (!game) return false;
+  if (game.halftime === true) return true;
+  if (game.halftime === false) return false;
+  return game.period === 1 && game.clockRunning === false;
+}
+
 function onFieldAt(game, atTs = Date.now()) {
   const onField = new Set(game.startingLineup || []);
   const subs = (game.events || [])
@@ -1631,6 +1643,9 @@ function CoachApp() {
         elapsedAtPause: (g.elapsedAtPause || 0) + additional,
         segmentStartedAt: null,
         pausePeriods: pp,
+        // A game ended from the halftime screen must not stay flagged as being
+        // at the break — isHalfTime() would keep reporting true for it.
+        halftime: false,
       };
     });
     setActiveGameId(null);
@@ -1742,6 +1757,11 @@ function CoachApp() {
         elapsedAtPause: (g.elapsedAtPause || 0) + additional,
         segmentStartedAt: null,
         pausePeriods: [...(g.pausePeriods || []), { startedAt: now, endedAt: null }],
+        // Halftime is a STATE, not just "period 1 with the clock stopped" —
+        // that inference can't tell the break apart from an injury pause, so
+        // resuming the clock from the scorebug used to strand the game in
+        // period 1 for the whole second half.
+        halftime: true,
       };
     });
     showToast('⏸ Half time — clock paused');
@@ -1758,9 +1778,16 @@ function CoachApp() {
         ...g,
         clockRunning: true,
         period: 2,
+        // Stash the 1st half's final elapsed before zeroing the clock, so the
+        // "← Back to 1st half" undo can restore it. Without this the undo is
+        // itself lossy: the clock restarts at 00:00 and every later 1st-half
+        // event carries a wrong `elapsed` — the anchor the post-game identity
+        // pipeline maps events onto video time with.
+        elapsedAtHalfTime: computeElapsed(g),
         elapsedAtPause: 0,
         segmentStartedAt: now,
         pausePeriods: pp,
+        halftime: false,
       };
     });
     showToast('▶ 2nd half started');
@@ -1773,12 +1800,19 @@ function CoachApp() {
       if (pp.length > 0 && pp[pp.length-1].endedAt === null) {
         pp[pp.length-1] = { ...pp[pp.length-1], endedAt: now };
       }
+      // Restore the elapsed we were at when the half ended. Falls back to the
+      // current value for games paused before `elapsedAtHalfTime` existed.
+      const restored = g.elapsedAtHalfTime != null
+        ? g.elapsedAtHalfTime
+        : (g.elapsedAtPause || 0);
       return {
         ...g,
         clockRunning: true,
         period: 1,
+        elapsedAtPause: restored,
         segmentStartedAt: now,
         pausePeriods: pp,
+        halftime: false,
       };
     });
     showToast('▶ Back to 1st half');
@@ -1796,12 +1830,26 @@ function CoachApp() {
         elapsedAtPause: (g.elapsedAtPause || 0) + additional,
         segmentStartedAt: null,
         pausePeriods: [...(g.pausePeriods || []), { startedAt: now, endedAt: null }],
+        // Mark this pause as NOT the break. Without it, a 1st-half injury pause
+        // falls through to isHalfTime()'s legacy inference (period 1 + clock
+        // stopped), shows the HALF TIME screen, and refuses to resume.
+        halftime: false,
       };
     });
     showToast('⏸ Clock paused');
   };
 
   const resumeClock = (gameId) => {
+    // At halftime the only ways forward are START 2ND HALF (period 2) or
+    // "← Back to 1st half" — both of which set the period deliberately. A
+    // plain resume here would restart the clock still in period 1, so the
+    // entire second half would be logged as period 1 with `elapsed` running
+    // past the half length, silently corrupting every downstream mapping.
+    const g0 = games.find(g => g.id === gameId);
+    if (g0 && isHalfTime(g0)) {
+      showToast('⏸ Half time — use START 2ND HALF');
+      return;
+    }
     updateGame(gameId, g => {
       if (g.clockRunning) return g;
       const now = Date.now();
@@ -4899,9 +4947,12 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game, tick]);
 
-  const inFirstHalf = game.period === 1 && game.clockRunning !== false;
-  const inHalfTimeBreak = game.period === 1 && game.clockRunning === false;
+  const inHalfTimeBreak = isHalfTime(game);
   const inSecondHalf = game.period === 2;
+  // "In the 1st half" must stay true through an injury pause — only the
+  // halftime break leaves it. Deriving it from `clockRunning` alone used to
+  // hide the HALF TIME button the moment the coach paused for anything else.
+  const inFirstHalf = game.period === 1 && !inHalfTimeBreak;
 
   // Halftime bulk-lineup modal: coach taps players to flip on/off the field
   // in a single pass instead of doing one SUB at a time.
@@ -14361,6 +14412,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
