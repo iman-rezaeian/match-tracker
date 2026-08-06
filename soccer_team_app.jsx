@@ -1402,10 +1402,27 @@ function CoachApp() {
   const confirmVoiceDraft = (gameId, draft, playerId = null) => {
     const game = games.find(g => g.id === gameId);
     const ev = draft && EVENT_TYPES[draft.type];
-    if (!game || !ev) return;
+    if (!game) return;
+    if (!ev) {
+      // A draft whose type this app doesn't know can never become an event.
+      // Say so and drop it, rather than no-op and leave an Accept button that
+      // does nothing sitting in the queue forever.
+      showToast(`⚠️ "${draft?.type}" isn't a loggable event — draft dismissed`);
+      dismissVoiceDraft(gameId, draft?.id);
+      return;
+    }
     const { type, period, elapsed, quote } = draft;
+    // `elapsed` is game-clock seconds within the half, but `at` is wall clock,
+    // so a 2nd-half draft has to skip the break. Assuming H2 begins exactly
+    // halfLengthMin after kickoff ignored it entirely and landed every 2nd-half
+    // voice event minutes early in `at`-keyed ordering. Derive the real start
+    // from the pauses, the same way the Python side does; fall back to the
+    // nominal half length only when the pause data is missing.
+    const pausedMs = (game.pausePeriods || []).reduce(
+      (acc, p) => acc + Math.max(0, (p.endedAt || p.startedAt || 0) - (p.startedAt || 0)), 0);
     const halfMs = (game.halfLengthMin || 25) * 60000;
-    const at = (game.startedAt || 0) + (period === 2 ? halfMs : 0) + (elapsed || 0) * 1000;
+    const h2OffsetMs = period === 2 ? halfMs + pausedMs : 0;
+    const at = (game.startedAt || 0) + h2OffsetMs + (elapsed || 0) * 1000;
     const confirmed = {
       id: `v_${period}_${elapsed}_${type}_${playerId || 'na'}`,
       type, playerId: playerId || null, period, elapsed, at,

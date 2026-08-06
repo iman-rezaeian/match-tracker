@@ -30,16 +30,23 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
 MODEL = "claude-haiku-4-5"
 OUT_DIR = Path(__file__).resolve().parent / "outputs" / "voice_clean"
 
-# Coach event vocabulary (matches the live-log types the confirm queue expects).
+# Coach event vocabulary. MUST be a subset of EVENT_TYPES in soccer_team_app.jsx:
+# the confirm queue looks each draft's type up there and silently drops the
+# Accept when it misses, leaving an un-actionable row in the queue forever.
+# CORNER and OFFSIDE were extracted here but have never existed in the app, and
+# SUB needs both the off and on player, which narration doesn't reliably give —
+# so none of the three could ever be accepted. Removed rather than added to the
+# app: a draft the coach cannot act on is worse than no draft.
 EVENT_TYPES = [
-    "GOAL", "ASSIST", "SHOT_ON", "SHOT_OFF", "SAVE", "CORNER", "PEN_AWARDED",
-    "FOUL_BY", "FOUL_ON", "BALL_WIN", "OFFSIDE", "SUB", "OPP_GOAL",
+    "GOAL", "ASSIST", "SHOT_ON", "SHOT_OFF", "SAVE", "PEN_AWARDED",
+    "FOUL_BY", "FOUL_ON", "BALL_WIN", "OPP_GOAL",
 ]
 
 _SCHEMA = {
@@ -126,6 +133,7 @@ def _extract(lines: list[str], roster_desc: str, model: str) -> list[dict]:
     # event spanning a chunk edge isn't lost; cross-chunk dedup cleans the overlap.
     CHUNK, OVERLAP = 70, 3
     out: list[dict] = []
+    dropped: list[tuple[int, int]] = []
     i = 0
     while i < len(lines):
         window = lines[i:i + CHUNK]
@@ -138,9 +146,19 @@ def _extract(lines: list[str], roster_desc: str, model: str) -> list[dict]:
         }
         try:
             out.extend(json.loads(_call(payload)).get("events", []))
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            # One bad chunk is ~CHUNK lines of narration — a quarter of a short
+            # game. Swallowing it silently reported a plausible-looking total
+            # with a hole in it, so say which window was lost.
+            dropped.append((i, min(i + CHUNK, len(lines))))
+            print(f"  !! chunk lines {i}-{min(i + CHUNK, len(lines))} dropped "
+                  f"({type(e).__name__}: {e})", file=sys.stderr)
         i += CHUNK - OVERLAP
+    if dropped:
+        lost = sum(b - a for a, b in dropped)
+        print(f"  !! WARNING: {len(dropped)} chunk(s) failed to parse — "
+              f"~{lost} of {len(lines)} narration lines were NOT scanned for events",
+              file=sys.stderr)
     return out
 
 

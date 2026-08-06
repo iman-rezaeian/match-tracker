@@ -209,6 +209,11 @@ def _llm_messages(payload: dict) -> str:
             r.raise_for_status()
             blocks = r.json().get("content", [])
             return next((b["text"] for b in blocks if b.get("type") == "text"), "{}")
+        # Retries exhausted on a retryable status. Falling off the loop returned
+        # None, which the caller fed straight to json.loads for a confusing
+        # TypeError far from the cause.
+        raise RuntimeError(
+            f"Anthropic API still failing after 5 attempts (last status {r.status_code})")
 
 
 def classify(segments: list[dict], model: str = MODEL, chunk: int = 300) -> list[str]:
