@@ -248,12 +248,14 @@ def run(
     tracks_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.parquet"
     jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
     emb_ckpt = ckpt_dir / f"embeddings{ckpt_suffix}.npz"
+    prov_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.provenance.json"
 
     # A pinned-partition refresh skips classify+stitch, so the (multi-GB,
     # often-deleted) jersey npz isn't needed — only tracks_raw is.
     if tracks_ckpt.exists() and (jersey_ckpt.exists() or pin_partition is not None):
         import pandas as pd
         log.info("Stage 2/6: loading cached tracks from %s", tracks_ckpt)
+        _check_tracks_provenance(prov_ckpt, tracks_ckpt)
         tracks_df = pd.read_parquet(tracks_ckpt)
         if jersey_ckpt.exists():
             with np.load(jersey_ckpt, allow_pickle=True) as nz:
@@ -429,6 +431,7 @@ def run(
         )
         if track_embeddings:
             np.savez(emb_ckpt, **{str(k): v for k, v in track_embeddings.items()})
+        _write_tracks_provenance(prov_ckpt)
         log.info("  -> checkpoint written: %s + %s%s", tracks_ckpt.name, jersey_ckpt.name,
                  (" + " + emb_ckpt.name) if track_embeddings else " (no embeddings captured)")
         _n_unique_tracks = tracks_df["track_id"].nunique() if not tracks_df.empty else 0
@@ -483,6 +486,38 @@ def run(
 
         log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
                  dropped_off, dropped_topn, len(tracks_df))
+
+    # 3.4 Halftime split — enforce "no track spans the break". The tracker is
+    # reset at halftime and its id counter carried across (see _new_tracker call
+    # site), but that only rules out id COLLISION; a boundary derived from the
+    # coach's taps can still be misplaced relative to the real whistle. Detect
+    # the break from the footage (the pitch empties) and cut anything that still
+    # spans it, so the invariant holds regardless of which cause produced it.
+    # Runs BEFORE gap-split/classification so one id universe flows downstream.
+    # Skipped on the pinned path (ids must stay byte-stable for coach overrides).
+    if (config.HALFTIME_SPLIT_ENABLED and not tracks_df.empty
+            and pin_partition is None and not smoke_windows):
+        from .halftime_split import detect_halftime_break, split_tracks_at_halftime
+        # Hint the detector with the coach-derived break so an injury stoppage
+        # can't be mistaken for halftime; it falls back to the logged time when
+        # the footage is inconclusive.
+        _logged_break = (play_windows[0][1], play_windows[1][0]) if len(play_windows) > 1 else None
+        _bw = detect_halftime_break(tracks_df, logged_break=_logged_break)
+        if _bw is None:
+            log.info("  -> halftime split: no break detected in the footage; "
+                     "keeping ids as-is (logged break %s)", _logged_break)
+        else:
+            _n0 = tracks_df["track_id"].nunique()
+            tracks_df, track_jersey_samples, track_embeddings, _ = split_tracks_at_halftime(
+                tracks_df, _bw, track_jersey_samples, track_embeddings,
+            )
+            _shift = (_bw[0] - _logged_break[0]) if _logged_break else 0.0
+            log.info("  -> halftime split: break %.0f-%.0fs (logged %.0f-%.0fs, "
+                     "shift %+.0fs) · %d -> %d track ids",
+                     _bw[0], _bw[1],
+                     (_logged_break[0] if _logged_break else 0.0),
+                     (_logged_break[1] if _logged_break else 0.0),
+                     _shift, _n0, tracks_df["track_id"].nunique())
 
     # 3.5 Gap-split — break "zombie" tracks (one id kept alive across long gaps,
     # teleporting between bodies) into clean contiguous sub-tracks BEFORE team
@@ -1163,6 +1198,83 @@ def run(
 
 
 # --- helpers -------------------------------------------------------------
+
+# Modules whose content determines what Stage 2 produces. A cache written before
+# any of these changed may be stale in a way no downstream stage can detect —
+# the parquet looks perfectly well-formed either way. Deliberately NOT the whole
+# repo: edits to stats/tv_view/identity don't invalidate a tracking pass.
+_TRACKING_SOURCES = ("tracking.py", "tracking_field.py", "tracking_pitch.py",
+                     "detection.py", "video.py", "calibration.py")
+# Config values that change Stage-2 output. Recorded so a cache taken at a
+# different sample rate / tile count is never silently mixed with a fresh one.
+_TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
+                         "DETECT_CONFIDENCE", "TRACK_BUFFER_S", "CROP_W", "CROP_H",
+                         "YOLO_MODEL", "TRACK_FIELD_SPACE", "TRACK_PITCH")
+
+
+def _tracking_fingerprint() -> dict:
+    """Fingerprint of everything that determines Stage-2 output."""
+    import hashlib
+    h = hashlib.sha256()
+    for name in _TRACKING_SOURCES:
+        p = Path(__file__).with_name(name)
+        if p.exists():
+            h.update(p.read_bytes())
+    return {
+        "code_sha256": h.hexdigest()[:16],
+        "config": {k: str(getattr(config, k, None)) for k in _TRACKING_CONFIG_KEYS},
+        "written_at_ms": int(time.time() * 1000),
+    }
+
+
+def _write_tracks_provenance(path: Path) -> None:
+    """Record what produced this checkpoint, next to it."""
+    import json
+    try:
+        path.write_text(json.dumps(_tracking_fingerprint(), indent=2))
+    except OSError as e:   # a missing sidecar only costs the staleness warning
+        log.warning("Could not write cache provenance %s: %s", path.name, e)
+
+
+def _check_tracks_provenance(path: Path, tracks_ckpt: Path) -> None:
+    """Warn when a reused Stage-2 cache predates the current tracking code.
+
+    This is the guard that was missing when the halftime id-collision fix
+    (`_next_id` carried across the tracker reset) landed: every existing cache
+    predated it, so months of offline measurement ran on data where ~40-57% of
+    tracked time sat in ids that welded two different children together — and
+    nothing in the pipeline said a word, because the checkpoint reuse test is
+    just `tracks_ckpt.exists()`. Warn loudly rather than block: a stale cache is
+    still the right input for a deliberate stats-only refresh.
+    """
+    import json
+    cur = _tracking_fingerprint()
+    if not path.exists():
+        log.warning(
+            "  !! cache %s has NO provenance sidecar — it predates provenance "
+            "tracking and may have been produced by different tracking code. "
+            "Re-track before trusting any measurement derived from it.",
+            tracks_ckpt.name)
+        return
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        log.warning("  !! cache provenance %s unreadable (%s); treating as stale",
+                    path.name, e)
+        return
+    if old.get("code_sha256") != cur["code_sha256"]:
+        log.warning(
+            "  !! cache %s was produced by DIFFERENT tracking code "
+            "(cache %s vs current %s). Downstream numbers may not reflect the "
+            "current pipeline — re-track for a clean baseline.",
+            tracks_ckpt.name, old.get("code_sha256"), cur["code_sha256"])
+    drift = {k: (v, cur["config"].get(k))
+             for k, v in (old.get("config") or {}).items()
+             if cur["config"].get(k) != v}
+    if drift:
+        log.warning("  !! cache %s config drift: %s", tracks_ckpt.name,
+                    ", ".join(f"{k}: {o} -> {n}" for k, (o, n) in sorted(drift.items())))
+
 
 def _build_broadcast_events_index(
     game,

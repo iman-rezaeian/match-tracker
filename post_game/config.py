@@ -349,10 +349,32 @@ PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-13"))  # goal-roar lev
 PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "7"))   # start the roar this many s before the tap
 PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-in (build) duration
 
+# --- Halftime split (pipeline.py, stage 3 -> 4) ---
+# No player is one continuous body across the halftime break, so any track_id
+# with detections on both sides has welded two different children together.
+# Two independent causes, and the id-carry only fixes the first:
+#   1. ID COLLISION — a fresh tracker restarts ids at 1, so half-2 ids reuse
+#      half-1 ids. Fixed at the source by carrying `_next_id` across the reset
+#      (pipeline._new_tracker call site). Measured on the pre-fix caches:
+#      1257/3555, 867/2887, 873/3609 ids affected = 39-57% of tracked time.
+#   2. MISPLACED BOUNDARY — the reset fires at `h1_end_s`, derived from the
+#      coach's taps (wallclock delta + video offset), which lags the whistle by
+#      up to 47 s on real games. A late boundary lands on empty frames and is
+#      harmless; nothing guarantees that in general.
+# This pass detects the break from the FOOTAGE (body count collapses to ~0 for
+# the whole break) and hard-splits anything still spanning it, so the invariant
+# holds regardless of cause. Lossless: relabels ids, never drops detections.
+# Default ON — it is a no-op on a clean game (nothing spans the break).
+HALFTIME_SPLIT_ENABLED = os.environ.get("HALFTIME_SPLIT_ENABLED", "1") != "0"
+
 # --- Gap-split pre-pass (pipeline.py, stage 3 -> 4) ---
 # Split each track_id at internal time gaps > SPLIT_GAP_S into clean contiguous
 # sub-tracks, removing "zombie" ids kept alive across long gaps (they teleport
 # between bodies and inflate distance). Off by default; flip only after A/B.
+# NOTE: deliberately much broader than HALFTIME_SPLIT_ENABLED above, which cuts
+# at exactly one time per track. Gap-split shatters good tracks to fix bad ones
+# (96% sub-30s pieces, r +0.733 -> +0.370 on common players), which is why that
+# one stays off and the halftime cut stays on.
 GAP_SPLIT_ENABLED = os.environ.get("GAP_SPLIT_ENABLED", "") == "1"
 SPLIT_GAP_S = float(os.environ.get("SPLIT_GAP_S", "1.0"))
 
