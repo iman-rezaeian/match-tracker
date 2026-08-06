@@ -1157,6 +1157,13 @@ def run(
                 field_width_m=field_cal.width_m, current_of_tl=_cur,
                 model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
                 max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
+                # Camera ground position, so crop choice can prefer frames where
+                # the player's back is turned. Read from the calibration rather
+                # than assumed: on this field the camera sits BEYOND the far
+                # touchline (y=34.6 of a 30 m pitch), so guessing the sideline
+                # would invert the test.
+                cam_xy=_camera_ground_xy(field_cal),
+                min_digit_px=config.VLM_MIN_DIGIT_PX, min_away=config.VLM_MIN_AWAY,
                 dt=(1.0 / fps_sampled if fps_sampled else 0.1),
                 log_fn=lambda m: log.info("%s", m), team_out=_vlm_team)
             firestore_io.write_identity_drafts(game_id, _drafts)
@@ -1636,6 +1643,26 @@ def _ensure_local_video(url: str, game_id: str) -> Path:
     ext = Path(url.split("?")[0]).suffix or ".mp4"
     dest = config.CACHE_DIR / f"{game_id}{ext}"
     return firestore_io.download_video(url, dest)
+
+
+def _camera_ground_xy(field_cal) -> Optional[tuple[float, float]]:
+    """Where the camera stands, in field metres — or None on the planar model.
+
+    The sphere solve puts the camera at the origin of its own frame, so the
+    similarity that maps camera-frame ground points into field coordinates sends
+    (0, 0) to exactly (tx, ty). Used to work out which way a player is facing:
+    the number is on their back, so it is only readable while they run away from
+    THIS point. Worth deriving rather than assuming a sideline — on W8 the rig
+    sits at y=34.6 m on a 30 m-wide pitch, i.e. beyond the far touchline, and an
+    assumed y=0 would get the sign backwards on every tracklet.
+    """
+    s = getattr(field_cal, "sphere", None)
+    if not s:
+        return None
+    try:
+        return (float(s["tx"]), float(s["ty"]))
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _our_color(game) -> str:

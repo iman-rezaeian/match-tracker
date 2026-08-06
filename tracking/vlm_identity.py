@@ -131,6 +131,93 @@ def _tallest_rows(sub, k: int):
     return s[s["_h"] > 0].nlargest(k, "_h")
 
 
+def _readable_rows(sub, k: int, cam_xy: Optional[tuple[float, float]] = None,
+                   away_weight: float = 1.5, min_step_m: float = 0.05):
+    """The k frames most likely to show a READABLE number, not merely the closest.
+
+    Squad numbers are on the back, so a frame only carries one while the player
+    is running away from the camera. Ranking by bbox height alone — what
+    `_tallest_rows` does — optimises for the wrong thing: it happily picks the
+    closest frames, which are disproportionately players turned toward the
+    camera with nothing on their chest to read. Measured on mri01pvelv46d, 74 of
+    105 tracklets came back with no number at all, and every single read that
+    did succeed described the number as being on the back.
+
+    The literature puts the same finding more starkly: only ~5% of a tracklet's
+    frames are legible, and picking them deliberately is worth far more than a
+    better recogniser (+37.8% in arXiv:2309.06285).
+
+    Score = normalised height + `away_weight` x away-facing-ness, where facing is
+    inferred from the direction of travel relative to the camera's own ground
+    position (derived from the calibration — the camera is not always on the
+    y=0 side, and guessing gets the sign backwards). Falls back to pure height
+    when there is no camera position or the player is standing still.
+
+    `away_weight` is 1.5 because facing has to be able to OUTVOTE size: at 0.6 a
+    big front-on frame still beat a slightly smaller back-on one, which is the
+    exact mistake this function exists to stop. At 1.5, every pick on a
+    realistic toward-then-away path is genuinely back-turned, and size still
+    breaks ties among those.
+    """
+    s = sub.copy()
+    s["_h"] = s["y2_eq"] - s["y1_eq"]
+    s = s[s["_h"] > 0]
+    if s.empty or cam_xy is None or "x_m" not in s.columns or len(s) < 3:
+        return s.nlargest(k, "_h")
+
+    s = s.sort_values("time_s")
+    x = s["x_m"].to_numpy(dtype=float)
+    y = s["y_m"].to_numpy(dtype=float)
+    # Step vector, and the unit vector pointing from the camera to the player.
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    cx, cy = cam_xy
+    rx, ry = x - cx, y - cy
+    rn = np.hypot(rx, ry)
+    sn = np.hypot(dx, dy)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        # +1 = moving directly away from the camera (back turned), -1 = toward it.
+        away = (dx * rx + dy * ry) / np.where(rn * sn > 0, rn * sn, np.nan)
+    away = np.nan_to_num(away, nan=0.0)
+    away[sn < min_step_m] = 0.0          # standing still says nothing about facing
+
+    h = s["_h"].to_numpy(dtype=float)
+    h_norm = (h - h.min()) / (h.max() - h.min()) if h.max() > h.min() else np.ones_like(h)
+    s["_away"] = away
+    s["_score"] = h_norm + away_weight * ((away + 1.0) / 2.0)
+    return s.nlargest(k, "_score")
+
+
+def legibility_prescreen(rows, min_digit_px: float, min_away: float) -> tuple[bool, str]:
+    """Cheap gate: could these frames possibly carry a readable number?
+
+    A learned legibility classifier (ResNet34, as in arXiv:2405.13896) is the
+    thorough version of this, but most of the wasted calls here fail for reasons
+    plain geometry already knows: the player is too far away for the digits to
+    survive, or never turns their back. Measured on this footage, a squad number
+    is ~17% of body height, so a 71 px median body gives a 12 px digit — under
+    what any recogniser reads reliably, however good it is.
+
+    Returns (worth_reading, why_not). Deliberately permissive: it only rejects on
+    positive evidence of unreadability, because a wrongly-skipped tracklet is a
+    player the coach must then name by hand.
+    """
+    if rows is None or len(rows) == 0:
+        return False, "no-frames"
+    h = float((rows["y2_eq"] - rows["y1_eq"]).max())
+    digit_px = 0.17 * h
+    if digit_px < min_digit_px:
+        return False, f"too-small(~{digit_px:.0f}px digits)"
+    # `_away` is +1 when the player is running directly away from the camera and
+    # -1 straight at it; _readable_rows attaches it. If the best frames we could
+    # find are all front-on, there is no number in any of them to read.
+    if min_away > -1.0 and "_away" in rows.columns:
+        best_away = float(rows["_away"].max())
+        if best_away < min_away:
+            return False, f"front-on(best away={best_away:+.2f})"
+    return True, ""
+
+
 # --------------------------------------------------------------------------
 # Orchestration (I/O). Kept thin so the pure logic above carries the tests.
 # --------------------------------------------------------------------------
@@ -153,15 +240,22 @@ def read_tracklet_number(video: str, sub, tmp: Path, tracklet_id: int,
                          roster_numbers: list[int], model: str, crops: int,
                          min_conf: float, batches: int,
                          our_color: Optional[str] = None, opp_color: Optional[str] = None,
+                         cam_xy: Optional[tuple[float, float]] = None,
+                         min_digit_px: float = 0.0, min_away: float = -1.0,
                          read_fn: Callable = _read_number,
                          render_fn: Callable = _render_crops) -> tuple[Optional[int], float, int, str, str]:
     """Render number-optimized crops for one tracklet, identify its TEAM by kit
     colour, and vote a number across `batches` independent VLM reads. Returns
     (number|None, confidence, votes, reasoning, team). read_fn/render_fn are
     injectable for tests."""
-    tall = _tallest_rows(sub, crops * batches)
+    # Pick frames where the number could actually BE, not merely the closest —
+    # the squad number is on the back, so a front-on close-up is worthless.
+    tall = _readable_rows(sub, crops * batches, cam_xy=cam_xy)
     if tall.empty:
         return None, 0.0, 0, "no-crops", "other"
+    ok, why = legibility_prescreen(tall, min_digit_px, min_away)
+    if not ok:
+        return None, 0.0, 0, f"skipped:{why}", "other"
     imgs = render_fn(video, tall, crops * batches, tmp, tracklet_id)
     if not imgs:
         return None, 0.0, 0, "no-crops", "other"
@@ -181,6 +275,8 @@ def read_tracklet_number(video: str, sub, tmp: Path, tracklet_id: int,
 def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
                     team_of_track: dict[int, int], roster, game, video_path: str,
                     field_length_m: float, field_width_m: float,
+                    cam_xy: Optional[tuple[float, float]] = None,
+                    min_digit_px: float = 0.0, min_away: float = -1.0,
                     current_of_tl: Optional[dict[int, tuple]] = None,
                     model: str = "claude-opus-4-8", min_conf: float = 0.5,
                     crops: int = 3, batches: int = 1, min_tracklet_min: float = 1.0,
@@ -243,13 +339,19 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
            f">= {min_tracklet_min}min, on-field >= {min_onfield_frac})")
 
     drafts: list[dict] = []
+    n_skipped = 0
     for tl in eligible:
         mins = float(tl_minutes[tl])
         sub = our_tl[our_tl["tracklet"] == tl]
         cur_pid, cur_min = current_of_tl.get(tl, (None, float(mins)))
         num, conf, votes, reasoning, team = read_tracklet_number(
             video_path, sub, tmp, tl, roster_numbers, model, crops, min_conf, batches,
-            our_color=our_color, opp_color=opp_color)
+            our_color=our_color, opp_color=opp_color,
+            cam_xy=cam_xy, min_digit_px=min_digit_px, min_away=min_away)
+        if reasoning.startswith("skipped:"):
+            n_skipped += 1
+            log_fn(f"  tl={tl} {mins:.1f}min  {reasoning}")
+            continue
         if team_out is not None:
             team_out[int(tl)] = team   # per-tracklet VLM team verdict → review-list prune
         # TEAM-COLOUR GATE: only OUR-team reads become drafts. A read the VLM
@@ -263,6 +365,9 @@ def generate_drafts(*, tracks_df, tracklet_of_track: dict[int, int],
                f"c={conf or 0:.2f} v={votes} -> {pred} {'DRAFT' if draft else '—'}")
         if draft:
             drafts.append(draft)
+    if n_skipped:
+        log_fn(f"  prescreen skipped {n_skipped}/{len(eligible)} tracklets "
+               f"({100*n_skipped/max(len(eligible),1):.0f}%) before any VLM call")
     return drafts
 
 

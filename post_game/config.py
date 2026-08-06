@@ -157,6 +157,22 @@ VLM_IDENTITY = os.environ.get("VLM_IDENTITY", "1") != "0"
 VLM_IDENTITY_MODEL = os.environ.get("VLM_IDENTITY_MODEL", "claude-opus-4-8")
 VLM_IDENTITY_MIN_CONF = float(os.environ.get("VLM_IDENTITY_MIN_CONF", "0.5"))
 VLM_IDENTITY_MAX_TRACKLETS = int(os.environ.get("VLM_IDENTITY_MAX_TRACKLETS", "120"))
+# Crop-selection + prescreen. The squad number is on the BACK, so a frame only
+# carries one while the player runs away from the camera — but crops used to be
+# chosen purely by bbox height, i.e. by closeness, which is uncorrelated with
+# facing. Measured: 74 of 105 tracklets returned no number, and every read that
+# DID succeed described the number as being on the back. The literature is
+# blunter still: only ~5% of a tracklet's frames are legible, and choosing them
+# deliberately beats a better recogniser (+37.8%, arXiv:2309.06285).
+# A number is ~17% of body height here, so a 71 px median body gives a 12 px
+# digit — below what any recogniser reads. Skipping those before the call is
+# free accuracy and fewer VLM calls.
+VLM_MIN_DIGIT_PX = float(os.environ.get("VLM_MIN_DIGIT_PX", "14"))
+# Cosine of travel direction vs the camera→player ray: +1 = running straight
+# away (back turned), -1 = straight at the camera. Require the tracklet's best
+# frame to clear this. Deliberately lenient — a wrongly-skipped tracklet is a
+# player the coach then has to name by hand.
+VLM_MIN_AWAY = float(os.environ.get("VLM_MIN_AWAY", "-0.30"))
 
 # --- PitchTracker association gates (TRACK_PITCH only; env-overridable) -------
 # The meter-space tracker's fragment win (775->90) came partly from GLUING
