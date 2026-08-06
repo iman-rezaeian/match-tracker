@@ -51,11 +51,18 @@ def _now_ms() -> int:
 
 
 # --- EVENT_TYPES (non-silent ids only) — mirrors the jsx map ---------------
+# The JS side derives this from EVENT_TYPES itself (`!def.silent`), so it picks
+# up new event types for free; this copy has to be kept in step by hand. Keep it
+# ordered like the jsx map and re-check on every event-type addition —
+# PEN_MISSED / OPP_PEN_MISSED were missed here, which under-counted Involvement
+# on every game containing one and shifted the squad INV prior for everyone
+# else. post_game/test_score_mirror.py fails if the two ever diverge again.
 KNOWN_NONSILENT_EVENTS = frozenset({
     "GOAL", "ASSIST", "KEY_PASS", "SAVE", "SHOT_ON", "SHOT_OFF", "BLOCK",
     "BALL_WIN", "CLEAR", "KICK_OUT", "DUEL_WIN", "DUEL_LOSE", "GIVE_GO",
     "GATES", "TURNOVER", "HOLDS_BALL", "OPP_GOAL",
     "FOUL_BY", "FOUL_ON", "PEN_CONCEDED", "PEN_AWARDED",
+    "PEN_MISSED", "OPP_PEN_MISSED",
 })
 
 # v2: mistake events already priced in DEF/DEC earn no Involvement credit.

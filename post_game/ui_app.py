@@ -659,9 +659,21 @@ if _c1.button("Confirm 2nd-half kickoff (override)", disabled=is_running or not 
         st.rerun()
     except Exception as e:
         st.error(f"Bad timestamp: {e}")
-if _c2.button("Confirm auto-derived 2nd-half", disabled=is_running):
+_accept_auto = _c2.button("Confirm auto-derived 2nd-half", disabled=is_running)
+if _accept_auto and current_h2_offset and not st.session_state.get("_h2_drop_ok"):
+    # This clears a manual override, and H2's offset anchors every player's
+    # on-field window for the half \u2014 so make discarding one deliberate rather
+    # than a mis-tap on the button next door.
+    st.session_state["_h2_drop_ok"] = True
+    st.warning(
+        f"This DISCARDS the saved 2nd-half override "
+        f"({_seconds_to_hms(current_h2_offset)}) and falls back to the "
+        f"auto-derived kickoff. Press the button again to confirm."
+    )
+elif _accept_auto:
     # accept the auto-derived H2 (clear any override \u2192 0) and mark confirmed
     firestore_io.set_video_offset_h2_kickoff_s(game_id, 0.0, confirmed=True)
+    st.session_state.pop("_h2_drop_ok", None)
     st.success("\u2713 2nd-half kickoff CONFIRMED (auto-derived)")
     _list_games.clear()
     st.rerun()
@@ -727,8 +739,15 @@ if _existing_cal:
         _prior = firestore_io.get_field_scale(_fk) if _fk else None
         _calib_verdict = evaluate_calibration(_raw, _prior)
         _calib_ok = _calib_verdict.ok
-    except Exception:
-        _calib_ok, _calib_verdict = True, None
+    except Exception as _e:
+        # Fail CLOSED. The point of this gate is that the coach never has to ask
+        # a developer whether a calibration is good enough to run; defaulting to
+        # "fine" on an evaluator error hands him exactly that judgement call,
+        # silently. The pipeline blocks independently, so the worst case here is
+        # a run refused at the UI that the CLI would also have refused.
+        _calib_ok, _calib_verdict = False, None
+        st.warning(f"Could not evaluate calibration quality ({_e}). "
+                   "Re-calibrate, or run from the CLI with --skip-calibration-qc.")
     _when = f" · saved {_saved_ts}" if _saved_ts else ""
     _sph = _existing_cal.sphere
     if _sph:

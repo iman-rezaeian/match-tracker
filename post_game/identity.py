@@ -221,7 +221,11 @@ def _gk_segments(gk_player_id: Optional[str], gk_changes: list[dict]) -> list[di
         segs.append({"playerId": gk_player_id, "from": 0, "to": None})
     for ch in gk_changes:
         at = int(ch.get("at", 0))
-        pid = ch.get("playerId")
+        # The PWA writes each change as {at, gkPlayerId} (see setGameGK). Reading
+        # only `playerId` silently dropped EVERY keeper change, leaving the
+        # starting GK in goal for the whole match. `playerId` stays accepted for
+        # any older doc that used it.
+        pid = ch.get("gkPlayerId") or ch.get("playerId")
         if not pid:
             continue
         if segs:
