@@ -432,6 +432,30 @@ ASSIGN_MINUTE_SLACK = 1.5      # per-player budget = coach-logged minutes + this
 # moves the log from a post-hoc filter to a real assignment constraint.
 # Default 240.0 reproduces the previous behaviour exactly (no-op).
 ID_ONFIELD_TOLERANCE_S = float(os.environ.get("ID_ONFIELD_TOLERANCE_S", "240.0"))
+
+# --- Sub-tap slack (post_game/sub_slack.py, applied to stats' on-field windows)
+# The other half of the asymmetry described just above: the assigner tolerates
+# 240 s of error in the SUB log while stats._drop_offwindow tolerates ZERO, and
+# deletes anything outside the logged window. The coach taps a mass rotation one
+# child at a time, so those timestamps are only as good as the rotation was fast.
+# Measured on mri01pvelv46d: 5 of 8 substitution moments involve 3+ players, taps
+# within a moment span 80 s median / 117 s worst; and 96% of the 20.7% of
+# detections the filter deletes sit within 180 s of a substitution moment
+# (median 58 s) — a signature of tap lag, not of the tracker following the wrong
+# child, which would be spread evenly through the game.
+# A flat tolerance can't fix this: 240 s (matching the assigner) drops 0.1%
+# instead of 20.7%, i.e. it switches the filter off. So each boundary is widened
+# by ITS OWN substitution moment's tap spread — clean single taps stay tight and
+# keep catching real misattribution; messy rotations get exactly as much room as
+# they were messy. Default ON; SUB_SLACK_ENABLED=0 restores the old behaviour.
+SUB_SLACK_ENABLED = os.environ.get("SUB_SLACK_ENABLED", "1") != "0"
+# Floor applied to every boundary — covers ordinary reaction time on a clean tap.
+SUB_SLACK_BASE_S = float(os.environ.get("SUB_SLACK_BASE_S", "20.0"))
+# Taps closer together than this are one substitution moment (one rotation).
+SUB_SLACK_CLUSTER_GAP_S = float(os.environ.get("SUB_SLACK_CLUSTER_GAP_S", "90.0"))
+# Ceiling on the spread credited to any one moment, so a pathological log can't
+# widen a window until the filter stops filtering.
+SUB_SLACK_MAX_S = float(os.environ.get("SUB_SLACK_MAX_S", "150.0"))
 # Tag pre-fill (Phase 3.3): suggestedPressure = an opponent within this radius
 # of the assigned player at the action moment. ~3 m ≈ closing-down range at U10.
 SUGGEST_PRESSURE_RADIUS_M = 3.0

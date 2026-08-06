@@ -697,6 +697,15 @@ def run(
     # SUB tap on the relevant edge; empty → identical to the pure coach log.
     _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video,
                               corrections=sub_corrections or None)
+    # `played_minutes` below is the coach's ANSWER for how long each child was on
+    # — the denominator for coverage and the base for extrapolation. It must keep
+    # using the raw log: widening it would hand every player minutes they didn't
+    # play. Only the attribution FILTER gets slack, so a detection near a messy
+    # rotation stops being deleted while the minutes it counts against stay honest.
+    from .sub_slack import relax_intervals, sub_times_from_events
+    _onf_filter = relax_intervals(
+        _onf, sub_times_from_events(game.events, clock_to_video), log_fn=log.info)
+
     played_minutes: dict[str, float] = {}
     for _pid, _ivs in _onf.items():
         _tot = 0.0
@@ -767,8 +776,11 @@ def run(
         conflicts_out=player_conflicts,
         tracklet_of_track=tracklet_of_track,
         # The coach's SUB taps as an independent filter: a detection credited to a
-        # player while the log says he was on the bench is the wrong child.
-        onfield_intervals={str(k): v for k, v in _onf.items()},
+        # player while the log says he was on the bench is the wrong child. The
+        # boundaries are relaxed by each substitution's own tap spread first —
+        # the taps are trustworthy about WHO changed, but only as trustworthy
+        # about WHEN as the rotation was quick to enter. See sub_slack.
+        onfield_intervals={str(k): v for k, v in _onf_filter.items()},
     )
     # The report mixes two independent defect kinds per player, so every read is
     # .get(): `conflict_seconds` (physically impossible — two places at once) and
