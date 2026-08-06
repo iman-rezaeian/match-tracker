@@ -1105,9 +1105,17 @@ function CoachApp() {
     try { await storageSet(STORAGE_KEYS.ROSTER, JSON.stringify(next)); } catch (e) {}
   };
 
-  const persistGames = async (next) => {
-    setGames(next);
-    try { await storageSet(STORAGE_KEYS.GAMES, JSON.stringify(next)); } catch (e) {}
+  // Accepts either the next array or an updater (prev => next). The updater
+  // form is what makes concurrent writes safe: React hands the CURRENT state
+  // to the callback, so two taps in the same batch compose instead of the
+  // second silently overwriting the first from a stale closure. See updateGame.
+  const persistGames = async (nextOrFn) => {
+    let resolved = null;
+    setGames(prev => {
+      resolved = typeof nextOrFn === 'function' ? nextOrFn(prev) : nextOrFn;
+      return resolved;
+    });
+    try { await storageSet(STORAGE_KEYS.GAMES, JSON.stringify(resolved)); } catch (e) {}
   };
 
   const persistWeights = async (next) => {
@@ -1209,13 +1217,18 @@ function CoachApp() {
       ...(liveInput ? { liveInput } : {}),
       ...(youtubeVideoId ? { youtubeVideoId } : {}),
     };
-    persistGames([game, ...games]);
+    persistGames(prev => [game, ...prev]);
     setActiveGameId(game.id);
     setView('activeGame');
   };
 
+  // Mutate one game from its LATEST state. This used to map over the `games`
+  // closure, so two writes dispatched in the same React batch both started
+  // from the pre-batch snapshot and the second discarded the first — a goal
+  // logged by rapid tapping could vanish, since logEvent auto-chains
+  // GOAL -> ASSIST. Passing an updater down defers the read to commit time.
   const updateGame = (id, mutator) => {
-    persistGames(games.map(g => g.id === id ? mutator(g) : g));
+    persistGames(prev => prev.map(g => g.id === id ? mutator(g) : g));
   };
 
   const logEvent = (gameId, eventType, playerId, extras = {}) => {
@@ -1236,13 +1249,16 @@ function CoachApp() {
       source: 'live',
       ...extras,
     };
-    const updated = {
-      ...game,
-      events: [...game.events, event],
-      ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
-      oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    // Derive from the LATEST game, not the `game` read above: logEvent
+    // auto-chains GOAL -> ASSIST, so two taps can land in one React batch and
+    // the second would otherwise append to a pre-first-tap events array and
+    // recompute the score from the pre-goal value — erasing the goal.
+    persistGames(prev => prev.map(g => g.id === gameId ? {
+      ...g,
+      events: [...g.events, event],
+      ourScore: g.ourScore + (ev.delta === 'us' ? 1 : 0),
+      oppScore: g.oppScore + (ev.delta === 'opp' ? 1 : 0),
+    } : g));
 
     const player = roster.find(p => p.id === playerId);
     let playerLabel = '';
@@ -1283,38 +1299,42 @@ function CoachApp() {
   const undoLastEvent = (gameId) => {
     const game = games.find(g => g.id === gameId);
     if (!game || game.events.length === 0) return;
-    // Skip silent POSITION events — undo should target the coach's last
-    // visible action (GOAL, SUB, etc.), not their last tactical drag.
-    let lastIdx = -1;
-    for (let i = game.events.length - 1; i >= 0; i--) {
-      if (game.events[i].type !== 'POSITION') { lastIdx = i; break; }
-    }
-    if (lastIdx === -1) return;
-    const last = game.events[lastIdx];
-    const ev = EVENT_TYPES[last.type];
-    const updated = {
-      ...game,
-      events: game.events.filter((_, i) => i !== lastIdx),
-      ourScore: game.ourScore - (ev?.delta === 'us' ? 1 : 0),
-      oppScore: game.oppScore - (ev?.delta === 'opp' ? 1 : 0),
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    // Resolve WHICH event to drop against the latest state — an undo racing a
+    // just-logged event would otherwise compute its index from a stale list
+    // and remove the wrong one.
+    persistGames(prev => prev.map(g => {
+      if (g.id !== gameId) return g;
+      // Skip silent POSITION events — undo should target the coach's last
+      // visible action (GOAL, SUB, etc.), not their last tactical drag.
+      let lastIdx = -1;
+      for (let i = g.events.length - 1; i >= 0; i--) {
+        if (g.events[i].type !== 'POSITION') { lastIdx = i; break; }
+      }
+      if (lastIdx === -1) return g;
+      const ev = EVENT_TYPES[g.events[lastIdx].type];
+      return {
+        ...g,
+        events: g.events.filter((_, i) => i !== lastIdx),
+        ourScore: g.ourScore - (ev?.delta === 'us' ? 1 : 0),
+        oppScore: g.oppScore - (ev?.delta === 'opp' ? 1 : 0),
+      };
+    }));
     showToast('Last event removed');
   };
 
   const deleteEvent = (gameId, eventId) => {
-    const game = games.find(g => g.id === gameId);
-    if (!game) return;
-    const ev = game.events.find(e => e.id === eventId);
-    if (!ev) return;
-    const evType = EVENT_TYPES[ev.type];
-    const updated = {
-      ...game,
-      events: game.events.filter(e => e.id !== eventId),
-      ourScore: game.ourScore - (evType?.delta === 'us' ? 1 : 0),
-      oppScore: game.oppScore - (evType?.delta === 'opp' ? 1 : 0),
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => {
+      if (g.id !== gameId) return g;
+      const ev = g.events.find(e => e.id === eventId);
+      if (!ev) return g;
+      const evType = EVENT_TYPES[ev.type];
+      return {
+        ...g,
+        events: g.events.filter(e => e.id !== eventId),
+        ourScore: g.ourScore - (evType?.delta === 'us' ? 1 : 0),
+        oppScore: g.oppScore - (evType?.delta === 'opp' ? 1 : 0),
+      };
+    }));
   };
 
   // Post-game tagging: patch zone/pressure/decision on an existing event.
@@ -1323,20 +1343,21 @@ function CoachApp() {
   // = coach reviewed the tags (even if left empty), dismissed = coach said
   // "don't ask about this event again". Both drain the queue permanently.
   const updateEvent = (gameId, eventId, patch) => {
-    const game = games.find(g => g.id === gameId);
-    if (!game) return;
-    const events = game.events.map(e => {
-      if (e.id !== eventId) return e;
-      const next = { ...e };
-      for (const k of ['zone', 'pressure', 'decision', 'tagsConfirmed', 'tagDismissed']) {
-        if (k in patch) {
-          if (patch[k] == null) delete next[k];
-          else next[k] = patch[k];
+    persistGames(prev => prev.map(g => {
+      if (g.id !== gameId) return g;
+      const events = g.events.map(e => {
+        if (e.id !== eventId) return e;
+        const next = { ...e };
+        for (const k of ['zone', 'pressure', 'decision', 'tagsConfirmed', 'tagDismissed']) {
+          if (k in patch) {
+            if (patch[k] == null) delete next[k];
+            else next[k] = patch[k];
+          }
         }
-      }
-      return next;
-    });
-    persistGames(games.map(g => g.id === gameId ? { ...g, events } : g));
+        return next;
+      });
+      return { ...g, events };
+    }));
   };
 
   // Confirm-queue: turn a live BOOKMARK (timestamp-only reflex tap) into a
@@ -1362,13 +1383,12 @@ function CoachApp() {
       source: 'bookmark-confirmed',
       ...extras,
     };
-    const updated = {
-      ...game,
-      events: game.events.map(e => e.id === bookmarkId ? confirmed : e),
-      ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
-      oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId ? {
+      ...g,
+      events: g.events.map(e => e.id === bookmarkId ? confirmed : e),
+      ourScore: g.ourScore + (ev.delta === 'us' ? 1 : 0),
+      oppScore: g.oppScore + (ev.delta === 'opp' ? 1 : 0),
+    } : g));
     showToast(`${ev.emoji} ${ev.label} confirmed from 🔖`);
   };
 
@@ -1392,22 +1412,20 @@ function CoachApp() {
       source: 'voice-confirmed',
       ...(quote ? { voiceQuote: quote } : {}),
     };
-    const updated = {
-      ...game,
-      events: [...game.events, confirmed],
-      voiceDrafts: (game.voiceDrafts || []).filter(d => d.id !== draft.id),
-      ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
-      oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId ? {
+      ...g,
+      events: [...g.events, confirmed],
+      voiceDrafts: (g.voiceDrafts || []).filter(d => d.id !== draft.id),
+      ourScore: g.ourScore + (ev.delta === 'us' ? 1 : 0),
+      oppScore: g.oppScore + (ev.delta === 'opp' ? 1 : 0),
+    } : g));
     showToast(`${ev.emoji} ${ev.label} confirmed from 🎙`);
   };
 
   const dismissVoiceDraft = (gameId, draftId) => {
-    const game = games.find(g => g.id === gameId);
-    if (!game) return;
-    const updated = { ...game, voiceDrafts: (game.voiceDrafts || []).filter(d => d.id !== draftId) };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId
+      ? { ...g, voiceDrafts: (g.voiceDrafts || []).filter(d => d.id !== draftId) }
+      : g));
   };
 
   const endGame = (gameId) => {
@@ -1479,7 +1497,7 @@ function CoachApp() {
       showToast('⚠️ Cloud delete failed — see console');
     }
 
-    persistGames(games.filter(g => g.id !== gameId));
+    persistGames(prev => prev.filter(g => g.id !== gameId));
     setView('home');
     showToast('🗑 Game deleted');
   };
@@ -1705,8 +1723,8 @@ function CoachApp() {
         y: lastOffPos.y,
       });
     }
-    const updated = { ...game, events: [...game.events, ...inheritedEvents] };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId
+      ? { ...g, events: [...g.events, ...inheritedEvents] } : g));
     const off = roster.find(p => p.id === offPlayerId);
     const on = roster.find(p => p.id === onPlayerId);
     showToast(`🔄 ${on?.name || '?'} IN · ${off?.name || '?'} OUT`);
@@ -1751,8 +1769,8 @@ function CoachApp() {
         bulkHalftime: true,
       });
     }
-    const updated = { ...game, events: [...game.events, ...newEvents] };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId
+      ? { ...g, events: [...g.events, ...newEvents] } : g));
     showToast(`🔄 Lineup updated · ${onNow.length} on / ${offNow.length} off`);
   };
 
@@ -1779,7 +1797,7 @@ function CoachApp() {
       x: cx,
       y: cy,
     };
-    persistGames(games.map(g => g.id === gameId
+    persistGames(prev => prev.map(g => g.id === gameId
       ? { ...g, events: [...g.events, event] }
       : g));
   };
@@ -1818,7 +1836,7 @@ function CoachApp() {
       });
     }
     if (newEvents.length === 0) return;
-    persistGames(games.map(g => g.id === gameId
+    persistGames(prev => prev.map(g => g.id === gameId
       ? { ...g, events: [...g.events, ...newEvents] }
       : g));
   };
@@ -1831,7 +1849,10 @@ function CoachApp() {
     const elapsed = computeElapsed(game);
     const onField = onFieldAt(game, now - 1);
 
-    let events = [...(game.events || [])];
+    // Only the NEW events are built here; they are appended to the latest
+    // events array inside the updater below, so a concurrent write isn't
+    // overwritten by a copy of the pre-write list.
+    const newEvents = [];
 
     // If swapping to a new GK who's currently on the bench, auto-sub them on
     // for the old GK (who must come off to make room). This only fires for the
@@ -1839,7 +1860,7 @@ function CoachApp() {
     // SUB-triggered GK pick, the new GK is already on the field.
     if (newGKPlayerId && prevGKId && newGKPlayerId !== prevGKId
         && onField.has(prevGKId) && !onField.has(newGKPlayerId)) {
-      events.push({
+      newEvents.push({
         id: uid(),
         type: 'SUB',
         playerId: prevGKId,
@@ -1851,7 +1872,7 @@ function CoachApp() {
     }
 
     // Always log a visible GK_CHANGE event so the swap appears in the feed.
-    events.push({
+    newEvents.push({
       id: uid(),
       type: 'GK_CHANGE',
       playerId: newGKPlayerId,
@@ -1862,12 +1883,11 @@ function CoachApp() {
     });
 
     const change = { at: now + 1, gkPlayerId: newGKPlayerId || null };
-    const updated = {
-      ...game,
-      events,
-      gkChanges: [...(game.gkChanges || []), change],
-    };
-    persistGames(games.map(g => g.id === gameId ? updated : g));
+    persistGames(prev => prev.map(g => g.id === gameId ? {
+      ...g,
+      events: [...(g.events || []), ...newEvents],
+      gkChanges: [...(g.gkChanges || []), change],
+    } : g));
     const p = roster.find(pl => pl.id === newGKPlayerId);
     showToast(`🧤 ${p?.name || 'No GK'} now in goal`);
     setPendingEvent(null);
@@ -2217,15 +2237,17 @@ function CoachApp() {
             if (!o || !n) return 0;
             const matches = (s) => (s || '').trim().toLowerCase() === o;
             let count = 0;
-            const nextGames = games.map((g) => {
-              if (matches(g.opponent)) { count++; return { ...g, opponent: n }; }
-              return g;
-            });
             const nextSchedule = schedule.map((s) => {
               if (matches(s.opponent)) { count++; return { ...s, opponent: n }; }
               return s;
             });
-            await Promise.all([persistGames(nextGames), persistSchedule(nextSchedule)]);
+            await Promise.all([
+              persistGames(prev => prev.map((g) => {
+                if (matches(g.opponent)) { count++; return { ...g, opponent: n }; }
+                return g;
+              })),
+              persistSchedule(nextSchedule),
+            ]);
             return count;
           }}
           initialEditId={resumeScheduleEditId}
