@@ -109,7 +109,58 @@ physics term. Worth fixing as one theme.
 
 Projection noise is not the blocker: per-step distance is 0.10 m median / 0.34 m
 p90, matching real U10 motion, so a 1.0–1.5 m gate sits comfortably above the
-measurement floor.
+measurement floor (see the appendix).
+
+---
+
+## 4. Identity has almost no evidence to work with — STRUCTURAL
+
+Not a bug: `identity_assign.py` is a reasonable algorithm run on a starved
+input. Worth recording because it caps what any upstream fix can buy.
+
+**The entire identity evidence for this game is 72 anchors**, for 176 tracklets:
+
+| coach event | count | usable as an identity anchor? |
+|---|---|---|
+| POSITION | 45 | yes — the board template the assigner is built on |
+| action events (GOAL/ASSIST/SHOT/…) | 27 | yes |
+| SUB | 28 | only gates *who is eligible*, not which tracklet |
+| GK_CHANGE | 1 | GK window only |
+
+POSITION is the load-bearing signal, and it is **median 3 events per player for
+a whole game** (min 2, max 7, 12 players). 16 of the 45 land in the first ~9
+minutes — the coach sets the board at kickoff and adjusts occasionally. So the
+"positional template" is a formation diagram sampled a handful of times, not a
+record of where a child was.
+
+Worse for discrimination: across all players the board spots span x = 12–44 m of
+a 55 m pitch, and individual players' spots range up to 30 m in x. The template
+positions overlap heavily, so matching a tracklet to the nearest template entry
+is a weak discriminator between *our own* children — which is exactly what
+memory's `phase-a-coach-log-outfield-dead` measured (coach-log anchors
+individuate only the GK).
+
+**Implication for the re-track.** Fixing #1 removes the opposition from the
+candidate pool, which should raise naming a lot in relative terms — but the
+ceiling is still set by 72 anchors over 176 tracklets. Do not expect the grass
+fix alone to produce high automatic naming. The per-player signal that beat this
+ceiling in prior work is the jersey-number VLM
+(`phase-b-vlm-jersey-number-works`, precision ~0.79, coverage ~28%), which is
+`VLM_IDENTITY`, default OFF and NOT enabled on the clean-baseline run.
+
+**Suggested measurement order after the re-track:** (a) grass fix alone, to
+isolate how much of the unknown mass was opposition; (b) then VLM on top, to see
+what the only real per-player signal adds against a clean candidate pool.
+
+---
+
+## Appendix: projection sensitivity
+
+A 10 px error in the bbox bottom moves the projected ground point ~1.0 m median
+(4.0 m p90); 20 px gives 2.1 m / 8.9 m. In practice the error is correlated
+frame-to-frame and cancels — measured per-step distance is 0.10 m median — but
+it bounds how tight any distance gate can sensibly be. The 1.0–1.5 m gate in #3
+is comfortably above that floor.
 
 ---
 
