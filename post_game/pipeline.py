@@ -183,6 +183,10 @@ def run(
              play_windows[0][0], play_windows[0][1],
              play_windows[1][0], play_windows[1][1])
     h1_end_s = play_windows[0][1]
+    # The coach-derived break, captured BEFORE smoke mode overwrites the windows
+    # below — the halftime split hints its detector with this, and the smoke
+    # windows would be a nonsense hint.
+    logged_break_s = (play_windows[0][1], play_windows[1][0]) if len(play_windows) > 1 else None
 
     # Smoke-test mode: keep a window of `max_play_s` seconds centered on the
     # MIDDLE of each half. Sampling from the middle catches active play
@@ -495,13 +499,18 @@ def run(
     # spans it, so the invariant holds regardless of which cause produced it.
     # Runs BEFORE gap-split/classification so one id universe flows downstream.
     # Skipped on the pinned path (ids must stay byte-stable for coach overrides).
+    # NOT skipped for smoke runs: excluding them meant a smoke run could never
+    # rehearse this stage, which is most of what a smoke run is for. Safety comes
+    # from detect_halftime_break itself — it returns None unless the footage
+    # actually contains a long enough empty-pitch run near the logged break, so
+    # on a window that doesn't span halftime this is a no-op that says so.
     if (config.HALFTIME_SPLIT_ENABLED and not tracks_df.empty
-            and pin_partition is None and not smoke_windows):
+            and pin_partition is None):
         from .halftime_split import detect_halftime_break, split_tracks_at_halftime
         # Hint the detector with the coach-derived break so an injury stoppage
         # can't be mistaken for halftime; it falls back to the logged time when
         # the footage is inconclusive.
-        _logged_break = (play_windows[0][1], play_windows[1][0]) if len(play_windows) > 1 else None
+        _logged_break = logged_break_s
         _bw = detect_halftime_break(tracks_df, logged_break=_logged_break)
         if _bw is None:
             log.info("  -> halftime split: no break detected in the footage; "
