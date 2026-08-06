@@ -9629,7 +9629,12 @@ const TEAM_SHAPE_SERIES = [
   { key: 'depth_m',       label: 'DEPTH',   color: '#f59e0b', hint: 'front-to-back spread' },
 ];
 
-function Sparkline({ times, values, color, halfT }) {
+// Full-match time series (x = seconds, with an optional halftime rule). Distinct
+// from the generic `Sparkline` above, which plots evenly-spaced values and takes
+// no `times`. These were both named `Sparkline`; function declarations hoist
+// last-wins, so this one silently shadowed the other and threw on every
+// Season Analytics row with 2+ games. Keep the names distinct.
+function TimeSeriesSparkline({ times, values, color, halfT }) {
   // Downsample to ~120 points so the SVG stays light on a full-match series.
   const n = values.length;
   if (n < 2) return null;
@@ -9675,7 +9680,7 @@ function TeamShapeChart({ doc, halfLenS }) {
                 <div className="text-[10px] tabular-nums text-stone-300">{a.toFixed(1)}m</div>
               </div>
               <div className="flex-1 min-w-0" title={s.hint}>
-                <Sparkline times={times} values={vals} color={s.color} halfT={halfLenS} />
+                <TimeSeriesSparkline times={times} values={vals} color={s.color} halfT={halfLenS} />
               </div>
             </div>
           );
