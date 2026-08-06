@@ -336,9 +336,29 @@ STITCH_GAP_WEIGHT = 0.5        # link-cost weight on temporal gap (s)
 # even separate teams), so appearance carries little signal; env-overridable to A/B
 # lowering it. Committed default unchanged (5.0).
 STITCH_APP_WEIGHT = float(os.environ.get("STITCH_APP_WEIGHT", "5.0"))
-# Absolute cap (m) on the A-end -> B-start move, on top of speed*gap+slack. Bounds
-# over-merge when the gap is large. inf = no-op (current behavior).
-STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "inf"))
+# Absolute cap (m) on the A-end -> B-start move, on top of speed*gap+slack.
+#
+# The speed term alone is far too permissive here because it assumes the child
+# sprints in a DEAD-STRAIGHT LINE for the whole unobserved gap: at 9 m/s over the
+# 10 s max gap it sanctions a 93 m move on a 55x30 m pitch. Measured on this
+# game's 761 in-tracklet joins, the median join already spans 5.4 m and the p90
+# spans 24 m, with a 64 m maximum — longer than the pitch. Real U10s cover ~1 m/s
+# median and change direction constantly, so those long joins are how one
+# tracklet ends up holding two different children. Independent evidence: reading
+# the same tracklet with the VLM at two times seconds apart returns two different
+# squad numbers (see NEXT_RETRACK.md #5).
+#
+# 12 m rejects 26% of joins — every physically absurd one — while keeping the
+# large tracklets that are easiest for the coach to recognise. Simulated cost to
+# him: the taps needed to cover 90% of tracked time go 71 -> 122, and tracklets
+# of 2 min or more only fall 50 -> 41. Tightening further is a bad trade: 8 m
+# costs another 37 taps and destroys 6 more of those big tracklets, while cutting
+# genuine merges of a child who simply jogged 9 m during an occlusion.
+#
+# A rejected join is not lost data — it becomes a separate tracklet the coach can
+# name. A wrong merge silently credits one child's running to another, which no
+# amount of naming repairs.
+STITCH_DIST_CAP_M = float(os.environ.get("STITCH_DIST_CAP_M", "12.0"))
 # Stitch chaining mode: "greedy" (each fragment grabs its locally-cheapest
 # successor — the shipped behavior) or "global" (min-cost bipartite matching over
 # the same gated edges, so a locally-cheap link never orphans a fragment that had
