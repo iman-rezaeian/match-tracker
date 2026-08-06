@@ -914,6 +914,15 @@ def run(
     # the identity-dependent analytics and MERGE them in, leaving the reel / audio /
     # broadcast-index (identity-independent) untouched — no re-render, no re-upload.
     if stats_only:
+        # The VLM draft stage lives at 7c-bis, well past this early return, and
+        # it needs the source video to render number crops — which a stats-only
+        # refresh deliberately never opens. Passing --vlm-identity here used to
+        # be accepted and then silently do nothing; say so instead.
+        if (config.VLM_IDENTITY if vlm_identity is None else vlm_identity):
+            log.warning("--vlm-identity has no effect with --stats-only: the VLM "
+                        "stage renders crops from the source video, which a "
+                        "stats-only refresh does not open. Re-run without "
+                        "--stats-only (cached tracks are still reused).")
         _tlrecs = _build_tracklet_index(tracks_df, tracklet_of_track, assignments,
                                         fps_sampled, field_cal.length_m, field_cal.width_m,
                                         track_jersey_samples=track_jersey_samples,
@@ -1125,11 +1134,15 @@ def run(
                                              our_color_hex=_our_color(game),
                                              opp_color_hex=game.away_color)
 
-    # 7c-bis. VLM jersey-number identity DRAFTS (opt-in). Runs HERE, inside the
-    # run, so drafts key by THIS run's tracklet ids — the exact ids the analytics
-    # doc + PWA FIX-IDS use (a standalone tool can't reproduce them). Reads the
-    # number off number-optimized crops, writes suggestions to game.identityDrafts;
-    # never auto-applies. Off by default (needs the video + an Opus OAuth token).
+    # 7c-bis. VLM jersey-number identity DRAFTS. Runs HERE, inside the run, so
+    # drafts key by THIS run's tracklet ids — the exact ids the analytics doc +
+    # PWA FIX-IDS use (a standalone tool can't reproduce them). Reads the number
+    # off number-optimized crops, writes suggestions to game.identityDrafts;
+    # never auto-applies. ON by default: it lifts naming from ~4.6% of tracked
+    # time to ~35% for ~9 min of a ~2 h run, and jersey numbers are the only
+    # signal that tells identically-dressed children apart. Needs the raw video
+    # and an Opus token; the try/except below keeps a missing token from costing
+    # the run, since everything else is already computed by this point.
     _vlm_on = config.VLM_IDENTITY if vlm_identity is None else vlm_identity
     if _vlm_on and tracklet_records and not stats_only:
         try:

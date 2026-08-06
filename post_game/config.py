@@ -137,9 +137,23 @@ TRACK_PITCH = os.environ.get("TRACK_PITCH", "0") != "0"
 # after building the tracklet index, and writes per-tracklet SUGGESTION drafts to
 # game.identityDrafts (the PWA FIX-IDS view surfaces them as one-click Accept
 # chips → identityOverrides). Keyed by the run's OWN tracklet ids so they match
-# the analytics doc the coach sees. Default OFF (needs the raw video + an
-# Opus-capable ANTHROPIC_OAUTH_TOKEN, and costs VLM calls); env/CLI-overridable.
-VLM_IDENTITY = os.environ.get("VLM_IDENTITY", "0") != "0"
+# the analytics doc the coach sees.
+#
+# Default ON as of 2026-08-06, measured on mri01pvelv46d against a candidate pool
+# that the kit-vote fix had just cleaned of opposition:
+#   * coach-log anchors alone name  ~4.6% of tracked time
+#   * + VLM jersey numbers          ~35%   (30 drafts, 26 at confidence >= 0.8)
+#   * cost: ~9 min on top of a ~2 h run, and it also pruned 18 opponent
+#     tracklets the colour classifier had let through
+# Jersey numbers are the only per-player signal that separates children in
+# identical kit — the tactical board cannot (45 POSITION events for a whole
+# game, overlapping heavily), which is what held naming near zero for so long.
+#
+# MUST run in the same pass as tracking: it renders number crops from the RAW
+# video, and that 80 GB source is deleted after a verified analysis. There is no
+# second chance to add drafts later, and --stats-only skips this stage entirely
+# (the pipeline warns if you ask for both).
+VLM_IDENTITY = os.environ.get("VLM_IDENTITY", "1") != "0"
 VLM_IDENTITY_MODEL = os.environ.get("VLM_IDENTITY_MODEL", "claude-opus-4-8")
 VLM_IDENTITY_MIN_CONF = float(os.environ.get("VLM_IDENTITY_MIN_CONF", "0.5"))
 VLM_IDENTITY_MAX_TRACKLETS = int(os.environ.get("VLM_IDENTITY_MAX_TRACKLETS", "120"))
