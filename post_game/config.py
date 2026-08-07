@@ -112,6 +112,28 @@ REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 # tuning sweep can vary it without a code edit (a long buffer lets a lost track
 # linger and re-acquire the WRONG same-kit body once it reappears).
 TRACK_BUFFER_S = float(os.environ.get("TRACK_BUFFER_S", "20"))
+# BoT-SORT association thresholds. These were literals inside Tracker.__init__
+# until a Stage-2 audit found they disagree with the detector about what counts
+# as a person: DETECT_CONFIDENCE lets YOLO emit boxes down to 0.30, but a track
+# needs 0.50 to be created and 0.45 to associate in the high-confidence round.
+# Measured on mrhvbvwi1gjpn by replaying the frame after each mid-field track
+# death (tracking/death_replay_probe.py): YOLO still saw the body 56% of the
+# time, and of those boxes 36% scored below 0.50 and 29% below 0.45 — detected,
+# but invisible to the tracker for the purpose of resuming an identity.
+#
+# Defaults are exactly the previous literals, so lifting them into config is a
+# no-op. Env-overridable so a smoke sweep can A/B them without a code edit; all
+# four are fingerprinted in pipeline._TRACKING_CONFIG_KEYS, so changing one
+# invalidates the Stage-2 cache instead of silently reusing it.
+TRACK_HIGH_THRESH = float(os.environ.get("TRACK_HIGH_THRESH", "0.45"))
+TRACK_NEW_THRESH = float(os.environ.get("TRACK_NEW_THRESH", "0.50"))
+TRACK_LOW_THRESH = float(os.environ.get("TRACK_LOW_THRESH", "0.10"))
+# Let the low-confidence second association round also revive LOST tracks
+# (default OFF — see post_game/tracking._RescuingBotSort for what upstream does
+# and why this exists). Measured: 99.3% of bodies reappear within 2.0 s of a
+# track death while TRACK_BUFFER_S keeps the track alive for 20 s, so the
+# evidence to re-associate is present and upstream declines to use it.
+TRACK_RESCUE_LOST = os.environ.get("TRACK_RESCUE_LOST", "0") != "0"
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate
 # space instead of the distorted equirect frame. See B2_FIELD_SPACE_TRACKING.md +
 # post_game/tracking_field.py. Re-ID de-corruption (real crops via boxmot embs) +

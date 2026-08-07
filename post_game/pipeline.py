@@ -1372,7 +1372,14 @@ _TRACKING_SOURCES = ("tracking.py", "tracking_field.py", "tracking_pitch.py",
 # different sample rate / tile count is never silently mixed with a fresh one.
 _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          "DETECT_CONFIDENCE", "TRACK_BUFFER_S", "CROP_W", "CROP_H",
-                         "YOLO_MODEL", "TRACK_FIELD_SPACE", "TRACK_PITCH")
+                         "YOLO_MODEL", "TRACK_FIELD_SPACE", "TRACK_PITCH",
+                         # Association thresholds + the lost-track rescue. These
+                         # live in config.py, which is NOT in _TRACKING_SOURCES,
+                         # so without them here a threshold sweep would change
+                         # Stage-2 output while leaving the fingerprint identical
+                         # and a stale cache would be reused in silence.
+                         "TRACK_HIGH_THRESH", "TRACK_NEW_THRESH",
+                         "TRACK_LOW_THRESH", "TRACK_RESCUE_LOST")
 
 
 def _tracking_fingerprint() -> dict:

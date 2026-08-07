@@ -34,6 +34,72 @@ class TrackedDetection:
     appearance_embedding: Optional[np.ndarray] = field(default=None, repr=False)
 
 
+def _make_rescuing_botsort():
+    """BotSort subclass whose low-confidence round can also revive LOST tracks.
+
+    Built lazily so importing this module never requires boxmot (the tests and
+    several offline tools import `to_dataframe` without it installed).
+
+    What upstream does. BoT-SORT associates in two rounds: a high-confidence
+    round over all tracks, then a second round for detections between
+    `track_low_thresh` and `track_high_thresh`. The second round is restricted
+    to tracks that are still `TrackState.Tracked`::
+
+        r_tracked_stracks = [strack_pool[i] for i in u_track_first
+                             if strack_pool[i].state == TrackState.Tracked]
+
+    so once a track goes Lost, only a HIGH-confidence detection can bring it
+    back — the weak-detection safety net is switched off for exactly the tracks
+    that most need it.
+
+    Why that hurts here. On mrhvbvwi1gjpn the tracker produced 4269 ids for ~15
+    players with a 6.0 s median lifespan, and 65% of tracks died mid-field. At
+    those deaths 99.3% of bodies reappear within 2.0 s while `TRACK_BUFFER_S`
+    keeps the lost track alive for 20 s, and replaying the frames showed YOLO
+    still saw the body 56% of the time — 36% of those boxes scoring under the
+    0.50 needed to start a track. The evidence to re-associate is there; the
+    filter above is what discards it.
+
+    The override adds Lost tracks to the second-round pool and nothing else:
+    same IoU distance, same 0.5 threshold. The matching branch that calls
+    `re_activate(..., new_id=False)` already exists upstream — it is simply
+    unreachable while the pool is filtered — so a revived track keeps its id.
+    """
+    from boxmot.trackers.botsort.botsort import BotSort
+    from boxmot.trackers.botsort.basetrack import TrackState
+    from boxmot.utils.matching import iou_distance, linear_assignment
+    from boxmot.trackers.botsort.botsort import STrack
+
+    class _RescuingBotSort(BotSort):
+        def _second_association(self, dets_second, activated_stracks,
+                                lost_stracks, refind_stracks, u_track_first,
+                                strack_pool):
+            detections_second = ([STrack(det, max_obs=self.max_obs)
+                                  for det in dets_second] if len(dets_second) else [])
+            # The one change: Lost tracks are eligible too.
+            pool = [strack_pool[i] for i in u_track_first
+                    if strack_pool[i].state in (TrackState.Tracked, TrackState.Lost)]
+
+            matches, u_track, u_detection = linear_assignment(
+                iou_distance(pool, detections_second), thresh=0.5)
+            for itracked, idet in matches:
+                track, det = pool[itracked], detections_second[idet]
+                if track.state == TrackState.Tracked:
+                    track.update(det, self.frame_count)
+                    activated_stracks.append(track)
+                else:
+                    track.re_activate(det, self.frame_count, new_id=False)
+                    refind_stracks.append(track)
+            for it in u_track:
+                track = pool[it]
+                if track.state != TrackState.Lost:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+            return matches, u_track, u_detection
+
+    return _RescuingBotSort
+
+
 class Tracker:
     def __init__(
         self,
@@ -44,13 +110,17 @@ class Tracker:
     ) -> None:
         from boxmot import BotSort
         weights_path = config.MODELS_DIR / reid_weights
-        self.impl = BotSort(
+        # Thresholds come from config (defaults are the previous literals). They
+        # need to be tunable because they disagreed with the detector about what
+        # counts as a person — see config.TRACK_HIGH_THRESH for the measurement.
+        impl_cls = _make_rescuing_botsort() if config.TRACK_RESCUE_LOST else BotSort
+        self.impl = impl_cls(
             reid_weights=Path(weights_path),
             device=device,
             half=False,
-            track_high_thresh=0.45,
-            track_low_thresh=0.1,
-            new_track_thresh=0.5,
+            track_high_thresh=config.TRACK_HIGH_THRESH,
+            track_low_thresh=config.TRACK_LOW_THRESH,
+            new_track_thresh=config.TRACK_NEW_THRESH,
             track_buffer=track_buffer_frames,
             match_thresh=0.8,
             proximity_thresh=0.5,
