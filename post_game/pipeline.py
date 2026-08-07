@@ -291,9 +291,15 @@ def run(
         # Per-track kit-hue tally: track_id -> (n_our, n_opp). Filled from the
         # video frame during tracking; consumed by classify_from_kit_votes.
         kit_votes: dict[int, tuple[int, int]] = {}
+        # Raw torso VALUES per detection, kept only for the value axis so the kit
+        # anchors can be fitted to the footage after the pass (see the
+        # fit_value_anchors call below). A hex is the fabric in a swatch; a black
+        # kit in sunlight photographs at V150-200, not its nominal V10, and on
+        # the value axis that gap is the whole decision.
+        kit_value_samples: dict[int, list[float]] = {}
         _kit_vote_on = config.KIT_VOTE_ENABLED and bool(game.away_color)
         if _kit_vote_on:
-            from .kit_vote import hex_to_hsv, pick_axis, vote_detection
+            from .kit_vote import hex_to_hsv, pick_axis, torso_roi, vote_detection
             _our_hex, _opp_hex = _our_color(game), game.away_color
             # The team owns a green kit and a black one, and they need different
             # discriminators: green separates from a blue opponent by HUE, black
@@ -412,6 +418,16 @@ def run(
                     if _v:
                         _o, _p = kit_votes.get(t.track_id, (0, 0))
                         kit_votes[t.track_id] = (_o + (_v == 1), _p + (_v == -1))
+                    # Stash the torso brightness so the anchors can be re-fitted
+                    # once the whole game's distribution is known. Cheap (one
+                    # median per detection) and only on the axis that needs it.
+                    if _kit_axis == "value":
+                        import cv2 as _cv2
+                        _roi = torso_roi(sample.eq_frame, t.bbox_eq)
+                        if _roi is not None and _roi.size:
+                            _v_med = float(np.median(
+                                _cv2.cvtColor(_roi, _cv2.COLOR_BGR2HSV)[:, :, 2]))
+                            kit_value_samples.setdefault(t.track_id, []).append(_v_med)
 
             # Debug-frame dump (cheap; runs only when requested). Renders a
             # downscaled equirect preview with ALL detection bboxes drawn,
@@ -468,6 +484,47 @@ def run(
                 last_log_t = now
 
         tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
+
+        # 2b. RE-VOTE on data-fitted kit anchors (value axis only).
+        # The per-detection votes above used the kit hexes, which describe the
+        # fabric in a swatch rather than in sunlight. On mrhvbvwi1gjpn the black
+        # kit's nominal V10 fell BELOW the entire observed range (p1-p99 =
+        # 28-250), so every one of our players sat nearer the opponent anchor:
+        # the split came out 948/2217 where 7v7 demands ~1:1, and 54% of the
+        # "opponent" tracks were achromatic — called opponent purely for being
+        # bright. Now that the whole game's distribution is in hand, fit the
+        # anchors to it and recount. Hue needs none of this (it is roughly
+        # illumination-invariant), so this touches only the value axis and
+        # leaves every hue game byte-identical.
+        if _kit_vote_on and _kit_axis == "value" and kit_value_samples:
+            from .kit_vote import fit_value_anchors
+            _per_track = {t: float(np.median(v)) for t, v in kit_value_samples.items()}
+            _our_v, _opp_v, _note = fit_value_anchors(
+                list(_per_track.values()), _our_hex, _opp_hex)
+            if _our_v is None:
+                # Abstained: the distribution can't support anchors (one team
+                # barely present, flat light). Keep the hex votes rather than
+                # bisect one blob and confidently mislabel half a team.
+                log.warning("  -> kit anchors NOT fitted, keeping hex values: %s", _note)
+            else:
+                _margin = config.KIT_VOTE_VALUE_MARGIN
+                _before = sum(1 for o, p in kit_votes.values() if o > p)
+                kit_votes = {}
+                for _t, _vals in kit_value_samples.items():
+                    _o = _p = 0
+                    for _val in _vals:
+                        _d_our, _d_opp = abs(_val - _our_v), abs(_val - _opp_v)
+                        if _d_opp - _d_our >= _margin:
+                            _o += 1
+                        elif _d_our - _d_opp >= _margin:
+                            _p += 1
+                    if _o or _p:
+                        kit_votes[_t] = (_o, _p)
+                _after = sum(1 for o, p in kit_votes.values() if o > p)
+                log.info("  -> kit anchors fitted from footage: %s", _note)
+                log.info("     tracks voting OURS: %d -> %d (of %d)",
+                         _before, _after, len(kit_votes))
+
         # Persist before any downstream filter touches the data — so a bug in
         # filtering / identity / stats doesn't cost another detection pass.
         tracks_df.to_parquet(tracks_ckpt)
