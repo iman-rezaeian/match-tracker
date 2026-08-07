@@ -1360,8 +1360,14 @@ def run(
 # any of these changed may be stale in a way no downstream stage can detect —
 # the parquet looks perfectly well-formed either way. Deliberately NOT the whole
 # repo: edits to stats/tv_view/identity don't invalidate a tracking pass.
+# Every module whose code changes what Stage 2 WRITES. kit_vote.py earns its
+# place because the kit votes are produced in the Stage-2 loop and cached beside
+# the tracks: when the value anchors moved from the kit hex to a fitted
+# threshold, the fingerprint stayed identical and the guard said nothing about a
+# cache whose votes were built the old way — the very silence this guard was
+# added to break.
 _TRACKING_SOURCES = ("tracking.py", "tracking_field.py", "tracking_pitch.py",
-                     "detection.py", "video.py", "calibration.py")
+                     "detection.py", "video.py", "calibration.py", "kit_vote.py")
 # Config values that change Stage-2 output. Recorded so a cache taken at a
 # different sample rate / tile count is never silently mixed with a fresh one.
 _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
