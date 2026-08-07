@@ -151,6 +151,35 @@ def _ant_bearer() -> str | None:
     return tok
 
 
+def _relaxed_session(ca_bundle: str):
+    """A requests Session that verifies against `ca_bundle` with OpenSSL 3's
+    X509_STRICT flag cleared.
+
+    Everything else about verification stays ON: the signature chain is still
+    validated to the corp root, and the hostname is still checked. The single
+    relaxation is RFC-5280 strictness about a missing Authority Key Identifier on
+    the proxy-minted leaf — the one thing that makes an otherwise-good chain fail
+    under Python 3.13. This is deliberately narrower than verify=False.
+    """
+    import ssl
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    ctx = ssl.create_default_context(cafile=ca_bundle)
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT      # the ONLY thing relaxed
+    ctx.check_hostname = True                         # hostname still enforced
+    ctx.verify_mode = ssl.CERT_REQUIRED               # cert still required
+
+    class _Adapter(HTTPAdapter):
+        def init_poolmanager(self, *a, **kw):
+            kw["ssl_context"] = ctx
+            return super().init_poolmanager(*a, **kw)
+
+    s = requests.Session()
+    s.mount("https://", _Adapter())
+    return s
+
+
 def _call(payload: dict, _tries: int = 5) -> str:
     """SDK when importable, else raw HTTPS (corp-VPN route) — as voice_clean.
     Retries transient 429/5xx with exponential backoff."""
@@ -185,16 +214,29 @@ def _call(payload: dict, _tries: int = 5) -> str:
     # (same var R2 uploads use). Falls back to default trust store off-VPN.
     verify = (os.environ.get("REQUESTS_CA_BUNDLE")
               or os.environ.get("AWS_CA_BUNDLE") or True)
+    session = None
     if os.environ.get("VLM_INSECURE_TLS") == "1":
         verify = False  # opt-in escape for corp CA chains OpenSSL 3 rejects
         import urllib3
         urllib3.disable_warnings()
+    elif os.environ.get("VLM_RELAXED_TLS") == "1" and verify is not True:
+        # Middle ground between "full strict" and "verify=False", for the Rocket
+        # corp proxy specifically. It re-signs api.anthropic.com with a LEAF that
+        # carries no Authority Key Identifier, and OpenSSL 3's X509_V_FLAG_X509_STRICT
+        # (on by default in Python 3.13) rejects exactly that — the chain itself is
+        # fine. Measured: the same chain verifies OK once the strict flag is cleared.
+        # So this keeps full signature-chain AND hostname verification against the
+        # corp bundle, and only tolerates the missing-AKI extension. Prefer this over
+        # VLM_INSECURE_TLS, which would accept ANY certificate.
+        session = _relaxed_session(str(verify))
+    if session is not None:
+        _post = lambda **kw: session.post(**kw)          # noqa: E731
+    else:
+        _post = lambda **kw: requests.post(verify=verify, **kw)   # noqa: E731
     base = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
     for attempt in range(_tries):
-        r = requests.post(
-            f"{base}/v1/messages",
-            headers=headers,
-            json=payload, timeout=120, verify=verify)
+        r = _post(url=f"{base}/v1/messages", headers=headers,
+                  json=payload, timeout=120)
         if r.status_code in (429, 500, 502, 503, 529) and attempt < _tries - 1:
             wait = float(r.headers.get("retry-after", 2 ** attempt))
             time.sleep(min(wait, 30))
