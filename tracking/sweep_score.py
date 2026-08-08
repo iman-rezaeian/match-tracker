@@ -87,6 +87,26 @@ def same_person_pairs(on: pd.DataFrame, max_gap_s=2.0, speed=3.0) -> int:
     return pairs
 
 
+def teleports(on: pd.DataFrame, max_speed=7.0) -> tuple[int, float]:
+    """Jumps inside ONE track id faster than a child can run => the id moved bodies.
+
+    This replaces an "id switch rate" that was tautological: it asked whether a
+    track's LAST frame had a successor carrying the same id, which by definition
+    it never does — if it did, the track would not have ended. That metric read
+    100% under every configuration and measured nothing, yet it was cited as
+    evidence that no change affected identity confusion.
+
+    A teleport is label-free and genuinely varies between configurations. 7 m/s
+    is a generous U10 sprint, well above the measured 0.08 m per 0.1 s step, so
+    anything past it is not a child running.
+    """
+    s = on.sort_values(["track_id", "time_s"])
+    d = s.groupby("track_id")[["x_m", "y_m"]].diff()
+    dt = s.groupby("track_id")["time_s"].diff()
+    tele = (np.hypot(d.x_m, d.y_m) > max_speed * dt) & dt.between(0.05, 2.0)
+    return int(tele.sum()), float(dt[tele].sum())
+
+
 def id_switch_proxy(on: pd.DataFrame, L: float, W: float, radius=1.5) -> tuple:
     frames = np.sort(on.frame.unique())
     nxt = dict(zip(frames[:-1], frames[1:]))
@@ -121,14 +141,14 @@ def score(game_id: str, tag: str) -> dict | None:
     d = s.groupby("track_id")[["x_m", "y_m"]].diff()
     dt = s.groupby("track_id")["time_s"].diff()
     step = np.hypot(d.x_m, d.y_m)[dt.between(0.05, 0.15)].dropna()
-    n_int, near, switched = id_switch_proxy(on, L, W)
+    n_tele, _ = teleports(on)
+    n_tracks = int(on.track_id.nunique())
     return {
         "tag": tag,
-        "tracks": int(on.track_id.nunique()),
+        "tracks": n_tracks,
         "median_life_s": float(life.median()),
         "pairs_left": same_person_pairs(on),
-        "deaths": n_int,
-        "switch_rate": (100.0 * switched / near) if near else float("nan"),
+        "tele_per_track": n_tele / max(n_tracks, 1),
         "bodies_per_frame": float(per_frame.median()),
         "median_step_m": float(step.median()) if len(step) else float("nan"),
     }
@@ -151,29 +171,32 @@ def main() -> None:
         print(f"!! no checkpoint for: {sorted(missing)}\n")
 
     hdr = (f"{'tag':<10}{'tracks':>8}{'med life':>10}{'pairs left':>12}"
-           f"{'switch%':>9}{'bodies/fr':>11}{'step m':>9}")
+           f"{'tele/trk':>10}{'bodies/fr':>11}{'step m':>9}")
     print(hdr)
     print("-" * len(hdr))
     base = rows[0]
     for r in rows:
         print(f"{r['tag']:<10}{r['tracks']:>8}{r['median_life_s']:>9.1f}s"
-              f"{r['pairs_left']:>12}{r['switch_rate']:>8.0f}%"
+              f"{r['pairs_left']:>12}{r['tele_per_track']:>10.2f}"
               f"{r['bodies_per_frame']:>11.0f}{r['median_step_m']:>9.3f}")
     print(f"\nvs {base['tag']}:")
     for r in rows[1:]:
         dt = 100.0 * (r["tracks"] - base["tracks"]) / max(base["tracks"], 1)
         dp = 100.0 * (r["pairs_left"] - base["pairs_left"]) / max(base["pairs_left"], 1)
         db = r["bodies_per_frame"] - base["bodies_per_frame"]
+        dtel = 100.0 * (r["tele_per_track"] - base["tele_per_track"]) / max(base["tele_per_track"], 1e-9)
         flag = ""
         if db > 2:
             flag = "  <-- REJECT: invented bodies"
+        elif dtel > 8:
+            flag = "  <-- REJECT: buys fragmentation by merging DIFFERENT children"
         elif r["median_step_m"] > 1.6 * base["median_step_m"]:
-            flag = "  <-- REJECT: step inflated (tracks jumping between players)"
-        print(f"  {r['tag']:<10} tracks {dt:+6.1f}%   same-person pairs {dp:+6.1f}%   "
-              f"bodies/frame {db:+.1f}{flag}")
-    print("\nA win = fewer tracks AND fewer same-person pairs, with bodies/frame\n"
-          "and median step unchanged. Fragmentation bought by admitting junk\n"
-          "detections is not a win.")
+            flag = "  <-- REJECT: step inflated"
+        print(f"  {r['tag']:<10} tracks {dt:+6.1f}%   pairs {dp:+6.1f}%   "
+              f"teleports {dtel:+6.1f}%   bodies/fr {db:+.1f}{flag}")
+    print("\nA win = fewer tracks AND fewer same-person pairs, with teleports and\n"
+          "bodies/frame flat. Fewer tracks bought by merging different children\n"
+          "(teleports up) is worse than the fragmentation it replaced.")
 
 
 if __name__ == "__main__":
