@@ -187,6 +187,50 @@ TRACK_RESCUE_LOST = os.environ.get("TRACK_RESCUE_LOST", "0") != "0"
 # stationary spectators, leaving only our own kids, who are the hard case — but
 # it has NOT been separated from a real regression. Watch it on the re-track.
 TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "1") != "0"
+# Drop OFF-FIELD detections before the tracker sees them, for the same reason.
+#
+# The off-field test already exists (stage 3b) but runs AFTER tracking, framed
+# as a cleanup for the stats rather than a constraint on association — so the
+# tracker spends its effort following the crowd and then the result is thrown
+# away. Measured: 17% (mrhvbvwi1gjpn) and 27% (mri01pvelv46d) of all detections
+# handed to the tracker are off-field, and 788 / 1200 raw track ids never touch
+# the pitch at all. Worse than the wasted work, those bodies sit in the
+# candidate pool, so a player near the touchline can be associated with a
+# spectator standing behind them.
+#
+# Nothing in the projection needs the tracker: a foot pixel becomes a metre
+# position from the calibration alone, and the stage-2 loop already projects
+# per frame. The +-1.5 m buffer is preserved exactly as stage 3b uses it, so a
+# throw-in run-up or a keeper behind the goal line still survives — 10-12% of
+# tracks legitimately cross the line and must not be cut.
+#
+# Stage 3b still runs afterwards and is then a no-op on anything this dropped,
+# which keeps the two paths consistent when the flag is off.
+TRACK_DROP_OFFFIELD = os.environ.get("TRACK_DROP_OFFFIELD", "0") != "0"
+# Drop whole tracks that NEVER set foot on the pitch — the touchline coaches.
+#
+# The 1.5 m buffer is a per-detection test and cannot separate a coach standing
+# half a metre outside the line from a player taking a throw-in at the same
+# spot. A whole track can: the player crosses the line and comes back, the coach
+# never does. Measured on both July 12 games the fraction-of-life-outside is
+# sharply bimodal (a mass at 0.0-0.1, a spike at 0.9-1.0, a thin valley), so
+# demanding EVERY sample be outside is a safe cut, not a tuned threshold:
+#
+#     game 1: 188 tracks / 13,647 detections   game 2: 127 / 8,084
+#
+# They are adults: within 5-15 m of the camera their boxes run 1.61x taller than
+# on-pitch players at the same distance.
+#
+# Applies AFTER tracking by necessity — you cannot know a track never came in
+# until you have the whole track — which is fine, since sweeping a pre-tracking
+# off-field cut showed it buys nothing for association anyway (tracks -1.5%,
+# teleports +0.9%): distant stationary bodies were never competing for a
+# player's identity. This filter is about not attributing coach minutes to
+# players, not about association.
+DROP_NEVER_ONFIELD = os.environ.get("DROP_NEVER_ONFIELD", "1") != "0"
+# Minimum detections before the rule may fire. A 3-frame blip that happens to
+# land outside is noise, not a coach, and dropping it gains nothing.
+DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
 TRACK_APPEARANCE = os.environ.get("TRACK_APPEARANCE", "1") != "0"
 TRACK_APPEARANCE_THRESH = float(os.environ.get("TRACK_APPEARANCE_THRESH", "0.25"))
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate

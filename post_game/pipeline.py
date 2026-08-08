@@ -317,6 +317,7 @@ def run(
         # the pass so a run that quietly filtered nothing — or filtered far too
         # much — is visible rather than inferred from downstream weirdness.
         n_dropped_opp = 0
+        n_dropped_off = 0
         n_kept_after_filter = 0
 
         all_tracks: list[TrackedDetection] = []
@@ -392,6 +393,22 @@ def run(
             dets = dedupe_detections_by_field_position(
                 dets, projector, config.DETECT_TILE_DEDUPE_M,
             )
+
+            # 2a0. OFF-FIELD PRE-FILTER — the stage-3b test, moved before the
+            # tracker. Runs FIRST because it is pure geometry on coordinates we
+            # already have, so it shrinks the set the (pixel-reading) kit vote
+            # below has to process. Same +-1.5 m buffer as stage 3b, so the two
+            # agree and 3b becomes a no-op on whatever this already removed.
+            if config.TRACK_DROP_OFFFIELD and dets:
+                _feet = np.array([[(d.bbox_eq[0] + d.bbox_eq[2]) / 2.0, d.bbox_eq[3]]
+                                  for d in dets], dtype=np.float64)
+                _xy = projector.pixel_to_field_batch(_feet)
+                _L, _W = field_cal.length_m, field_cal.width_m
+                _ok = ((_xy[:, 0] >= -1.5) & (_xy[:, 0] <= _L + 1.5)
+                       & (_xy[:, 1] >= -1.5) & (_xy[:, 1] <= _W + 1.5)
+                       & np.isfinite(_xy).all(axis=1))
+                n_dropped_off += int((~_ok).sum())
+                dets = [d for d, k in zip(dets, _ok) if k]
 
             # 2a. OPPONENT PRE-FILTER — decide team BEFORE association, not after.
             # Halves the number of bodies the tracker can confuse ours with (see
@@ -512,6 +529,13 @@ def run(
                 )
                 last_log_t = now
 
+        if config.TRACK_DROP_OFFFIELD:
+            log.info("  -> off-field pre-filter: dropped %d detections before tracking",
+                     n_dropped_off)
+            if n_dropped_off == 0:
+                log.warning("  !! off-field pre-filter removed NOTHING — expected "
+                            "17-27%% on this footage; check the calibration")
+
         if config.TRACK_DROP_OPPONENTS and _kit_vote_on:
             _seen = n_dropped_opp + n_kept_after_filter
             log.info("  -> opponent pre-filter: dropped %d of %d detections (%.0f%%) "
@@ -610,6 +634,42 @@ def run(
         )
         dropped_off = int((~on_field).sum())
         tracks_df = tracks_df.loc[on_field].reset_index(drop=True)
+
+        # 3b2. NEVER-ENTERS-THE-PITCH FILTER — the touchline coaches.
+        # The buffer above is a per-DETECTION test, so it cannot tell a coach
+        # standing 0.5 m outside the line from a player taking a throw-in from
+        # the same spot. A whole TRACK can: a player crosses the line and comes
+        # back, a coach never does. Measured on both July 12 games, the
+        # fraction-of-life-outside distribution is sharply bimodal — a mass at
+        # 0.0-0.1 (players) and a spike at 0.9-1.0 (touchline adults) with a
+        # thin valley between — so requiring EVERY sample to be outside is a
+        # safe cut rather than a tuned one.
+        #
+        # Confirmed these are adults, not our kids: within 5-15 m of the camera
+        # (where the coaches stand) their boxes are 1.61x taller than on-pitch
+        # players at the same distance. Beyond 15 m the ratio inverts (0.79-0.89)
+        # because those are distant spectators, not coaches.
+        #
+        # This is deliberately NOT the near-sideline-only rule it looks like it
+        # should be. The coach reported these appear on the near side, but the
+        # FAR sideline holds more never-enter tracks in both games (245 vs 112,
+        # 188 vs 111) — near-side ones are simply larger and easier to notice.
+        # A side-specific buffer would fix the visible half and miss the bigger
+        # half, while also cutting the ~10x more player-detections that share
+        # that strip.
+        if config.DROP_NEVER_ONFIELD and not tracks_df.empty:
+            _outside = ((tracks_df["x_m"] < 0) | (tracks_df["x_m"] > L)
+                        | (tracks_df["y_m"] < 0) | (tracks_df["y_m"] > W))
+            _per = tracks_df.assign(_o=_outside).groupby("track_id")["_o"].agg(
+                ["mean", "size"])
+            _never = _per.index[(_per["mean"] >= 1.0)
+                                & (_per["size"] >= config.DROP_NEVER_MIN_DETS)]
+            if len(_never):
+                _before_n = len(tracks_df)
+                tracks_df = tracks_df[~tracks_df["track_id"].isin(_never)].reset_index(drop=True)
+                log.info("  -> never-on-pitch filter: dropped %d tracks (%d detections) "
+                         "that spent their whole life outside the touchlines",
+                         len(_never), _before_n - len(tracks_df))
 
         # 3c. TOP-N PER FRAME — soccer has ≤ 16 people on the field (7v7 + ref
         # + occasional coach for injury). Cap at 20 per frame ranked by
@@ -1421,7 +1481,7 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          "TRACK_HIGH_THRESH", "TRACK_NEW_THRESH",
                          "TRACK_LOW_THRESH", "TRACK_RESCUE_LOST",
                          "TRACK_APPEARANCE", "TRACK_APPEARANCE_THRESH",
-                         "TRACK_DROP_OPPONENTS")
+                         "TRACK_DROP_OPPONENTS", "TRACK_DROP_OFFFIELD")
 
 
 def _tracking_fingerprint() -> dict:

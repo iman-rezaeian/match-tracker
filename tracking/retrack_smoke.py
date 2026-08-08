@@ -107,7 +107,7 @@ def main() -> None:
     _our_hex, _opp_hex = _our_color(game), game.away_color
     _kit_on = config.KIT_VOTE_ENABLED and bool(_opp_hex)
     _kit_axis = pick_axis(_our_hex, _opp_hex) if _kit_on else "hue"
-    n_drop = n_keep = 0
+    n_drop = n_keep = n_off = 0
     if config.TRACK_DROP_OPPONENTS:
         log.info("  opponent pre-filter ON: ours %s vs opp %s on %s",
                  _our_hex, _opp_hex, _kit_axis.upper())
@@ -144,6 +144,16 @@ def main() -> None:
                     d.bbox_crop = d.bbox_eq
                     dets.append(d)
             dets = dedupe_detections_by_field_position(dets, projector, config.DETECT_TILE_DEDUPE_M)
+            # Off-field pre-filter, mirroring pipeline stage 2a0.
+            if config.TRACK_DROP_OFFFIELD and dets:
+                _feet = np.array([[(d.bbox_eq[0] + d.bbox_eq[2]) / 2.0, d.bbox_eq[3]]
+                                  for d in dets], dtype=np.float64)
+                _xy = projector.pixel_to_field_batch(_feet)
+                _ok = ((_xy[:, 0] >= -1.5) & (_xy[:, 0] <= cal.length_m + 1.5)
+                       & (_xy[:, 1] >= -1.5) & (_xy[:, 1] <= cal.width_m + 1.5)
+                       & np.isfinite(_xy).all(axis=1))
+                n_off += int((~_ok).sum())
+                dets = [d for d, k in zip(dets, _ok) if k]
             # Opponent pre-filter, mirroring pipeline stage 2a. Without this the
             # harness would silently ignore TRACK_DROP_OPPONENTS and an A/B on it
             # would report "no effect" from a run that never applied the change.
@@ -173,6 +183,11 @@ def main() -> None:
         # carry the (advanced) id counter into the next half so ids stay unique
         next_id_carry = getattr(tracker, "_next_id", next_id_carry)
 
+    if config.TRACK_DROP_OFFFIELD:
+        log.info("  off-field pre-filter: dropped %d detections", n_off)
+        if n_off == 0:
+            log.warning("  !! off-field pre-filter dropped NOTHING — an A/B against "
+                        "this run would be meaningless")
     if config.TRACK_DROP_OPPONENTS and _kit_on:
         _seen = n_drop + n_keep
         log.info("  opponent pre-filter: dropped %d of %d (%.0f%%), kept %d",
