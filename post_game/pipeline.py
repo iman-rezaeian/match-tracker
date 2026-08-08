@@ -1484,7 +1484,8 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          "TRACK_DROP_OPPONENTS", "TRACK_DROP_OFFFIELD",
                          # Inference resolution changes what the detector sees,
                          # so a cache taken at another imgsz is not comparable.
-                         "DETECT_IMGSZ")
+                         "DETECT_IMGSZ",
+                         "TRACK_HEADING_WEIGHT", "TRACK_HEADING_MIN_SPEED")
 
 
 def _tracking_fingerprint() -> dict:

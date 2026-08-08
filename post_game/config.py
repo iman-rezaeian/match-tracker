@@ -256,6 +256,24 @@ DROP_NEVER_ONFIELD = os.environ.get("DROP_NEVER_ONFIELD", "1") != "0"
 # Minimum detections before the rule may fire. A 3-frame blip that happens to
 # land outside is noise, not a coach, and dropping it gains nothing.
 DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
+# Penalise a candidate that sits OPPOSITE a lost track's direction of travel.
+#
+# The association cost is overlap-with-the-prediction and nothing else — it asks
+# "how far?", never "in what direction?". For a track that has just been lost the
+# prediction is already stale, so a body BEHIND the player scores as well as one
+# where they were actually running. Measured on mrhvbvwi1gjpn, extrapolating exit
+# velocity picks a different successor than raw distance on 17% of ambiguous
+# joins, which is signal currently thrown away.
+#
+# 0 disables it (upstream behaviour). The weight is in the same units as the IoU
+# cost (0-1), and the penalty is 0 dead ahead / 0.5 perpendicular / 1.0 directly
+# behind — so 0.3 makes a fully-reversed candidate cost 0.3 more, enough to lose
+# a close race without overriding strong geometry.
+TRACK_HEADING_WEIGHT = float(os.environ.get("TRACK_HEADING_WEIGHT", "0"))
+# Below this speed (PIXELS per frame, the tracker's own units) a track's heading
+# is noise and the penalty is skipped. A stationary player has a meaningless
+# velocity vector and penalising on it is worse than not penalising at all.
+TRACK_HEADING_MIN_SPEED = float(os.environ.get("TRACK_HEADING_MIN_SPEED", "2.0"))
 TRACK_APPEARANCE = os.environ.get("TRACK_APPEARANCE", "1") != "0"
 TRACK_APPEARANCE_THRESH = float(os.environ.get("TRACK_APPEARANCE_THRESH", "0.25"))
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate

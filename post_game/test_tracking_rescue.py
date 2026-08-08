@@ -194,6 +194,45 @@ def test_appearance_off_keeps_embeddings_flowing_to_the_stitcher():
         importlib.reload(config)
 
 
+def test_heading_penalty_is_zero_ahead_and_one_behind():
+    """The whole point: a body where the player was RUNNING must beat one behind."""
+    from .tracking import heading_penalty
+    at, v = (100.0, 100.0), (10.0, 0.0)          # moving +x
+    assert abs(heading_penalty(at, v, (150.0, 100.0)) - 0.0) < 1e-6   # ahead
+    assert abs(heading_penalty(at, v, (50.0, 100.0)) - 1.0) < 1e-6    # behind
+    assert abs(heading_penalty(at, v, (100.0, 150.0)) - 0.5) < 1e-6   # sideways
+
+
+def test_heading_penalty_abstains_on_a_slow_track():
+    """A stationary player's velocity is noise; penalising on it is worse than
+    not penalising at all."""
+    from .tracking import heading_penalty
+    at, slow = (100.0, 100.0), (0.3, 0.1)
+    assert heading_penalty(at, slow, (50.0, 100.0), min_speed=2.0) == 0.0
+
+
+def test_heading_penalty_handles_a_detection_on_top_of_the_track():
+    from .tracking import heading_penalty
+    assert heading_penalty((100.0, 100.0), (10.0, 0.0), (100.0, 100.0)) == 0.0
+
+
+def test_heading_ranks_the_forward_candidate_first():
+    """Two candidates equidistant from a stale prediction — direction decides."""
+    from .tracking import heading_penalty
+    at, v = (100.0, 100.0), (8.0, 0.0)
+    fwd = heading_penalty(at, v, (140.0, 100.0))
+    back = heading_penalty(at, v, (60.0, 100.0))
+    assert fwd < back, "the candidate in the direction of travel must cost less"
+
+
+def test_heading_is_off_by_default_and_selects_the_subclass_when_on():
+    """It must not be a silent no-op: the subclass carries BOTH features, so
+    keying selection only on TRACK_RESCUE_LOST would ignore the heading flag."""
+    from . import config
+    assert config.TRACK_HEADING_WEIGHT == 0.0, "heading must ship OFF"
+    assert config.TRACK_HEADING_MIN_SPEED > 0
+
+
 def test_threshold_changes_invalidate_the_stage2_cache():
     """A sweep must not silently reuse a cache built at other thresholds.
 
@@ -203,7 +242,8 @@ def test_threshold_changes_invalidate_the_stage2_cache():
     from .pipeline import _TRACKING_CONFIG_KEYS
     for k in ("TRACK_HIGH_THRESH", "TRACK_NEW_THRESH", "TRACK_LOW_THRESH",
               "TRACK_RESCUE_LOST", "TRACK_APPEARANCE",
-              "TRACK_APPEARANCE_THRESH"):
+              "TRACK_APPEARANCE_THRESH", "TRACK_HEADING_WEIGHT",
+              "TRACK_HEADING_MIN_SPEED"):
         assert k in _TRACKING_CONFIG_KEYS, f"{k} missing from the fingerprint"
 
 

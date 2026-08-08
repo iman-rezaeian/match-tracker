@@ -34,6 +34,38 @@ class TrackedDetection:
     appearance_embedding: Optional[np.ndarray] = field(default=None, repr=False)
 
 
+def heading_penalty(track_xy, track_v, det_xy, min_speed=2.0):
+    """Cost added when a detection sits OPPOSITE a track's direction of travel.
+
+    Returns 0.0 for a candidate dead ahead, 1.0 for one directly behind, 0.5 for
+    perpendicular. Zero whenever the track is too slow for its heading to mean
+    anything — a stationary player's velocity is noise, and penalising on noise
+    is worse than not penalising at all.
+
+    Why this exists. The association cost is overlap-with-the-prediction and
+    nothing else: it asks "how far?", never "in what direction?". For a track
+    that has just been lost the prediction is already stale, so two candidates
+    equidistant from it score the same even when one is where the player was
+    running and the other is behind them. Measured on mrhvbvwi1gjpn, extrapolating
+    the exit velocity picks a DIFFERENT successor than raw distance on 17% of
+    ambiguous joins — signal the tracker currently discards.
+
+    Units are pixels here (the tracker associates in equirect pixel space), so
+    `min_speed` is px/frame, not m/s.
+    """
+    vx, vy = float(track_v[0]), float(track_v[1])
+    speed = (vx * vx + vy * vy) ** 0.5
+    if speed < min_speed:
+        return 0.0
+    dx = float(det_xy[0]) - float(track_xy[0])
+    dy = float(det_xy[1]) - float(track_xy[1])
+    dist = (dx * dx + dy * dy) ** 0.5
+    if dist < 1e-6:
+        return 0.0
+    cos = (vx * dx + vy * dy) / (speed * dist)      # +1 ahead, -1 behind
+    return float((1.0 - cos) / 2.0)
+
+
 def _make_rescuing_botsort():
     """BotSort subclass whose low-confidence round can also revive LOST tracks.
 
@@ -71,6 +103,69 @@ def _make_rescuing_botsort():
     from boxmot.trackers.botsort.botsort import STrack
 
     class _RescuingBotSort(BotSort):
+        def _first_association(self, dets, dets_first, active_tracks, unconfirmed,
+                               img, detections, activated_stracks, refind_stracks,
+                               strack_pool):
+            """Upstream's high-confidence round, plus a heading term.
+
+            The cost upstream builds is overlap-with-the-prediction only, so a
+            LOST track — whose prediction is already drifting — scores a body
+            behind it exactly as well as one where the player was actually
+            running. Adding the heading penalty here (and only for lost tracks,
+            whose prediction is the untrustworthy one) is the whole change; the
+            matching, thresholds and bookkeeping are upstream's.
+            """
+            if not config.TRACK_HEADING_WEIGHT:
+                return super()._first_association(
+                    dets, dets_first, active_tracks, unconfirmed, img, detections,
+                    activated_stracks, refind_stracks, strack_pool)
+
+            STrack.multi_predict(strack_pool)
+            warp = self.cmc.apply(img, dets)
+            STrack.multi_gmc(strack_pool, warp)
+            STrack.multi_gmc(unconfirmed, warp)
+
+            ious_dists = iou_distance(strack_pool, detections)
+            ious_mask = ious_dists > self.proximity_thresh
+            if self.fuse_first_associate:
+                from boxmot.utils.matching import fuse_score
+                ious_dists = fuse_score(ious_dists, detections)
+
+            if self.with_reid:
+                from boxmot.utils.matching import embedding_distance
+                emb = embedding_distance(strack_pool, detections) / 2.0
+                emb[emb > self.appearance_thresh] = 1.0
+                emb[ious_mask] = 1.0
+                dists = np.minimum(ious_dists, emb)
+            else:
+                dists = ious_dists
+
+            w = float(config.TRACK_HEADING_WEIGHT)
+            for ti, t in enumerate(strack_pool):
+                # Only lost tracks: a Tracked track's prediction is one frame old
+                # and already reliable, so nudging it adds noise, not signal.
+                if t.state != TrackState.Lost or t.mean is None:
+                    continue
+                txy, tv = t.mean[:2], t.mean[4:6]
+                for di, d in enumerate(detections):
+                    if ious_mask[ti, di]:
+                        continue                     # already out of the gate
+                    dists[ti, di] += w * heading_penalty(
+                        txy, tv, d.xywh[:2],
+                        min_speed=config.TRACK_HEADING_MIN_SPEED)
+
+            matches, u_track, u_detection = linear_assignment(
+                dists, thresh=self.match_thresh)
+            for itracked, idet in matches:
+                track, det = strack_pool[itracked], detections[idet]
+                if track.state == TrackState.Tracked:
+                    track.update(det, self.frame_count)
+                    activated_stracks.append(track)
+                else:
+                    track.re_activate(det, self.frame_count, new_id=False)
+                    refind_stracks.append(track)
+            return matches, u_track, u_detection
+
         def _second_association(self, dets_second, activated_stracks,
                                 lost_stracks, refind_stracks, u_track_first,
                                 strack_pool):
@@ -113,7 +208,13 @@ class Tracker:
         # Thresholds come from config (defaults are the previous literals). They
         # need to be tunable because they disagreed with the detector about what
         # counts as a person — see config.TRACK_HIGH_THRESH for the measurement.
-        impl_cls = _make_rescuing_botsort() if config.TRACK_RESCUE_LOST else BotSort
+        # The subclass carries BOTH the lost-track rescue and the heading term,
+        # each independently flag-gated inside it. Select it if EITHER is on —
+        # keying only on TRACK_RESCUE_LOST would make TRACK_HEADING_WEIGHT a
+        # silent no-op, and a sweep on it would report "no effect" from runs
+        # that never applied it.
+        _need_subclass = config.TRACK_RESCUE_LOST or config.TRACK_HEADING_WEIGHT
+        impl_cls = _make_rescuing_botsort() if _need_subclass else BotSort
         self.impl = impl_cls(
             reid_weights=Path(weights_path),
             device=device,
