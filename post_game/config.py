@@ -93,7 +93,32 @@ DETECT_TILE_DEDUPE_M = 1.5     # foot positions within this distance (m)
 
 # --- Detection -----------------------------------------------------------
 
-YOLO_MODEL = "yolo11s.pt"
+# Detector weights. `yolo11s` is the second-SMALLEST of the family
+# (n < s < m < l < x) and was never chosen on evidence — it arrived with the
+# first commit as a default and stayed.
+#
+# Measured 2026-08-07 by replaying 150 frames where the tracker lost a player
+# and asking which detector still finds a body there (tracking/detector_bakeoff.py,
+# Wilson 95% intervals):
+#
+#     yolo11s (current)  72%  [64, 79]   191 ms/frame
+#     yolo11m            75%  [67, 81]   248        <- inside the noise
+#     yolo11x            87%  [81, 92]   576        <- SEPARATED, real at 95%
+#     11s + 5 tiles      83%  [77, 88]   295        <- inside the noise
+#     11m + 5t + 1600px  86%  [80, 91]   481        <- SEPARATED
+#
+# Only two arms clear the baseline's interval, and they are indistinguishable
+# from each other, so take the simpler one: a bigger model changes one line,
+# while the tile-geometry arm perturbs rendering that later stages depend on.
+# Those misses are NOT occlusion — the nearest other body is over 4 m away 43%
+# of the time — which is why raw model capacity moves the number at all.
+#
+# Env-overridable so a validation run can A/B without a code edit. Fingerprinted
+# in pipeline._TRACKING_CONFIG_KEYS, so switching invalidates the Stage-2 cache.
+# NOT yet the default: 87% recall on known misses is measured, but the false
+# positives a larger model also finds are not, and yolo11x costs ~3x the runtime
+# (~2 h -> ~6 h per game).
+YOLO_MODEL = os.environ.get("YOLO_MODEL", "yolo11s.pt")
 DETECT_CONFIDENCE = 0.30
 # YOLO inference resolution. Ultralytics defaults to 640, which downsamples
 # our 1280-wide detection tiles 2x and loses far/small players (the accuracy
