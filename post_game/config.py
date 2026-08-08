@@ -270,10 +270,27 @@ DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
 # behind — so 0.3 makes a fully-reversed candidate cost 0.3 more, enough to lose
 # a close race without overriding strong geometry.
 TRACK_HEADING_WEIGHT = float(os.environ.get("TRACK_HEADING_WEIGHT", "0"))
-# Below this speed (PIXELS per frame, the tracker's own units) a track's heading
-# is noise and the penalty is skipped. A stationary player has a meaningless
-# velocity vector and penalising on it is worse than not penalising at all.
-TRACK_HEADING_MIN_SPEED = float(os.environ.get("TRACK_HEADING_MIN_SPEED", "2.0"))
+# Speed floor below which a track's heading is treated as noise, expressed as a
+# FRACTION OF BOX HEIGHT rather than absolute pixels.
+#
+# The first version used 2.0 px/frame and was self-defeating: apparent speed
+# scales with distance, so a far player moves 0.21 px/frame (91% of them below
+# the gate) while a near one moves 1.7 (56% below). An absolute threshold
+# therefore muted the heading term almost everywhere, and hardest on the distant
+# players it was meant to help. Box height is the natural per-detection scale,
+# so a fraction of it means the same physical speed near and far.
+#
+# 0.0025 is derived from the measured medians rather than guessed: a 30 px box
+# moves 0.21 px/frame and a 200 px box 1.49, so a floor at one third of typical
+# motion is 0.07 and 0.50 respectively — and 0.0025 hits both. (0.01, the first
+# attempt at a scaled floor, still sat ABOVE typical motion at both scales and
+# would have reproduced the original bug in a new coordinate system.)
+TRACK_HEADING_MIN_SPEED_FRAC = float(
+    os.environ.get("TRACK_HEADING_MIN_SPEED_FRAC", "0.0025"))
+# Ceiling on the penalty. 24% of true continuations ARE behind the exit
+# velocity — players do double back — so a reversed candidate should be
+# disadvantaged, never excluded outright.
+TRACK_HEADING_CAP = float(os.environ.get("TRACK_HEADING_CAP", "1.0"))
 TRACK_APPEARANCE = os.environ.get("TRACK_APPEARANCE", "1") != "0"
 TRACK_APPEARANCE_THRESH = float(os.environ.get("TRACK_APPEARANCE_THRESH", "0.25"))
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate

@@ -207,8 +207,43 @@ def test_heading_penalty_abstains_on_a_slow_track():
     """A stationary player's velocity is noise; penalising on it is worse than
     not penalising at all."""
     from .tracking import heading_penalty
-    at, slow = (100.0, 100.0), (0.3, 0.1)
-    assert heading_penalty(at, slow, (50.0, 100.0), min_speed=2.0) == 0.0
+    at, slow = (100.0, 100.0), (0.05, 0.02)
+    assert heading_penalty(at, slow, (50.0, 100.0), box_h=77.0) == 0.0
+
+
+def test_heading_speed_floor_scales_with_distance():
+    """The bug this fix exists for.
+
+    Apparent speed scales with distance: measured on mrhvbvwi1gjpn a far player
+    moves 0.21 px/frame and a near one 1.7. The first version gated on an
+    ABSOLUTE 2.0 px/frame, which silenced 91% of small-box (distant) players and
+    56% of large ones — muting the term almost everywhere, and hardest on the
+    players it was meant to help. The floor must be a fraction of box height so
+    the same physical speed passes near and far.
+    """
+    from .tracking import heading_penalty
+    at, behind = (100.0, 100.0), (50.0, 100.0)
+    far_v, far_box = (0.25, 0.0), 30.0     # distant player, genuinely moving
+    near_v, near_box = (1.70, 0.0), 200.0  # near player, same physical speed
+    frac = 0.0025
+    assert heading_penalty(at, far_v, behind, box_h=far_box,
+                           min_speed_frac=frac) > 0.5, (
+        "a moving DISTANT player must not be silenced by the speed floor")
+    assert heading_penalty(at, near_v, behind, box_h=near_box,
+                           min_speed_frac=frac) > 0.5
+    # ...while genuine sub-jitter still abstains at BOTH scales
+    assert heading_penalty(at, (0.02, 0.0), behind, box_h=far_box,
+                           min_speed_frac=frac) == 0.0
+    assert heading_penalty(at, (0.2, 0.0), behind, box_h=near_box,
+                           min_speed_frac=frac) == 0.0
+
+
+def test_heading_cap_disadvantages_but_never_excludes():
+    """24% of true continuations ARE behind — players double back."""
+    from .tracking import heading_penalty
+    full = heading_penalty((100.0, 100.0), (10.0, 0.0), (50.0, 100.0), cap=1.0)
+    half = heading_penalty((100.0, 100.0), (10.0, 0.0), (50.0, 100.0), cap=0.5)
+    assert full == 1.0 and half == 0.5
 
 
 def test_heading_penalty_handles_a_detection_on_top_of_the_track():
@@ -230,7 +265,8 @@ def test_heading_is_off_by_default_and_selects_the_subclass_when_on():
     keying selection only on TRACK_RESCUE_LOST would ignore the heading flag."""
     from . import config
     assert config.TRACK_HEADING_WEIGHT == 0.0, "heading must ship OFF"
-    assert config.TRACK_HEADING_MIN_SPEED > 0
+    assert config.TRACK_HEADING_MIN_SPEED_FRAC > 0
+    assert 0 < config.TRACK_HEADING_CAP <= 1.0
 
 
 def test_threshold_changes_invalidate_the_stage2_cache():
@@ -243,7 +279,7 @@ def test_threshold_changes_invalidate_the_stage2_cache():
     for k in ("TRACK_HIGH_THRESH", "TRACK_NEW_THRESH", "TRACK_LOW_THRESH",
               "TRACK_RESCUE_LOST", "TRACK_APPEARANCE",
               "TRACK_APPEARANCE_THRESH", "TRACK_HEADING_WEIGHT",
-              "TRACK_HEADING_MIN_SPEED"):
+              "TRACK_HEADING_MIN_SPEED_FRAC", "TRACK_HEADING_CAP"):
         assert k in _TRACKING_CONFIG_KEYS, f"{k} missing from the fingerprint"
 
 

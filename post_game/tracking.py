@@ -34,28 +34,37 @@ class TrackedDetection:
     appearance_embedding: Optional[np.ndarray] = field(default=None, repr=False)
 
 
-def heading_penalty(track_xy, track_v, det_xy, min_speed=2.0):
+def heading_penalty(track_xy, track_v, det_xy, box_h=None, min_speed_frac=0.01,
+                    cap=1.0):
     """Cost added when a detection sits OPPOSITE a track's direction of travel.
 
-    Returns 0.0 for a candidate dead ahead, 1.0 for one directly behind, 0.5 for
-    perpendicular. Zero whenever the track is too slow for its heading to mean
-    anything — a stationary player's velocity is noise, and penalising on noise
-    is worse than not penalising at all.
+    0.0 dead ahead, 1.0 directly behind, 0.5 perpendicular, scaled by `cap`.
 
     Why this exists. The association cost is overlap-with-the-prediction and
     nothing else: it asks "how far?", never "in what direction?". For a track
-    that has just been lost the prediction is already stale, so two candidates
-    equidistant from it score the same even when one is where the player was
-    running and the other is behind them. Measured on mrhvbvwi1gjpn, extrapolating
-    the exit velocity picks a DIFFERENT successor than raw distance on 17% of
-    ambiguous joins — signal the tracker currently discards.
+    just lost, the prediction is already stale, so a body BEHIND the player
+    scores as well as one where they were actually running. Measured on
+    mrhvbvwi1gjpn over 474 unambiguous continuations, the true successor is
+    ahead of the exit velocity **76%** of the time (82% at 2-4 m/s) — against
+    53% for the OSNet appearance embedding, which is a coin flip. Direction is
+    the strongest per-track signal available on same-kit players.
 
-    Units are pixels here (the tracker associates in equirect pixel space), so
-    `min_speed` is px/frame, not m/s.
+    The speed gate is a FRACTION OF BOX HEIGHT, not an absolute pixel count.
+    The first version used 2.0 px/frame and silenced almost everything it was
+    meant to help: a distant player moves 0.21 px/frame (91% below the gate)
+    while a near one moves 1.7, so an absolute threshold in a space where
+    apparent speed scales with distance mutes the far players entirely. Box
+    height is the natural per-detection scale, so `min_speed_frac` of it means
+    the same physical speed near and far. Falls back to an absolute 0.3 px when
+    no box height is supplied.
+
+    `cap` bounds the penalty so a player who genuinely doubles back is
+    disadvantaged rather than excluded — 24% of true continuations ARE behind.
     """
     vx, vy = float(track_v[0]), float(track_v[1])
     speed = (vx * vx + vy * vy) ** 0.5
-    if speed < min_speed:
+    floor = (min_speed_frac * float(box_h)) if box_h else 0.3
+    if speed < floor:
         return 0.0
     dx = float(det_xy[0]) - float(track_xy[0])
     dy = float(det_xy[1]) - float(track_xy[1])
@@ -63,7 +72,7 @@ def heading_penalty(track_xy, track_v, det_xy, min_speed=2.0):
     if dist < 1e-6:
         return 0.0
     cos = (vx * dx + vy * dy) / (speed * dist)      # +1 ahead, -1 behind
-    return float((1.0 - cos) / 2.0)
+    return float(cap * (1.0 - cos) / 2.0)
 
 
 def _make_rescuing_botsort():
@@ -152,7 +161,9 @@ def _make_rescuing_botsort():
                         continue                     # already out of the gate
                     dists[ti, di] += w * heading_penalty(
                         txy, tv, d.xywh[:2],
-                        min_speed=config.TRACK_HEADING_MIN_SPEED)
+                        box_h=float(t.mean[3]) if t.mean is not None else None,
+                        min_speed_frac=config.TRACK_HEADING_MIN_SPEED_FRAC,
+                        cap=config.TRACK_HEADING_CAP)
 
             matches, u_track, u_detection = linear_assignment(
                 dists, thresh=self.match_thresh)
