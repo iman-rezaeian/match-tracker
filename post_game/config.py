@@ -167,7 +167,26 @@ TRACK_RESCUE_LOST = os.environ.get("TRACK_RESCUE_LOST", "0") != "0"
 # real player ends their track outright — strictly worse than leaving a
 # confusable body in the pool. The per-track tally in stage 4 still gets the
 # final say on anything unclear.
-TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "0") != "0"
+#
+# DEFAULT ON as of 2026-08-07, measured on both July 12 games (opposite kit
+# configurations — black/value and green/hue) over 120 s mid-half windows:
+#
+#     metric                 game 1        game 2
+#     teleports/track        -66.5%        -52.8%   <- wrong-child jumps
+#     raw tracks             -19.9%        -12.2%
+#     bodies/frame           22 -> 8       17 -> 7
+#
+# Seven is the number a 7v7 has, so the surviving population is finally the
+# right size. Every other knob swept that day left teleports flat or raised
+# them; this is the only change measured to REDUCE identity confusion rather
+# than trade it for fragmentation. Set TRACK_DROP_OPPONENTS=0 to restore the
+# old behaviour.
+#
+# One caveat on record: median track lifespan fell 6.1 s -> 3.0 s. That is
+# believed to be composition — the long, easy tracks removed were opponents and
+# stationary spectators, leaving only our own kids, who are the hard case — but
+# it has NOT been separated from a real regression. Watch it on the re-track.
+TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "1") != "0"
 TRACK_APPEARANCE = os.environ.get("TRACK_APPEARANCE", "1") != "0"
 TRACK_APPEARANCE_THRESH = float(os.environ.get("TRACK_APPEARANCE_THRESH", "0.25"))
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate
