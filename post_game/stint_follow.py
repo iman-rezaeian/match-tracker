@@ -108,15 +108,35 @@ REACQUIRE_CAP_S = 3.0
 #
 # Swept end-to-end on Game 1 (53 seeds), 0.75 m is the knee:
 #
-#     radius   swaps   rate/min   coverage
-#     0.00 *       8      0.592         7%
+#     radius   swaps   rate/min   coverage*
+#     0.00 †       8      0.592         7%
 #     0.50         9      0.202        86%
 #     0.75         9      0.191        86%   <- best
 #     1.00        11      0.231        87%
 #     2.00        14      0.303        87%
 #     4.00        17      0.373        88%
-#     (* re-acquisition disabled: a lost target stays lost forever, which is
+#     († re-acquisition disabled: a lost target stays lost forever, which is
 #        the deadlock this whole path exists to fix — note the 7% coverage.)
+#
+# * READ THIS BEFORE QUOTING THE COVERAGE COLUMN. Those percentages are against
+#   48-second pseudo-truth segments, and coverage is attached/asked — so a short
+#   question flatters it. Holding the seeds fixed and only extending how long
+#   the follower is ASKED to continue:
+#
+#       asked          median coverage   median actually followed
+#       segment only         91%                76 s
+#       + 60 s               73%               132 s
+#       + 300 s              53%               303 s
+#       + 600 s              49%               339 s
+#
+#   The follower does keep extending; it just does not keep pace with the
+#   denominator. A follow sustains roughly 300-340 s before it stops making
+#   progress, which against a real 8-minute stint is ~60%, not 86%.
+#
+#   Re-swept at an 8-minute ask, 0.75 m is STILL the minimum (0.377/min, vs
+#   0.469 at 0.50 and 0.435 at 1.00), so the setting is robust to the framing
+#   even though the headline rate is not: 0.377/min at a realistic duration
+#   against 0.191 on 48-second segments.
 REACQUIRE_RADIUS_M = 0.75
 # Two targets cannot stand in the same square metre. Used to reject a joint
 # assignment that puts two named children on top of each other.
