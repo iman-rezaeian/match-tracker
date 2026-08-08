@@ -124,9 +124,26 @@ class Tracker:
             track_buffer=track_buffer_frames,
             match_thresh=0.8,
             proximity_thresh=0.5,
-            appearance_thresh=0.25,
+            appearance_thresh=config.TRACK_APPEARANCE_THRESH,
             frame_rate=frame_rate,
         )
+        # Associate on motion alone when appearance is measured to be noise on
+        # this kit (see config.TRACK_APPEARANCE).
+        #
+        # NOT by setting `with_reid = False`: that also stops boxmot computing
+        # `smooth_feat`, so `update()` below would persist no embeddings and the
+        # OFFLINE stitcher would lose its appearance input without saying a word.
+        # Those are different decisions — the stitcher compares whole tracklets
+        # with far more context than a single frame-to-frame gate — so keep
+        # Re-ID running and neutralise the gate instead.
+        #
+        # The gate is neutralised at 0.0, NOT 1.0. Upstream fuses with
+        # `emb_dists[emb_dists > thresh] = 1.0; dists = min(ious, emb_dists)`,
+        # so appearance can only ever LOWER a cost: raising the threshold admits
+        # MORE appearance, which is backwards. At 0.0 every embedding distance
+        # is forced to 1.0 and `min(ious, 1.0)` is just IoU.
+        if not config.TRACK_APPEARANCE:
+            self.impl.appearance_thresh = 0.0
 
     @property
     def _next_id(self) -> int:

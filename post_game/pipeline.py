@@ -313,6 +313,12 @@ def run(
         elif config.KIT_VOTE_ENABLED:
             log.warning("  kit vote OFF: game has no awayColor to compare against")
 
+        # Opponent pre-filter accounting (see the 2a block below). Logged after
+        # the pass so a run that quietly filtered nothing — or filtered far too
+        # much — is visible rather than inferred from downstream weirdness.
+        n_dropped_opp = 0
+        n_kept_after_filter = 0
+
         all_tracks: list[TrackedDetection] = []
         track_jersey_samples: dict[int, list[np.ndarray]] = {}
         # Latest smoothed Re-ID embedding per track (boxmot's smooth_feat is an
@@ -386,6 +392,29 @@ def run(
             dets = dedupe_detections_by_field_position(
                 dets, projector, config.DETECT_TILE_DEDUPE_M,
             )
+
+            # 2a. OPPONENT PRE-FILTER — decide team BEFORE association, not after.
+            # Halves the number of bodies the tracker can confuse ours with (see
+            # config.TRACK_DROP_OPPONENTS for the measurement). Only a CONFIDENT
+            # opponent read removes a detection; `vote_detection` returns 0 when
+            # the torso is too small, too washed, or sits between the two kit
+            # anchors, and those are KEPT — an unclear frame must never be able to
+            # end a real player's track. The per-track tally below re-votes on the
+            # surviving boxes and still has the final say.
+            if _kit_vote_on and config.TRACK_DROP_OPPONENTS:
+                _keep = []
+                for d in dets:
+                    if vote_detection(sample.eq_frame, d.bbox_eq,
+                                      _our_hex, _opp_hex, axis=_kit_axis,
+                                      min_s=config.PITCH_COLOR_MIN_S,
+                                      min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                      hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                      value_margin=config.KIT_VOTE_VALUE_MARGIN) == -1:
+                        n_dropped_opp += 1
+                        continue
+                    _keep.append(d)
+                n_kept_after_filter += len(_keep)
+                dets = _keep
 
             # ReID + tracker run on the equirect frame directly. BotSort
             # crops ROIs by xyxy so any frame works as long as the bboxes
@@ -482,6 +511,17 @@ def run(
                     elapsed, eta_s,
                 )
                 last_log_t = now
+
+        if config.TRACK_DROP_OPPONENTS and _kit_vote_on:
+            _seen = n_dropped_opp + n_kept_after_filter
+            log.info("  -> opponent pre-filter: dropped %d of %d detections (%.0f%%) "
+                     "before tracking; %d kept (ours + unclear)",
+                     n_dropped_opp, _seen,
+                     100.0 * n_dropped_opp / max(_seen, 1), n_kept_after_filter)
+            if _seen and n_dropped_opp / _seen > 0.75:
+                log.warning("  !! pre-filter removed >75%% of detections — the kit "
+                            "anchors are probably inverted; expect our team to be "
+                            "missing from the output")
 
         tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
 
@@ -1379,7 +1419,9 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          # Stage-2 output while leaving the fingerprint identical
                          # and a stale cache would be reused in silence.
                          "TRACK_HIGH_THRESH", "TRACK_NEW_THRESH",
-                         "TRACK_LOW_THRESH", "TRACK_RESCUE_LOST")
+                         "TRACK_LOW_THRESH", "TRACK_RESCUE_LOST",
+                         "TRACK_APPEARANCE", "TRACK_APPEARANCE_THRESH",
+                         "TRACK_DROP_OPPONENTS")
 
 
 def _tracking_fingerprint() -> dict:

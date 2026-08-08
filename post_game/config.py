@@ -134,6 +134,42 @@ TRACK_LOW_THRESH = float(os.environ.get("TRACK_LOW_THRESH", "0.10"))
 # track death while TRACK_BUFFER_S keeps the track alive for 20 s, so the
 # evidence to re-associate is present and upstream declines to use it.
 TRACK_RESCUE_LOST = os.environ.get("TRACK_RESCUE_LOST", "0") != "0"
+# Re-ID appearance gate, and a switch to drop appearance entirely.
+#
+# OSNet is trained on adult pedestrians in varied clothing. On 14 same-kit U10s
+# it has almost nothing to separate: measured on mrhvbvwi1gjpn over tracks that
+# are PROVABLY different children (alive in the same frame), the median cosine
+# distance is 0.271 and **42.5% score below the 0.25 match threshold**. So on
+# nearly half of confusable pairs appearance does not merely fail to help, it
+# actively votes for the wrong child — which is the likeliest reason the
+# id-switch rate stayed pinned at 100% across a full threshold sweep.
+#
+# Geometry, by contrast, is healthy: only 5.4% of true same-player consecutive
+# pairs fall below `proximity_thresh=0.5`. TRACK_APPEARANCE=0 tests whether the
+# tracker does better on clean motion evidence than on motion plus a coin flip.
+# Defaults preserve today's behaviour.
+# Drop confidently-OPPONENT detections BEFORE the tracker sees them.
+#
+# The tracker currently associates over every body on the pitch — our 7, their
+# 7, the ref, and whoever is standing near the touchline — so roughly half its
+# candidates are people who provably cannot be our player. Team was only ever
+# used as a LABEL applied after tracking (classify_from_kit_votes runs in stage
+# 4), never as a CONSTRAINT on association, so the tracker makes all of its
+# wrong-child decisions with the opponent still in the pool.
+#
+# Measured: detections with another body within 2 m drop from 11.5% to 6.0%
+# (mrhvbvwi1gjpn) and 11.0% to 4.2% (mri01pvelv46d) once the opponent is
+# removed. Unlike every threshold swept, this does not trade fragmentation
+# against wrong merges; it deletes candidates that are not our player at all.
+#
+# AMBIGUOUS detections are KEPT, never dropped. A single frame's vote is
+# decisive on 59-73% of tracks but sits in the middle on 10-17%, and deleting a
+# real player ends their track outright — strictly worse than leaving a
+# confusable body in the pool. The per-track tally in stage 4 still gets the
+# final say on anything unclear.
+TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "0") != "0"
+TRACK_APPEARANCE = os.environ.get("TRACK_APPEARANCE", "1") != "0"
+TRACK_APPEARANCE_THRESH = float(os.environ.get("TRACK_APPEARANCE_THRESH", "0.25"))
 # Accuracy-audit B2 (default OFF): associate tracks in field-metric surrogate
 # space instead of the distorted equirect frame. See B2_FIELD_SPACE_TRACKING.md +
 # post_game/tracking_field.py. Re-ID de-corruption (real crops via boxmot embs) +

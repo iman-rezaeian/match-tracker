@@ -137,6 +137,63 @@ def test_thresholds_come_from_config_and_default_to_the_old_literals():
             config.TRACK_LOW_THRESH) == (0.45, 0.50, 0.10)
 
 
+def test_appearance_off_neutralises_the_gate_at_zero_not_one():
+    """0.0 is the neutral value; 1.0 would admit MORE appearance.
+
+    Upstream fuses with `emb[emb > thresh] = 1.0; dists = min(ious, emb)`, so a
+    HIGHER threshold lets more embedding distances survive and pull costs down.
+    Getting this backwards would have made the experiment measure the opposite
+    of what it claims.
+    """
+    iou = np.array([0.2, 0.6, 0.9])
+    emb = np.array([0.10, 0.30, 0.05])
+
+    def fuse(thresh):
+        e = emb.copy()
+        e[e > thresh] = 1.0
+        return np.minimum(iou, e)
+
+    assert np.allclose(fuse(0.0), iou), "0.0 must leave pure IoU"
+    assert not np.allclose(fuse(1.0), iou), "1.0 must NOT be treated as neutral"
+
+
+def test_appearance_off_keeps_embeddings_flowing_to_the_stitcher():
+    """Turning the gate off must not stop boxmot computing smooth_feat.
+
+    Setting `with_reid = False` also disables feature extraction, so `update()`
+    would persist no embeddings and the OFFLINE stitcher would silently lose its
+    appearance input — a different decision from the frame-to-frame gate.
+    """
+    import os
+    from . import config
+    prev = os.environ.get("TRACK_APPEARANCE")
+    os.environ["TRACK_APPEARANCE"] = "0"
+    try:
+        import importlib
+        importlib.reload(config)
+        from .tracking import Tracker
+        from .detection import Detection
+        t = Tracker(frame_rate=10, track_buffer_frames=200)
+        assert t.impl.with_reid, "Re-ID must stay ON so embeddings are still made"
+        assert t.impl.appearance_thresh == 0.0
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        det = Detection(frame_index=0, cls=0, confidence=0.9,
+                        bbox_crop=(600, 300, 660, 480),
+                        bbox_eq=(600, 300, 660, 480))
+        out = []
+        for i in range(4):
+            out = t.update(frame, [det], time_s=i * 0.1)
+        assert out and out[0].appearance_embedding is not None, (
+            "embeddings must still reach the stitcher with the gate off")
+    finally:
+        if prev is None:
+            os.environ.pop("TRACK_APPEARANCE", None)
+        else:
+            os.environ["TRACK_APPEARANCE"] = prev
+        import importlib
+        importlib.reload(config)
+
+
 def test_threshold_changes_invalidate_the_stage2_cache():
     """A sweep must not silently reuse a cache built at other thresholds.
 
@@ -145,7 +202,8 @@ def test_threshold_changes_invalidate_the_stage2_cache():
     """
     from .pipeline import _TRACKING_CONFIG_KEYS
     for k in ("TRACK_HIGH_THRESH", "TRACK_NEW_THRESH", "TRACK_LOW_THRESH",
-              "TRACK_RESCUE_LOST"):
+              "TRACK_RESCUE_LOST", "TRACK_APPEARANCE",
+              "TRACK_APPEARANCE_THRESH"):
         assert k in _TRACKING_CONFIG_KEYS, f"{k} missing from the fingerprint"
 
 
