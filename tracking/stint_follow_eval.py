@@ -57,11 +57,17 @@ def build_stints(game_id: str):
 
     game = firestore_io.get_game(game_id)
     clock = period_clock_to_video_time_factory(game)
-    iv = _onfield_intervals(game.starting_lineup, game.events, clock)
+    # `_onfield_intervals` closes a still-open stint with its `video_end_s`
+    # sentinel (1e9 by default) for players who were on at the final whistle.
+    # Pass the real end so those stints have a usable length instead of
+    # 16-million-minute nonsense.
+    end_s = float(clock(2, game.half_length_min * 60))
+    iv = _onfield_intervals(game.starting_lineup, game.events, clock,
+                            video_end_s=end_s)
     out = []
     for pid, spans in iv.items():
         for (a, b) in spans:
-            out.append((pid, float(a), float(b)))
+            out.append((pid, float(a), min(float(b), end_s)))
     out.sort(key=lambda r: r[1])
     return out, game
 
