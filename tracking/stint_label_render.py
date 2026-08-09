@@ -82,6 +82,10 @@ EDGE_M = 1.5
 # can clear 0.5 and he reads as a player. Rare, but it is the realistic
 # failure mode — not the brief entries, which stay far below the threshold.
 CORE_FRAC_MIN = 0.5
+# How close in time a follower sample must be to a rendered frame for the box
+# to be drawn. Beyond this the follower had declared a GAP, and drawing
+# anything would invent a belief it did not hold.
+SAMPLE_TOL_S = 0.15
 
 
 def _draw(frame, box, colour=(0, 235, 255), width=6):
@@ -274,12 +278,22 @@ def main() -> None:
                 break
             if fi % step == 0:
                 t_now = (t_cp - args.clip_s / 2) + fi / src_fps
-                # Where the follower believes the player is AT THIS INSTANT.
-                if fpath:
-                    kk = min(fpath, key=lambda z: abs(z - t_now))
+                # Where the follower believes the player is AT THIS INSTANT —
+                # or NOWHERE, if it declared a gap.
+                #
+                # `min(fpath, ...)` alone snaps to the nearest sample however
+                # far away in time, so through a gap the box locked onto a
+                # stale position and then hopped to whichever body was nearest.
+                # The coach saw the box "jump from one player to the next"
+                # mid-clip and reasonably read it as a swap — but the follower
+                # had made NO attachment in that window at all (it declared
+                # gaps at t=41.0 and 42.5). The clip was showing a swap that
+                # never happened, and contradicting its own caption.
+                kk = min(fpath, key=lambda z: abs(z - t_now)) if fpath else None
+                if kk is not None and abs(kk - t_now) <= SAMPLE_TOL_S:
                     cx_now, cy_now = proj.field_to_pixel(*fpath[kk])
                 else:
-                    cx_now, cy_now = cx, cy
+                    cx_now = cy_now = None      # gap: draw no box
                 sub = fr[max(0, y0):y0 + int(w * 0.62), max(0, x0):x0 + w]
                 if sub.size:
                     # Draw ONLY the followed player, in yellow. The first
@@ -292,13 +306,21 @@ def main() -> None:
                     # at stage 3b2; they are not a tracking failure, but they
                     # have no business in a labeling clip.
                     kt = min(px, key=lambda z: abs(z - t_now)) if px else None
-                    if kt is not None and abs(kt - t_now) < 0.2:
+                    if cx_now is not None and kt is not None \
+                            and abs(kt - t_now) < 0.2:
                         rows = px[kt]
                         d = np.hypot(rows[:, 4] - cx_now, rows[:, 5] - cy_now)
                         k = int(np.argmin(d))
                         if d[k] < half * 0.5:
                             _draw(sub, (rows[k, 0] - x0, rows[k, 1] - y0,
                                         rows[k, 2] - x0, rows[k, 3] - y0))
+                    elif cx_now is None:
+                        # Say so, rather than leaving a bare frame the coach has
+                        # to interpret. A gap is a real answer: the follower
+                        # knows it has lost the player.
+                        cv2.putText(sub, "NO TRACK (follower lost him)",
+                                    (24, 46), cv2.FONT_HERSHEY_SIMPLEX,
+                                    1.1, (60, 60, 235), 3, cv2.LINE_AA)
                     sub = cv2.resize(sub, (w, int(w * 0.62)))
                     vw.write(sub)
                     wrote += 1
