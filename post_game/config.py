@@ -131,7 +131,18 @@ BALL_CLASS_ID = 32                              # COCO sports ball
 
 # --- Tracking ------------------------------------------------------------
 
-TRACKER_TYPE = "botsort"                         # bytetrack | botsort | deepocsort
+# Association algorithm. Until 2026-08-09 this was a bare literal that nothing
+# read — `Tracker.__init__` hardcoded BotSort — so the knob documented three
+# options and delivered one, and "try another tracker" looked done while never
+# having been run once. Now wired, env-overridable, and fingerprinted.
+#
+# It matters because a sweep of every BotSort knob (thresholds, buffer, heading,
+# appearance) came back inert against a 5.7 s median track lifespan. Those are
+# results about BotSort's tuning, not about association in general.
+#
+# boxmot 11.0.5 offers: botsort, bytetrack, deepocsort, hybridsort, imprassoc,
+# ocsort, strongsort — all installed, no new dependency.
+TRACKER_TYPE = os.environ.get("TRACKER_TYPE", "botsort")
 REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 # How long a lost track is kept alive for re-acquisition. Env-overridable so a
 # tuning sweep can vary it without a code edit (a long buffer lets a lost track
