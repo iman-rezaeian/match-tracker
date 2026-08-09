@@ -272,6 +272,7 @@ def main() -> None:
         wrote = 0
         want = int(args.clip_s * args.out_fps)
         fi = 0
+        n_gap_frames = n_frames_drawn = 0
         while wrote < want:
             ok, fr = cap.read()
             if not ok:
@@ -318,9 +319,18 @@ def main() -> None:
                         # Say so, rather than leaving a bare frame the coach has
                         # to interpret. A gap is a real answer: the follower
                         # knows it has lost the player.
-                        cv2.putText(sub, "NO TRACK (follower lost him)",
+                        #
+                        # "this frame" is deliberate. A clip can hold BOTH
+                        # states — the coach hit one that was lost for its first
+                        # 1.6 s and then re-acquired onto a team-mate for the
+                        # remaining 2.4 s. The old wording read as a verdict on
+                        # the whole clip, so a mixed clip looked like a
+                        # contradiction between the banner and the box.
+                        cv2.putText(sub, "NO TRACK this frame",
                                     (24, 46), cv2.FONT_HERSHEY_SIMPLEX,
                                     1.1, (60, 60, 235), 3, cv2.LINE_AA)
+                        n_gap_frames += 1
+                    n_frames_drawn += 1
                     sub = cv2.resize(sub, (w, int(w * 0.62)))
                     vw.write(sub)
                     wrote += 1
@@ -337,6 +347,13 @@ def main() -> None:
             "t_checkpoint_s": t_cp, "t_stint_start_s": t0,
             "elapsed_in_follow_s": t_cp - t0,
             "follower_xy_m": [x_m, y_m],
+            # Fraction of the clip the follower was actually attached for. A
+            # clip can be MIXED — lost for part, tracking for the rest — so a
+            # single verdict per checkpoint is lossy. Recording this lets the
+            # scorer tell "the coach judged a clean clip" from "the coach
+            # judged a clip that was half gap".
+            "tracked_frac": (1.0 - n_gap_frames / n_frames_drawn)
+                            if n_frames_drawn else 0.0,
         })
         if (n + 1) % 5 == 0 or n + 1 == len(tasks):
             print(f"  rendered {n+1}/{len(tasks)}", flush=True)

@@ -71,10 +71,18 @@ SAME, WRONG, UNSURE = "same", "wrong", "unsure"
 # coach is a colour-classifier failure of a different kind — and the first seed
 # clip rendered was in fact one of our own coaches on the touchline. Recording
 # them apart is what lets the scorer say which failure mode is costing what.
-COACH, OPPONENT, OTHER = "__coach__", "__opponent__", "__other__"
-NON_PLAYER = ["coach / staff (ours)", "opponent player", "other / can't say"]
+COACH, OPPONENT, REFEREE, OTHER = (
+    "__coach__", "__opponent__", "__referee__", "__other__")
+# The REFEREE is a fourth body on the pitch and belongs to neither team, so a
+# two-team colour vote has no correct answer for him — he is not a
+# misclassification, he is out of the model's vocabulary. He also behaves like
+# a player (roams the whole pitch, high core-fraction), so no touchline or
+# never-on-field test excludes him either. The 7v7 body count everyone quotes
+# is really 7+7+1.
+NON_PLAYER = ["coach / staff (ours)", "opponent player", "referee",
+              "other / can't say"]
 _NON_PLAYER_ID = {NON_PLAYER[0]: COACH, NON_PLAYER[1]: OPPONENT,
-                  NON_PLAYER[2]: OTHER}
+                  NON_PLAYER[2]: REFEREE, NON_PLAYER[3]: OTHER}
 
 st.set_page_config(page_title="Stint Label", layout="wide")
 
