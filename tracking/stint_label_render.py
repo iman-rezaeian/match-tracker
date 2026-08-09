@@ -67,6 +67,21 @@ CTX_M = 8.0
 # someone who was actually ON the field. A player crosses well in; a coach
 # hovering by the line never does.
 EDGE_M = 1.5
+# Fraction of a track's life that must be inside that core area.
+#
+# Coach (2026-08-08): a coach is behind the line ~95% of the game, stepping on
+# only briefly and occasionally — an injury, a quick word. So the expected
+# core fraction for a coach is ~0.05, and for a player it is near 1.0 (measured
+# at one Game 1 instant: five players at 1.000, the touchline coach at 0.021).
+# 0.5 sits in the empty middle of a sharply bimodal distribution: of tracks
+# with >=200 detections, 75 fall in 0-0.05 and 110 in 0.95-1.0, with only ~15
+# anywhere between.
+#
+# Where this WOULD fail: a long injury stoppage with the coach on the pitch.
+# If his track is short and most of it is spent inside the lines, the fraction
+# can clear 0.5 and he reads as a player. Rare, but it is the realistic
+# failure mode — not the brief entries, which stay far below the threshold.
+CORE_FRAC_MIN = 0.5
 
 
 def _draw(frame, box, colour=(0, 235, 255), width=6):
@@ -124,7 +139,17 @@ def main() -> None:
     core = ((on.x_m > EDGE_M) & (on.x_m < L - EDGE_M)
             & (on.y_m > EDGE_M) & (on.y_m < W - EDGE_M))
     per = on.assign(_c=core).groupby("track_id")["_c"].agg(["mean", "size"])
-    touchline = set(per.index[(per["mean"] <= 0.0) & (per["size"] >= 10)])
+    # Require a real MAJORITY of the track to be inside, not merely one frame.
+    # The pipeline's own rule is "never inside" (mean <= 0.0), which is right
+    # for deleting a track from the stats but too weak here: the coach who
+    # opened this whole thread had core_frac 0.021 — a couple of frames over
+    # the line out of 282 — and sailed through. Every genuine player at that
+    # instant scored 1.000, so the populations are cleanly separated and a
+    # majority test costs nothing. This is a LABELING-clip filter, deliberately
+    # stricter than DROP_NEVER_ONFIELD; it may discard a real player who spent
+    # most of a stint off-pitch, which is a fine trade for not wasting the
+    # coach's time on spectators.
+    touchline = set(per.index[(per["mean"] < CORE_FRAC_MIN) & (per["size"] >= 10)])
     on = on[~on.track_id.isin(touchline)].copy()
     print(f"on-pitch filter: {before} -> {len(on)} detections "
           f"({100*(1-len(on)/max(before,1)):.0f}% removed); "
