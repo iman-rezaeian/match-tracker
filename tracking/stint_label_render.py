@@ -251,7 +251,10 @@ def main() -> None:
         half = float(np.clip(abs(x2p - cx), 200.0, 700.0))
         x0, y0 = int(cx - half), int(cy - half * 0.62)
         w = h = int(half * 2)
-        name = f"{key.replace('@','_')}_{t_cp:.0f}.mp4"
+        # Name in DECISECONDS, matching the precision of the dedup key. With a
+        # whole-second name two samples 0.5 s apart passed the guard and then
+        # overwrote each other on disk, leaving 46 manifest rows over 45 files.
+        name = f"{key.replace('@', '_')}_{round(t_cp * 10)}ds.mp4"
         path = outdir / name
         # OpenCV's mp4v writes an MPEG-4 Part 2 stream, which no browser will
         # play — the labeling app showed a black player with working controls.
