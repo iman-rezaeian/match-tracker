@@ -66,6 +66,15 @@ FIELDS = ["clip", "stint_key", "player_id", "t_checkpoint_s",
           "elapsed_in_follow_s", "verdict", "true_player_id", "certain", "note"]
 # verdict vocabulary
 SAME, WRONG, UNSURE = "same", "wrong", "unsure"
+# Non-player answers. "coach / staff" is deliberately separate from "opponent":
+# our coaches wear BLACK, the same as the team on a normal game, so a boxed
+# coach is a colour-classifier failure of a different kind — and the first seed
+# clip rendered was in fact one of our own coaches on the touchline. Recording
+# them apart is what lets the scorer say which failure mode is costing what.
+COACH, OPPONENT, OTHER = "__coach__", "__opponent__", "__other__"
+NON_PLAYER = ["coach / staff (ours)", "opponent player", "other / can't say"]
+_NON_PLAYER_ID = {NON_PLAYER[0]: COACH, NON_PLAYER[1]: OPPONENT,
+                  NON_PLAYER[2]: OTHER}
 
 st.set_page_config(page_title="Stint Label", layout="wide")
 
@@ -189,15 +198,17 @@ with right:
 
     st.divider()
     st.write("**Wrong player — who is it really?**")
-    st.caption("Pick the actual child if you can tell, or 'unknown / opponent'.")
-    who = st.selectbox("Actually", ["— pick —", "unknown / opponent"] +
+    st.caption("Pick the actual child, or say what it is instead. "
+               "Our coaches wear black like the team, so 'coach / staff' is "
+               "its own answer — not 'opponent'.")
+    who = st.selectbox("Actually", ["— pick —"] + NON_PLAYER +
                        [o["label"] for o in opts], index=0)
     if st.button("❌ Wrong", use_container_width=True):
         if who == "— pick —":
-            st.warning("Say who it is (or 'unknown / opponent') first.")
+            st.warning("Say who or what it is first.")
         else:
-            tid = "" if who.startswith("unknown") else \
-                next(o["id"] for o in opts if o["label"] == who)
+            tid = _NON_PLAYER_ID.get(
+                who, next((o["id"] for o in opts if o["label"] == who), ""))
             save_label(labels_csv, {
                 "clip": cur["clip"], "stint_key": stint_key,
                 "player_id": nominal,

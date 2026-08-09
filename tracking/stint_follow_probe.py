@@ -115,7 +115,11 @@ def load_frames(game_id: str, tag: str):
     from post_game import config, firestore_io
     from post_game.calibration import FieldProjector
 
-    path = config.OUTPUTS_DIR / game_id / f"tracks_raw.{tag}.parquet"
+    # An empty/None tag means the pipeline's own untagged checkpoint
+    # (`tracks_raw.parquet`) rather than a sweep arm. Game 2's full-game cache
+    # is untagged, so without this the path becomes `tracks_raw..parquet`.
+    path = (config.OUTPUTS_DIR / game_id /
+            (f"tracks_raw.{tag}.parquet" if tag else "tracks_raw.parquet"))
     if not path.exists():
         raise SystemExit(
             f"no checkpoint {path}. Run tracking.retrack_smoke --tag {tag} first.")

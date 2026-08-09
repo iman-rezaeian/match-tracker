@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import warnings
 from pathlib import Path
 
@@ -62,6 +63,10 @@ LABELS_ROOT = Path(__file__).resolve().parent / "labels"
 # enough to show who they are running with (the context that makes a swap
 # visible), tight enough that the player is not a speck.
 CTX_M = 8.0
+# How far inside the touchline a body must come, at least once, to count as
+# someone who was actually ON the field. A player crosses well in; a coach
+# hovering by the line never does.
+EDGE_M = 1.5
 
 
 def _draw(frame, box, colour=(0, 235, 255), width=6):
@@ -104,8 +109,26 @@ def main() -> None:
     # itself or the coach gets asked to identify a parent under a gazebo.
     before = len(on)
     on = on[(on.x_m >= 0) & (on.x_m <= L) & (on.y_m >= 0) & (on.y_m <= W)].copy()
+
+    # A per-detection box test is NOT enough to exclude touchline figures. A
+    # coach standing a foot off the line at halfway projects to y=30.8 on a
+    # 31.1 m pitch — 31 cm inside — and is indistinguishable from a player
+    # taking a throw-in. The first seed clip rendered was one of our own
+    # coaches, and on a normal game our coaches wear BLACK, the same as the
+    # team, so colour cannot separate them either.
+    #
+    # The distinguishing fact is only visible over a WHOLE track: a player
+    # crosses into the field and comes back, a coach never does. This is the
+    # same rule the pipeline applies at stage 3b2 (DROP_NEVER_ONFIELD,
+    # post_game/test_never_onfield.py); apply it here rather than a box test.
+    core = ((on.x_m > EDGE_M) & (on.x_m < L - EDGE_M)
+            & (on.y_m > EDGE_M) & (on.y_m < W - EDGE_M))
+    per = on.assign(_c=core).groupby("track_id")["_c"].agg(["mean", "size"])
+    touchline = set(per.index[(per["mean"] <= 0.0) & (per["size"] >= 10)])
+    on = on[~on.track_id.isin(touchline)].copy()
     print(f"on-pitch filter: {before} -> {len(on)} detections "
-          f"({100*(1-len(on)/max(before,1)):.0f}% off-pitch removed)")
+          f"({100*(1-len(on)/max(before,1)):.0f}% removed); "
+          f"{len(touchline)} never-entered-the-field tracks dropped")
     times, byt = build_frame_index(on)
     frames_in = [(float(t), byt[t][:, :3]) for t in times]
     stints, game = build_stints(args.game_id)
@@ -164,11 +187,21 @@ def main() -> None:
         m = meta[tg.player_id]
         t0 = tg.samples[0][0]
         cps = np.arange(t0, tg.samples[-1][0], args.checkpoint_s)
+        seen_t: set[float] = set()
         for cp in cps:
             # nearest sample at/after the checkpoint
             cand = [s for s in tg.samples if s[0] >= cp]
             if not cand:
                 continue
+            # Several checkpoints can resolve to the SAME sample when the
+            # follower has a long gap — the next available attach is shared.
+            # Clips are named by rounded second, so those collided and
+            # overwrote each other: 60 manifest rows became 40 files, one name
+            # written five times, and the manifest then described clips that
+            # did not exist. Keep the first checkpoint to reach a sample.
+            if round(cand[0][0], 1) in seen_t:
+                continue
+            seen_t.add(round(cand[0][0], 1))
             # Carry the follower's whole path over the clip window so the box
             # can track the player frame by frame instead of being pinned to
             # the checkpoint instant — a player crossing the window would
@@ -195,7 +228,12 @@ def main() -> None:
         w = h = int(half * 2)
         name = f"{key.replace('@','_')}_{t_cp:.0f}.mp4"
         path = outdir / name
-        vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"),
+        # OpenCV's mp4v writes an MPEG-4 Part 2 stream, which no browser will
+        # play — the labeling app showed a black player with working controls.
+        # Write to a temp file then transcode to H.264 + yuv420p with
+        # faststart, which is what <video> actually needs.
+        tmp = outdir / f".raw_{name}"
+        vw = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"mp4v"),
                              args.out_fps, (w, int(w * 0.62)))
         step = max(1, int(round(src_fps / args.out_fps)))
         cap.set(cv2.CAP_PROP_POS_MSEC, (t_cp - args.clip_s / 2) * 1000)
@@ -238,6 +276,12 @@ def main() -> None:
                     wrote += 1
             fi += 1
         vw.release()
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(tmp),
+             "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-movflags", "+faststart", str(path)],
+            check=True)
+        tmp.unlink(missing_ok=True)
         manifest.append({
             "clip": name, "stint_key": key, "player_id": pid,
             "t_checkpoint_s": t_cp, "t_stint_start_s": t0,
