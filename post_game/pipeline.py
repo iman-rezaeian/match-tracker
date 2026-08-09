@@ -589,6 +589,48 @@ def run(
                 log.info("     tracks voting OURS: %d -> %d (of %d)",
                          _before, _after, len(kit_votes))
 
+        # 2c. PRUNE OPPONENT TRACKS — the tag-don't-drop replacement for the
+        # pre-tracking filter (see TRACK_DROP_OPPONENTS in config for why that
+        # one deleted a third of our own team).
+        #
+        # This runs HERE, after the block above has fitted the kit anchors to
+        # the footage, so the threshold separating the two kits is the measured
+        # one rather than the hex midpoint. Nothing was deleted during tracking:
+        # every detection was tagged, the votes accumulated per track, and only
+        # now — with a whole track's worth of evidence and the right anchors —
+        # is anything removed.
+        #
+        # Requires a strong majority of DECISIVE votes (abstains ignored, they
+        # are not evidence either way). Asymmetric on purpose: dropping a real
+        # player costs their whole stint, keeping an opponent costs one extra
+        # candidate in the association.
+        n_pruned_opp = 0
+        if config.TRACK_TAG_OPPONENTS and kit_votes and not tracks_df.empty:
+            _opp_tracks = set()
+            for _t, (_o, _p) in kit_votes.items():
+                _decisive = _o + _p
+                if _decisive < config.KIT_TAG_MIN_VOTES:
+                    continue
+                if _p / _decisive >= config.KIT_TAG_TRACK_MAJORITY:
+                    _opp_tracks.add(_t)
+            if _opp_tracks:
+                _before_rows = len(tracks_df)
+                tracks_df = tracks_df[
+                    ~tracks_df["track_id"].isin(_opp_tracks)].reset_index(drop=True)
+                n_pruned_opp = _before_rows - len(tracks_df)
+                # Report what was REMOVED, not just what survived. The drop
+                # version was only auditable because a pre-filter cache happened
+                # to survive on disk; a filter should not need luck to be
+                # reviewable.
+                log.info("  -> opponent track prune: removed %d tracks "
+                         "(%d detections, %.1f%%) at >=%.0f%% of >=%d decisive votes",
+                         len(_opp_tracks), n_pruned_opp,
+                         100.0 * n_pruned_opp / max(1, _before_rows),
+                         100 * config.KIT_TAG_TRACK_MAJORITY, config.KIT_TAG_MIN_VOTES)
+            else:
+                log.warning("  -> TRACK_TAG_OPPONENTS on but nothing met the "
+                            "prune bar (%d tracks voted)", len(kit_votes))
+
         # Persist before any downstream filter touches the data — so a bug in
         # filtering / identity / stats doesn't cost another detection pass.
         tracks_df.to_parquet(tracks_ckpt)
@@ -639,11 +681,14 @@ def run(
         # The buffer above is a per-DETECTION test, so it cannot tell a coach
         # standing 0.5 m outside the line from a player taking a throw-in from
         # the same spot. A whole TRACK can: a player crosses the line and comes
-        # back, a coach never does. Measured on both July 12 games, the
-        # fraction-of-life-outside distribution is sharply bimodal — a mass at
-        # 0.0-0.1 (players) and a spike at 0.9-1.0 (touchline adults) with a
-        # thin valley between — so requiring EVERY sample to be outside is a
-        # safe cut rather than a tuned one.
+        # back, a coach never does.
+        #
+        # The threshold is TUNED, not safe-by-construction — an earlier version
+        # of this comment claimed the distribution was sharply bimodal with a
+        # thin valley, which measurement refuted (the middle holds 591/482
+        # substantial tracks). See DROP_NEVER_OUTSIDE_FRAC in config for the
+        # tuning table; 1.0 leaked ~50k touchline detections per game because a
+        # single frame of projection noise saved a track.
         #
         # Confirmed these are adults, not our kids: within 5-15 m of the camera
         # (where the coaches stand) their boxes are 1.61x taller than on-pitch
@@ -662,7 +707,7 @@ def run(
                         | (tracks_df["y_m"] < 0) | (tracks_df["y_m"] > W))
             _per = tracks_df.assign(_o=_outside).groupby("track_id")["_o"].agg(
                 ["mean", "size"])
-            _never = _per.index[(_per["mean"] >= 1.0)
+            _never = _per.index[(_per["mean"] >= config.DROP_NEVER_OUTSIDE_FRAC)
                                 & (_per["size"] >= config.DROP_NEVER_MIN_DETS)]
             if len(_never):
                 _before_n = len(tracks_df)
@@ -1486,7 +1531,13 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          # so a cache taken at another imgsz is not comparable.
                          "DETECT_IMGSZ",
                          "TRACK_HEADING_WEIGHT", "TRACK_HEADING_MIN_SPEED_FRAC",
-                         "TRACK_HEADING_CAP")
+                         "TRACK_HEADING_CAP",
+                         # Tag-don't-drop opponent pruning and the never-on-pitch
+                         # threshold. Both change which tracks reach the cached
+                         # parquet, so both must move the fingerprint.
+                         "TRACK_TAG_OPPONENTS", "KIT_TAG_TRACK_MAJORITY",
+                         "KIT_TAG_MIN_VOTES", "DROP_NEVER_ONFIELD",
+                         "DROP_NEVER_OUTSIDE_FRAC", "DROP_NEVER_MIN_DETS")
 
 
 def _tracking_fingerprint() -> dict:
