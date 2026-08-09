@@ -193,25 +193,83 @@ TRACK_RESCUE_LOST = os.environ.get("TRACK_RESCUE_LOST", "0") != "0"
 # confusable body in the pool. The per-track tally in stage 4 still gets the
 # final say on anything unclear.
 #
-# DEFAULT ON as of 2026-08-07, measured on both July 12 games (opposite kit
-# configurations — black/value and green/hue) over 120 s mid-half windows:
+# *** DEFAULT OFF as of 2026-08-08. THIS FILTER DELETES OUR OWN PLAYERS. ***
 #
-#     metric                 game 1        game 2
-#     teleports/track        -66.5%        -52.8%   <- wrong-child jumps
-#     raw tracks             -19.9%        -12.2%
-#     bodies/frame           22 -> 8       17 -> 7
+# It was default ON for one day. On a VALUE-axis game it removed roughly a third
+# of our own team, every frame, because the vote runs at the wrong time:
 #
-# Seven is the number a 7v7 has, so the surviving population is finally the
-# right size. Every other knob swept that day left teleports flat or raised
-# them; this is the only change measured to REDUCE identity confusion rather
-# than trade it for fragmentation. Set TRACK_DROP_OPPONENTS=0 to restore the
-# old behaviour.
+#     during tracking   pre-filter votes with the RAW kit hexes  <- wrong line
+#     after tracking    fit_value_anchors derives the real line  <- too late
 #
-# One caveat on record: median track lifespan fell 6.1 s -> 3.0 s. That is
-# believed to be composition — the long, easy tracks removed were opponents and
-# stationary spectators, leaving only our own kids, who are the hard case — but
-# it has NOT been separated from a real regression. Watch it on the re-track.
-TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "1") != "0"
+# A `#0a0a0a` shirt is V10 as fabric but photographs at V~145 in July sun, so the
+# hex midpoint lands at 98 and our own players sit ABOVE it — read as opponents
+# and deleted. `fit_value_anchors` exists precisely to fix that (it derives 131
+# from the footage) but runs at stage 2b, after tracking, where it can only
+# re-label survivors. A deleted detection cannot be recovered.
+#
+# Replaying 2158 real on-pitch detections through the production call, game 1:
+#
+#     box height     ours +1    opp -1    unknown
+#     <40 px             10%       83%         7%
+#     >200 px            59%       34%         8%
+#     ALL                27%       68%         5%    <- a 7v7 is ~1:1
+#
+# Game 2 (HUE axis, green vs blue) votes 49/47 with no size gradient, so hue
+# games are unaffected — hue is roughly illumination-invariant and needs no
+# fitted anchors. The bug is value-axis only, i.e. whenever our kit is dark.
+#
+# Blast radius, game 1 window 720-1518 s, filter OFF vs ON:
+#
+#     bodies/frame              18  ->  7
+#     median track lifespan    6.0s -> 2.1s   (the "composition" caveat this
+#                                              comment used to carry was the bug)
+#     pitch thirds own/mid/far  .28/.35/.38 -> .44/.35/.22
+#     far-goal occupancy       100%  -> 77%
+#
+# The -66.5%/-52.8% teleport reduction once claimed here is REAL PER MINUTE
+# (289/min -> 77/min) and worthless as an association result: it prevents swaps
+# by deleting the players you would swap between. Any intervention that reduces
+# confusion by reducing bodies must be scored per-BODY, not per-minute.
+#
+# Do not simply re-enable this. The replacement is TRACK_TAG_OPPONENTS below,
+# which tags instead of deleting and prunes at TRACK level after the anchors are
+# fitted. See memory `opponent-filter-value-axis-bug` and the preserved
+# before/after caches in post_game/outputs/_prefilter_evidence/.
+TRACK_DROP_OPPONENTS = os.environ.get("TRACK_DROP_OPPONENTS", "0") != "0"
+# Tag opponents instead of deleting them: the replacement for the filter above.
+#
+# Three changes, each fixing one thing that broke the drop version:
+#
+# 1. ORDER. Nothing is removed during tracking. The vote is recorded per
+#    detection and the pruning happens at stage 2b, AFTER `fit_value_anchors`
+#    has derived the real threshold from the footage. The correct line exists
+#    before anything is discarded.
+#
+# 2. GRANULARITY. It prunes whole TRACKS, not detections. A track is ~100 looks
+#    at one child; a detection is one glance. Voting across a track survives a
+#    shadow, a turn, or a bad crop that would flip a single frame — the same
+#    reason DROP_NEVER_ONFIELD works at track level and a per-detection
+#    touchline test cannot. Requires a clear majority (KIT_TAG_TRACK_MAJORITY)
+#    over enough votes (KIT_TAG_MIN_VOTES); anything short of that is kept.
+#
+# 3. AUDITABILITY. A tagged detection can be re-scored next week; a deleted one
+#    is gone. The damage done by the drop version was only measurable because a
+#    pre-filter cache happened to survive on disk. That was luck, and a filter
+#    should not need luck to be reviewable — so this one reports what it pruned
+#    as data, not as a log line.
+#
+# Default OFF until measured on BOTH games (black/value and green/hue). Enabling
+# it changes Stage-2 output, so it is in _TRACKING_CONFIG_KEYS and will
+# correctly invalidate the cache.
+TRACK_TAG_OPPONENTS = os.environ.get("TRACK_TAG_OPPONENTS", "0") != "0"
+# Share of a track's decisive votes that must say "opponent" before it is
+# pruned. 0.8 is deliberately far above a bare majority: the cost of dropping a
+# real player is their whole stint, while keeping an opponent costs one extra
+# candidate in the association.
+KIT_TAG_TRACK_MAJORITY = float(os.environ.get("KIT_TAG_TRACK_MAJORITY", "0.8"))
+# Minimum DECISIVE votes (ignoring abstains) before a track may be pruned. A
+# handful of frames is not a kit reading.
+KIT_TAG_MIN_VOTES = int(os.environ.get("KIT_TAG_MIN_VOTES", "10"))
 # Drop OFF-FIELD detections before the tracker sees them, for the same reason.
 #
 # The off-field test already exists (stage 3b) but runs AFTER tracking, framed
@@ -237,11 +295,34 @@ TRACK_DROP_OFFFIELD = os.environ.get("TRACK_DROP_OFFFIELD", "0") != "0"
 # The 1.5 m buffer is a per-detection test and cannot separate a coach standing
 # half a metre outside the line from a player taking a throw-in at the same
 # spot. A whole track can: the player crosses the line and comes back, the coach
-# never does. Measured on both July 12 games the fraction-of-life-outside is
-# sharply bimodal (a mass at 0.0-0.1, a spike at 0.9-1.0, a thin valley), so
-# demanding EVERY sample be outside is a safe cut, not a tuned threshold:
+# never does.
 #
-#     game 1: 188 tracks / 13,647 detections   game 2: 127 / 8,084
+# CORRECTION 2026-08-08 — this comment used to claim the fraction-of-life-outside
+# is "sharply bimodal with a thin valley", making `>= 1.0` a safe cut rather than
+# a tuned one. That was asserted, not measured, and it is FALSE. Counting
+# substantial tracks (>= DROP_NEVER_MIN_DETS) on both games:
+#
+#     outside-fraction    game 1    game 2
+#     0.00 - 0.05           2322      2077
+#     0.05 - 0.95            591       482   <- the "thin valley", 16% / 13%
+#     0.95 - <1.00            79        70
+#     == 1.00                781      1039
+#
+# The middle is populated. This IS a tuned threshold and must be justified as
+# one. At 1.0 a single frame of projection noise saves a track, so ~50k
+# touchline-adult detections per game escaped — including the coach at
+# core-fraction 0.021 that broke a labeling run.
+#
+# Tuned to 0.95, which drops ~75 more tracks per game for 2 (g1) / 6 (g2) large
+# ones as collateral, and "large" means near-camera, which is where the coaches
+# stand. NOT lower: at 0.75 the collateral reaches 22/36 and starts eating
+# tracks that genuinely enter the pitch.
+#
+# What it removes is genuinely off-pitch: median 2.42 m (g1) / 3.18 m (g2)
+# outside the lines, only 8% / 3% within a metre of it, median span 7-8 s. A
+# substitute warming up on the touchline who later comes on is NOT at risk —
+# once they step on, their fraction drops below the threshold and they are kept
+# by construction.
 #
 # They are adults: within 5-15 m of the camera their boxes run 1.61x taller than
 # on-pitch players at the same distance.
@@ -253,6 +334,10 @@ TRACK_DROP_OFFFIELD = os.environ.get("TRACK_DROP_OFFFIELD", "0") != "0"
 # player's identity. This filter is about not attributing coach minutes to
 # players, not about association.
 DROP_NEVER_ONFIELD = os.environ.get("DROP_NEVER_ONFIELD", "1") != "0"
+# Fraction of a track's life that must be outside the lines before it is cut.
+# See the tuning table above: 1.0 leaks ~50k detections/game, 0.75 starts eating
+# real players. 0.95 sits between them.
+DROP_NEVER_OUTSIDE_FRAC = float(os.environ.get("DROP_NEVER_OUTSIDE_FRAC", "0.95"))
 # Minimum detections before the rule may fire. A 3-frame blip that happens to
 # land outside is noise, not a coach, and dropping it gains nothing.
 DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
