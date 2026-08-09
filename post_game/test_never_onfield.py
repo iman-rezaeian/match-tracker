@@ -5,9 +5,13 @@ half a metre outside the line from a player taking a throw-in from the same
 spot — both are "just outside". The distinguishing fact is only visible over a
 whole track: the player crosses the line and comes back, the coach never does.
 
-Measured on both July 12 games, fraction-of-life-outside is sharply bimodal (a
-mass at 0.0-0.1, a spike at 0.9-1.0, a thin valley between), so requiring EVERY
-sample to be outside is a safe cut rather than a tuned threshold.
+The threshold is TUNED, not safe-by-construction. An earlier version of this
+docstring claimed the fraction-of-life-outside distribution is "sharply bimodal
+with a thin valley", making `>= 1.0` self-evidently safe. Measurement on both
+games refuted that: the middle band holds 591 (g1) / 482 (g2) substantial
+tracks, 16% / 13% of the population. At 1.0 a single frame of projection noise
+saved a track and ~50k touchline detections per game escaped, so the cut now
+sits at DROP_NEVER_OUTSIDE_FRAC = 0.95.
 
 Run: `.venv-post-game/bin/python -m post_game.test_never_onfield`
 """
@@ -30,12 +34,18 @@ def _track(tid, pts, t0=0.0):
     })
 
 
-def _apply(df, min_dets=10):
-    """The stage-3b2 rule, mirrored (pipeline needs a video to run end-to-end)."""
+def _apply(df, min_dets=10, frac=None):
+    """The stage-3b2 rule, mirrored (pipeline needs a video to run end-to-end).
+
+    `frac` defaults to the CONFIG value rather than a literal, so a change to
+    DROP_NEVER_OUTSIDE_FRAC is exercised here instead of passing regardless.
+    """
+    if frac is None:
+        frac = config.DROP_NEVER_OUTSIDE_FRAC
     outside = ((df["x_m"] < 0) | (df["x_m"] > L)
                | (df["y_m"] < 0) | (df["y_m"] > W))
     per = df.assign(_o=outside).groupby("track_id")["_o"].agg(["mean", "size"])
-    never = per.index[(per["mean"] >= 1.0) & (per["size"] >= min_dets)]
+    never = per.index[(per["mean"] >= frac) & (per["size"] >= min_dets)]
     return df[~df["track_id"].isin(never)], set(never)
 
 
@@ -58,13 +68,20 @@ def test_a_keeper_behind_the_goal_line_is_kept():
     assert not dropped
 
 
-def test_one_frame_inside_is_enough_to_survive():
-    """The rule is >=1.0, i.e. EVERY sample outside. Deliberately strict.
+def test_a_player_who_spends_real_time_inside_survives():
+    """Replaces `test_one_frame_inside_is_enough_to_survive` (2026-08-08).
 
-    The valley in the measured distribution is thin but real; anything less than
-    total keeps the cut safe against a player who is briefly mis-projected.
+    That test asserted a single inside frame out of 30 should save a track,
+    justified by a "thin but real" valley in the distribution. Measurement
+    refuted the valley (591/482 substantial tracks sit in the middle), and the
+    behaviour it protected was the leak itself: ~50k touchline detections per
+    game survived on one frame of projection noise.
+
+    What it was TRYING to protect is a real player briefly mis-projected — so
+    that is what is asserted now. Two of 30 frames inside (0.933) is below the
+    0.95 bar and kept; a lone blip is not.
     """
-    pts = [(20.0, W + 0.5)] * 29 + [(20.0, W - 0.2)]
+    pts = [(20.0, W + 0.5)] * 28 + [(20.0, W - 0.2)] * 2
     _, dropped = _apply(_track(4, pts))
     assert not dropped
 
@@ -99,6 +116,44 @@ def test_far_sideline_is_caught_too():
 def test_default_is_on_and_overridable():
     assert config.DROP_NEVER_ONFIELD is True
     assert config.DROP_NEVER_MIN_DETS == 10
+    assert config.DROP_NEVER_OUTSIDE_FRAC == 0.95
+
+
+def test_one_frame_inside_no_longer_saves_a_coach():
+    """The leak the 1.0 threshold had: 1 frame of noise kept a whole track.
+
+    A coach with 39 samples outside and a single projection blip inside scores
+    0.975 — under the old `>= 1.0` rule that track survived, and ~50k such
+    detections per game reached identity. At 0.95 it is cut.
+    """
+    pts = [(-2.0, 15.0)] * 39 + [(1.0, 15.0)]
+    _, dropped = _apply(_track(9, pts))
+    assert 9 in dropped
+    # ...and the old threshold demonstrably did NOT cut it
+    _, old = _apply(_track(9, pts), frac=1.0)
+    assert 9 not in old
+
+
+def test_substitute_who_comes_on_is_kept():
+    """The population a naive tightening would eat.
+
+    A sub warms up on the touchline then plays. Most of the track is outside,
+    but once they step on the fraction falls below the bar — kept by
+    construction, which is why 0.95 is safe and 0.75 is not.
+    """
+    pts = [(-2.0, 16.0)] * 30 + [(20.0, 15.0)] * 10   # 0.75 outside
+    kept, dropped = _apply(_track(11, pts))
+    assert 11 not in dropped
+    assert not kept.empty
+
+
+def test_threshold_is_not_hardcoded_in_the_pipeline():
+    """Guards the wiring: the rule must read config, not a literal 1.0."""
+    import inspect
+    from . import pipeline
+    src = inspect.getsource(pipeline)
+    assert "config.DROP_NEVER_OUTSIDE_FRAC" in src
+    assert '_per["mean"] >= 1.0' not in src
 
 
 def test_empty_input_is_safe():
