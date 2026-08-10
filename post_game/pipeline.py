@@ -949,8 +949,8 @@ def run(
                     "(2) coach events fall outside the smoke window so no votes were cast, "
                     "(3) tracks at event times don't match team 0.")
 
-    # 6. Stats + Formation + GK positioning
-    log.info("Stage 6/6: stats, formation, GK positioning...")
+    # 6. Stats + Formation
+    log.info("Stage 6/6: stats, formation...")
     attack_dir = _attack_direction(game, tracks_df, identity_by_track, field_cal.length_m)
     # Coach-logged minutes per player (ground truth) = on-field intervals
     # (lineup + subs) clipped to the play windows. Used for minutes_played.

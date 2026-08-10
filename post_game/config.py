@@ -131,6 +131,15 @@ BALL_CLASS_ID = 32                              # COCO sports ball
 
 # --- Tracking ------------------------------------------------------------
 
+# ⚠ DEAD KNOB — declared here but referenced NOWHERE. Changing it does nothing;
+# the tracker is constructed directly in tracking.py. Kept as the documented
+# hook for the swap experiment, which is cheap precisely because this is unwired.
+# Temper expectations before spending on it: BoT-SORT is 2022 and boxmot's
+# alternatives (ByteTrack 2022; OC-SORT / StrongSORT / DeepOCSORT / HybridSORT
+# all 2023) are the same Kalman + IoU + appearance family, so a swap is a
+# LATERAL move, not a generational one. All four BoT-SORT knobs already measured
+# inert (thresholds, buffer, heading, appearance). A genuine alternative would be
+# a different paradigm (transformer / end-to-end MOT), not installed here.
 TRACKER_TYPE = "botsort"                         # bytetrack | botsort | deepocsort
 REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 # How long a lost track is kept alive for re-acquisition. Env-overridable so a

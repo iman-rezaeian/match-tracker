@@ -64,7 +64,6 @@ def run(
         "game_id": game_id,
         "players_analyzed": len(analytics.get("player_stats", [])),
         "clips": analytics.get("clip_count", 0),
-        "gk_events": len(analytics.get("gk_positions", [])),
         "tv_reel": (analytics.get("tv_reel") or {}).get("r2_url") or None,
         "auto_highlights": (analytics.get("auto_highlights") or {}).get("r2_url") or None,
     }))
