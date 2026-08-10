@@ -16,6 +16,13 @@ and prioritizes by ROI × how-blocked.
   spatial-metric partial-view sub-labels; team-summary sprint/top-speed parity fixes. Display-only,
   no pipeline change, no GT re-run. Decision locked: physical metrics NOT shrunk toward mean.
 - NEXT: Tier 4 (identity recall — coach FIX-ID UX / leftover-pass tuning / VLM, VLM-gated).
+  **⚠ READ `PER_PLAYER_METRICS_DECISION.md` (2026-08-09) BEFORE STARTING TIER 4.** Every
+  route to per-player DISTANCE has now been measured and the ceiling is coverage, not
+  identity: automatic ~20%, coach seeding 35%, fragment verification 62% (77% ceiling),
+  click-and-fix ~1,900 clicks/game. Clean (teleport-free) fragments live 1.1 s, so no
+  identity scheme — VLM, FIX-ID UX or coach seeding — repairs distance metrics. Position and
+  territory metrics ARE achievable, because they are samples rather than integrals. Tier 4
+  is still worth doing for *naming* coverage; it will not make distance trustworthy.
 Tier 3 awaits coach validation on `beta.match-tracker-843.pages.dev` before promotion to main.
 
 ## The core finding: two metric systems, opposite accuracy profiles
