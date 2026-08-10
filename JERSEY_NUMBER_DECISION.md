@@ -1,7 +1,8 @@
 # Jersey-number identity (VLM): settled decision
 
-**Status: SHIPPED, default OFF, coverage-limited. NOT a dead-end.**
-Last verified 2026-08-05. Read this before re-opening the question.
+**Status: SHIPPED, default ON, coverage-limited. NOT a dead-end.**
+Last verified 2026-08-05; default flipped to ON 2026-08-06 (`5aae148`), doc
+corrected 2026-08-09. Read this before re-opening the question.
 
 This document exists because the jersey-number question has been re-litigated
 several times. The measurements below are done. Do not re-run them; extend them.
@@ -74,9 +75,15 @@ does not close the coverage gap on its own.
 | `d874985` | **pipeline wiring** — fixes the tracklet-ID mismatch (see below) |
 | `3fa8ac6` | prune the FIX-IDS review list using the VLM's team read (free — reads already happen) |
 
-Flag: `VLM_IDENTITY` (`post_game/config.py:142`), **default OFF**. Model default
+Flag: `VLM_IDENTITY` (`post_game/config.py:422`), **default ON** since `5aae148`
+(2026-08-06), which also fixed the CLI flag silently overriding config on every
+run — it is now tri-state (`--vlm-identity` / `--no-vlm-identity`). Model default
 `claude-opus-4-8`, min-conf `0.5`, max-tracklets `120`.
 Tests: `post_game/test_vlm_identity.py` (14, VLM mocked) — green as of 2026-08-05.
+
+Re-measured on a kit-vote-cleaned pool at the time of the flip: coach-log alone
+names ~4.6% of tracked time, +VLM = **35%** (30 drafts, 26 at conf ≥ 0.8, ~9 min
+on a ~2 h run), and it pruned 18 opponents the colour classifier missed.
 
 Validated end-to-end on W8 `mri01pvelv46d`: 9 drafts naming 6 players, conf
 0.55–0.97, with legible reasoning ("'15' visible on green shirt back").

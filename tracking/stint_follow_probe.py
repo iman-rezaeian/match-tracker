@@ -4,10 +4,14 @@
 The question this answers
 -------------------------
 The pipeline currently detects every body and works out afterwards which body
-is which child. It is bad at that: 4269 raw ids for ~15 players on
-mrhvbvwi1gjpn, 6.0 s median lifespan, 87% chain impurity on the other game.
-Detection is fine — 99.5% of frames hold >=14 bodies — so the loss is
-ASSOCIATION.
+is which child. It is bad at that: 4269 ids for ~15 players on mrhvbvwi1gjpn
+(on-pitch +-1.5 m, full game; 5057 raw), 6.0 s median lifespan. Detection is
+fine — 99.5% of frames hold >=14 bodies — so the loss is ASSOCIATION.
+
+(This docstring used to add "87% chain impurity on the other game". RETIRED —
+that was 26/30 `__cant_tell__` labels, the share the coach could not NAME, read
+as the share holding more than one child. See tracking/composition_sampler.py.
+Chain impurity is UNRESOLVED; do not cite the figure.)
 
 The proposed replacement is to name a player ONCE, at the moment they walk on,
 and follow them until they walk off. The coach's two Jul-12 logs say a stint

@@ -3,10 +3,18 @@
 The problem this replaces
 -------------------------
 Stage 2 detects every body and the identity stage works out afterwards which
-body is which child. On same-kit U10s that fails structurally: 4269 raw track
-ids for ~15 players, 6.0 s median lifespan, 87% chain impurity, ~80% of tracked
-time unresolved. Detection is NOT the weak link — 99.5% of frames hold >=14
-bodies — so the loss is entirely in ASSOCIATION.
+body is which child. On same-kit U10s that fails structurally: 4269 track ids
+for ~15 players on mrhvbvwi1gjpn (on-pitch +-1.5 m, full game; 5057 raw),
+6.0 s median lifespan, ~80% of tracked time unresolved. Detection is NOT the
+weak link — 99.5% of frames hold >=14 bodies — so the loss is entirely in
+ASSOCIATION.
+
+(An earlier version of this docstring also cited "87% chain impurity". That
+figure is RETIRED — see tracking/composition_sampler.py. It was 26/30
+`__cant_tell__` labels, i.e. the share the coach could not NAME, misread as the
+share holding more than one child. Nothing in that data asserts any tracklet
+held two children, so chain impurity is UNRESOLVED, not established. The case
+for this module rests on lifespan and unresolved time, which are measured.)
 
 This module deletes the association problem rather than tuning it. The coach
 names a player once, at the moment they walk on, and the follower carries that
