@@ -27,5 +27,14 @@ if [[ ! -f "tracking/outputs/click_samples/$GAME_ID/index.json" ]]; then
   exit 1
 fi
 
+# Pick a free port. 8501/8502 are usually taken by the calibration UI and the
+# older labelling app, and Streamlit silently lands on a different port when its
+# default is busy -- which leaves you refreshing someone else's app.
+PORT="${PORT:-8511}"
+while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
+  PORT=$((PORT + 1))
+done
+echo "starting on http://localhost:$PORT"
+
 exec env PYTHONPATH="$REPO" "$VENV/bin/streamlit" run tracking/click_sample_app.py \
-  -- --game-id "$GAME_ID"
+  --server.port "$PORT" -- --game-id "$GAME_ID"
