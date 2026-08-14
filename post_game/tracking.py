@@ -11,6 +11,9 @@ Each TrackedDetection carries the equirect bbox for downstream stages.
 
 from __future__ import annotations
 
+import inspect
+import logging
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
@@ -20,6 +23,8 @@ import pandas as pd
 
 from . import config
 from .detection import Detection
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -225,8 +230,41 @@ class Tracker:
         # silent no-op, and a sweep on it would report "no effect" from runs
         # that never applied it.
         _need_subclass = config.TRACK_RESCUE_LOST or config.TRACK_HEADING_WEIGHT
-        impl_cls = _make_rescuing_botsort() if _need_subclass else BotSort
-        self.impl = impl_cls(
+        # TRACKER_TYPE selects the association algorithm. It sat in config for
+        # months documented with three options and referenced NOWHERE — BotSort
+        # was hardcoded here — so "try a different tracker" looked done and had
+        # never been run. It matters because a sweep of all four BotSort knobs
+        # (thresholds, buffer, heading, appearance) came back inert against a
+        # 5.7 s median track lifespan, and those results say nothing about a
+        # different algorithm.
+        #
+        # The rescue/heading subclass is BotSort-specific, so any other type
+        # ignores those flags — made loud rather than silent, since a sweep that
+        # thinks it is testing heading on OcSort would be measuring nothing.
+        _type = str(getattr(config, "TRACKER_TYPE", "botsort") or "botsort").lower()
+        if _type == "botsort":
+            impl_cls = _make_rescuing_botsort() if _need_subclass else BotSort
+        else:
+            if _need_subclass:
+                raise SystemExit(
+                    f"TRACKER_TYPE={_type} cannot honour TRACK_RESCUE_LOST/"
+                    f"TRACK_HEADING_WEIGHT (both are BotSort subclass features). "
+                    f"Unset them, or use botsort.")
+            # boxmot's TRACKERS is a list of NAMES, not a name->class mapping,
+            # so it validates but cannot construct. Map explicitly.
+            import boxmot
+            _classes = {"bytetrack": "ByteTrack", "ocsort": "OcSort",
+                        "deepocsort": "DeepOcSort", "strongsort": "StrongSort",
+                        "hybridsort": "HybridSort", "imprassoc": "ImprAssocTrack"}
+            if _type not in _classes:
+                raise SystemExit(f"unknown TRACKER_TYPE={_type!r}; "
+                                 f"offered: botsort, {', '.join(sorted(_classes))}")
+            impl_cls = getattr(boxmot, _classes[_type])
+        # Trackers disagree about their constructor signature — ByteTrack takes
+        # no Re-ID at all, OcSort has no appearance gate. Pass only what this
+        # one accepts, so an unsupported kwarg is a no-op rather than a crash,
+        # and log what was dropped so a missing knob is never silent.
+        _wanted = dict(
             reid_weights=Path(weights_path),
             device=device,
             half=False,
@@ -238,7 +276,18 @@ class Tracker:
             proximity_thresh=0.5,
             appearance_thresh=config.TRACK_APPEARANCE_THRESH,
             frame_rate=frame_rate,
+            # HybridSort requires this explicitly; the others derive an
+            # equivalent from new_track_thresh. Same value either way, so no
+            # tracker gets a different detection bar than the rest.
+            det_thresh=config.TRACK_NEW_THRESH,
         )
+        _accepted = set(inspect.signature(impl_cls.__init__).parameters)
+        _kwargs = {k: v for k, v in _wanted.items() if k in _accepted}
+        if _type != "botsort":
+            _skipped = sorted(set(_wanted) - set(_kwargs))
+            log.info("tracker=%s (%s); ignored kwargs: %s", _type,
+                     impl_cls.__name__, ", ".join(_skipped) or "none")
+        self.impl = impl_cls(**_kwargs)
         # Associate on motion alone when appearance is measured to be noise on
         # this kit (see config.TRACK_APPEARANCE).
         #

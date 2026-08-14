@@ -1556,6 +1556,11 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          # Tag-don't-drop opponent pruning and the never-on-pitch
                          # threshold. Both change which tracks reach the cached
                          # parquet, so both must move the fingerprint.
+                         # The association algorithm itself. This sat in config
+                         # unused for months while BotSort was hardcoded, so a
+                         # cache taken on one tracker must never be reused for
+                         # another.
+                         "TRACKER_TYPE",
                          "TRACK_TAG_OPPONENTS", "KIT_TAG_TRACK_MAJORITY",
                          "KIT_TAG_MIN_VOTES", "DROP_NEVER_ONFIELD",
                          "DROP_NEVER_OUTSIDE_FRAC", "DROP_NEVER_MIN_DETS")
