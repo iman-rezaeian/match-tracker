@@ -251,3 +251,98 @@ def test_onfield_at_slack_covers_the_kickoff_boundary():
 def test_onfield_at_is_empty_well_outside_every_window():
     iv = {"a": [(0.0, 100.0)]}
     assert onfield_at(iv, 5000.0) == []
+
+
+# --------------------------------------------------------------------------
+# panel ranking near the far touchline
+#
+# This is the bug that shipped three times: the far touchline is the horizon in
+# this camera geometry, so spectators behind it project onto y~0 and read as
+# on-pitch. Measured on Game 1: the line sits at pixel row 2028, and 10 px above
+# it projects to y=-3.2 m. Neither a polygon test nor apparent size can separate
+# a child at the far side from a seated adult just beyond it.
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import (FAR_TOUCHLINE_BAND_M, PANEL_H,
+                                       occupied_panels,
+                                       panel_label)
+
+
+class _Proj:
+    """Projector stub: pixel y maps linearly to field width, x to length."""
+    def pixel_to_field(self, px, py):
+        return (px - 2000) / 100.0, (py - 2000) / 100.0
+
+
+def _det(px, py, h=70, tid=1):
+    return {"track_id": tid, "foot_x_eq": px, "foot_y_eq": py, "bbox_h": h}
+
+
+def _frm(dets):
+    return {"video_time_s": 100.0, "detections": dets}
+
+
+def test_far_band_bodies_do_not_inflate_the_confident_count():
+    """A spectator projecting just inside the far line must not count.
+
+    Both detections are placed in the SAME grid cell (within one PANEL_H of each
+    other) so the assertion is about the tally rather than about how the pixel
+    grid happens to split them.
+    """
+    box = [2000, 2000, 2750, 2600]
+    band_px = 2000 + int(FAR_TOUCHLINE_BAND_M * 100)
+    near_line = _det(2100, band_px - 50)        # inside the uncertain band
+    real = _det(2200, band_px + 200)           # comfortably on the pitch
+    assert (near_line["foot_y_eq"] - box[1]) // PANEL_H \
+        == (real["foot_y_eq"] - box[1]) // PANEL_H, "fixture must share one cell"
+    cells = occupied_panels(_frm([near_line, real]), box, _Proj(), (50.0, 30.0))
+    assert len(cells) == 1
+    assert cells[0]["confident"] == 1
+    assert cells[0]["uncertain"] == 1
+
+
+def test_far_band_bodies_still_make_a_panel_visible():
+    """A player really can be at the far side, so the panel must stay clickable."""
+    box = [2000, 2000, 2750, 2600]
+    only_far = _det(2100, 2000 + 50)
+    cells = occupied_panels(_frm([only_far]), box, _Proj(), (50.0, 30.0))
+    assert len(cells) == 1 and cells[0]["confident"] == 0
+    assert cells[0]["uncertain"] == 1
+
+
+def test_ranking_prefers_confident_play_over_far_clutter():
+    box = [2000, 2000, 3500, 2600]
+    far_heavy = [_det(2100 + i * 5, 2050) for i in range(6)]      # far band
+    real_play = [_det(2900 + i * 5, 2900) for i in range(3)]      # comfortably in
+    cells = occupied_panels(_frm(far_heavy + real_play), box, _Proj(), (50.0, 30.0))
+    assert cells[0]["confident"] == 3, "real play must rank above far-band clutter"
+
+
+def test_adults_are_counted_separately_from_players():
+    box = [2000, 2000, 2750, 2600]
+    cells = occupied_panels(
+        _frm([_det(2100, 2900, h=200), _det(2150, 2900, h=70)]),
+        box, _Proj(), (50.0, 30.0))
+    assert cells[0]["adults"] == 1 and cells[0]["confident"] == 1
+
+
+def test_off_pitch_bodies_are_counted_separately():
+    box = [2000, 2000, 2750, 2600]
+    # y far beyond the pitch width -> outside the polygon entirely
+    cells = occupied_panels(_frm([_det(2100, 2000 + 5000)]), box,
+                            _Proj(), (50.0, 30.0))
+    assert cells == [] or cells[0]["off"] == 1
+
+
+def test_panel_label_uses_field_position_not_grid_arithmetic():
+    """Labels must name a real pitch area; the grid-derived version produced
+    'left, far side' three times in one frame."""
+    L, W = 60.0, 30.0
+    assert panel_label({"fx": [5.0], "fy": [15.0]}, (L, W)) == "defensive third, centre"
+    assert panel_label({"fx": [55.0], "fy": [2.0]}, (L, W)) == "attacking third, left"
+    assert panel_label({"fx": [30.0], "fy": [28.0]}, (L, W)) == "middle third, right"
+
+
+def test_panel_label_degrades_without_field_coords():
+    assert panel_label({"fx": [], "fy": []}, (50.0, 30.0)) == "pitch area"
+    assert panel_label({"fx": [1.0], "fy": [1.0]}, None) == "pitch area"

@@ -70,6 +70,11 @@ SNAP_RATIO = 2.0
 # two nearest candidates must ALSO be separated in absolute terms. 3.2% of
 # bodies have a neighbour within 50 px; those are the cases this protects.
 SNAP_MIN_SEPARATION_PX = 50.0
+# Width-axis band (metres from the FAR touchline) inside which the projection
+# cannot distinguish a player on the pitch from a spectator behind it -- the far
+# touchline is the horizon in this geometry. Detections here stay clickable (a
+# player really can be at the far side) but never drive the panel ranking.
+FAR_TOUCHLINE_BAND_M = 3.0
 
 
 def _args() -> argparse.Namespace:
@@ -121,6 +126,23 @@ def load_onfield(game_id: str) -> tuple[dict[str, list[tuple[float, float]]], st
             game.gk_player_id)
 
 
+@st.cache_resource(show_spinner=False)
+def load_projector(game_id: str):
+    """(FieldProjector, (length_m, width_m)) or (None, None) without calibration.
+
+    Used to test whether a detection is actually ON the pitch. Without it the
+    panel ranking counts spectators and the adjacent game.
+    """
+    try:
+        from post_game import calibration, firestore_io
+        cal = firestore_io.get_game_calibration(game_id)
+        if cal is None:
+            return None, None
+        return calibration.FieldProjector(cal), (cal.length_m, cal.width_m)
+    except Exception:  # pragma: no cover - UI convenience
+        return None, None
+
+
 def onfield_at(
     intervals: dict[str, list[tuple[float, float]]], t: float, slack_s: float = 3.0,
 ) -> list[str]:
@@ -135,24 +157,101 @@ def onfield_at(
     return sorted(out)
 
 
-def occupied_panels(frame: dict, box: list[int]) -> list[tuple[int, int, int]]:
-    """Panels holding at least one player-sized body, richest first.
+def occupied_panels(
+    frame: dict, box: list[int], projector=None, field_dims=None,
+) -> list[dict]:
+    """Panels worth showing, ranked by how much CONFIDENT play they contain.
 
-    Adults (box height >= 120 px, the measured sideline-adult threshold) are not
-    counted: they are the largest things on screen and would otherwise make every
-    touchline panel look busy.
+    ⚠ Read this before reintroducing a body count to the UI. Three versions of
+    this ranking were wrong, each for a different reason:
+
+    1. **Raw detection count.** Counted every body at the venue -- parents in
+       chairs, the adjacent game, people by the treeline -- so a panel of seated
+       spectators ranked first while a panel of eight real players ranked fourth.
+    2. **Count of bodies inside the pitch polygon.** Better, but still reported
+       "8 players" for a panel containing about three children and five seated
+       spectators.
+    3. The reason (2) fails is geometric, not a tuning problem. Measured on Game
+       1: the far touchline sits at pixel row 2028; ten pixels above it projects
+       to y = -3.2 m, forty pixels to -17.5 m, and beyond that to NaN. **The far
+       touchline is the horizon in this camera geometry**, so everyone past it
+       projects onto y ~ 0 and reads as on-pitch. Apparent size cannot separate
+       them either: a child genuinely at the far side is 30-40 px and so is a
+       seated adult just beyond the line. This is the far-touchline compression
+       already recorded in ACCURACY_AUDIT.md.
+
+    So this function no longer claims to count players. It counts detections it
+    can be CONFIDENT about -- those comfortably inside the far touchline -- and
+    ranks by that. Bodies in the uncertain far band are tallied separately and
+    never drive the ranking. The caller must not display `confident` as "N
+    players": the coach can tell three children from five chairs at a glance and
+    the software demonstrably cannot.
+
+    Falls back to the raw count without a projector, so the app still runs on an
+    uncalibrated game, with the old and worse ordering.
     """
-    grid: dict[tuple[int, int], int] = {}
+    grid: dict[tuple[int, int], dict] = {}
     for d in frame["detections"]:
-        if d.get("bbox_h", 0) >= 120:
-            continue
         gx = int((d["foot_x_eq"] - box[0]) // PANEL_W)
         gy = int((d["foot_y_eq"] - box[1]) // PANEL_H)
         if gx < 0 or gy < 0:
             continue
-        grid[(gx, gy)] = grid.get((gx, gy), 0) + 1
-    return [(gx, gy, n) for (gx, gy), n in
-            sorted(grid.items(), key=lambda kv: -kv[1])]
+        cell = grid.setdefault((gx, gy), {"confident": 0, "uncertain": 0,
+                                          "adults": 0, "off": 0,
+                                          "fx": [], "fy": []})
+        if projector is None or field_dims is None:
+            cell["confident"] += 1
+            continue
+        L, W = field_dims
+        fx, fy = projector.pixel_to_field(d["foot_x_eq"], d["foot_y_eq"])
+        if np.isnan(fx) or not (-1.0 <= fx <= L + 1.0 and -1.0 <= fy <= W + 1.0):
+            cell["off"] += 1
+        elif d.get("bbox_h", 0) >= 120:
+            cell["adults"] += 1
+        elif fy < FAR_TOUCHLINE_BAND_M:
+            # Inside the polygon arithmetically, but within the band where
+            # everything beyond the line also lands. Not trusted, not ranked.
+            cell["uncertain"] += 1
+        else:
+            cell["confident"] += 1
+            cell["fx"].append(fx)
+            cell["fy"].append(fy)
+
+    out = [{"gx": gx, "gy": gy, **v} for (gx, gy), v in grid.items()
+           if v["confident"] > 0 or v["uncertain"] > 0]
+    # Rank by confident play, then prefer panels further from the far line.
+    out.sort(key=lambda c: (-c["confident"],
+                            -(np.median(c["fy"]) if c["fy"] else 0.0)))
+    return out
+
+
+def panel_label(cell: dict, field_dims=None) -> str:
+    """Where on the pitch this panel is, from FIELD coordinates.
+
+    Two earlier versions of this were wrong and both are worth recording.
+
+    The first showed the detector's body count ("#1 (5 bodies)") -- internal
+    plumbing that told the coach nothing about where to look, and was inaccurate
+    besides, because most of those bodies were spectators.
+
+    The second derived the label from grid row/column arithmetic, which produced
+    "left, far side" three times in one frame and called nearly everything "far
+    side". The grid is a pixel rectangle laid over a curved pitch, so several
+    cells cover the same real area and a pixel ROW is not a side of the field.
+
+    So the label comes from the median field position of the players actually in
+    the cell: which third along the length, and which side across the width.
+    """
+    if field_dims is None or not cell.get("fx"):
+        return "pitch area"
+    L, W = field_dims
+    fx = float(np.median(cell["fx"]))
+    fy = float(np.median(cell["fy"]))
+    third = ("defensive third", "middle third", "attacking third")[
+        min(2, int(max(0.0, fx) / max(1e-6, L) * 3))]
+    frac = max(0.0, min(1.0, fy / max(1e-6, W)))
+    side = "left" if frac < 0.33 else ("right" if frac > 0.67 else "centre")
+    return f"{third}, {side}"
 
 
 def panel_click_to_equirect(
@@ -272,11 +371,15 @@ def main() -> None:
     if abs(sc - 1.0) > 0.01:
         flat = flat.resize((int(flat.width / sc), int(flat.height / sc)))
 
-    panels = occupied_panels(frame, box)
+    proj, dims = load_projector(a.game_id)
+    panels = occupied_panels(frame, box, proj, dims)
     if not panels:
-        st.info("No players detected in this frame — skip it.")
+        st.info("No players on the pitch in this frame — skip to the next.")
         return
-    st.write(f"**{len(panels)} panel(s) hold players.** Click a body, then pick a name.")
+    st.write(f"**{len(panels)} area(s) to check.** Click a player, then pick "
+             "their name. Areas nearest the camera come first — the far "
+             "touchline is where spectators sit and the camera cannot tell them "
+             "from players, so ignore anything that looks like a folding chair.")
 
     try:
         from streamlit_image_coordinates import streamlit_image_coordinates as sic
@@ -285,9 +388,14 @@ def main() -> None:
                  "`.venv-post-game/bin/pip install streamlit-image-coordinates`")
         return
 
-    pi = st.radio("panel", range(len(panels)), horizontal=True,
-                  format_func=lambda i: f"#{i+1} ({panels[i][2]} bodies)")
-    gx, gy, _ = panels[int(pi)]
+    # No body count in the label. The count cannot be trusted near the far
+    # touchline (see occupied_panels), and the coach can tell three children from
+    # five folding chairs at a glance. The software picks WHERE to look; the
+    # coach decides WHO is a player.
+    pi = st.radio(
+        "which part of the pitch", range(len(panels)), horizontal=True,
+        format_func=lambda i: panel_label(panels[i], dims))
+    gx, gy = panels[int(pi)]["gx"], panels[int(pi)]["gy"]
     crop = flat.crop((gx * PANEL_W, gy * PANEL_H,
                       min((gx + 1) * PANEL_W, flat.width),
                       min((gy + 1) * PANEL_H, flat.height)))
