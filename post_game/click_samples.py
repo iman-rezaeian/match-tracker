@@ -59,6 +59,18 @@ THIRDS = (1 / 3, 2 / 3)
 # horizon in this geometry, so a player standing on it can project several metres
 # negative from a few pixels of click error.
 FAR_CLAMP_M = 8.0
+# Heatmap kernel width in metres. A raw histogram discards almost everything the
+# clicks carry -- two clicks either side of a cell boundary contribute nothing to
+# each other -- so a 12x8 grid scored 0.15 split-half agreement, i.e. noise. A
+# Gaussian kernel lifts the same clicks to 0.67.
+#
+# ⚠ Do NOT raise this to make the map look better. Agreement rises monotonically
+# with bandwidth because every player converges on the same featureless blob:
+# measured, bw=12 m reaches 0.88 agreement but players are then 50% similar to
+# each other, which is a prettier picture of nothing. Scored on reliability minus
+# between-player similarity, 6 m is the optimum, and Silverman's rule on this data
+# independently suggests 3.9 m.
+HEATMAP_BANDWIDTH_M = 6.0
 
 
 @dataclass
@@ -156,6 +168,31 @@ def to_field(
     return out
 
 
+def kde_heatmap(
+    d: np.ndarray, w: np.ndarray, length_m: float, width_m: float,
+    shape: tuple[int, int], bandwidth_m: float = HEATMAP_BANDWIDTH_M,
+) -> np.ndarray:
+    """Occupancy grid by kernel density rather than binning.
+
+    Every click contributes a Gaussian bump, so nearby clicks reinforce and the
+    estimate is defined everywhere instead of only where a click happened to
+    land. Measured on the coach's clicks, this is what makes a fine grid usable
+    at all: split-half agreement at 12x8 rises from 0.15 (histogram) to 0.67.
+
+    Returns a `shape` grid with rows along DEPTH and columns along WIDTH,
+    normalised to sum to 1.
+    """
+    gx, gy = shape
+    cx = (np.arange(gx) + 0.5) * (length_m / gx)          # depth centres
+    cy = (np.arange(gy) + 0.5) * (width_m / gy)           # width centres
+    DX = cx[:, None, None] - np.asarray(d)[None, None, :]
+    DY = cy[None, :, None] - np.asarray(w)[None, None, :]
+    k = np.exp(-(DX * DX + DY * DY) / (2.0 * bandwidth_m * bandwidth_m))
+    grid = k.sum(axis=2)
+    s = grid.sum()
+    return grid / s if s > 0 else grid
+
+
 def spread_score(times: np.ndarray, t0: float, t1: float, bins: int = 10) -> float:
     """How evenly do a player's clicks span the match? 1.0 = perfectly spread.
 
@@ -237,9 +274,8 @@ def compute_click_stats(
                     "avg_width_m": round(float(w[m].mean()), 2),
                 }
 
-        hm, _, _ = np.histogram2d(
-            d, w, bins=heatmap_shape, range=[[0, L], [0, W]])
-        tot = max(1.0, hm.sum())
+        hm = kde_heatmap(d, w, L, W, heatmap_shape)
+        tot = max(1e-12, hm.sum())
 
         out.append(ClickPlayerStats(
             player_id=pid, n_clicks=len(rows),
