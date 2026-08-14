@@ -373,7 +373,17 @@ def main() -> None:
                    "fixed grid for that reason — please don't skip ahead to "
                    "the exciting bits, it biases every position.")
 
-    fi = st.number_input("frame", 0, len(frames) - 1, 0, 1)
+    if "fi" not in st.session_state:
+        st.session_state.fi = 0
+    _c1, _c2, _c3 = st.columns([1, 1, 6])
+    if _c1.button("◀ prev", disabled=st.session_state.fi <= 0):
+        st.session_state.fi -= 1
+        st.rerun()
+    if _c2.button("next ▶", disabled=st.session_state.fi >= len(frames) - 1):
+        st.session_state.fi += 1
+        st.rerun()
+    fi = _c3.number_input("frame", 0, len(frames) - 1,
+                          st.session_state.fi, 1, key="fi")
     frame = frames[int(fi)]
     st.caption(f"video t = {frame['video_time_s']:.1f}s "
                f"({frame['video_time_s']/60:.1f} min) — frame {int(fi)+1} of {len(frames)}")
@@ -415,10 +425,37 @@ def main() -> None:
     # identified nothing), and even unique names would have made the coach
     # translate a zone phrase onto a photograph. He confirmed he can read players
     # at band scale, so navigating tiles bought nothing.
+    # Per-band tally of bodies worth clicking, so an empty band is visibly empty
+    # rather than something the coach has to scan grass to rule out. Counts only
+    # child-sized bodies inside the pitch and clear of the far-touchline band --
+    # coaches standing at the touchline are excluded by size, and benched subs
+    # are usually not detected at all.
+    seg_px = (box[2] - box[0]) / max(1, bands)
+    band_counts = [0] * bands
+    for _d in frame["detections"]:
+        if _d.get("bbox_h", 0) >= 120:
+            continue
+        if proj is not None and dims is not None:
+            _L, _W = dims
+            _fx, _fy = proj.pixel_to_field(_d["foot_x_eq"], _d["foot_y_eq"])
+            if np.isnan(_fx) or not (-1.0 <= _fx <= _L + 1.0
+                                     and FAR_TOUCHLINE_BAND_M <= _fy <= _W + 1.0):
+                continue
+        _b = min(bands - 1, max(0, int((_d["foot_x_eq"] - box[0]) // seg_px)))
+        band_counts[_b] += 1
+
+    def _band_label(i: int) -> str:
+        n = band_counts[i]
+        return f"band {i+1} — {n} player{'' if n == 1 else 's'}" if n \
+            else f"band {i+1} — empty ⊘"
+
     band_i = st.radio(
-        "band", range(bands), horizontal=True,
-        format_func=lambda i: f"band {i+1} of {bands}"
+        "band", range(bands), horizontal=True, format_func=_band_label
     ) if bands > 1 else 0
+    if band_counts[int(band_i)] == 0:
+        st.warning("No players detected on the pitch in this band — skip to the "
+                   "next band, or the next frame if they're all empty. Nothing "
+                   "to record here.")
     seg_w = flat.width // bands
     crop = flat.crop((int(band_i) * seg_w, 0,
                       min((int(band_i) + 1) * seg_w, flat.width), flat.height))
