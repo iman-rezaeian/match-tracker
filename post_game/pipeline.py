@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 
 from . import config, firestore_io
+from .adult_filter import drop_sideline_adults
 from .calibration import (
     FieldProjector,
     aim_from_calibration,
@@ -1086,8 +1087,18 @@ def run(
                         ", ".join(f"{p}={100*v.get('offwindow_frac', 0):.0f}%" for p, v in
                                   sorted(_off.items(),
                                          key=lambda kv: -kv[1].get("offwindow_frac", 0))[:3]))
+    # Team shape is a function of the SET of bodies present, so it is immune to
+    # identity confusion but fully exposed to non-players: on a clicked frame
+    # only ~25% of tracked rows are ours. Restrict it to player-sized boxes
+    # before aggregating. Per-player stats above deliberately do NOT get this —
+    # they are gated on identity, and cutting a real player's near-camera frames
+    # would bias his own numbers instead of cleaning a shared one.
+    _shape_df = tracks_df
+    adult_report: dict = {}
+    if config.TEAM_SHAPE_SIZE_FILTER:
+        _shape_df = drop_sideline_adults(tracks_df, report=adult_report)
     formation_snaps, team_ts = compute_formation(
-        tracks_df, identity_by_track, team_of_player,
+        _shape_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
         gk_player_id=game.gk_player_id,
         coach_events=game.events,
@@ -1171,6 +1182,10 @@ def run(
                 for f in formation_snaps
             ],
             "team_time_series": asdict(team_ts),
+            # What the size filter removed from the TEAM metrics above. Reported
+            # as data, not a log line: a filter scored only on its survivors is
+            # how two earlier filters shipped while cutting our own players.
+            "team_shape_filter": adult_report or None,
             "field_tilt": field_tilt,
             "sub_corrections": sub_corrections_echo,
             # Provably-impossible spans (one player in two places at once) that
@@ -1443,6 +1458,10 @@ def run(
             for f in formation_snaps
         ],
         "team_time_series": asdict(team_ts),
+        # What the size filter removed from the TEAM metrics above. Reported as
+        # data, not a log line: a filter scored only on its survivors is how two
+        # earlier filters shipped while cutting our own players.
+        "team_shape_filter": adult_report or None,
         "clip_count": len(clips),
         "tv_reel": _tv_meta_to_dict(tv_reel_meta),
         "auto_highlights": _tv_meta_to_dict(auto_hl_meta),

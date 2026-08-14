@@ -368,6 +368,26 @@ DROP_NEVER_OUTSIDE_FRAC = float(os.environ.get("DROP_NEVER_OUTSIDE_FRAC", "0.95"
 # Minimum detections before the rule may fire. A 3-frame blip that happens to
 # land outside is noise, not a coach, and dropping it gains nothing.
 DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
+
+# Restrict the TEAM-SHAPE metrics (centroid, width, depth, compactness, field
+# tilt) to bodies whose per-track median box height is player-sized.
+#
+# Only 24.8% of tracked rows on a clicked frame are one of our players; the rest
+# are opponents, touchline adults and phantoms, and team shape is a function of
+# the SET of bodies, so every one of them moves the number. Scored against the
+# coach's clicks, the band keeps 94.1% of confirmed players while removing 40%
+# of non-players (purity 24.8% -> 34.1%). See post_game/adult_filter.py for the
+# full table and for why the earlier one-sided `h >= 120` version was inverted.
+#
+# ON by default: it is a strict improvement on both axes over the unfiltered
+# metric. It applies ONLY to team aggregates — per-player stats are gated on
+# identity instead, and cutting a real player's near-camera frames there would
+# bias his own numbers rather than clean a shared one.
+#
+# ⚠ It does NOT make team shape precise. The residual is mostly OPPONENTS, who
+# are exactly player-sized; 2 non-players per player survive. Directional only.
+TEAM_SHAPE_SIZE_FILTER = os.environ.get("TEAM_SHAPE_SIZE_FILTER", "1") != "0"
+
 # Penalise a candidate that sits OPPOSITE a lost track's direction of travel.
 #
 # The association cost is overlap-with-the-prediction and nothing else — it asks
@@ -972,6 +992,11 @@ GK_EVENT_TYPES = ("SHOT_ON", "GOAL", "SAVE")
 FIRESTORE_PROJECT_ID = os.environ.get("FIRESTORE_PROJECT_ID", "stompers-tracker")
 FIRESTORE_TEAM_DOC = "teams/main"
 ANALYTICS_DOC_VERSION = os.environ.get("ANALYTICS_DOC_VERSION", "v1")  # bump if schema breaks; env-override for shadow A/B runs
+# Companion doc holding ONLY the keys the season view reads. It fans out over
+# every finished game at once, and the full docs (420-970 KB each, ~3.4 MB of it
+# `identity_assignments` it never touches) made that open to a black screen on a
+# phone. See firestore_io.write_analytics_summary.
+ANALYTICS_SUMMARY_DOC = os.environ.get("ANALYTICS_SUMMARY_DOC", "summary")
 
 R2_BUCKET = os.environ.get("R2_BUCKET", "stompers-videos")
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")  # set in env, never committed
