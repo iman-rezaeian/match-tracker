@@ -1765,12 +1765,18 @@ function CoachApp() {
     }
   };
 
-  // Halftime bulk lineup change: coach picks the on-field set for the 2nd
-  // half in one pass. Emits paired SUB events for each net swap (one OFF
-  // player pairs with one ON player) so minutes-played stays accurate.
-  // Extras get standalone SUB rows with the "missing" side null — these are
-  // tolerated by playerSeconds / onFieldAt (they iterate independently).
-  const bulkReplaceLineup = (gameId, nextOnFieldIds) => {
+  // Bulk lineup change: swap several players in one pass. Emits paired SUB
+  // events for each net swap (one OFF player pairs with one ON player) so
+  // minutes-played stays accurate. Extras get standalone SUB rows with the
+  // "missing" side null — these are tolerated by playerSeconds / onFieldAt
+  // (they iterate independently).
+  //
+  // `pairing` optionally supplies the off→on correspondence and each incoming
+  // player's board slot: [{ offId, onId, x, y }]. The multi-sub flow passes it
+  // so incoming players inherit a deliberate position (see
+  // assignIncomingToSlots); without it, off and on are paired by index, which
+  // is arbitrary but preserves the original halftime behaviour.
+  const bulkReplaceLineup = (gameId, nextOnFieldIds, pairing = null) => {
     const game = games.find(g => g.id === gameId);
     if (!game) return;
     const currentOn = onFieldAt(game);
@@ -1783,23 +1789,55 @@ function CoachApp() {
     }
     const baseAt = Date.now();
     const elapsed = computeElapsed(game);
-    const pairs = Math.max(offNow.length, onNow.length);
     const newEvents = [];
-    for (let i = 0; i < pairs; i++) {
+
+    // Rows to emit: explicit pairing when given, else index-paired.
+    const rows = pairing
+      ? pairing.map(p => ({ offId: p.offId || null, onId: p.onId || null, x: p.x, y: p.y }))
+      : Array.from({ length: Math.max(offNow.length, onNow.length) }, (_, i) => ({
+          offId: offNow[i] || null,
+          onId: onNow[i] || null,
+        }));
+
+    rows.forEach((row, i) => {
+      const at = baseAt + i; // distinct timestamps so onFieldAt orders deterministically
       newEvents.push({
         id: uid(),
         type: 'SUB',
-        playerId: offNow[i] || null,
-        subOnPlayerId: onNow[i] || null,
+        playerId: row.offId,
+        subOnPlayerId: row.onId,
         period: game.period,
         elapsed,
-        at: baseAt + i, // distinct timestamps so onFieldAt orders deterministically
-        bulkHalftime: true,
+        at,
       });
-    }
+      // Give the incoming player a board spot so the formation is intact and
+      // the coach only drags the ones they actually want to move.
+      if (row.onId && typeof row.x === 'number' && typeof row.y === 'number') {
+        newEvents.push({
+          id: uid(),
+          type: 'POSITION',
+          playerId: row.onId,
+          period: game.period,
+          elapsed,
+          at,
+          x: row.x,
+          y: row.y,
+        });
+      }
+    });
+
     persistGames(prev => prev.map(g => g.id === gameId
       ? { ...g, events: [...g.events, ...newEvents] } : g));
-    showToast(`🔄 Lineup updated · ${onNow.length} on / ${offNow.length} off`);
+    const nOn = rows.filter(r => r.onId).length;
+    const nOff = rows.filter(r => r.offId).length;
+    showToast(`🔄 Lineup updated · ${nOn} on / ${nOff} off`);
+
+    // If the keeper went off in this batch, prompt for the new one immediately —
+    // same guard as the single-sub path, so the GK is never left undefined.
+    const gkOff = rows.find(r => r.offId && currentGKAt(game, baseAt - 1) === r.offId);
+    if (gkOff) {
+      setPendingEvent({ type: 'NEW_GK', defaultGK: gkOff.onId || null, at: baseAt });
+    }
   };
 
   // Silent: writes a POSITION event from the tactical board. No toast, no
@@ -1941,6 +1979,15 @@ function CoachApp() {
 
   const activeGame = games.find(g => g.id === activeGameId) || games.find(g => g.status === 'active');
   const viewingGame = games.find(g => g.id === viewingGameId);
+
+  // Where each player has been pinned on the board, over every game we have
+  // (including the one in progress). Feeds the multi-sub position matching.
+  // Recomputed only when a POSITION event is added — cheap, but it walks every
+  // game's event list, so it shouldn't run on every tick of the match clock.
+  const bandHist = useMemo(
+    () => bandHistory(games),
+    [games.reduce((n, g) => n + (g.events?.length || 0), 0), games.length]
+  );
 
   return (
     <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100 max-w-2xl mx-auto sm:border-x sm:border-stone-900">
@@ -2208,7 +2255,8 @@ function CoachApp() {
             endGame(activeGame.id);
           })}
           onBack={() => askConfirm('Leave this game? The clock keeps running — you can resume from Home.', () => setView('home'), { yesLabel: 'LEAVE' })}
-          onBulkReplaceLineup={(ids) => bulkReplaceLineup(activeGame.id, ids)}
+          onBulkReplaceLineup={(ids, pairing) => bulkReplaceLineup(activeGame.id, ids, pairing)}
+          bandHist={bandHist}
           voiceRef={voiceRef}
           pendingMicRef={pendingMicRef}
           tick={tick}
@@ -3810,6 +3858,111 @@ function snapOutfieldToSlots(outfieldIds, currentPositions) {
   return assigned;
 }
 
+// Coarse band each POSITION_SLOTS key belongs to. Multi-sub matching works at
+// BAND level, not slot level, and that is a measured decision rather than a
+// simplification: across 12 games of real POSITION pins, predicting a player's
+// band from their history in PRIOR games is right ~59% of the time (chance
+// ~33%), while predicting the exact slot is right only ~29%. Left/right/centre
+// is genuinely not stable for these kids — several have near-equal LD and RD
+// counts — so the band is the part of the signal that actually holds up.
+const SLOT_BAND = {
+  LST: 'F', CST: 'F', RST: 'F',
+  LM:  'M', CM:  'M', RM:  'M',
+  LD:  'D', CD:  'D', RD:  'D',
+};
+
+// Nearest named slot to an (x, y) board spot. POSITION events store raw drag
+// coords, but the picker snaps to POSITION_SLOTS, so most real pins sit exactly
+// on a slot and this is a no-op for them.
+//
+// POSITION_SLOTS holds outfield slots only, so a keeper pinned at the default
+// (0.5, 0.94) would otherwise land on CD and be counted as a defender. Return
+// 'GK' for pins that sit at or behind the deepest outfield slot instead.
+function nearestSlotKey(x, y) {
+  if (y >= 0.85) return 'GK';
+  let best = null, bestD = Infinity;
+  for (const s of POSITION_SLOTS) {
+    const d = (s.x - x) ** 2 + (s.y - y) ** 2;
+    if (d < bestD) { bestD = d; best = s.key; }
+  }
+  return best;
+}
+
+// How often each player has been pinned in each band, counted over every game
+// passed in (history + the game in progress). Returns
+// { [playerId]: { D: n, M: n, F: n } }. Players with no pins are simply absent,
+// which callers must treat as "no preference" rather than "no position".
+function bandHistory(games) {
+  const hist = {};
+  for (const g of games || []) {
+    for (const e of g?.events || []) {
+      if (e.type !== 'POSITION') continue;
+      if (typeof e.x !== 'number' || typeof e.y !== 'number' || !e.playerId) continue;
+      const band = SLOT_BAND[nearestSlotKey(e.x, e.y)];
+      if (!band) continue; // GK slot: keeper handling is separate
+      hist[e.playerId] = hist[e.playerId] || { D: 0, M: 0, F: 0 };
+      hist[e.playerId][band] += 1;
+    }
+  }
+  return hist;
+}
+
+// Share of a player's pins that fall in `band` (0..1). 0 when we've never
+// pinned them, so a brand-new player never outranks someone with real history.
+function bandAffinity(hist, playerId, band) {
+  const h = hist[playerId];
+  if (!h) return 0;
+  const total = h.D + h.M + h.F;
+  if (!total) return 0;
+  return (h[band] || 0) / total;
+}
+
+// Match bench players to the slots just vacated.
+//
+// Zone fit leads, minutes break ties (the coach's call): for each vacated slot
+// we want the bench player whose history most says "this band", and among
+// equally-good fits we prefer the one who has played MORE — their legs are the
+// freshest thing we can't measure, and it keeps the least-played kid available
+// for the next rotation.
+//
+// Greedy by ascending cost, same shape as snapOutfieldToSlots: with <=9 slots
+// and <=12 bench players a Hungarian solve buys nothing a coach would notice.
+//
+// vacatedSlots: [{ key, x, y, slotKey? }] — `key` must be unique per entry
+// (two outgoing players can share a named slot); `slotKey` carries the named
+// slot when `key` has been made unique. benchIds: [playerId]
+// Returns { pairs: [{ slot, playerId }], leftoverSlots, leftoverBench }
+function assignIncomingToSlots(vacatedSlots, benchIds, bandHist, secondsByPlayer) {
+  const candidates = [];
+  for (const slot of vacatedSlots) {
+    const band = SLOT_BAND[slot.slotKey || slot.key];
+    for (const pid of benchIds) {
+      // Primary: band mismatch (0 = perfect fit). Secondary: minutes, scaled
+      // small enough that it only ever separates equal fits.
+      const fit = 1 - bandAffinity(bandHist, pid, band);
+      const mins = (secondsByPlayer?.[pid] || 0) / 60;
+      candidates.push({ slot, pid, cost: fit - Math.min(mins, 90) / 10000 });
+    }
+  }
+  candidates.sort((a, b) => a.cost - b.cost);
+
+  const pairs = [];
+  const usedSlots = new Set();
+  const usedPlayers = new Set();
+  for (const c of candidates) {
+    if (usedSlots.has(c.slot.key) || usedPlayers.has(c.pid)) continue;
+    usedSlots.add(c.slot.key);
+    usedPlayers.add(c.pid);
+    pairs.push({ slot: c.slot, playerId: c.pid });
+    if (pairs.length === Math.min(vacatedSlots.length, benchIds.length)) break;
+  }
+  return {
+    pairs,
+    leftoverSlots: vacatedSlots.filter(s => !usedSlots.has(s.key)),
+    leftoverBench: benchIds.filter(p => !usedPlayers.has(p)),
+  };
+}
+
 // Small modal that floats above the tactical board so the coach can tap a
 // position label instead of dragging. Used by both KickoffTacticalBoard and
 // the in-game TacticalBoard. Rendered as a centered overlay so it works
@@ -4744,7 +4897,7 @@ const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef },
   );
 });
 
-function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, voiceRef, pendingMicRef, tick }) {
+function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPlayer, onResolveOppGoal, onConfirmGK, onSwapGK, onMovePosition, onResetFormation, onCancelEvent, onUndo, onPauseHalfTime, onStartSecondHalf, onResumeFirstHalf, onPauseClock, onResumeClock, onEnd, onBack, onBulkReplaceLineup, bandHist, voiceRef, pendingMicRef, tick }) {
   const elapsed = computeElapsed(game);
   const recent = [...game.events].reverse().filter(e => e.type !== 'POSITION').slice(0, 6);
   // Match-day squad limits who can be picked / subbed on. Legacy games without
@@ -4771,6 +4924,20 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
   // Halftime bulk-lineup modal: coach taps players to flip on/off the field
   // in a single pass instead of doing one SUB at a time.
   const [halftimePicker, setHalftimePicker] = useState(false);
+  // Multi-sub modal: keep-these-on flow with automatic position matching.
+  const [multiSubOpen, setMultiSubOpen] = useState(false);
+
+  // Last pinned board spot per player in THIS game — the slot an outgoing
+  // player vacates, which the incoming player inherits.
+  const boardPositions = useMemo(() => {
+    const m = {};
+    for (const e of game.events) {
+      if (e.type === 'POSITION' && typeof e.x === 'number' && typeof e.y === 'number') {
+        m[e.playerId] = { x: e.x, y: e.y };
+      }
+    }
+    return m;
+  }, [game.events]);
 
   const statusLabel = inHalfTimeBreak ? 'HALF TIME' : inSecondHalf ? '2ND HALF' : '1ST HALF';
   const statusColor = inHalfTimeBreak ? 'bg-amber-400 text-stone-100' : 'bg-stone-900 text-lime-400';
@@ -5186,6 +5353,15 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
+            {/* Rotate several players at once, keeping the shape. */}
+            <button
+              onClick={() => setMultiSubOpen(true)}
+              className="mt-2 w-full max-w-sm bg-purple-950/60 text-purple-100 border-2 border-purple-600/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+            >
+              <span className="text-2xl">👥</span>
+              <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SUB MULTIPLE</span>
+            </button>
+
             {/* Bulk lineup re-pick: faster than chaining individual SUBs when
                 many players rotate at halftime. */}
             <button
@@ -5325,6 +5501,15 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               </button>
             </div>
 
+            {/* Rotate several players at once instead of chaining single SUBs. */}
+            <button
+              onClick={() => setMultiSubOpen(true)}
+              className="mt-2 w-full bg-purple-950/60 text-purple-100 border-2 border-purple-600/60 rounded-2xl py-2.5 flex items-center justify-center gap-2 active:scale-[0.97] transition"
+            >
+              <span className="text-2xl">👥</span>
+              <span className="font-sans-pro font-extrabold tracking-tight text-base leading-none">SUB MULTIPLE</span>
+            </button>
+
             {inFirstHalf ? (
               <button
                 onClick={onPauseHalfTime}
@@ -5393,6 +5578,21 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           onSave={(ids) => {
             onBulkReplaceLineup(ids);
             setHalftimePicker(false);
+          }}
+        />
+      )}
+      {multiSubOpen && (
+        <MultiSubPicker
+          players={playersSorted}
+          onFieldIds={[...onFieldAt(game)]}
+          gameGKId={gameGKId}
+          secondsByPlayer={secondsByPlayer}
+          bandHist={bandHist}
+          currentPositions={boardPositions}
+          onCancel={() => setMultiSubOpen(false)}
+          onCommit={(ids, pairing) => {
+            onBulkReplaceLineup(ids, pairing);
+            setMultiSubOpen(false);
           }}
         />
       )}
@@ -5465,6 +5665,214 @@ function HalftimeLineupPicker({ players, gameGKId, initialOnField, secondsByPlay
         </button>
       </div>
     </div>
+  );
+}
+
+/* ---- Multi-player substitution -------------------------------------------
+ * Opens with every outfielder marked to come OFF and the keeper kept on, so
+ * "sub everyone except the goalie" is zero taps. Tap a row to keep that player
+ * on instead. Incoming players are matched to the slots being vacated by
+ * position history (band-level; see SLOT_BAND for why not exact slots).
+ *
+ * Commits immediately — the coach fixes the shape on the tactical board, which
+ * is why the incoming players arrive with a real board position rather than
+ * unplaced. Blocked while more players are going off than the bench can cover,
+ * with an explicit PLAY SHORT override for injuries / send-offs.
+ */
+function MultiSubPicker({
+  players, onFieldIds, gameGKId, secondsByPlayer, bandHist, currentPositions, onCancel, onCommit,
+}) {
+  const onFieldSet = useMemo(() => new Set(onFieldIds), [onFieldIds]);
+  const onFieldPlayers = players.filter(p => onFieldSet.has(p.id));
+  const benchPlayers = players.filter(p => !onFieldSet.has(p.id));
+
+  // Everyone on the field is going off unless kept. The keeper starts kept —
+  // the coach subs them separately when needed.
+  const [keptIds, setKeptIds] = useState(
+    () => new Set(onFieldPlayers.filter(p => p.id === gameGKId).map(p => p.id))
+  );
+  const toggleKeep = (pid) => setKeptIds(prev => {
+    const next = new Set(prev);
+    if (next.has(pid)) next.delete(pid); else next.add(pid);
+    return next;
+  });
+
+  const offPlayers = onFieldPlayers.filter(p => !keptIds.has(p.id));
+  const nOff = offPlayers.length;
+  const nBench = benchPlayers.length;
+  const short = nOff > nBench;
+
+  // One vacated slot per outgoing player: the slot they currently occupy is
+  // what the incoming player inherits (nearest named slot for a hand-dragged
+  // spot). Two players can legitimately sit on the same named slot when the
+  // coach dragged them together, so each entry gets a unique `key` — keying by
+  // slot name alone would collapse the duplicates and silently leave a bench
+  // player on the bench.
+  const vacatedSlots = offPlayers.map((p, i) => {
+    const cur = currentPositions[p.id];
+    const name = cur ? nearestSlotKey(cur.x, cur.y) : 'CM';
+    const s = POSITION_SLOTS.find(t => t.key === name)
+      || POSITION_SLOTS.find(t => t.key === 'CM');
+    return { key: `${s.key}#${i}`, slotKey: s.key, x: s.x, y: s.y, offId: p.id };
+  });
+
+  const assignment = useMemo(
+    () => assignIncomingToSlots(vacatedSlots, benchPlayers.map(p => p.id), bandHist, secondsByPlayer),
+    [vacatedSlots.map(s => s.key).join(','), benchPlayers.map(p => p.id).join(','), bandHist, secondsByPlayer]
+  );
+
+  const nameOf = (pid) => players.find(p => p.id === pid)?.name || '?';
+  const bandLabel = { D: 'DEF', M: 'MID', F: 'FWD' };
+  const mins = (pid) => Math.floor((secondsByPlayer?.[pid] || 0) / 60);
+
+  const commit = () => {
+    // Each vacated slot carries its own outgoing player, so pair straight off
+    // that. Slots nobody was left to fill become off-only rows (playing short).
+    const byKey = new Map(assignment.pairs.map(p => [p.slot.key, p.playerId]));
+    const pairing = vacatedSlots.map(s => ({
+      offId: s.offId,
+      onId: byKey.get(s.key) || null,
+      x: s.x,
+      y: s.y,
+    }));
+    const nextOnField = [
+      ...onFieldPlayers.filter(p => keptIds.has(p.id)).map(p => p.id),
+      ...pairing.filter(r => r.onId).map(r => r.onId),
+    ];
+    onCommit(nextOnField, pairing);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-stone-950/95 flex flex-col">
+      <div className="px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3 border-b border-stone-800 flex items-center justify-between">
+        <div>
+          <div className="font-display text-xl text-white leading-none">SUB MULTIPLE</div>
+          <div className="text-xs text-stone-400 mt-1">Tap a player to KEEP them on. The rest come off.</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-2xl font-display leading-none ${short ? 'text-red-400' : 'text-lime-400'}`}>{nOff}</div>
+          <div className="text-[10px] text-stone-500 uppercase tracking-wide">going off</div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider px-1 mb-1.5">On field</div>
+        <div className="grid grid-cols-2 gap-2">
+          {onFieldPlayers.map(p => {
+            const kept = keptIds.has(p.id);
+            const isGK = p.id === gameGKId;
+            return (
+              <button
+                key={p.id}
+                onClick={() => toggleKeep(p.id)}
+                className={`rounded-2xl border-2 px-3 py-3 flex flex-col items-start gap-1 active:scale-[0.97] transition text-left ${
+                  kept
+                    ? 'bg-lime-900/40 border-lime-500/70 text-lime-100'
+                    : 'bg-purple-950/50 border-purple-600/60 text-purple-100'
+                }`}
+              >
+                <div className="flex items-center gap-2 w-full">
+                  <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${kept ? 'bg-lime-700/60 text-white' : 'bg-purple-800/70 text-purple-100'}`}>#{p.number}</span>
+                  {isGK && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-700/60 text-amber-100">GK</span>}
+                  <span className="ml-auto text-[10px] font-mono text-stone-400">{mins(p.id)}'</span>
+                </div>
+                <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
+                <div className={`text-[10px] font-bold tracking-wide ${kept ? 'text-lime-300' : 'text-purple-300'}`}>
+                  {kept ? 'STAYING ON' : '→ COMING OFF'}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Who comes on, and where they'll land. Read-only: the board is where
+            the coach adjusts, per the agreed commit-immediately flow. */}
+        <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider px-1 mt-4 mb-1.5">
+          Coming on {nOff > 0 && `· ${assignment.pairs.length} of ${nBench} on bench`}
+        </div>
+        {nOff === 0 ? (
+          <div className="text-sm text-stone-500 italic px-1">Nobody selected to come off.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {offPlayers.map((p, i) => {
+              const slot = vacatedSlots[i];
+              const inId = assignment.pairs.find(x => x.slot.key === slot.key)?.playerId;
+              const band = SLOT_BAND[slot.slotKey];
+              const aff = inId && band ? bandAffinity(bandHist, inId, band) : 0;
+              return (
+                <div key={p.id} className="flex items-center gap-2 rounded-xl bg-stone-900/60 border border-stone-700 px-3 py-2">
+                  <span className="text-xs font-mono text-stone-500 w-9">{slot.slotKey}</span>
+                  <span className="text-sm text-stone-400 truncate flex-1">{p.name.split(' ')[0]}</span>
+                  <span className="text-stone-600">→</span>
+                  <span className="text-sm font-bold text-lime-200 truncate flex-1">
+                    {inId ? nameOf(inId).split(' ')[0] : <span className="text-red-400 font-normal italic">nobody</span>}
+                  </span>
+                  {inId && (
+                    <span className="text-[10px] font-mono text-stone-500">
+                      {band ? bandLabel[band] : ''} {Math.round(100 * aff)}%
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="text-[10px] text-stone-600 mt-2 px-1 leading-snug">
+          Positions come from each player's history on the board. Drag on the pitch to adjust after.
+        </div>
+      </div>
+
+      <div className="px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] border-t border-stone-800">
+        {short && (
+          <div className="text-[11px] text-red-300 text-center mb-2 leading-snug">
+            {nOff} going off but only {nBench} on the bench — keep {nOff - nBench} more on,
+            or play short.
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 bg-stone-800 text-stone-200 border-2 border-stone-700 rounded-2xl py-3 font-display"
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={commit}
+            disabled={nOff === 0 || short}
+            className={`flex-1 rounded-2xl py-3 font-display border-2 transition ${
+              nOff === 0 || short
+                ? 'bg-stone-800/60 text-stone-600 border-stone-800 cursor-not-allowed'
+                : 'bg-lime-700 text-white border-lime-500 active:scale-[0.97]'
+            }`}
+          >
+            SUB {nOff} PLAYER{nOff === 1 ? '' : 'S'}
+          </button>
+        </div>
+        {short && (
+          <ShortHandedButton count={nOff} available={nBench} onConfirm={commit} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Two-tap override for deliberately continuing short-handed (injury, send-off).
+ * Separate from the main commit so it can never be hit by accident. */
+function ShortHandedButton({ count, available, onConfirm }) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <button
+      onClick={() => (armed ? onConfirm() : setArmed(true))}
+      className={`mt-2 w-full rounded-2xl py-2.5 font-display text-sm border-2 transition active:scale-[0.98] ${
+        armed
+          ? 'bg-red-700 text-white border-red-400'
+          : 'bg-stone-900 text-red-300 border-red-800/70'
+      }`}
+    >
+      {armed
+        ? `TAP AGAIN — PLAY SHORT (${count - available} fewer on field)`
+        : 'PLAY SHORT'}
+    </button>
   );
 }
 
