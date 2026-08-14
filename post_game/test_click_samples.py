@@ -446,3 +446,44 @@ def test_adults_are_excluded_from_both_tallies():
     ours, other = _tally([_kit_det(2100, 2900, "ours", h=200)], box, 1,
                          _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
     assert ours[0] == 0 and other[0] == 0
+
+
+# --------------------------------------------------------------------------
+# the (GK) suffix must follow whoever is actually in the net
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import gk_at, video_to_elapsed_ms
+
+
+def test_gk_at_returns_the_starting_keeper_with_no_changes():
+    segs = [{"playerId": "p_garland", "from": 0, "to": None}]
+    assert gk_at(segs, 0) == "p_garland"
+    assert gk_at(segs, 1_400_000) == "p_garland"
+
+
+def test_gk_at_follows_a_keeper_change():
+    """A game-wide gk_player_id would mark the wrong child after the swap."""
+    segs = [{"playerId": "a", "from": 0, "to": 600_000},
+            {"playerId": "b", "from": 600_000, "to": None}]
+    assert gk_at(segs, 599_999) == "a"
+    assert gk_at(segs, 600_000) == "b"
+    assert gk_at(segs, 1_200_000) == "b"
+
+
+def test_gk_at_is_none_without_segments():
+    assert gk_at([], 1000) is None
+    assert gk_at(None, 1000) is None
+
+
+def test_video_time_converts_to_match_clock_per_half():
+    """The clock RESTARTS at the H2 kickoff; treating video as one continuous
+    clock would push every H2 frame past the end of the match."""
+    h1, h2 = 40.92, 1753.08
+    assert video_to_elapsed_ms(40.92, h1, h2) == 0
+    assert video_to_elapsed_ms(670.92, h1, h2) == 630_000
+    # first frame of H2 must read as one minute into the SECOND half
+    assert video_to_elapsed_ms(1813.08, h1, h2) == 60_000
+
+
+def test_video_time_never_goes_negative_before_kickoff():
+    assert video_to_elapsed_ms(0.0, 40.92, 1753.08) == 0

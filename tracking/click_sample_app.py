@@ -143,12 +143,16 @@ def load_onfield(game_id: str) -> tuple[dict[str, list[tuple[float, float]]], st
     rather than inventing a second notion of who was playing.
     """
     from post_game import firestore_io
-    from post_game.identity import (_onfield_intervals,
+    from post_game.identity import (_gk_segments, _onfield_intervals,
                                     period_clock_to_video_time_factory)
     game = firestore_io.get_game(game_id)
     c2v = period_clock_to_video_time_factory(game)
+    # Keeper segments rather than the single game-wide `gk_player_id`, so the
+    # (GK) suffix follows whoever is actually in the net. On this game there are
+    # no changes and Garland kept throughout, but a game where the keeper rotates
+    # would otherwise mark the wrong child for the whole match.
     return (_onfield_intervals(game.starting_lineup, game.events, c2v),
-            game.gk_player_id)
+            _gk_segments(game.gk_player_id, game.gk_changes or []))
 
 
 @st.cache_resource(show_spinner=False)
@@ -166,6 +170,45 @@ def load_projector(game_id: str):
         return calibration.FieldProjector(cal), (cal.length_m, cal.width_m)
     except Exception:  # pragma: no cover - UI convenience
         return None, None
+
+
+@st.cache_data(show_spinner=False)
+def load_kickoff_offsets(game_id: str) -> tuple[float, float]:
+    """(h1_kickoff_s, h2_kickoff_s) in VIDEO seconds, for the clock conversion."""
+    try:
+        from post_game import firestore_io
+        g = firestore_io.get_game(game_id)
+        return (float(getattr(g, "video_offset_h1_kickoff_s", 0.0) or 0.0),
+                float(getattr(g, "video_offset_h2_kickoff_s", 0.0) or 0.0))
+    except Exception:  # pragma: no cover - UI convenience
+        return 0.0, 0.0
+
+
+def video_to_elapsed_ms(t_video: float, h1_off: float, h2_off: float) -> int:
+    """Video seconds -> match-clock milliseconds, which is what the coach's taps use.
+
+    The clock RESTARTS at the second-half kickoff, so a frame after `h2_off`
+    measures from there, not from H1. Treating the video timeline as one
+    continuous clock would put every second-half frame far beyond the end of the
+    match and match the wrong keeper segment.
+    """
+    if h2_off and t_video >= h2_off:
+        return int(max(0.0, t_video - h2_off) * 1000)
+    return int(max(0.0, t_video - h1_off) * 1000)
+
+
+def gk_at(gk_segments: list[dict], elapsed_ms: int) -> str | None:
+    """Whoever is in the net at `elapsed_ms` of match clock.
+
+    ⚠ Segment bounds are MATCH-CLOCK MILLISECONDS (the coach's taps), not video
+    seconds. Passing a video timestamp here would compare seconds against
+    milliseconds and always return the starting keeper -- silently correct on a
+    game with one keeper, silently wrong on any game where they rotate.
+    """
+    for seg in gk_segments or []:
+        if seg["from"] <= elapsed_ms and (seg["to"] is None or elapsed_ms < seg["to"]):
+            return seg["playerId"]
+    return None
 
 
 def onfield_at(
@@ -343,11 +386,14 @@ def main() -> None:
     roster = load_roster(a.game_id)
     done = load_samples(root)
     try:
-        onfield_iv, gk_id = load_onfield(a.game_id)
+        onfield_iv, gk_segs = load_onfield(a.game_id)
     except Exception as exc:
         st.warning(f"on-field windows unavailable ({type(exc).__name__}) — "
                    "showing the whole roster")
-        onfield_iv, gk_id = {}, None
+        onfield_iv, gk_segs = {}, []
+    # Offsets to convert a frame's VIDEO time into match-clock ms, which is what
+    # the keeper segments are keyed on.
+    h1_off, h2_off = load_kickoff_offsets(a.game_id)
     # Matchday squad = anyone the coach's log ever put on the pitch (12), not the
     # 16-name club roster.
     squad = {p for p in onfield_iv} or {p["id"] for p in roster}
@@ -385,6 +431,8 @@ def main() -> None:
     fi = _c3.number_input("frame", 0, len(frames) - 1,
                           st.session_state.fi, 1, key="fi")
     frame = frames[int(fi)]
+    gk_id = gk_at(gk_segs, video_to_elapsed_ms(
+        float(frame["video_time_s"]), h1_off, h2_off))
     st.caption(f"video t = {frame['video_time_s']:.1f}s "
                f"({frame['video_time_s']/60:.1f} min) — frame {int(fi)+1} of {len(frames)}")
     _on = onfield_at(onfield_iv, float(frame["video_time_s"]))
