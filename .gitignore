@@ -35,3 +35,6 @@ tracking/labels/
 
 # rendered click-sampling frames (large, regenerable from the raw video)
 tracking/outputs/click_samples/
+
+# click-sampler run log
+run*.log

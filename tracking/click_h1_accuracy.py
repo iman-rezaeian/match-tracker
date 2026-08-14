@@ -39,6 +39,8 @@ def main() -> None:
     ap.add_argument("--game-id", required=True)
     ap.add_argument("--dir", default=None)
     ap.add_argument("--trials", type=int, default=400)
+    ap.add_argument("--half", choices=["1", "2", "both"], default="both",
+                    help="which half to score; 'both' pools the whole game")
     args = ap.parse_args()
 
     from post_game import firestore_io
@@ -54,12 +56,20 @@ def main() -> None:
     pts = to_field(load_clicks(root / "clicks.jsonl"), cal)
     net = our_net_at_x0_from_keeper(pts, game.gk_player_id,
                                    float(cal.length_m), lambda t: 1 if t < h2 else 2)
-    # First half only: it is the half with real coverage, and restricting to one
-    # half removes the end-change question from the accuracy estimate entirely.
-    h1 = [p for p in pts if p["video_time_s"] < h2]
-    flip = not (net or {}).get(1, True)
+    # Pooling both halves is safe for a POSITION estimate only because each half
+    # is mirrored into a common frame first; without that flip the two halves
+    # would disagree by the length of the pitch and the "error" would be the end
+    # change. It is NOT safe for drift, which needs the halves kept apart.
     L, W = float(cal.length_m), float(cal.width_m)
+    per = (lambda t: 1 if t < h2 else 2)
+    if args.half == "1":
+        h1 = [p for p in pts if p["video_time_s"] < h2]
+    elif args.half == "2":
+        h1 = [p for p in pts if p["video_time_s"] >= h2]
+    else:
+        h1 = list(pts)
     for p in h1:
+        flip = not (net or {}).get(per(p["video_time_s"]), True)
         p["d"] = (L - p["x_m"]) if flip else p["x_m"]
         p["w"] = (W - p["y_m"]) if flip else p["y_m"]
 
@@ -97,7 +107,8 @@ def main() -> None:
            for i in range(len(cent)) for j in range(i + 1, len(cent))]
     med_sep = float(np.median(sep)) if sep else float("nan")
 
-    print(f"FIRST HALF only — {len(h1)} clicks, {len(rows)} players with >=8\n")
+    lbl={"1":"FIRST HALF","2":"SECOND HALF","both":"FULL GAME"}[args.half]
+    print(f"{lbl} — {len(h1)} clicks, {len(rows)} players with >=8\n")
     print(f"{'#':>3} {'name':17s} {'n':>3} {'pos err':>8} {'roam':>6} "
           f"{'err/roam':>9} {'err/sep':>8}")
     print("-" * 62)
