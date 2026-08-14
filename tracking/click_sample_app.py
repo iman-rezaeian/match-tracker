@@ -60,7 +60,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import streamlit as st  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 PANEL_W, PANEL_H = 750, 600
 # A snap is only trusted when the nearest detection is this close (px) AND the
@@ -423,8 +423,24 @@ def main() -> None:
                    "fixed grid for that reason — please don't skip ahead to "
                    "the exciting bits, it biases every position.")
 
+    # Resume where the last session stopped. Restarting at frame 0 made the app
+    # re-show every frame already worked, with no sign that the earlier clicks
+    # had been saved at all -- they had, but invisibly.
     if "fi" not in st.session_state:
-        st.session_state.fi = 0
+        done_times = {round(float(s["video_time_s"]), 2) for s in done}
+        # Resume AFTER the furthest frame worked, not at the first untouched one.
+        # A deliberately skipped frame (nobody nameable, or all bands empty of
+        # ours) is legitimately left blank, so "first blank" would send the coach
+        # back to the start every session. The skipped frames stay reachable via
+        # prev / the progress strip.
+        last_done = max((i for i, f in enumerate(frames)
+                         if round(float(f["video_time_s"]), 2) in done_times),
+                        default=-1)
+        st.session_state.fi = min(last_done + 1, len(frames) - 1)
+        if done:
+            st.toast(f"Resuming at frame {st.session_state.fi + 1} — "
+                     f"{len(done)} clicks already saved across "
+                     f"{len(done_times)} frame(s).")
     _c1, _c2, _c3 = st.columns([1, 1, 6])
     if _c1.button("◀ prev", disabled=st.session_state.fi <= 0):
         st.session_state.fi -= 1
@@ -434,6 +450,12 @@ def main() -> None:
         st.rerun()
     fi = _c3.number_input("frame", 0, len(frames) - 1,
                           st.session_state.fi, 1, key="fi")
+    # A done/todo strip, so progress through the game is visible at a glance
+    # rather than something the coach has to remember between sessions.
+    _dt = {round(float(s["video_time_s"]), 2) for s in done}
+    st.caption("progress  " + "".join(
+        "●" if round(float(f["video_time_s"]), 2) in _dt else "○"
+        for f in frames) + f"   ({len(_dt)}/{len(frames)} frames, {len(done)} clicks)")
     frame = frames[int(fi)]
     gk_id = gk_at(gk_segs, video_to_elapsed_ms(
         float(frame["video_time_s"]), h1_off, h2_off))
@@ -444,6 +466,16 @@ def main() -> None:
         st.info("**On the pitch now:** " + ", ".join(
             button_label(by_id.get(p, {"id": p, "name": p}), gk_id)
             for p in sorted(_on, key=lambda i: _num(by_id.get(i, {})))))
+
+    # What has already been recorded on THIS frame, so the coach can see his own
+    # work instead of guessing whether a click landed.
+    this_frame = [s for s in done
+                  if abs(float(s["video_time_s"]) - float(frame["video_time_s"])) < 0.01]
+    if this_frame:
+        st.success("**Already marked here:** " + ", ".join(
+            button_label(by_id.get(s["player_id"], {"id": s["player_id"],
+                                                    "name": s["player_id"]}))
+            for s in this_frame))
 
     img = Image.open(root / frame["image"])
     # The rendered canvas is banded; rebuild the flat strip so panel maths is
@@ -525,6 +557,29 @@ def main() -> None:
     crop = flat.crop((int(band_i) * seg_w, 0,
                       min((int(band_i) + 1) * seg_w, flat.width), flat.height))
 
+    # Draw every click already recorded on this frame, plus the one awaiting a
+    # name. Without this the coach has no way to tell who he has marked and ends
+    # up either re-clicking the same child or skipping one.
+    crop = crop.convert("RGB")
+    _draw = ImageDraw.Draw(crop)
+    _x0 = box[0] + int(band_i) * seg_w
+    for s in this_frame:
+        cx = float(s["click_x_eq"]) - _x0
+        cy = float(s["click_y_eq"]) - box[1]
+        if not (0 <= cx < crop.width and 0 <= cy < crop.height):
+            continue          # recorded in a different band
+        nm = by_id.get(s["player_id"], {}).get("number") or "?"
+        _draw.ellipse([cx - 16, cy - 16, cx + 16, cy + 16], outline=(0, 255, 60), width=4)
+        _draw.text((cx + 20, cy - 8), f"#{nm}", fill=(0, 255, 60))
+    _pend0 = st.session_state.get("pending")
+    if _pend0 and abs(float(_pend0["video_time_s"]) - float(frame["video_time_s"])) < 0.01:
+        px = float(_pend0["click_x_eq"]) - _x0
+        py = float(_pend0["click_y_eq"]) - box[1]
+        if 0 <= px < crop.width and 0 <= py < crop.height:
+            _draw.ellipse([px - 18, py - 18, px + 18, py + 18],
+                          outline=(255, 210, 0), width=4)
+            _draw.text((px + 22, py - 8), "who?", fill=(255, 210, 0))
+
     key = f"click_{fi}_{band_i}"
     pt = sic(crop, key=key)
     if pt:
@@ -537,12 +592,11 @@ def main() -> None:
             "raw_x_eq": ex, "raw_y_eq": ey,
             "snapped_track_id": tid,
         }
+        st.rerun()            # redraw immediately so the yellow ring appears
 
     pend = st.session_state.get("pending")
     if pend:
-        st.success(f"Clicked at ({pend['click_x_eq']:.0f}, {pend['click_y_eq']:.0f})"
-                   + (f" — snapped to track {pend['snapped_track_id']}"
-                      if pend["snapped_track_id"] is not None else " — raw click"))
+        st.warning("⬤ **Marked in yellow on the image — now pick the name below.**")
         st.write("**Who is it?**")
         # Only the players the coach's log says were ON THE PITCH at this
         # instant: 7 of a 12-strong squad, not the 16-name club roster.
@@ -563,6 +617,7 @@ def main() -> None:
                                           use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
+                st.toast(f"✅ saved {button_label(p)}")
                 st.rerun()
         with st.expander(f"not in these {len(choices)}? show whole squad"):
             # Escape hatch: a late or missed SUB tap would otherwise make the
@@ -578,6 +633,7 @@ def main() -> None:
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
                     st.session_state.pop("pending", None)
+                    st.toast(f"✅ saved {button_label(p)} (outside his logged window)")
                     st.rerun()
         st.divider()
         c1, c2 = st.columns(2)
@@ -589,6 +645,7 @@ def main() -> None:
         if c2.button("opponent / ref / adult"):
             append_sample(root, {**pend, "player_id": "__not_ours__"})
             st.session_state.pop("pending", None)
+            st.toast("✅ saved as not-ours")
             st.rerun()
 
 

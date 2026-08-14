@@ -529,3 +529,55 @@ def test_main_runs_without_name_errors(tmp_path, monkeypatch):
                         ["app", "--game-id", "g", "--dir", str(root)])
 
     app.main()          # NameError / UnboundLocalError would raise here
+
+
+# --------------------------------------------------------------------------
+# resume + visible progress
+#
+# The coach restarted the app and it began at frame 0 every time, showing no
+# sign that his 22 clicks had been saved -- they had, but nothing surfaced them.
+# --------------------------------------------------------------------------
+
+def _resume_index(frames, done):
+    """Mirror of the app's resume rule, pinned here."""
+    dt = {round(float(s["video_time_s"]), 2) for s in done}
+    last = max((i for i, f in enumerate(frames)
+                if round(float(f["video_time_s"]), 2) in dt), default=-1)
+    return min(last + 1, len(frames) - 1)
+
+
+def _frames(times):
+    return [{"video_time_s": t} for t in times]
+
+
+def test_resume_starts_after_the_furthest_frame_worked():
+    frames = _frames([10.0, 20.0, 30.0, 40.0, 50.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 30.0}]
+    assert _resume_index(frames, done) == 3
+
+
+def test_resume_skips_past_a_deliberately_blank_frame():
+    """A frame with nobody nameable is legitimately empty; resuming at the first
+    blank would send the coach back to the start every session."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 40.0}]   # 10 and 30 skipped
+    assert _resume_index(frames, done) == 3                    # last index, not 0
+
+
+def test_resume_is_zero_on_a_fresh_game():
+    assert _resume_index(_frames([1.0, 2.0]), []) == 0
+
+
+def test_resume_clamps_at_the_last_frame():
+    frames = _frames([10.0, 20.0])
+    assert _resume_index(frames, [{"video_time_s": 20.0}]) == 1
+
+
+def test_clicks_for_this_frame_are_matched_on_time_not_index():
+    """Frame indices shift when the render interval changes; the timestamp does not."""
+    done = [{"video_time_s": 190.92, "player_id": "a", "click_x_eq": 1, "click_y_eq": 2},
+            {"video_time_s": 340.92, "player_id": "b", "click_x_eq": 3, "click_y_eq": 4}]
+    frame = {"video_time_s": 190.92}
+    here = [s for s in done
+            if abs(float(s["video_time_s"]) - float(frame["video_time_s"])) < 0.01]
+    assert [s["player_id"] for s in here] == ["a"]
