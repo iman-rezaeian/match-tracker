@@ -346,3 +346,43 @@ def test_panel_label_uses_field_position_not_grid_arithmetic():
 def test_panel_label_degrades_without_field_coords():
     assert panel_label({"fx": [], "fy": []}, (50.0, 30.0)) == "pitch area"
     assert panel_label({"fx": [1.0], "fy": [1.0]}, None) == "pitch area"
+
+
+# --------------------------------------------------------------------------
+# roster button labels
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import _num, button_label
+
+
+def test_button_label_leads_with_the_shirt_number():
+    """The number is what the coach reads off the kit, so it comes first."""
+    assert button_label({"id": "a", "name": "Liam Gibala", "number": "7"}) \
+        == "#7 Liam Gibala"
+
+
+def test_button_label_marks_the_keeper_after_the_name():
+    """Guards operator precedence: `x + y if c else x` would misplace the suffix."""
+    assert button_label({"id": "gk", "name": "Liam Garland", "number": "14"},
+                        "gk") == "#14 Liam Garland (GK)"
+    assert button_label({"id": "out", "name": "Ben Hahn", "number": "8"},
+                        "gk") == "#8 Ben Hahn"
+
+
+def test_button_label_survives_a_missing_number():
+    """A roster row without a shirt number must not render '#None'."""
+    assert button_label({"id": "a", "name": "No Number", "number": None}) == "No Number"
+    assert button_label({"id": "gk", "name": "Keeper", "number": None}, "gk") \
+        == "Keeper (GK)"
+
+
+def test_number_sort_is_numeric_not_lexical():
+    """'21' must not sort before '3'."""
+    ps = [{"number": "21"}, {"number": "3"}, {"number": "10"}]
+    assert [p["number"] for p in sorted(ps, key=_num)] == ["3", "10", "21"]
+
+
+def test_unnumbered_players_sort_last():
+    ps = [{"number": None}, {"number": "9"}, {"number": "bad"}]
+    assert _num(ps[0]) == 999 and _num(ps[2]) == 999
+    assert sorted(ps, key=_num)[0]["number"] == "9"

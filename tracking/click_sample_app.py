@@ -98,11 +98,34 @@ def load_roster(game_id: str) -> list[dict]:
     try:
         from post_game import firestore_io
         players = firestore_io.get_roster()
+        # The field is `jersey_number`, NOT `number`. Reading the wrong attribute
+        # via getattr(..., None) failed silently and dropped every shirt number
+        # from the buttons, which is exactly the failure mode a default hides.
         return [{"id": p.id, "name": getattr(p, "name", p.id),
-                 "number": getattr(p, "number", None)} for p in players]
+                 "number": getattr(p, "jersey_number", None)} for p in players]
     except Exception as exc:  # pragma: no cover - UI convenience
         st.warning(f"roster unavailable ({type(exc).__name__}) — using generic ids")
         return [{"id": f"p{i}", "name": f"Player {i}", "number": i} for i in range(1, 13)]
+
+
+def _num(p: dict) -> int:
+    """Sort key: shirt number ascending, unnumbered last."""
+    try:
+        return int(str(p.get("number")))
+    except (TypeError, ValueError):
+        return 999
+
+
+def button_label(p: dict, gk_id: str | None = None) -> str:
+    """"#7 Liam Gibala" — number FIRST, because that is what is on the shirt.
+
+    The coach reads the number off the kit in the band, then finds the matching
+    button; leading with the number makes that a scan of one column rather than
+    of the whole name.
+    """
+    n = p.get("number")
+    label = f"#{n} {p.get('name', p['id'])}" if n else str(p.get("name", p["id"]))
+    return label + " (GK)" if p["id"] == gk_id else label
 
 
 @st.cache_data(show_spinner=False)
@@ -340,11 +363,11 @@ def main() -> None:
         st.caption("Target ~400 total (~50/player) for ~7% position error. "
                    "20/player (~15% error) is still usable.")
         st.write("**per player** (matchday squad)")
-        for pid in sorted(squad, key=lambda i: by_id.get(i, {}).get("name", i)):
+        for pid in sorted(squad, key=lambda i: _num(by_id.get(i, {}))):
             n = counts.get(pid, 0)
-            nm = by_id.get(pid, {}).get("name", pid)
+            p = by_id.get(pid, {"id": pid, "name": pid})
             st.write(f"{'🟢' if n >= 50 else '🟡' if n >= 20 else '⚪'} "
-                     f"{nm}{' (GK)' if pid == gk_id else ''}: {n}")
+                     f"{button_label(p, gk_id)}: {n}")
         st.divider()
         st.caption("Clicks must be SPREAD across the match. Frames are on a "
                    "fixed grid for that reason — please don't skip ahead to "
@@ -357,8 +380,8 @@ def main() -> None:
     _on = onfield_at(onfield_iv, float(frame["video_time_s"]))
     if _on:
         st.info("**On the pitch now:** " + ", ".join(
-            by_id.get(p, {}).get("name", p) + (" (GK)" if p == gk_id else "")
-            for p in _on))
+            button_label(by_id.get(p, {"id": p, "name": p}), gk_id)
+            for p in sorted(_on, key=lambda i: _num(by_id.get(i, {})))))
 
     img = Image.open(root / frame["image"])
     # The rendered canvas is banded; rebuild the flat strip so panel maths is
@@ -428,12 +451,13 @@ def main() -> None:
                        "(kickoff boundary or a missing SUB tap) — showing the "
                        "whole squad.")
             choices = [by_id.get(p, {"id": p, "name": p}) for p in sorted(squad)]
+        # Shirt-number order, so the buttons sit in the same sequence every frame
+        # and the coach builds muscle memory instead of re-reading the row.
+        choices.sort(key=_num)
         cols = st.columns(min(4, len(choices)))
         for i, p in enumerate(choices):
-            label = p.get("name", p["id"])
-            if p["id"] == gk_id:
-                label += " (GK)"
-            if cols[i % len(cols)].button(label, key=f"pick_{p['id']}_{fi}_{band_i}",
+            if cols[i % len(cols)].button(button_label(p, gk_id),
+                                          key=f"pick_{p['id']}_{fi}_{band_i}",
                                           use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
@@ -445,8 +469,9 @@ def main() -> None:
             other = [by_id.get(p, {"id": p, "name": p})
                      for p in sorted(squad) if p not in {c["id"] for c in choices}]
             ocols = st.columns(4) if other else []
+            other.sort(key=_num)
             for i, p in enumerate(other):
-                if ocols[i % 4].button(p.get("name", p["id"]),
+                if ocols[i % 4].button(button_label(p, gk_id),
                                        key=f"pickx_{p['id']}_{fi}_{band_i}"):
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
