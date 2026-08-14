@@ -701,3 +701,54 @@ def test_a_click_does_not_trigger_a_rerun_loop(tmp_path, monkeypatch):
     assert not reruns, "a click must not request a rerun (it loops)"
     assert _st.session_state.get("pending"), "the click should arm a pending name"
     assert any(b.startswith("#7") for b in labels), "name buttons must render"
+
+
+# --------------------------------------------------------------------------
+# undo + no-double-tagging
+# --------------------------------------------------------------------------
+
+import json
+
+from post_game.click_samples import drop_last_click
+
+
+def test_drop_last_click_removes_only_the_final_entry(tmp_path):
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n{"player_id": "c"}\n')
+    removed = drop_last_click(p)
+    assert removed["player_id"] == "c"
+    assert [json.loads(l)["player_id"] for l in p.read_text().splitlines()] == ["a", "b"]
+
+
+def test_drop_last_click_is_repeatable_down_to_empty(tmp_path):
+    """Undo walks back across frames, so it must survive being pressed to zero."""
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n')
+    assert drop_last_click(p)["player_id"] == "b"
+    assert drop_last_click(p)["player_id"] == "a"
+    assert drop_last_click(p) is None
+    assert p.read_text() == ""
+
+
+def test_drop_last_click_on_a_missing_file_is_safe(tmp_path):
+    assert drop_last_click(tmp_path / "nope.jsonl") is None
+
+
+def test_drop_last_click_leaves_no_temp_file_behind(tmp_path):
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n')
+    drop_last_click(p)
+    assert list(tmp_path.iterdir()) == [p], "the rewrite temp file must be replaced"
+
+
+def test_already_tagged_players_are_identified_for_disabling():
+    """Exactly 7 are on the pitch, so a second tag of one child in one frame is
+    an error rather than a preference."""
+    frame_t = 190.92
+    done = [{"video_time_s": frame_t, "player_id": "p_adam"},
+            {"video_time_s": frame_t, "player_id": "p_hahn"},
+            {"video_time_s": 999.0, "player_id": "p_gibala"}]   # another frame
+    here = [s for s in done if abs(s["video_time_s"] - frame_t) < 0.01]
+    tagged = {s["player_id"] for s in here}
+    assert tagged == {"p_adam", "p_hahn"}
+    assert "p_gibala" not in tagged, "a tag on another frame must not disable here"

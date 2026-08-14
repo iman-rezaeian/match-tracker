@@ -90,6 +90,27 @@ def load_clicks(path: str | Path) -> list[dict]:
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
 
+def drop_last_click(path: str | Path) -> dict | None:
+    """Remove and return the most recently appended click.
+
+    The file is append-only JSONL, so undo is a truncation: read every line,
+    drop the last, rewrite. Rewriting via a temporary file and a replace keeps
+    the log intact if the process dies mid-write -- losing a whole session's
+    clicks to a botched undo would be far worse than the mistake being undone.
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    lines = [l for l in p.read_text().splitlines() if l.strip()]
+    if not lines:
+        return None
+    removed = json.loads(lines[-1])
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text("".join(l + "\n" for l in lines[:-1]))
+    tmp.replace(p)
+    return removed
+
+
 def to_field(
     clicks: list[dict], field_cal, report: dict | None = None,
 ) -> list[dict]:

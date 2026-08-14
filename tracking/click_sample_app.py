@@ -371,6 +371,13 @@ def load_samples(root: Path) -> list[dict]:
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
 
+def drop_last_click(path: Path) -> dict | None:
+    """Remove and return the most recent click. Delegates to the stats module so
+    undo and the analysis read the same file format from one implementation."""
+    from post_game.click_samples import drop_last_click as _drop
+    return _drop(path)
+
+
 def main() -> None:
     a = _args()
     root = Path(a.dir or f"tracking/outputs/click_samples/{a.game_id}")
@@ -471,11 +478,38 @@ def main() -> None:
     # work instead of guessing whether a click landed.
     this_frame = [s for s in done
                   if abs(float(s["video_time_s"]) - float(frame["video_time_s"])) < 0.01]
+    # Players already named here. Exactly 7 are on the pitch at any instant, so
+    # naming one twice in a single frame is provably an error rather than a
+    # preference -- their button is disabled until the click is undone.
+    tagged_here = {s["player_id"] for s in this_frame}
+    n_on = len(onfield_at(onfield_iv, float(frame["video_time_s"])))
+    # Undo sits OUTSIDE the "has clicks on this frame" branch on purpose. It was
+    # first placed inside, which hid it whenever the app resumed onto a clean
+    # frame -- i.e. every time the coach opened it, which is exactly when he most
+    # wants to take back the last thing he did.
+    _u1, _u2 = st.columns([3, 1])
     if this_frame:
-        st.success("**Already marked here:** " + ", ".join(
-            button_label(by_id.get(s["player_id"], {"id": s["player_id"],
-                                                    "name": s["player_id"]}))
-            for s in this_frame))
+        _u1.success(
+            f"**Marked here ({len(tagged_here)} of {n_on} on the pitch):** "
+            + ", ".join(button_label(by_id.get(s["player_id"],
+                                               {"id": s["player_id"],
+                                                "name": s["player_id"]}))
+                        for s in this_frame))
+    if done:
+        _last = done[-1]
+        _lp = by_id.get(_last["player_id"], {"id": _last["player_id"],
+                                             "name": _last["player_id"]})
+        # Undo always removes the LAST click recorded, wherever it was, and can be
+        # pressed repeatedly. It walks back across frames rather than stopping at
+        # the current one, so a mistake spotted late is still fixable.
+        _elsewhere = "" if _last in this_frame else " (earlier frame)"
+        if _u2.button(f"↶ undo {button_label(_lp)}{_elsewhere}",
+                      use_container_width=True):
+            removed = drop_last_click(samples_path(root))
+            if removed:
+                st.session_state.pop("pending", None)
+                st.toast(f"↶ removed {button_label(_lp)}")
+            st.rerun()
 
     img = Image.open(root / frame["image"])
     # The rendered canvas is banded; rebuild the flat strip so panel maths is
@@ -624,11 +658,18 @@ def main() -> None:
         # Shirt-number order, so the buttons sit in the same sequence every frame
         # and the coach builds muscle memory instead of re-reading the row.
         choices.sort(key=_num)
+        _left = [p for p in choices if p["id"] not in tagged_here]
+        st.caption(f"{len(_left)} of {len(choices)} still to name in this frame")
         cols = st.columns(min(4, len(choices)))
         for i, p in enumerate(choices):
-            if cols[i % len(cols)].button(button_label(p, gk_id),
-                                          key=f"pick_{p['id']}_{fi}_{band_i}",
-                                          use_container_width=True):
+            _already = p["id"] in tagged_here
+            if cols[i % len(cols)].button(
+                    button_label(p, gk_id) + (" ✓" if _already else ""),
+                    key=f"pick_{p['id']}_{fi}_{band_i}",
+                    use_container_width=True,
+                    disabled=_already,
+                    help="Already named in this frame — undo to change it"
+                    if _already else None):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
                 st.toast(f"✅ saved {button_label(p)}")
@@ -642,8 +683,10 @@ def main() -> None:
             ocols = st.columns(4) if other else []
             other.sort(key=_num)
             for i, p in enumerate(other):
-                if ocols[i % 4].button(button_label(p, gk_id),
-                                       key=f"pickx_{p['id']}_{fi}_{band_i}"):
+                if ocols[i % 4].button(
+                        button_label(p, gk_id) + (" ✓" if p["id"] in tagged_here else ""),
+                        key=f"pickx_{p['id']}_{fi}_{band_i}",
+                        disabled=p["id"] in tagged_here):
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
                     st.session_state.pop("pending", None)
