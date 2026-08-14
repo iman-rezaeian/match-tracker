@@ -386,3 +386,63 @@ def test_unnumbered_players_sort_last():
     ps = [{"number": None}, {"number": "9"}, {"number": "bad"}]
     assert _num(ps[0]) == 999 and _num(ps[2]) == 999
     assert sorted(ps, key=_num)[0]["number"] == "9"
+
+
+# --------------------------------------------------------------------------
+# band tallies must count OUR players, not bodies
+#
+# The first version counted every child-sized body on the pitch and called them
+# "players", so a band holding only the opposition advertised "3 players" and
+# sent the coach looking for his own kids in it. Measured after the fix: 15 of 60
+# bands on the pilot hold none of ours.
+# --------------------------------------------------------------------------
+
+def _kit_det(px, py, kit, h=70):
+    return {"track_id": 1, "foot_x_eq": px, "foot_y_eq": py, "bbox_h": h, "kit": kit}
+
+
+def _tally(dets, box, bands, proj, dims, far_band):
+    """Mirror of the app's per-band tally, kept in the test to pin the rule."""
+    seg = (box[2] - box[0]) / bands
+    ours = [0] * bands
+    other = [0] * bands
+    for d in dets:
+        if d["bbox_h"] >= 120:
+            continue
+        fx, fy = proj.pixel_to_field(d["foot_x_eq"], d["foot_y_eq"])
+        L, W = dims
+        if np.isnan(fx) or not (-1 <= fx <= L + 1 and far_band <= fy <= W + 1):
+            continue
+        b = min(bands - 1, max(0, int((d["foot_x_eq"] - box[0]) // seg)))
+        (other if d.get("kit") == "opponent" else ours)[b] += 1
+    return ours, other
+
+
+def test_opponent_only_band_counts_zero_of_ours():
+    box = [2000, 2000, 3200, 2600]
+    dets = [_kit_det(2100, 2900, "opponent"), _kit_det(2150, 2900, "opponent")]
+    ours, other = _tally(dets, box, 1, _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 0 and other[0] == 2
+
+
+def test_unknown_kit_counts_as_ours():
+    """Under-counting would hide a band worth checking; over-counting costs a glance."""
+    box = [2000, 2000, 3200, 2600]
+    ours, _ = _tally([_kit_det(2100, 2900, "unknown")], box, 1,
+                     _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 1
+
+
+def test_our_and_opponent_players_are_tallied_separately():
+    box = [2000, 2000, 3200, 2600]
+    dets = [_kit_det(2100, 2900, "ours"), _kit_det(2110, 2900, "opponent"),
+            _kit_det(2120, 2900, "ours")]
+    ours, other = _tally(dets, box, 1, _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 2 and other[0] == 1
+
+
+def test_adults_are_excluded_from_both_tallies():
+    box = [2000, 2000, 3200, 2600]
+    ours, other = _tally([_kit_det(2100, 2900, "ours", h=200)], box, 1,
+                         _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 0 and other[0] == 0

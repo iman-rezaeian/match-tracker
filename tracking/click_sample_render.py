@@ -240,6 +240,34 @@ def main() -> None:
 
     tracks = pd.read_parquet(
         Path("post_game/outputs") / args.game_id / "tracks_raw.parquet")
+
+    # Per-track kit vote, so the app can say how many of OUR players are in a
+    # band rather than how many bodies. A body count is useless to the coach: a
+    # band can be full of the opposition and still hold nothing to click.
+    # Votes are [ours, opponent] sample counts from the tracking pass.
+    # ⚠ Sanity-check the split before trusting these on a new game. On a 7v7 the
+    # on-pitch truth is ~50/50; this cache measures 45% ours / 50% opponent / 5%
+    # ambiguous, which is plausible. A heavy skew means the vote is broken for
+    # that game's kit (it has happened -- see the opponent-filter value-axis bug),
+    # not that one side fielded more children.
+    kit: dict[int, str] = {}
+    kit_path = Path("post_game/outputs") / args.game_id / "kit_votes.npz"
+    if kit_path.exists():
+        z = np.load(kit_path, allow_pickle=True)
+        for k in z.files:
+            a, b = (int(v) for v in z[k])
+            if a + b < 10:
+                kit[int(k)] = "unknown"
+            elif a > b * 1.5:
+                kit[int(k)] = "ours"
+            elif b > a * 1.5:
+                kit[int(k)] = "opponent"
+            else:
+                kit[int(k)] = "unknown"
+        log.info("kit votes loaded for %d tracks", len(kit))
+    else:
+        log.warning("no kit_votes.npz — the app cannot tell our players from "
+                    "the opposition and will count all bodies")
     field_cal = firestore_io.get_game_calibration(args.game_id)
     if field_cal is not None:
         box = pitch_bbox_from_calibration(field_cal, tracks)
@@ -283,7 +311,8 @@ def main() -> None:
             "detections": [
                 {"track_id": int(r.track_id),
                  "foot_x_eq": float(r.foot_x_eq), "foot_y_eq": float(r.foot_y_eq),
-                 "bbox_h": float(r.bbox_h_crop)}
+                 "bbox_h": float(r.bbox_h_crop),
+                 "kit": kit.get(int(r.track_id), "unknown")}
                 for r in det.itertuples()],
         })
         if (i + 1) % 10 == 0:

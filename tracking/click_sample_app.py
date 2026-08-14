@@ -430,8 +430,14 @@ def main() -> None:
     # child-sized bodies inside the pitch and clear of the far-touchline band --
     # coaches standing at the touchline are excluded by size, and benched subs
     # are usually not detected at all.
+    # ⚠ Count OUR players, not bodies. The first version counted every
+    # child-sized body on the pitch and called them "players", so a band holding
+    # nothing but the opposition advertised "3 players" and sent the coach
+    # hunting for his own kids in it. The detector has no idea which team it is
+    # looking at; the kit vote does.
     seg_px = (box[2] - box[0]) / max(1, bands)
-    band_counts = [0] * bands
+    ours = [0] * bands
+    other = [0] * bands
     for _d in frame["detections"]:
         if _d.get("bbox_h", 0) >= 120:
             continue
@@ -442,20 +448,27 @@ def main() -> None:
                                      and FAR_TOUCHLINE_BAND_M <= _fy <= _W + 1.0):
                 continue
         _b = min(bands - 1, max(0, int((_d["foot_x_eq"] - box[0]) // seg_px)))
-        band_counts[_b] += 1
+        if _d.get("kit") == "opponent":
+            other[_b] += 1
+        else:
+            # "ours" and "unknown" both count as ours: an unknown kit is still
+            # possibly one of our children, and under-counting would hide a band
+            # worth checking. Over-counting only costs a glance.
+            ours[_b] += 1
 
     def _band_label(i: int) -> str:
-        n = band_counts[i]
-        return f"band {i+1} — {n} player{'' if n == 1 else 's'}" if n \
-            else f"band {i+1} — empty ⊘"
+        if not ours[i]:
+            return (f"band {i+1} — none of ours ⊘" if other[i]
+                    else f"band {i+1} — empty ⊘")
+        return f"band {i+1} — {ours[i]} of ours"
 
     band_i = st.radio(
         "band", range(bands), horizontal=True, format_func=_band_label
     ) if bands > 1 else 0
-    if band_counts[int(band_i)] == 0:
-        st.warning("No players detected on the pitch in this band — skip to the "
-                   "next band, or the next frame if they're all empty. Nothing "
-                   "to record here.")
+    if not ours[int(band_i)]:
+        st.warning(
+            f"None of our players here{' (opposition only)' if other[int(band_i)] else ''}"
+            " — skip to the next band, or the next frame if they're all empty.")
     seg_w = flat.width // bands
     crop = flat.crop((int(band_i) * seg_w, 0,
                       min((int(band_i) + 1) * seg_w, flat.width), flat.height))
