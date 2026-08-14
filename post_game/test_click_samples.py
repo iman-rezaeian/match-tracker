@@ -487,3 +487,45 @@ def test_video_time_converts_to_match_clock_per_half():
 
 def test_video_time_never_goes_negative_before_kickoff():
     assert video_to_elapsed_ms(0.0, 40.92, 1753.08) == 0
+
+
+def test_main_runs_without_name_errors(tmp_path, monkeypatch):
+    """Smoke-run main() line by line.
+
+    An UnboundLocalError shipped to the coach because every prior check only
+    IMPORTED this module. Import proves the file parses; it never executes
+    main(), so a variable used above its assignment stays invisible until the
+    app is opened. Streamlit's bare mode runs the body with no browser, which is
+    enough to catch that whole class of mistake.
+    """
+    import json as _json
+    import sys as _sys
+
+    import tracking.click_sample_app as app
+
+    # Minimal on-disk index so main() gets past its existence check.
+    root = tmp_path / "g"
+    root.mkdir()
+    geom = {"box": [0, 0, 300, 100], "bands": 1, "band_w": 300, "band_h": 100,
+            "seg_w": 300, "scale": 1.0, "canvas": [300, 100]}
+    (root / "index.json").write_text(_json.dumps({
+        "game_id": "g", "pitch_box": [0, 0, 300, 100],
+        "frames": [{"video_time_s": 10.0, "image": "f.jpg", "geom": geom,
+                    "detections": [{"track_id": 1, "foot_x_eq": 10.0,
+                                    "foot_y_eq": 50.0, "bbox_h": 70,
+                                    "kit": "ours"}]}]}))
+    from PIL import Image as _Image
+    _Image.new("RGB", (300, 100)).save(root / "f.jpg")
+
+    # Keep the test offline: no Firestore, no calibration.
+    monkeypatch.setattr(app, "load_roster",
+                        lambda g: [{"id": "p1", "name": "A", "number": "7"}])
+    monkeypatch.setattr(app, "load_onfield",
+                        lambda g: ({"p1": [(0.0, 1e9)]},
+                                   [{"playerId": "p1", "from": 0, "to": None}]))
+    monkeypatch.setattr(app, "load_kickoff_offsets", lambda g: (0.0, 0.0))
+    monkeypatch.setattr(app, "load_projector", lambda g: (None, None))
+    monkeypatch.setattr(_sys, "argv",
+                        ["app", "--game-id", "g", "--dir", str(root)])
+
+    app.main()          # NameError / UnboundLocalError would raise here

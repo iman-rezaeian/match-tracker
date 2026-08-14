@@ -394,6 +394,10 @@ def main() -> None:
     # Offsets to convert a frame's VIDEO time into match-clock ms, which is what
     # the keeper segments are keyed on.
     h1_off, h2_off = load_kickoff_offsets(a.game_id)
+    # The sidebar totals span the WHOLE game, so they mark the game's keeper
+    # rather than whoever is in the net at the frame on screen. (The per-frame
+    # keeper is resolved further down, once a frame is chosen.)
+    game_gk_id = gk_segs[0]["playerId"] if gk_segs else None
     # Matchday squad = anyone the coach's log ever put on the pitch (12), not the
     # 16-name club roster.
     squad = {p for p in onfield_iv} or {p["id"] for p in roster}
@@ -413,7 +417,7 @@ def main() -> None:
             n = counts.get(pid, 0)
             p = by_id.get(pid, {"id": pid, "name": pid})
             st.write(f"{'🟢' if n >= 50 else '🟡' if n >= 20 else '⚪'} "
-                     f"{button_label(p, gk_id)}: {n}")
+                     f"{button_label(p, game_gk_id)}: {n}")
         st.divider()
         st.caption("Clicks must be SPREAD across the match. Frames are on a "
                    "fixed grid for that reason — please don't skip ahead to "
