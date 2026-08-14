@@ -10191,146 +10191,6 @@ const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDE
 const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
-// CLICK-SAMPLED POSITIONS — per-player position from the coach naming bodies
-// himself in the click sampler, written to analytics as `click_stats`.
-//
-// Kept VISUALLY SEPARATE from the tracking-derived player deck on purpose. That
-// deck is identity-dependent and measurably wrong (~23% of a player's attributed
-// frames belong to another child, so its distances run 3-4x low). These numbers
-// come from the coach pointing at each child, so their only error is sampling
-// noise — measured at ±1.7 m on this game — and mixing the two behind identical
-// styling would invite reading across between sources of very different quality.
-//
-// Deliberately NO distance / speed / sprints here: a click samples a position,
-// and between two samples 30 s apart a child could have run 5 m or 80 m.
-function ClickHeatmap({ flat, shape }) {
-  // `flat` is row-major (depth × width); Firestore rejects nested arrays, so the
-  // grid arrives flattened with its shape alongside.
-  if (!Array.isArray(flat) || !flat.length) return null;
-  const [gx, gy] = shape || [12, 8];
-  const max = Math.max(...flat) || 1;
-  const cw = 100 / gx, ch = 62 / gy;
-  return (
-    <svg viewBox="0 0 100 62" className="w-full rounded bg-stone-950/60">
-      {flat.map((v, i) => {
-        const dx = Math.floor(i / gy), wy = i % gy;   // row = depth, col = width
-        const a = Math.pow(v / max, 0.6);             // gamma so faint cells show
-        if (a < 0.02) return null;
-        return <rect key={i} x={dx * cw} y={wy * ch} width={cw} height={ch}
-                     fill={`rgba(163,230,53,${a.toFixed(3)})`} />;
-      })}
-      {/* thirds, so the map reads as a pitch rather than a blob */}
-      <line x1="33.3" y1="0" x2="33.3" y2="62" stroke="#57534e" strokeWidth="0.3" />
-      <line x1="66.6" y1="0" x2="66.6" y2="62" stroke="#57534e" strokeWidth="0.3" />
-      <rect x="0" y="0" width="100" height="62" fill="none" stroke="#57534e" strokeWidth="0.5" />
-    </svg>
-  );
-}
-
-function ClickStatsCard({ doc, roster }) {
-  const cs = doc && doc.click_stats;
-  // Say WHY there is nothing to show rather than rendering nothing. A silent
-  // `return null` cost a debugging round: the card was correct, the data was
-  // correct, and the only observable was an absence — which looks identical to a
-  // stale cache, a wrong view, or a crash.
-  if (!cs) {
-    return (
-      <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
-        <div className="text-[10px] tracking-widest text-stone-400">WHERE THEY PLAYED</div>
-        <div className="text-[9px] text-stone-500 mt-1">
-          No tagged positions for this game yet — run the click sampler, then
-          publish with <span className="text-stone-400">tracking.click_publish</span>.
-        </div>
-      </div>
-    );
-  }
-  if (!Array.isArray(cs.players) || !cs.players.length) {
-    return (
-      <div className="rounded-xl border border-amber-800/50 bg-stone-900/60 p-3">
-        <div className="text-[10px] tracking-widest text-amber-300">WHERE THEY PLAYED</div>
-        <div className="text-[9px] text-stone-500 mt-1">
-          {cs.n_clicks || 0} tags recorded, but no player reached the
-          {' '}{cs.min_clicks || 12}-tag minimum.
-        </div>
-      </div>
-    );
-  }
-  const byId = Object.fromEntries((roster || []).map(p => [p.id, p]));
-  const label = pid => {
-    const p = byId[pid];
-    if (!p) return pid;
-    // The roster field is `number`, not `jerseyNumber` — the Python side calls it
-    // jersey_number and I carried that name across, which silently dropped every
-    // shirt number here.
-    return p.number != null ? `#${p.number} ${p.name}` : p.name;
-  };
-  const L = cs.field_length_m || 55;
-  return (
-    <div className="rounded-xl border border-lime-800/50 bg-stone-900/60 p-3">
-      <div className="text-[10px] tracking-widest text-lime-300 mb-1">
-        WHERE THEY PLAYED
-        <span className="text-stone-500"> · you tagged {cs.n_clicks} positions over {cs.n_frames} moments</span>
-      </div>
-      <div className="text-[9px] text-stone-500 mb-2">
-        Position accurate to about ±{cs.median_pos_err_m} m. No distance or speed —
-        tagged moments show where a player was, not the path between them.
-      </div>
-      <div className="space-y-2">
-        {cs.players.map(p => {
-          const dr = p.drift;
-          const pctL = Math.max(0, Math.min(100, 100 * p.p10_depth_m / L));
-          const pctW = Math.max(2, Math.min(100 - pctL, 100 * (p.p90_depth_m - p.p10_depth_m) / L));
-          return (
-            <div key={p.player_id} className="rounded-lg bg-stone-950/50 p-2">
-              <div className="flex items-baseline justify-between">
-                <span className="text-xs text-stone-200">{label(p.player_id)}</span>
-                <span className="text-[9px] text-stone-500">{p.n_clicks} tags · ±{p.pos_err_m} m</span>
-              </div>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                <div>
-                  {/* territory: where he was 80% of the time, along the pitch */}
-                  <div className="text-[9px] text-stone-500">
-                    territory {p.p10_depth_m}–{p.p90_depth_m} m · avg {p.avg_depth_m} m
-                  </div>
-                  <div className="mt-0.5 h-2 w-full rounded bg-stone-800 relative overflow-hidden">
-                    <div className="absolute h-full bg-lime-600/60"
-                         style={{ left: `${pctL}%`, width: `${pctW}%` }} />
-                    <div className="absolute h-full w-[2px] bg-lime-300"
-                         style={{ left: `${Math.min(99, 100 * p.avg_depth_m / L)}%` }} />
-                  </div>
-                  <div className="mt-1 flex gap-2 text-[9px]">
-                    <span className="text-red-300">Def {p.pct_defensive_third}</span>
-                    <span className="text-yellow-300">Mid {p.pct_middle_third}</span>
-                    <span className="text-lime-300">Att {p.pct_attacking_third}</span>
-                  </div>
-                  <div className="mt-0.5 text-[9px] text-stone-500">
-                    L {p.pct_left} · C {p.pct_centre} · R {p.pct_right}
-                    {p.area_covered_m2 != null && <> · covers {p.area_covered_m2} m²</>}
-                  </div>
-                  {/* Only a drift whose CI excludes zero is shown as a finding;
-                      anything else is sampling noise and says nothing. */}
-                  {dr && dr.significant && (
-                    <div className="mt-1 text-[9px] text-amber-300">
-                      2nd half {dr.depth_m > 0 ? '+' : ''}{dr.depth_m} m
-                      {dr.depth_m > 0 ? ' further up' : ' deeper'}
-                    </div>
-                  )}
-                </div>
-                <ClickHeatmap flat={p.heatmap} shape={cs.heatmap_shape} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {Array.isArray(cs.under_sampled) && cs.under_sampled.length > 0 && (
-        <div className="mt-2 text-[9px] text-stone-500">
-          Not enough tags to report: {cs.under_sampled.map(u => label(u.player_id)).join(', ')}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // TEAM SHAPE (Tier 2) — surfaces the per-second team_time_series the pipeline
 // already writes (compactness / width / depth of the outfield block) but which
 // nothing rendered. Identity-ROBUST: it's the aggregate shape of team-0, so it
@@ -10681,6 +10541,13 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   // ---- derived analytics view-model (team summary + cards) ----
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
+  // Coach-tagged positions, keyed by player. Written by tracking.click_publish
+  // after a click-sampling session. When a player appears here his positional
+  // figures come from his tags instead of from tracking — see the per-player card.
+  const clickStats = (doc && doc.click_stats) || null;
+  const clickByPlayer = Object.fromEntries(
+    ((clickStats && clickStats.players) || []).map(p => [p.player_id, p]));
+  const clickShape = (clickStats && clickStats.heatmap_shape) || [12, 8];
   const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
   // Team minutes come from the coach's SUB taps, so unlike a tracked peak they
   // don't depend on identity or coverage at all.
@@ -10916,7 +10783,6 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             </div>
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
-              <ClickStatsCard doc={doc} roster={roster} />
               <TeamShapeChart doc={doc} halfLenS={(game.halfLengthMin || 25) * 60} />
               <ShotMap games={[game]} />
               {/* 4.6 — team-centroid third occupancy: where the game lived.
@@ -11050,6 +10916,10 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 const wrCoverageOk = coverage == null || coverage >= WORK_RATE_MIN_COVERAGE;
                 const workRate = (trkMin >= 1 && wrCoverageOk)
                   ? (s.distance_m || 0) / trkMin : null;
+                // Coach-tagged positions for this player, if he tagged this game.
+                // Where present these REPLACE the tracked positional figures below
+                // — one heatmap, one thirds bar, from the better source.
+                const cp = clickByPlayer[s.player_id] || null;
                 // grade → tile chrome: a corner dot + tinted border (no bg wash —
                 // a filled tint reads as an error state and would make a card with
                 // several caveated tiles look alarming on a phone).
@@ -11069,11 +10939,25 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         </div>
                       </div>
                       <div className="text-right shrink-0 pl-2">
-                        <div className="text-[9px] text-stone-500">IDENTITY</div>
-                        <div className={`text-xs font-bold ${confColor}`}>{conf == null ? '—' : `● ${(conf * 100).toFixed(0)}%`}</div>
-                        {swapPolluted && <div className="text-[9px] font-bold text-rose-400 mt-1">⚠ INFLATED</div>}
-                        {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
-                        {conflictSec >= 10 && <div className="text-[9px] font-bold text-sky-400 mt-1">🧹 CLEANED</div>}
+                        {/* The identity confidence and the tracking warnings all
+                            describe the TRACKED source. With coach tags they are
+                            not just redundant but misleading: a "48% IDENTITY"
+                            badge over positions the coach assigned himself would
+                            undermine the more trustworthy number. */}
+                        {cp ? (
+                          <>
+                            <div className="text-[9px] text-stone-500">TAGGED</div>
+                            <div className="text-xs font-bold text-lime-400">● {cp.n_clicks}</div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-[9px] text-stone-500">IDENTITY</div>
+                            <div className={`text-xs font-bold ${confColor}`}>{conf == null ? '—' : `● ${(conf * 100).toFixed(0)}%`}</div>
+                            {swapPolluted && <div className="text-[9px] font-bold text-rose-400 mt-1">⚠ INFLATED</div>}
+                            {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
+                            {conflictSec >= 10 && <div className="text-[9px] font-bold text-sky-400 mt-1">🧹 CLEANED</div>}
+                          </>
+                        )}
                       </div>
                     </div>
                     {/* TOP km/h was removed here on purpose. It is the p99 of a
@@ -11089,13 +10973,25 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         A p95-speed replacement (repeatability 0.651) is the intended
                         successor but is not computed yet; don't add a headline number
                         back until it is validated on the two ground-truth games. */}
+                    {/* With coach tags present, the movement tiles are replaced by
+                        what the tags can actually support. Distance, speed and
+                        sprints are NOT among them: a tag samples a position, and
+                        between two samples 30 s apart a child could have run 5 m or
+                        80 m, so no estimator recovers the path. Showing a tracked
+                        distance next to tagged positions would put a 12%-coverage
+                        number beside a ±1.7 m one on the same card. */}
                     <div className="grid grid-cols-4 gap-1.5 mb-1">
-                      {[
+                      {(cp ? [
+                        [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
+                        [`${cp.avg_depth_m}`, 'AVG m OUT', 3, false],
+                        [`${cp.p90_depth_m - cp.p10_depth_m}`, 'RANGE m', 3, false],
+                        [`${cp.area_covered_m2}`, 'AREA m²', 3, false],
+                      ] : [
                         [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
                         [avgKmh.toFixed(1), 'AVG km/h', avgGrade, true],
                         [workRate == null ? '—' : workRate.toFixed(0), 'M/MIN', avgGrade, true],
                         [sprintsShown, 'SPRINTS', movementGrade, true],
-                      ].map(([v, l, g, movement]) => {
+                      ]).map(([v, l, g, movement]) => {
                         const t = tileTint(g);
                         const dashed = movement && g === 0;
                         return (
@@ -11107,7 +11003,14 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         );
                       })}
                     </div>
-                    {coveragePct != null && (
+                    {cp && (
+                      <div className="text-[9px] text-lime-600/90 mb-2 leading-snug">
+                        🖱 Positions from {cp.n_clicks} moments you tagged yourself, accurate
+                        to ±{cp.pos_err_m} m. No distance or speed — tagging shows where he
+                        was, not the path between.
+                      </div>
+                    )}
+                    {!cp && coveragePct != null && (
                       <div className="text-[9px] text-stone-500 mb-2 leading-snug">
                         📡 {coveragePct}% of minutes tracked
                         {workRate != null
@@ -11120,7 +11023,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
                       </div>
                     )}
-                    {conflictSec >= 10 && (
+                    {!cp && conflictSec >= 10 && (
                       <div className="text-[9px] text-sky-400/80 mb-2 leading-snug">
                         🧹 Removed {Math.round(conflictSec)}s where the camera saw this
                         player in two places at once{conflict.median_separation_m
@@ -11129,7 +11032,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         that time, so they're lower but real.
                       </div>
                     )}
-                    {lowTrack && (
+                    {!cp && lowTrack && (
                       <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
                         {idConfirmed ? (
                           <>Identity confirmed, but the camera only caught {Math.round(s.tracked_seconds || 0)}s of this player's {(s.minutes_played || 0).toFixed(0)}′ on the field — they stayed deep / far-side and were rarely in frame. Movement stats (distance, speed, sprints) aren't reliable here; there's no further tracking to recover.</>
@@ -11138,31 +11041,51 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         )}
                       </div>
                     )}
-                    {swapPolluted && (
+                    {!cp && swapPolluted && (
                       <div className="text-[9px] text-rose-400/80 mb-2 leading-snug">
                         About {Math.round((artFrac || 0) * 100)}% of this player's tracked steps are identity-swap jumps — another player's movement is mixed into these tracks, so distance &amp; sprints are over-counted. Use FIX IDS to split them out.
                       </div>
                     )}
+                    {/* ONE set of positional numbers per player, from the best
+                        source available. When the coach has tagged this game the
+                        click samples REPLACE the tracked positions rather than
+                        sitting beside them: he named each body himself, so their
+                        only error is sampling noise (measured ±1.7 m), whereas the
+                        tracked version inherits ~23% wrong-child contamination and
+                        can read 12% coverage. Two heatmaps for one player, from
+                        sources of very different quality, is worse than either. */}
                     <div className="mb-2">
                       <div className="flex h-2 rounded-full overflow-hidden">
-                        <div style={{ width: `${s.pct_defensive_third || 0}%`, background: '#ef4444' }} />
-                        <div style={{ width: `${s.pct_middle_third || 0}%`, background: '#eab308' }} />
-                        <div style={{ width: `${s.pct_attacking_third || 0}%`, background: '#a3e635' }} />
+                        <div style={{ width: `${(cp || s).pct_defensive_third || 0}%`, background: '#ef4444' }} />
+                        <div style={{ width: `${(cp || s).pct_middle_third || 0}%`, background: '#eab308' }} />
+                        <div style={{ width: `${(cp || s).pct_attacking_third || 0}%`, background: '#a3e635' }} />
                       </div>
                       <div className="flex justify-between text-[9px] text-stone-500 mt-1">
-                        <span>Def {(s.pct_defensive_third || 0).toFixed(0)}%</span>
-                        <span>Mid {(s.pct_middle_third || 0).toFixed(0)}%</span>
-                        <span>Att {(s.pct_attacking_third || 0).toFixed(0)}%</span>
+                        <span>Def {((cp || s).pct_defensive_third || 0).toFixed(0)}%</span>
+                        <span>Mid {((cp || s).pct_middle_third || 0).toFixed(0)}%</span>
+                        <span>Att {((cp || s).pct_attacking_third || 0).toFixed(0)}%</span>
                       </div>
-                      {coveragePct != null && coverage != null && coverage < 0.5 && (
+                      {cp ? (
+                        <div className="text-[8px] text-lime-600 mt-0.5">
+                          from your {cp.n_clicks} tagged positions · L {cp.pct_left}% C {cp.pct_centre}% R {cp.pct_right}%
+                        </div>
+                      ) : (coveragePct != null && coverage != null && coverage < 0.5 && (
                         <div className="text-[8px] text-stone-600 mt-0.5">of the {coveragePct}% tracked — where the camera caught them</div>
-                      )}
+                      ))}
                     </div>
-                    <div className="rounded-xl border border-stone-700/60 bg-stone-950/40">
-                      {coverage != null && coverage < 0.5 && (
+                    <div className={`rounded-xl border ${cp ? 'border-lime-800/50' : 'border-stone-700/60'} bg-stone-950/40`}>
+                      {cp ? (
+                        <div className="text-[8px] text-lime-600 px-2 pt-1">
+                          Where he played · avg {cp.avg_depth_m} m out, territory {cp.p10_depth_m}–{cp.p90_depth_m} m · ±{cp.pos_err_m} m
+                          {cp.drift && cp.drift.significant &&
+                            ` · 2nd half ${cp.drift.depth_m > 0 ? '+' : ''}${cp.drift.depth_m} m ${cp.drift.depth_m > 0 ? 'higher' : 'deeper'}`}
+                        </div>
+                      ) : (coverage != null && coverage < 0.5 && (
                         <div className="text-[8px] text-stone-600 px-2 pt-1">Partial view — positions shown are where the camera caught them</div>
-                      )}
-                      <PlayerHeatmap grid={s.heatmap_grid} rows={s.heatmap_grid_rows} cols={s.heatmap_grid_cols} />
+                      ))}
+                      {cp
+                        ? <PlayerHeatmap grid={cp.heatmap} rows={clickShape[0]} cols={clickShape[1]} />
+                        : <PlayerHeatmap grid={s.heatmap_grid} rows={s.heatmap_grid_rows} cols={s.heatmap_grid_cols} />}
                     </div>
                   </div>
                 );
