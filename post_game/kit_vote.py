@@ -12,7 +12,8 @@ discriminators:
 Picking one axis for both is what has bitten this pipeline twice already.
 `team_classifier.sample_jersey_hsv` drops the grass band to protect small ROIs,
 which deletes our GREEN kit (H71 sits inside 35–85) while leaving a blue
-opponent intact — measured, that splits the teams 3.9:1 where 7v7 needs ~1:1.
+opponent intact — measured, that splits the teams 3.9:1 where both sides field
+the same count and must come out ~1:1.
 Its own comment records the mirror-image bug: dropping low-saturation pixels
 "erased WHITE and BLACK kits ... the bug that pushed white opponents onto our
 (green) team". Two kits, two failure modes, same root cause — a fixed rule
@@ -184,7 +185,7 @@ def fit_value_anchors(track_values, our_hex: str, opp_hex: str,
     so the hex-midpoint boundary sits in the wrong place and, measured on
     mrhvbvwi1gjpn, the "ours" anchor fell BELOW the entire observed range
     (p1-p99 = 28-250). Every one of our players was therefore nearer the
-    opponent anchor: the split came out 948/2217 where 7v7 demands ~1:1, and 54%
+    opponent anchor: the split came out 948/2217 where the sides must be ~1:1, and 54%
     of the "opponent" tracks were achromatic — called opponent purely for being
     bright. Fitting the threshold to the data instead moves that to 0.91:1.
 
