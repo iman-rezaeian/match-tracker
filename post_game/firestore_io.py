@@ -447,6 +447,59 @@ def read_analytics(game_id: str) -> Optional[dict]:
     return snap.to_dict() if snap.exists else None
 
 
+# Keys the season view actually reads. Everything else in the analytics doc is
+# either film-room detail or per-track debug data.
+_SUMMARY_KEYS = ("player_stats", "field_tilt", "generated_at_ms",
+                 "team_shape_filter")
+# Per-player fields the squad table and its sparklines use. `heatmap_grid` is
+# deliberately excluded: 96 floats per player per game, and the season view has
+# never drawn a heatmap.
+_SUMMARY_PLAYER_KEYS = ("player_id", "minutes_played", "pct_defensive_third",
+                        "pct_middle_third", "pct_attacking_third")
+
+
+def write_analytics_summary(game_id: str, analytics: dict[str, Any]) -> None:
+    """Write a SMALL companion doc for the season view to fan out over.
+
+    The season view fetches one analytics doc per finished game in a single
+    Promise.all. The full docs run 420-970 KB each -- ~5 MB across seven games,
+    of which ~3.4 MB is `identity_assignments`, a per-track array it never reads
+    (measured: it touches `player_stats` and nothing else). That download and the
+    main-thread JSON parse are what made the view open to a black screen on a
+    phone, and it gets worse with every game played.
+
+    So the fan-out target becomes this projection instead, which is ~2% of the
+    size and grows only with the roster. Derived from the payload just written,
+    so it cannot drift from the doc it summarises.
+
+    Also carries `click_stats.players[].n_clicks` -- not for numbers, only so the
+    squad table can mark which games are tagged and therefore which per-player
+    positions exist at all.
+    """
+    out: dict[str, Any] = {k: analytics[k] for k in _SUMMARY_KEYS if k in analytics}
+    if isinstance(analytics.get("player_stats"), list):
+        out["player_stats"] = [
+            {k: s[k] for k in _SUMMARY_PLAYER_KEYS if k in s}
+            for s in analytics["player_stats"] if isinstance(s, dict)
+        ]
+    cs = analytics.get("click_stats")
+    if isinstance(cs, dict):
+        out["click_stats"] = {
+            "n_clicks": cs.get("n_clicks"),
+            "n_frames": cs.get("n_frames"),
+            "median_pos_err_m": cs.get("median_pos_err_m"),
+            "players": [{"player_id": p.get("player_id"),
+                         "n_clicks": p.get("n_clicks"),
+                         "avg_depth_m": p.get("avg_depth_m"),
+                         "pct_defensive_third": p.get("pct_defensive_third"),
+                         "pct_middle_third": p.get("pct_middle_third"),
+                         "pct_attacking_third": p.get("pct_attacking_third")}
+                        for p in (cs.get("players") or []) if isinstance(p, dict)],
+        }
+    (_team_doc().collection("games").document(game_id)
+     .collection("analytics").document(config.ANALYTICS_SUMMARY_DOC).set(out))
+
+
 def collect_prior_player_top_speeds(exclude_game_id: str | None = None) -> dict[str, list[float]]:
     """{player_id: [top_speed_ms per prior game]} from every other game's
     analytics doc. Feeds the personalized sprint threshold (plan 4.5)."""

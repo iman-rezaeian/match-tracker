@@ -1197,6 +1197,15 @@ def run(
         if board_orient_ambiguous:
             _update["orientation_ambiguous_periods"] = board_orient_ambiguous
         firestore_io.write_analytics_merge(game_id, _sanitize_json(_update))
+        # Refresh the season-view projection. Built from the doc as it now stands,
+        # NOT from `_update`: this path is a merge, so the update alone is missing
+        # keys the summary carries (click_stats above all) and summarising it
+        # would silently blank them.
+        try:
+            firestore_io.write_analytics_summary(
+                game_id, firestore_io.read_analytics(game_id) or _update)
+        except Exception as e:
+            log.warning("season summary write failed: %s", e)
         log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
                  game_id, len(player_stats))
         return _update
@@ -1496,6 +1505,13 @@ def run(
     if board_orient_ambiguous:
         analytics["orientation_ambiguous_periods"] = board_orient_ambiguous
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
+    # Small companion doc the season view fans out over instead of these ~1 MB
+    # docs. Non-fatal: a missing summary degrades that one view, and losing the
+    # whole run's analytics over it would be a far worse trade.
+    try:
+        firestore_io.write_analytics_summary(game_id, _sanitize_json(analytics))
+    except Exception as e:
+        log.warning("season summary write failed: %s", e)
 
     # Public-safe slice on the game doc itself so parents can render the
     # broadcast video + scorebug without being able to read the rest of
