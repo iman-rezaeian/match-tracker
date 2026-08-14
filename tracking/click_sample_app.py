@@ -98,6 +98,43 @@ def load_roster(game_id: str) -> list[dict]:
         return [{"id": f"p{i}", "name": f"Player {i}", "number": i} for i in range(1, 13)]
 
 
+@st.cache_data(show_spinner=False)
+def load_onfield(game_id: str) -> tuple[dict[str, list[tuple[float, float]]], str | None]:
+    """Per-player on-field intervals from the coach's lineup + SUB taps.
+
+    This is what keeps the roster buttons honest. The full club roster is 16
+    names, the matchday squad is 12, and only **7 are on the pitch at any
+    instant** (6 outfield + keeper). Offering all 16 invites a click on a child
+    who was not even at the game, and every such click is a silently wrong
+    position sample that no downstream check can catch.
+
+    The intervals come from `identity._onfield_intervals`, the same reconstruction
+    the identity stage uses, so the app agrees with the rest of the pipeline
+    rather than inventing a second notion of who was playing.
+    """
+    from post_game import firestore_io
+    from post_game.identity import (_onfield_intervals,
+                                    period_clock_to_video_time_factory)
+    game = firestore_io.get_game(game_id)
+    c2v = period_clock_to_video_time_factory(game)
+    return (_onfield_intervals(game.starting_lineup, game.events, c2v),
+            game.gk_player_id)
+
+
+def onfield_at(
+    intervals: dict[str, list[tuple[float, float]]], t: float, slack_s: float = 3.0,
+) -> list[str]:
+    """Player ids on the pitch at video-time `t`.
+
+    `slack_s` covers the kickoff boundary: a frame rendered exactly at the
+    kickoff offset can fall a hair before every interval opens and return an
+    empty list (observed at t=40.9 s on Game 1, the H1 kickoff).
+    """
+    out = [p for p, ivs in intervals.items()
+           if any(a - slack_s <= t <= b + slack_s for a, b in ivs)]
+    return sorted(out)
+
+
 def occupied_panels(frame: dict, box: list[int]) -> list[tuple[int, int, int]]:
     """Panels holding at least one player-sized body, richest first.
 
@@ -181,6 +218,16 @@ def main() -> None:
     box = idx["pitch_box"]
     roster = load_roster(a.game_id)
     done = load_samples(root)
+    try:
+        onfield_iv, gk_id = load_onfield(a.game_id)
+    except Exception as exc:
+        st.warning(f"on-field windows unavailable ({type(exc).__name__}) — "
+                   "showing the whole roster")
+        onfield_iv, gk_id = {}, None
+    # Matchday squad = anyone the coach's log ever put on the pitch (12), not the
+    # 16-name club roster.
+    squad = {p for p in onfield_iv} or {p["id"] for p in roster}
+    by_id = {p["id"]: p for p in roster}
 
     st.title("Click sampling — name the players you can see")
     counts: dict[str, int] = {}
@@ -191,11 +238,12 @@ def main() -> None:
         st.metric("clicks recorded", len(done))
         st.caption("Target ~400 total (~50/player) for ~7% position error. "
                    "20/player (~15% error) is still usable.")
-        st.write("**per player**")
-        for p in roster:
-            n = counts.get(p["id"], 0)
+        st.write("**per player** (matchday squad)")
+        for pid in sorted(squad, key=lambda i: by_id.get(i, {}).get("name", i)):
+            n = counts.get(pid, 0)
+            nm = by_id.get(pid, {}).get("name", pid)
             st.write(f"{'🟢' if n >= 50 else '🟡' if n >= 20 else '⚪'} "
-                     f"{p['name']}: {n}")
+                     f"{nm}{' (GK)' if pid == gk_id else ''}: {n}")
         st.divider()
         st.caption("Clicks must be SPREAD across the match. Frames are on a "
                    "fixed grid for that reason — please don't skip ahead to "
@@ -205,6 +253,11 @@ def main() -> None:
     frame = frames[int(fi)]
     st.caption(f"video t = {frame['video_time_s']:.1f}s "
                f"({frame['video_time_s']/60:.1f} min) — frame {int(fi)+1} of {len(frames)}")
+    _on = onfield_at(onfield_iv, float(frame["video_time_s"]))
+    if _on:
+        st.info("**On the pitch now:** " + ", ".join(
+            by_id.get(p, {}).get("name", p) + (" (GK)" if p == gk_id else "")
+            for p in _on))
 
     img = Image.open(root / frame["image"])
     # The rendered canvas is banded; rebuild the flat strip so panel maths is
@@ -257,14 +310,39 @@ def main() -> None:
                    + (f" — snapped to track {pend['snapped_track_id']}"
                       if pend["snapped_track_id"] is not None else " — raw click"))
         st.write("**Who is it?**")
-        cols = st.columns(4)
-        for i, p in enumerate(roster):
-            if cols[i % 4].button(f"{p['name']}"
-                                  + (f" #{p['number']}" if p.get("number") else ""),
-                                  key=f"pick_{p['id']}_{fi}_{pi}"):
+        # Only the players the coach's log says were ON THE PITCH at this
+        # instant: 7 of a 12-strong squad, not the 16-name club roster.
+        on_now = onfield_at(onfield_iv, float(frame["video_time_s"]))
+        choices = [by_id.get(p, {"id": p, "name": p}) for p in on_now]
+        if not choices:
+            st.warning("The coach log shows nobody on the pitch at this instant "
+                       "(kickoff boundary or a missing SUB tap) — showing the "
+                       "whole squad.")
+            choices = [by_id.get(p, {"id": p, "name": p}) for p in sorted(squad)]
+        cols = st.columns(min(4, len(choices)))
+        for i, p in enumerate(choices):
+            label = p.get("name", p["id"])
+            if p["id"] == gk_id:
+                label += " (GK)"
+            if cols[i % len(cols)].button(label, key=f"pick_{p['id']}_{fi}_{pi}",
+                                          use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
                 st.rerun()
+        with st.expander(f"not in these {len(choices)}? show whole squad"):
+            # Escape hatch: a late or missed SUB tap would otherwise make the
+            # right child unclickable. Recorded identically, so a correction here
+            # is not second-class data.
+            other = [by_id.get(p, {"id": p, "name": p})
+                     for p in sorted(squad) if p not in {c["id"] for c in choices}]
+            ocols = st.columns(4) if other else []
+            for i, p in enumerate(other):
+                if ocols[i % 4].button(p.get("name", p["id"]),
+                                       key=f"pickx_{p['id']}_{fi}_{pi}"):
+                    append_sample(root, {**pend, "player_id": p["id"],
+                                         "off_window": True})
+                    st.session_state.pop("pending", None)
+                    st.rerun()
         st.divider()
         c1, c2 = st.columns(2)
         # Both of these are first-class answers, not failures. Forcing a choice

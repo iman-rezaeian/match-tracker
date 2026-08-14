@@ -209,3 +209,45 @@ def test_snap_ignores_adults():
     dets = [{"track_id": 9, "foot_x_eq": 1000, "foot_y_eq": 1000, "bbox_h": 200}]
     x, y, tid = snap(1005, 1000, dets)
     assert tid is None
+
+
+# --------------------------------------------------------------------------
+# on-field filtering of the name buttons
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import onfield_at
+
+
+def test_onfield_at_returns_only_players_in_their_window():
+    """7 on the pitch, not the 12-strong squad and not the 16-name roster."""
+    iv = {
+        "a": [(0.0, 600.0)], "b": [(0.0, 600.0)], "c": [(0.0, 600.0)],
+        "d": [(0.0, 600.0)], "e": [(0.0, 600.0)], "f": [(0.0, 600.0)],
+        "gk": [(0.0, 3000.0)],
+        "sub1": [(600.0, 1200.0)], "sub2": [(600.0, 1200.0)],
+    }
+    assert onfield_at(iv, 300.0) == ["a", "b", "c", "d", "e", "f", "gk"]
+    assert len(onfield_at(iv, 300.0)) == 7
+    assert "sub1" not in onfield_at(iv, 300.0)
+
+
+def test_onfield_at_handles_a_substitution():
+    iv = {"starter": [(0.0, 600.0)], "sub": [(600.0, 1200.0)]}
+    assert onfield_at(iv, 100.0) == ["starter"]
+    assert onfield_at(iv, 900.0) == ["sub"]
+
+
+def test_onfield_at_slack_covers_the_kickoff_boundary():
+    """A frame rendered exactly at kickoff must not return an empty list.
+
+    Observed live: Game 1's first sampled frame sits at t=40.9s, the H1 kickoff
+    offset, and a strict test returned nobody on the pitch.
+    """
+    iv = {"a": [(40.92, 1500.0)]}
+    assert onfield_at(iv, 40.9) == ["a"]
+    assert onfield_at(iv, 40.9, slack_s=0.0) == []
+
+
+def test_onfield_at_is_empty_well_outside_every_window():
+    iv = {"a": [(0.0, 100.0)]}
+    assert onfield_at(iv, 5000.0) == []
