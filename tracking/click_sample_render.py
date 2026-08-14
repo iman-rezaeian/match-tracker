@@ -9,31 +9,32 @@ loop would mean the coach waits on the disk for a quarter of the session.
 Rendering once, offline, turns a slow interactive job into a fast one -- the
 same reason `stint_label_render.py` exists.
 
-Why the frames are SPLIT into two stacked bands
------------------------------------------------
+Why the frames are SPLIT into stacked bands
+-------------------------------------------
 This is the design decision the whole tool turns on, so it is recorded here.
 
-The pitch occupies a narrow horizontal strip of the equirect frame: 99% of
-detections fall in x 1985-5921, y 1984-2563, i.e. 51% of the width but only 15%
-of the height, an aspect ratio of **6.8:1**. Rendering that strip as one row on
-a normal screen shrinks the players below recognition:
+The pitch occupies a narrow horizontal strip of the equirect frame -- the crop is
+~3640 px wide and, once trimmed to the rows players occupy, only ~665 px tall.
+Rendering that as ONE row on a screen shrinks the players below recognition,
+because fitting 3640 px into a ~1200 px column scales everything by a third. The
+median detection box is 77 px tall and 63% are under 100 px, so anything below
+~60 px is hopeless for naming a same-kit child.
 
-    render width   strip height   player height
-      1600 px         236 px          31 px      <- unusable
-      2400 px         354 px          47 px
-      3200 px         472 px          63 px
-      3936 px         580 px          77 px      <- native, too wide for a screen
+Splitting the strip into stacked bands keeps native resolution while fitting a
+screen. Three bands over this crop gives ~1213 px per band at scale 1.0, which
+renders a median player at ~102 px -- the coach confirmed he can read jersey
+numbers at that size.
 
-The median detection box is 77 px tall and 63% are under 100 px, so any scale
-below ~60 px is hopeless for naming a same-kit child. Splitting the strip into
-two stacked halves keeps NATIVE resolution while fitting a screen:
+⚠ Do NOT pass a `--band-w` larger than `crop_width / bands`. That UPSCALES: it
+inflates the image and the disk cost without adding any detail. `--band-w 0`
+(the default) picks the native width. An earlier render at `--band-w 1600` over a
+1213 px segment was resampling by 1.32x for nothing.
 
-    2 bands @ 1900 px wide  ->  1900x1120 canvas, player 74 px
-    3 bands @ 1500 px wide  ->  1500x1989 canvas, player 88 px
-
-Two bands is the default: near-native player size in a canvas that fits without
-scrolling. `--bands 3` trades vertical scrolling for larger players if the pilot
-shows 74 px is not enough.
+Trimming the crop is what makes this work. The first version padded the top by
+the 98th-percentile box height, which is driven by near-camera ADULTS, so half the
+image was sky, treeline and empty foreground: 1291 px tall of which only 663 held
+any player. Cropping to the actual head-and-foot rows of player-sized bodies
+halves the height, which is what allows three bands instead of two.
 
 Sampling instants
 -----------------
@@ -122,15 +123,25 @@ def pitch_bbox_from_calibration(
     xs = np.array([p[0] for p in pts], dtype=float)
     ys = np.array([p[1] for p in pts], dtype=float)
 
-    top_pad = 260
+    # Trim to the rows PLAYERS actually occupy. Padding the top by the 98th
+    # percentile box height (~240 px, driven by near-camera adults) left half the
+    # crop as sky, treeline and empty foreground: 1291 px tall of which only 663
+    # held any player. Halving the height is what lets the band render at 3
+    # segments and ~100 px per player instead of 80.
+    top_pad, bottom_pad = 260, 40
     if tracks_df is not None and "bbox_h_crop" in tracks_df.columns:
         on = tracks_df[
             (tracks_df.foot_x_eq > xs.min()) & (tracks_df.foot_x_eq < xs.max())
-            & (tracks_df.foot_y_eq > ys.min() - 20) & (tracks_df.foot_y_eq < ys.max() + 20)]
+            & (tracks_df.foot_y_eq > ys.min() - 20) & (tracks_df.foot_y_eq < ys.max() + 20)
+            & (tracks_df.bbox_h_crop < 120)]        # players, not touchline adults
         if len(on) > 100:
-            top_pad = int(on.bbox_h_crop.quantile(0.98)) + 20
+            # Highest head and lowest foot among actual players, plus a margin.
+            head = float((on.foot_y_eq - on.bbox_h_crop).quantile(0.005))
+            foot = float(on.foot_y_eq.quantile(0.995))
+            return (int(max(0, xs.min() - 30)), int(max(0, head - 25)),
+                    int(xs.max() + 30), int(foot + 35))
     return (int(max(0, xs.min() - 30)), int(max(0, ys.min() - top_pad)),
-            int(xs.max() + 30), int(ys.max() + 40))
+            int(xs.max() + 30), int(ys.max() + bottom_pad))
 
 
 def sample_times(
@@ -206,8 +217,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--game-id", required=True)
     ap.add_argument("--interval", type=float, default=30.0)
-    ap.add_argument("--bands", type=int, default=2)
-    ap.add_argument("--band-w", type=int, default=1900)
+    # 3 bands over a ~3640 px crop is ~1213 px per band, so --band-w 1213 keeps
+    # scale at 1.0. Rendering wider than that UPSCALES: it makes the image bigger
+    # without adding detail, costing disk and screen for nothing.
+    ap.add_argument("--bands", type=int, default=3)
+    ap.add_argument("--band-w", type=int, default=0,
+                    help="0 = native (no resampling), which is what you want")
     ap.add_argument("--limit", type=int, default=0, help="0 = all (pilot: 20)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
@@ -234,6 +249,8 @@ def main() -> None:
         log.warning("no calibration — falling back to the detection-quantile "
                     "crop, which is polluted by touchline and adjacent pitches")
 
+    band_w = args.band_w or int((box[2] - box[0]) / max(1, args.bands))
+
     cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
     dur = (cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / fps
@@ -247,7 +264,7 @@ def main() -> None:
         times = [times[i] for i in sorted(set(idx.tolist()))]
 
     log.info("rendering %d frames (%d bands @ %d px) -> %s",
-             len(times), args.bands, args.band_w, root)
+             len(times), args.bands, band_w, root)
     index = []
     for i, t in enumerate(times):
         cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
@@ -255,7 +272,7 @@ def main() -> None:
         if not ok:
             log.warning("  seek failed at %.1fs — skipped", t)
             continue
-        canvas, geom = render_frame(frame, box, args.bands, args.band_w)
+        canvas, geom = render_frame(frame, box, args.bands, band_w)
         # Deciseconds in the name: two samples closer than a second must not
         # collide (a bug already fixed once in the stint clip renderer).
         name = f"f_{int(round(t*10)):07d}.jpg"
@@ -275,11 +292,11 @@ def main() -> None:
 
     (root / "index.json").write_text(json.dumps(
         {"game_id": args.game_id, "pitch_box": list(box),
-         "player_px_estimate": round(77.0 * args.band_w / (box[2]-box[0]) * args.bands, 1),
+         "player_px_estimate": round(77.0 * band_w / (box[2]-box[0]) * args.bands, 1),
          "frames": index}, indent=2))
     log.info("wrote %d frames + index.json", len(index))
     log.info("estimated player height on canvas: %.0f px (need >= %.0f)",
-             77.0 * args.band_w / (box[2]-box[0]) * args.bands, MIN_PLAYER_PX)
+             77.0 * band_w / (box[2]-box[0]) * args.bands, MIN_PLAYER_PX)
 
 
 if __name__ == "__main__":

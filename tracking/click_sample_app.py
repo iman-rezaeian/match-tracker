@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Streamlit: click players in zoomed pitch panels to sample their positions.
+"""Streamlit: click players on a band of the pitch to sample their positions.
 
-The interaction, and why it is panels
--------------------------------------
-The coach confirmed he can "completely name my kids" from a 750x600 crop shown
-at 1:1 -- and that such a crop typically holds TWO of his players. That single
-observation sets the whole design:
+The interaction
+---------------
+One band of the pitch at a time, clicked directly. No tile picker.
 
-* **1:1 pixels, never downscaled.** A full band (1900x1348) has to be shrunk to
-  fit a screen, which is what pushed the earlier estimate down to 31-80 px per
-  player. At 1:1 a player is his native ~77 px and jersey numbers are readable.
-* **Panels, not whole frames.** The pitch crop is 3640x1291, which tiles into
-  5x3 = 15 panels of 750x600. Measured on the pilot frames, only **5 of those 15
-  hold any on-pitch body** at a given instant, at ~4.7 bodies each. So the coach
-  reviews ~5 zoomed panels per frame rather than hunting across a whole band,
-  and empty grass is never shown.
+A tile picker was built first and removed at the coach's request. It diced the
+pitch into 750x600 panels and offered them as radio buttons named by pitch area.
+Two things were wrong with it: the labels DUPLICATED in 9 of 20 frames
+("defensive third, centre" appearing twice in one row, so the buttons identified
+nothing), and even unique names would have made the coach translate a zone phrase
+onto a photograph he was already looking at. He confirmed he can read players at
+band scale, so navigating tiles bought nothing and cost a decision per view.
 
-Budget: ~38 frames x ~5 occupied panels = ~190 panel views to reach the ~400
-clicks that buy 7% position error. At ~2 clicks per panel that is roughly 400
-clicks in 190 views.
+What makes a band legible is trimming the crop to the rows players occupy. The
+renderer's first version padded the top by the 98th-percentile box height, which
+is driven by near-camera adults, so half the image was sky, treeline and empty
+foreground -- 1291 px tall of which only 663 held any player. Cropping to actual
+head-and-foot rows halves the height, which is what lets three bands render at
+~102 px per player in an 874 px-tall image that fits on a screen.
+
+Budget unchanged: ~38 frames to reach the ~400 clicks that buy 7% position error.
 
 What a click records
 --------------------
@@ -372,14 +374,9 @@ def main() -> None:
         flat = flat.resize((int(flat.width / sc), int(flat.height / sc)))
 
     proj, dims = load_projector(a.game_id)
-    panels = occupied_panels(frame, box, proj, dims)
-    if not panels:
-        st.info("No players on the pitch in this frame — skip to the next.")
-        return
-    st.write(f"**{len(panels)} area(s) to check.** Click a player, then pick "
-             "their name. Areas nearest the camera come first — the far "
-             "touchline is where spectators sit and the camera cannot tell them "
-             "from players, so ignore anything that looks like a folding chair.")
+    st.write("**Click a player, then pick their name.** Spectators sit behind "
+             "the far touchline and the camera cannot tell them from players — "
+             "ignore anything that looks like a folding chair.")
 
     try:
         from streamlit_image_coordinates import streamlit_image_coordinates as sic
@@ -388,22 +385,26 @@ def main() -> None:
                  "`.venv-post-game/bin/pip install streamlit-image-coordinates`")
         return
 
-    # No body count in the label. The count cannot be trusted near the far
-    # touchline (see occupied_panels), and the coach can tell three children from
-    # five folding chairs at a glance. The software picks WHERE to look; the
-    # coach decides WHO is a player.
-    pi = st.radio(
-        "which part of the pitch", range(len(panels)), horizontal=True,
-        format_func=lambda i: panel_label(panels[i], dims))
-    gx, gy = panels[int(pi)]["gx"], panels[int(pi)]["gy"]
-    crop = flat.crop((gx * PANEL_W, gy * PANEL_H,
-                      min((gx + 1) * PANEL_W, flat.width),
-                      min((gy + 1) * PANEL_H, flat.height)))
+    # One band at a time, no tile picker.
+    #
+    # The picker was removed rather than improved. Its labels duplicated in 9 of
+    # 20 frames ("defensive third, centre" twice in one row, so the buttons
+    # identified nothing), and even unique names would have made the coach
+    # translate a zone phrase onto a photograph. He confirmed he can read players
+    # at band scale, so navigating tiles bought nothing.
+    band_i = st.radio(
+        "band", range(bands), horizontal=True,
+        format_func=lambda i: f"band {i+1} of {bands}"
+    ) if bands > 1 else 0
+    seg_w = flat.width // bands
+    crop = flat.crop((int(band_i) * seg_w, 0,
+                      min((int(band_i) + 1) * seg_w, flat.width), flat.height))
 
-    key = f"click_{fi}_{pi}"
+    key = f"click_{fi}_{band_i}"
     pt = sic(crop, key=key)
     if pt:
-        ex, ey = panel_click_to_equirect(pt["x"], pt["y"], gx, gy, box)
+        ex = box[0] + int(band_i) * seg_w + pt["x"]
+        ey = box[1] + pt["y"]
         sx, sy, tid = snap(ex, ey, frame["detections"])
         st.session_state["pending"] = {
             "video_time_s": frame["video_time_s"],
@@ -432,7 +433,7 @@ def main() -> None:
             label = p.get("name", p["id"])
             if p["id"] == gk_id:
                 label += " (GK)"
-            if cols[i % len(cols)].button(label, key=f"pick_{p['id']}_{fi}_{pi}",
+            if cols[i % len(cols)].button(label, key=f"pick_{p['id']}_{fi}_{band_i}",
                                           use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
@@ -446,7 +447,7 @@ def main() -> None:
             ocols = st.columns(4) if other else []
             for i, p in enumerate(other):
                 if ocols[i % 4].button(p.get("name", p["id"]),
-                                       key=f"pickx_{p['id']}_{fi}_{pi}"):
+                                       key=f"pickx_{p['id']}_{fi}_{band_i}"):
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
                     st.session_state.pop("pending", None)
