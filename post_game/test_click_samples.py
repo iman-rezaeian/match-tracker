@@ -643,3 +643,61 @@ def test_two_names_cannot_share_one_click_position():
     # The app now stamps each click and refuses to re-consume it; this test pins
     # the detector so a regression is visible in the data.
     assert len(next(iter(dups.values()))) == 2
+
+
+def test_a_click_does_not_trigger_a_rerun_loop(tmp_path, monkeypatch):
+    """A click must arm `pending` and stop, not rerun forever.
+
+    Calling st.rerun() after setting `pending` re-entered with the widget's
+    sticky last-value still set, which re-armed `pending` and reran again. The
+    browser tab flickered continuously and the name buttons never rendered --
+    the pass that would have drawn them was always interrupted. Streamlit reruns
+    on its own after a widget interaction, so no explicit rerun is needed here.
+    """
+    import json as _json
+    import sys as _sys
+    import types as _types
+
+    import streamlit as _st
+    from streamlit.delta_generator import DeltaGenerator
+
+    import tracking.click_sample_app as app
+
+    root = tmp_path / "g"
+    root.mkdir()
+    geom = {"box": [0, 0, 300, 200], "bands": 1, "band_w": 300, "band_h": 200,
+            "seg_w": 300, "scale": 1.0, "canvas": [300, 200]}
+    (root / "index.json").write_text(_json.dumps({
+        "game_id": "g", "pitch_box": [0, 0, 300, 200],
+        "frames": [{"video_time_s": 10.0, "image": "f.jpg", "geom": geom,
+                    "detections": [{"track_id": 1, "foot_x_eq": 150.0,
+                                    "foot_y_eq": 100.0, "bbox_h": 70,
+                                    "kit": "ours"}]}]}))
+    from PIL import Image as _Image
+    _Image.new("RGB", (300, 200)).save(root / "f.jpg")
+
+    fake = _types.ModuleType("streamlit_image_coordinates")
+    fake.streamlit_image_coordinates = lambda img, key=None: {"x": 150, "y": 100}
+    monkeypatch.setitem(_sys.modules, "streamlit_image_coordinates", fake)
+
+    reruns = []
+    monkeypatch.setattr(_st, "rerun", lambda *a, **k: reruns.append(1))
+    labels: list[str] = []
+    monkeypatch.setattr(DeltaGenerator, "button",
+                        lambda self, label, *a, **k: (labels.append(str(label)), False)[1])
+    monkeypatch.setattr(_st, "button",
+                        lambda label, *a, **k: (labels.append(str(label)), False)[1])
+    monkeypatch.setattr(app, "load_roster",
+                        lambda g: [{"id": "p1", "name": "A", "number": "7"}])
+    monkeypatch.setattr(app, "load_onfield",
+                        lambda g: ({"p1": [(0.0, 1e9)]},
+                                   [{"playerId": "p1", "from": 0, "to": None}]))
+    monkeypatch.setattr(app, "load_kickoff_offsets", lambda g: (0.0, 0.0))
+    monkeypatch.setattr(app, "load_projector", lambda g: (None, None))
+    monkeypatch.setattr(_sys, "argv", ["app", "--game-id", "g", "--dir", str(root)])
+    _st.session_state.clear()
+
+    app.main()
+    assert not reruns, "a click must not request a rerun (it loops)"
+    assert _st.session_state.get("pending"), "the click should arm a pending name"
+    assert any(b.startswith("#7") for b in labels), "name buttons must render"

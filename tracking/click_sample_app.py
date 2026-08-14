@@ -582,13 +582,22 @@ def main() -> None:
 
     key = f"click_{fi}_{band_i}"
     pt = sic(crop, key=key)
-    # Ignore a coordinate we have already turned into a pending click. Without
-    # this the widget's sticky last-value re-arms `pending` on the very rerun
-    # that follows a save, so the next name lands on the previous body.
-    if pt and st.session_state.get("consumed_click") == (
-            float(pt["x"]), float(pt["y"]), int(fi), int(band_i)):
-        pt = None
-    if pt:
+    # The widget returns its LAST click on EVERY rerun, which makes this the
+    # trickiest part of the app. Two distinct hazards, both seen live:
+    #
+    #  * re-consumption -- after a name is saved the same coordinates are still
+    #    returned, so the next name would attach to the previous body (measured
+    #    in the coach's own data: Duncan and Garland both at pixel 3963, 2019).
+    #  * a RERUN LOOP -- calling st.rerun() here re-enters with `pt` still set,
+    #    which re-arms `pending` and reruns again, forever. That flickered the
+    #    browser tab and stopped the name buttons ever rendering.
+    #
+    # One click id guards both: a coordinate is acted on once, and no rerun is
+    # issued. Streamlit already reruns after any widget interaction, so the ring
+    # appears on that pass without help.
+    click_id = (float(pt["x"]), float(pt["y"]), int(fi), int(band_i)) if pt else None
+    if click_id and click_id != st.session_state.get("seen_click"):
+        st.session_state["seen_click"] = click_id
         ex = box[0] + int(band_i) * seg_w + pt["x"]
         ey = box[1] + pt["y"]
         sx, sy, tid = snap(ex, ey, frame["detections"])
@@ -598,14 +607,6 @@ def main() -> None:
             "raw_x_eq": ex, "raw_y_eq": ey,
             "snapped_track_id": tid,
         }
-        # Stamp the click so a stale component value cannot be re-consumed. The
-        # image-coordinates widget keeps returning its LAST click on every rerun,
-        # so after naming a player the same coordinates were still on offer and a
-        # second name could be attached to one body -- measured in the coach's
-        # own data: Duncan and Garland both recorded at pixel (3963, 2019).
-        st.session_state["pending_click_id"] = (float(pt["x"]), float(pt["y"]),
-                                                int(fi), int(band_i))
-        st.rerun()            # redraw immediately so the yellow ring appears
 
     pend = st.session_state.get("pending")
     if pend:
@@ -630,7 +631,6 @@ def main() -> None:
                                           use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
-                st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
                 st.toast(f"✅ saved {button_label(p)}")
                 st.rerun()
         with st.expander(f"not in these {len(choices)}? show whole squad"):
@@ -647,7 +647,6 @@ def main() -> None:
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
                     st.session_state.pop("pending", None)
-                    st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
                     st.toast(f"✅ saved {button_label(p)} (outside his logged window)")
                     st.rerun()
         st.divider()
@@ -656,12 +655,10 @@ def main() -> None:
         # is what produced 26 "can't tell" of 30 in the earlier composition pass.
         if c1.button("↩︎ can't tell — discard"):
             st.session_state.pop("pending", None)
-            st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
             st.rerun()
         if c2.button("opponent / ref / adult"):
             append_sample(root, {**pend, "player_id": "__not_ours__"})
             st.session_state.pop("pending", None)
-            st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
             st.toast("✅ saved as not-ours")
             st.rerun()
 
