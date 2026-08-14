@@ -225,6 +225,8 @@ def main() -> None:
                     help="0 = native (no resampling), which is what you want")
     ap.add_argument("--limit", type=int, default=0, help="0 = all (pilot: 20)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--force", action="store_true",
+                    help="render even if it orphans already-worked frames")
     args = ap.parse_args()
 
     from post_game import firestore_io
@@ -237,6 +239,12 @@ def main() -> None:
 
     root = Path(args.out or f"tracking/outputs/click_samples/{args.game_id}")
     root.mkdir(parents=True, exist_ok=True)
+
+    existing_clicks = set()
+    p_clicks = root / "clicks.jsonl"
+    if p_clicks.exists():
+        existing_clicks = {round(float(json.loads(l)["video_time_s"]), 2)
+                           for l in p_clicks.read_text().splitlines() if l.strip()}
 
     tracks = pd.read_parquet(
         Path("post_game/outputs") / args.game_id / "tracks_raw.parquet")
@@ -290,6 +298,27 @@ def main() -> None:
         # first N, so a pilot cannot accidentally sample only the first minutes.
         idx = np.linspace(0, len(times) - 1, args.limit).round().astype(int)
         times = [times[i] for i in sorted(set(idx.tolist()))]
+
+    # Refuse to strand existing work. Clicks attach to frames by TIMESTAMP, so
+    # re-rendering at a different interval leaves already-worked frames with no
+    # frame to attach to: measured on Game 1, moving 30 s -> 75 s orphaned 43 of
+    # 54 worked frames. The clicks stay valid for the stats (they carry their own
+    # timestamps) but the app can no longer show or undo them, and the progress
+    # strip reads as though the work were never done.
+    if existing_clicks:
+        planned = {round(t, 2) for t in times}
+        orphans = existing_clicks - planned
+        if orphans and not args.force:
+            raise SystemExit(
+                f"REFUSING to render: {len(orphans)} of {len(existing_clicks)} "
+                f"already-worked frames would be orphaned by this interval.\n"
+                f"  Their clicks stay in clicks.jsonl and still count for stats, "
+                f"but the app could no longer show or undo them.\n"
+                f"  Keep the current interval to continue this game, render a NEW "
+                f"game at the wider interval, or pass --force with a different "
+                f"--out directory.")
+        if orphans:
+            log.warning("  --force: orphaning %d worked frame(s)", len(orphans))
 
     log.info("rendering %d frames (%d bands @ %d px) -> %s",
              len(times), args.bands, band_w, root)
