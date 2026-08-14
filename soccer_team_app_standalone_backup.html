@@ -10453,12 +10453,40 @@ function ClickHeatmap({ flat, shape }) {
 
 function ClickStatsCard({ doc, roster }) {
   const cs = doc && doc.click_stats;
-  if (!cs || !Array.isArray(cs.players) || !cs.players.length) return null;
+  // Say WHY there is nothing to show rather than rendering nothing. A silent
+  // `return null` cost a debugging round: the card was correct, the data was
+  // correct, and the only observable was an absence — which looks identical to a
+  // stale cache, a wrong view, or a crash.
+  if (!cs) {
+    return (
+      <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
+        <div className="text-[10px] tracking-widest text-stone-400">WHERE THEY PLAYED</div>
+        <div className="text-[9px] text-stone-500 mt-1">
+          No tagged positions for this game yet — run the click sampler, then
+          publish with <span className="text-stone-400">tracking.click_publish</span>.
+        </div>
+      </div>
+    );
+  }
+  if (!Array.isArray(cs.players) || !cs.players.length) {
+    return (
+      <div className="rounded-xl border border-amber-800/50 bg-stone-900/60 p-3">
+        <div className="text-[10px] tracking-widest text-amber-300">WHERE THEY PLAYED</div>
+        <div className="text-[9px] text-stone-500 mt-1">
+          {cs.n_clicks || 0} tags recorded, but no player reached the
+          {' '}{cs.min_clicks || 12}-tag minimum.
+        </div>
+      </div>
+    );
+  }
   const byId = Object.fromEntries((roster || []).map(p => [p.id, p]));
   const label = pid => {
     const p = byId[pid];
     if (!p) return pid;
-    return p.jerseyNumber != null ? `#${p.jerseyNumber} ${p.name}` : p.name;
+    // The roster field is `number`, not `jerseyNumber` — the Python side calls it
+    // jersey_number and I carried that name across, which silently dropped every
+    // shirt number here.
+    return p.number != null ? `#${p.number} ${p.name}` : p.name;
   };
   const L = cs.field_length_m || 55;
   return (
@@ -15093,6 +15121,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
     // ===== APP CODE ENDS =====
