@@ -85,6 +85,11 @@ class GameDoc:
     # until BOTH are confirmed. H2 may be confirmed with the auto-derived start.
     video_offset_h1_confirmed: bool = False
     video_offset_h2_confirmed: bool = False
+    # Match format: "7v7" (Canadian festivals/tournaments) or "9v9" (US
+    # tournaments, from the 2026-27 season). Sets how many bodies the pipeline
+    # should expect on the pitch. Every game predating the field is 7v7, so an
+    # absent value means 7v7 rather than unknown.
+    game_format: str = "7v7"
     # Per-game coach identity corrections, written by the PWA IdentityFixView:
     # { "<tracklet_id>": "<player_id>" | None }. A player_id force-assigns that
     # stitched tracklet to that roster player (status="coach", confidence=1.0);
@@ -189,6 +194,7 @@ def get_game(game_id: str) -> GameDoc:
         video_offset_h2_confirmed=bool(d.get("videoOffsetH2Confirmed", False)),
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
         identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
+        game_format=str(d.get("format") or "7v7"),
     )
 
 

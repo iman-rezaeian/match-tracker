@@ -118,7 +118,8 @@ def classify_from_kit_votes(
     pixels in the grass band (35<=H<=85, S>60, V>50) and our kit #16a34a is
     H71 S221 — inside it — while the opponent's #2563eb is H110, outside. The
     filter is asymmetric by construction, so it deletes exactly one team's
-    defining pixels and the classifier then splits 3.9:1 where 7v7 needs ~1:1.
+    defining pixels and the classifier then splits 3.9:1 where the two teams must
+    come out ~1:1 (true of any format — both sides field the same count).
     Deciding by which kit hue the torso is NEARER needs no grass drop at all;
     measured on the same frames it splits 1.11:1 (8 ours / 7 opp per frame).
 

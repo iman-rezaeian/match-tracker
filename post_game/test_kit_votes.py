@@ -9,6 +9,7 @@ opponent into our roster's candidate pool for the whole game.
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from post_game.team_classifier import classify_from_kit_votes
 
@@ -59,14 +60,21 @@ def test_every_track_in_the_frame_gets_a_verdict():
     assert out[1] == 0 and out[2] == 1 and out[3] == -1
 
 
-def test_a_realistic_7v7_frame_splits_about_evenly():
-    """The whole point: ~7 a side, not 14 v 2."""
-    votes = {i: (12, 1) for i in range(7)}            # ours
-    votes.update({i: (1, 12) for i in range(7, 14)})  # theirs
-    out = classify_from_kit_votes(_df(*range(14)), votes)
+@pytest.mark.parametrize("per_side", [7, 9])
+def test_a_realistic_frame_splits_about_evenly(per_side):
+    """The whole point: ~even sides, not 14 v 2.
+
+    Parameterised over both match formats — 7v7 for Canadian festivals and 9v9
+    for US tournaments. Both teams always field the same count, so the ~1:1
+    expectation is format-independent; only the absolute number changes.
+    """
+    n = per_side * 2
+    votes = {i: (12, 1) for i in range(per_side)}       # ours
+    votes.update({i: (1, 12) for i in range(per_side, n)})  # theirs
+    out = classify_from_kit_votes(_df(*range(n)), votes)
     ours = sum(1 for v in out.values() if v == 0)
     opp = sum(1 for v in out.values() if v == 1)
-    assert ours == 7 and opp == 7
+    assert ours == per_side and opp == per_side
 
 
 def test_votes_for_absent_tracks_are_ignored():

@@ -569,6 +569,25 @@ function formatClock(seconds) {
   return `${m}:${s}`;
 }
 
+// Match format. 7v7 for Canadian festivals/tournaments, 9v9 for US tournaments
+// from the 2026-27 season. Single source of truth for everything the format
+// implies, so no caller hardcodes a squad cap or an on-field count.
+//
+// `halfMin` is only a SUGGESTION used when the coach hasn't set the clock
+// themselves (9v9 is normally two 30-minute halves against 7v7's 25).
+const FORMATS = {
+  '7v7': { key: '7v7', onField: 7, squadCap: 12, halfMin: 25 },
+  '9v9': { key: '9v9', onField: 9, squadCap: 16, halfMin: 30 },
+};
+const DEFAULT_FORMAT = '7v7';
+
+// Format for a game / schedule item / setup draft. Games created before the
+// format field existed are all 7v7, so an absent value means 7v7 rather than
+// unknown — no migration needed.
+function formatOf(gameOrSetup) {
+  return FORMATS[gameOrSetup?.format] || FORMATS[DEFAULT_FORMAT];
+}
+
 // Display minute for a logged event using its period + the game's half length.
 // The clock resets to 0 at the start of P2, so a goal at elapsed=240s in P2 of
 // a 30-min-half game should display as 34' (30 + 4), not 4'. Round half-up.
@@ -996,6 +1015,18 @@ function TournamentChip({ value }) {
   );
 }
 
+// Match format badge. Only rendered for the NON-default format: every game
+// before 2026-27 is 7v7, so tagging those adds noise to every row while telling
+// the coach nothing. A visible chip means "this one was different".
+function FormatChip({ value }) {
+  if (!value || value === DEFAULT_FORMAT || !FORMATS[value]) return null;
+  return (
+    <span className="inline-block bg-sky-500/20 text-sky-200 border border-sky-400/50 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+      {String(value).toUpperCase()}
+    </span>
+  );
+}
+
 // Auth for the R2/Stream worker. This bundle is a public static file, so it
 // cannot hold a secret — anything constant here is readable by anyone who opens
 // devtools. Send the signed-in user's Firebase ID token instead; the worker
@@ -1410,7 +1441,7 @@ function CoachApp() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord, format) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     // Seed POSITION events from the kickoff tactical board so the in-game
@@ -1442,6 +1473,7 @@ function CoachApp() {
       opponent: opponent || 'Opponent',
       tournament: tournament || 'Festival',
       isHome: !!isHome,
+      format: FORMATS[format] ? format : DEFAULT_FORMAT,
       halfLengthMin: halfLengthMin || 25,
       homeColor: homeColor || '#0a0a0a',
       awayColor: awayColor || '#dc2626',
@@ -2242,6 +2274,7 @@ function CoachApp() {
               tournament: item.tournament,
               fromSchedule: true,
               isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
+              format: item.format,
               halfLengthMin: item.halfLengthMin,
               homeColor: item.homeColor,
               awayColor: item.awayColor,
@@ -2311,10 +2344,10 @@ function CoachApp() {
           initial={pendingGameSetup}
           opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
-          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord) => {
+          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
             // a scheduled-game start, so it survives the GameSetup detour.
-            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord });
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -2351,7 +2384,7 @@ function CoachApp() {
               try { pendingMicRef.current = navigator.mediaDevices.getUserMedia({ audio: true }); }
               catch (e) { pendingMicRef.current = null; }
             }
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord, pendingGameSetup.format);
             setPendingGameSetup(null);
           }}
         />
@@ -2555,7 +2588,7 @@ function CoachApp() {
           onSave={persistSchedule}
           onBack={() => setView('home')}
           onEditSquad={(item) => {
-            setEditingScheduleSquad({ itemId: item.id, opponent: item.opponent, squadIds: item.squadIds || [] });
+            setEditingScheduleSquad({ itemId: item.id, opponent: item.opponent, format: item.format, squadIds: item.squadIds || [] });
             setView('scheduleSquad');
           }}
           askConfirm={askConfirm}
@@ -2566,7 +2599,7 @@ function CoachApp() {
       {view === 'scheduleSquad' && editingScheduleSquad && (
         <SquadPickerView
           roster={roster}
-          setup={{ opponent: editingScheduleSquad.opponent }}
+          setup={{ opponent: editingScheduleSquad.opponent, format: editingScheduleSquad.format }}
           initialSquad={editingScheduleSquad.squadIds}
           title="EDIT MATCH-DAY SQUAD"
           subtitle={<>Pre-pick the squad now. On match day, tapping <span className="font-bold">START</span> will jump straight to the lineup.</>}
@@ -2860,6 +2893,7 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
                         </span>
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
+                      <FormatChip value={item.format} />
                       {item.time && <span>{formatTime12(item.time)}</span>}
                       {item.field && (
                         <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
@@ -3317,7 +3351,24 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
   const [opponent, setOpponent] = useState(initial?.opponent || '');
   const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
   const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
-  const [halfLengthMin, setHalfLengthMin] = useState(initial?.halfLengthMin ?? 25);
+  const [format, setFormat] = useState(initial?.format && FORMATS[initial.format] ? initial.format : DEFAULT_FORMAT);
+  const [halfLengthMin, setHalfLengthMin] = useState(
+    initial?.halfLengthMin ?? formatOf({ format: initial?.format }).halfMin
+  );
+  // Flipping format SUGGESTS its usual half length (9v9 is 2×30, 7v7 2×25), but
+  // only until the coach sets the clock themselves — an explicit choice must
+  // never be silently overwritten by a later format tap.
+  const [halfLenTouched, setHalfLenTouched] = useState(
+    typeof initial?.halfLengthMin === 'number'
+  );
+  const pickFormat = (next) => {
+    setFormat(next);
+    if (!halfLenTouched) setHalfLengthMin(FORMATS[next].halfMin);
+  };
+  const setHalfLenManually = (next) => {
+    setHalfLenTouched(true);
+    setHalfLengthMin(next);
+  };
   const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
   const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
   // Auto-record narration with the game clock. Sticky across games via
@@ -3403,11 +3454,27 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
           </div>
         </Field>
 
+        <Field label="FORMAT">
+          <div className="flex gap-2">
+            {Object.values(FORMATS).map(f => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => pickFormat(f.key)}
+                className={`flex-1 py-3 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${format === f.key ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+              >{f.key.toUpperCase()}</button>
+            ))}
+          </div>
+          <div className="text-[11px] text-stone-500 mt-1.5">
+            {formatOf({ format }).onField} a side · squad soft limit {formatOf({ format }).squadCap}
+          </div>
+        </Field>
+
         <Field label="HALF LENGTH (MIN)">
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+              onClick={() => setHalfLenManually(Math.max(1, halfLengthMin - 1))}
               className="w-14 h-14 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-2xl font-bold active:scale-95 transition"
               aria-label="Decrease half length"
             >−</button>
@@ -3417,11 +3484,14 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
             </div>
             <button
               type="button"
-              onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+              onClick={() => setHalfLenManually(Math.min(99, halfLengthMin + 1))}
               className="w-14 h-14 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-2xl font-bold active:scale-95 transition"
               aria-label="Increase half length"
             >+</button>
           </div>
+          {!halfLenTouched && (
+            <div className="text-[11px] text-stone-500 mt-1.5">Suggested for {format.toUpperCase()}</div>
+          )}
         </Field>
 
         <Field label="LASALLE STOMPERS JERSEY">
@@ -3511,7 +3581,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
         </button>
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor, autoRecord)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor, autoRecord, format)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -3525,7 +3595,10 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
 /* ---------- MATCH-DAY SQUAD ---------- */
 function SquadPickerView({ roster, setup, initialSquad, onBack, onNext, title, subtitle, nextLabel }) {
   const sorted = [...roster].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
-  const SOFT_CAP = 12;
+  // Squad size the format allows (12 for 7v7, 16 for 9v9). Still only a soft
+  // warning — a tournament may say otherwise and the coach wins.
+  const fmt = formatOf(setup);
+  const SOFT_CAP = fmt.squadCap;
   const [selected, setSelected] = useState(() =>
     new Set(initialSquad && initialSquad.length > 0 ? initialSquad : sorted.map(p => p.id))
   );
@@ -3550,7 +3623,7 @@ function SquadPickerView({ roster, setup, initialSquad, onBack, onNext, title, s
         <div className="text-xs text-stone-400 mb-1">vs {setup.opponent}</div>
         <div className="text-sm text-stone-200 mb-3">
           {subtitle || (<>Tap players who are <span className="font-bold">available for this match</span>. Unchecked players are OUT.
-          Soft limit is <span className="font-bold">{SOFT_CAP}</span> (7v7 max squad) — you can exceed it if you need to.</>)}
+          Soft limit is <span className="font-bold">{SOFT_CAP}</span> ({fmt.key} max squad) — you can exceed it if you need to.</>)}
         </div>
 
         <div className="flex gap-2 mb-4">
@@ -7525,7 +7598,14 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [points, setPoints] = useState([]); // [{x, y}] in NATURAL equirect pixel coords
   const [lensFront, setLensFront] = useState(true);
-  // Fixed U10 7v7 pitch dimensions — calibration is per-game now.
+  // Nominal U10 7v7 pitch, used only to give the 4-point homography a metric
+  // frame. This is the LEGACY in-PWA calibrator: it emits no solver tag, so the
+  // Run-Analysis quality gate rejects it (post_game/calibration_qc.py) and the
+  // real calibration is done in the Streamlit UI, which asks the coach for the
+  // measured field length and stores it per field. So these numbers never reach
+  // a published metric — including for 9v9, where they would be wrong by ~1.5x
+  // on width. Do NOT wire the match format in here to "fix" that; the fix is
+  // that this path stays blocked.
   const LENGTH_M = 50;
   const WIDTH_M = 35;
   const [saving, setSaving] = useState(false);
@@ -7858,7 +7938,7 @@ function FieldCalibrationModal({ videoUrl, onCancel, onSave }) {
             <button onClick={undo} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">UNDO</button>
             <button onClick={reset} disabled={!points.length} className="flex-1 py-2 rounded-lg bg-stone-800 text-stone-300 text-xs font-bold active:scale-95 disabled:opacity-30">RESET</button>
           </div>
-          <p className="text-[10px] text-stone-500 text-center">Pitch: U10 7v7 (50 × 35 m). Calibration saved per game.</p>
+          <p className="text-[10px] text-stone-500 text-center">Nominal pitch 50 × 35 m. For accurate distances (and any 9v9 pitch), calibrate in the analysis UI, which uses the measured field length.</p>
           {saveErr && <p className="text-[10px] text-red-400 text-center">{saveErr}</p>}
           <button
             onClick={handleSave}
@@ -8793,6 +8873,7 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
                       {g.tournament && <TournamentChip value={g.tournament} />}
+                      <FormatChip value={g.format} />
                       <span>{formatDate(g.date)}</span>
                       {pendingCount > 0 && (
                         <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-700">
@@ -11369,7 +11450,10 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
         {shareMsg && (
           <div className="text-center text-xs text-lime-300 -mt-1 mb-2">{shareMsg}</div>
         )}
-        <div className="text-center text-xs text-white/70 mb-1">{game.tournament || 'Festival'} · {formatDate(game.date)}</div>
+        <div className="text-center text-xs text-white/70 mb-1 flex items-center justify-center gap-1.5">
+          <span>{game.tournament || 'Festival'} · {formatDate(game.date)}</span>
+          <FormatChip value={game.format} />
+        </div>
         <div className="text-center font-display text-2xl">vs {game.opponent}</div>
         <div className="text-center font-display text-6xl tabular-nums mt-2">
           {game.ourScore} <span className="text-white/40">–</span> {game.oppScore}
@@ -12559,7 +12643,19 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
   // Optional match-day pre-fill — saved on the schedule item, used when the
   // coach taps START on match day to skip setup screens.
   const [isHome, setIsHome] = useState(true);
-  const [halfLengthMin, setHalfLengthMin] = useState(25);
+  const [format, setFormat] = useState(DEFAULT_FORMAT);
+  const [halfLengthMin, setHalfLengthMin] = useState(FORMATS[DEFAULT_FORMAT].halfMin);
+  // Same suggest-but-never-override rule as GameSetup: flipping format moves the
+  // clock only while the coach hasn't set it themselves.
+  const [halfLenTouched, setHalfLenTouched] = useState(false);
+  const pickFormat = (next) => {
+    setFormat(next);
+    if (!halfLenTouched) setHalfLengthMin(FORMATS[next].halfMin);
+  };
+  const setHalfLenManually = (next) => {
+    setHalfLenTouched(true);
+    setHalfLengthMin(next);
+  };
   const [homeColor, setHomeColor] = useState('#0a0a0a');
   const [awayColor, setAwayColor] = useState('#dc2626');
   const [squadIds, setSquadIds] = useState([]);
@@ -12597,7 +12693,10 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
       setLocation(item.location || '');
       setField(item.field || '');
       setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
-      setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+      setFormat(FORMATS[item.format] ? item.format : DEFAULT_FORMAT);
+      setHalfLengthMin(typeof item.halfLengthMin === 'number'
+        ? item.halfLengthMin : formatOf(item).halfMin);
+      setHalfLenTouched(typeof item.halfLengthMin === 'number');
       setHomeColor(item.homeColor || '#0a0a0a');
       setAwayColor(item.awayColor || '#dc2626');
       setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
@@ -12611,6 +12710,7 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
     if (!opponent.trim() || !date) return;
     const setupFields = {
       isHome,
+      format,
       halfLengthMin,
       homeColor,
       awayColor,
@@ -12649,7 +12749,9 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
 
   const resetForm = () => {
     setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation(''); setField('');
-    setIsHome(true); setHalfLengthMin(25); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
+    setIsHome(true); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
+    setFormat(DEFAULT_FORMAT); setHalfLengthMin(FORMATS[DEFAULT_FORMAT].halfMin);
+    setHalfLenTouched(false);
     setShowSetup(false);
     setEditingId(null);
   };
@@ -12663,7 +12765,10 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
     setLocation(item.location || '');
     setField(item.field || '');
     setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
-    setHalfLengthMin(typeof item.halfLengthMin === 'number' ? item.halfLengthMin : 25);
+    setFormat(FORMATS[item.format] ? item.format : DEFAULT_FORMAT);
+    setHalfLengthMin(typeof item.halfLengthMin === 'number'
+      ? item.halfLengthMin : formatOf(item).halfMin);
+    setHalfLenTouched(typeof item.halfLengthMin === 'number');
     setHomeColor(item.homeColor || '#0a0a0a');
     setAwayColor(item.awayColor || '#dc2626');
     setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
@@ -12725,6 +12830,7 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
               </span>
             )}
             {item.tournament && <TournamentChip value={item.tournament} />}
+            <FormatChip value={item.format} />
             {item.time && <span>{formatTime12(item.time)}</span>}
             {item.field && (
               <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
@@ -12905,13 +13011,28 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
                 </div>
               </div>
 
+              {/* Format — 7v7 (Canada) vs 9v9 (US tournaments) */}
+              <div>
+                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">FORMAT</div>
+                <div className="flex gap-2">
+                  {Object.values(FORMATS).map(f => (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => pickFormat(f.key)}
+                      className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${format === f.key ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                    >{f.key.toUpperCase()}</button>
+                  ))}
+                </div>
+              </div>
+
               {/* Half length */}
               <div>
                 <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">HALF LENGTH (MIN)</div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setHalfLengthMin(m => Math.max(1, m - 1))}
+                    onClick={() => setHalfLenManually(Math.max(1, halfLengthMin - 1))}
                     className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
                   >−</button>
                   <div className="flex-1 py-2 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
@@ -12919,10 +13040,13 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
                   </div>
                   <button
                     type="button"
-                    onClick={() => setHalfLengthMin(m => Math.min(99, m + 1))}
+                    onClick={() => setHalfLenManually(Math.min(99, halfLengthMin + 1))}
                     className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
                   >+</button>
                 </div>
+                {!halfLenTouched && (
+                  <div className="text-[10px] text-stone-500 mt-1">Suggested for {format.toUpperCase()}</div>
+                )}
               </div>
 
               {/* Stompers jersey */}
@@ -12995,7 +13119,7 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
                       tournament: tournament.trim(),
                       location: location.trim(),
                       field: field.trim(),
-                      isHome, halfLengthMin, homeColor, awayColor,
+                      isHome, format, halfLengthMin, homeColor, awayColor,
                       squadIds: Array.isArray(squadIds) ? squadIds : [],
                     } : s));
                     onEditSquad?.({ id: editingId, opponent: opponent.trim() || 'Opponent', squadIds });
@@ -13738,9 +13862,9 @@ function HelpView({ onBack }) {
 
         <Section id="start" emoji="🚀" title="1 · Starting a match" summary="Opponent → squad → lineup → GK">
           <p>From Home tap <Pill tone="lime">START GAME</Pill> and walk through the wizard:</p>
-          <Step n={1}><strong>Game setup</strong>: opponent name, tournament/festival label.</Step>
-          <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. For 7v7 leagues that cap rosters at 12, you'll see a soft warning over 12 — but no hard limit.</Step>
-          <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or however many) who start on the field. Everyone else begins on the bench.</Step>
+          <Step n={1}><strong>Game setup</strong>: opponent name, tournament/festival label, and the <strong>format</strong> — 7v7 or 9v9. Picking 9v9 suggests a 30-minute half and raises the squad limit to 16; you can still override both.</Step>
+          <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. You'll see a soft warning over the squad limit for the format (12 for 7v7, 16 for 9v9) — but no hard limit.</Step>
+          <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or 9 for 9v9) who start on the field. Everyone else begins on the bench.</Step>
           <Step n={4}><strong>Goalkeeper</strong>: tap the player wearing the gloves. You can change keeper at any time during the game.</Step>
           <p className="text-xs text-stone-400">If you mis-pick the squad, tap <ChevronLeft className="inline w-3 h-3" /> to go back at any step — nothing is saved until kick-off.</p>
         </Section>
@@ -14582,6 +14706,7 @@ function PublicHomePage() {
                         </span>
                       )}
                       {item.tournament && <TournamentChip value={item.tournament} />}
+                      <FormatChip value={item.format} />
                       {item.time && <span>{formatTime12(item.time)}</span>}
                       {item.field && (
                         <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
@@ -14855,6 +14980,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

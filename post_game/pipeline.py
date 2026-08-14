@@ -716,10 +716,17 @@ def run(
                          "that spent their whole life outside the touchlines",
                          len(_never), _before_n - len(tracks_df))
 
-        # 3c. TOP-N PER FRAME — soccer has ≤ 16 people on the field (7v7 + ref
-        # + occasional coach for injury). Cap at 20 per frame ranked by
+        # 3c. TOP-N PER FRAME — cap the bodies kept per frame, ranked by
         # (track lifetime × detection confidence) so established tracks beat
         # one-off background detections that survived the off-field filter.
+        #
+        # The budget scales with the match format (config.topn_per_frame): 20 for
+        # 7v7, 24 for 9v9. It MUST scale, because the rank key favours long-lived
+        # tracks — what a too-small cap deletes is the NEWEST track, i.e. a
+        # just-subbed-on player or one re-acquired after an occlusion, exactly
+        # when they are most fragile. That loss is per-player and invisible in
+        # the team-level ratios, so it gets a WARNING rather than an info line.
+        topn = config.topn_per_frame(getattr(game, "game_format", None))
         if not tracks_df.empty and "track_id" in tracks_df.columns:
             lifetime = tracks_df.groupby("track_id").size().rename("track_lifetime")
             tracks_df = tracks_df.merge(lifetime, on="track_id")
@@ -729,14 +736,28 @@ def run(
                 score = score * tracks_df[conf_col].astype(float).clip(lower=0.1)
             tracks_df["_rank_score"] = score
             ranked = tracks_df.sort_values(["frame", "_rank_score"], ascending=[True, False])
-            top_n = ranked.groupby("frame", group_keys=False).head(20)
+            top_n = ranked.groupby("frame", group_keys=False).head(topn)
             dropped_topn = len(tracks_df) - len(top_n)
+            _frames_capped = int((tracks_df.groupby("frame").size() > topn).sum())
+            _frames_total = int(tracks_df["frame"].nunique())
             tracks_df = top_n.drop(columns=["_rank_score", "track_lifetime"]).reset_index(drop=True)
         else:
             dropped_topn = 0
+            _frames_capped = _frames_total = 0
 
-        log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
-                 dropped_off, dropped_topn, len(tracks_df))
+        log.info("  -> filters: dropped %d off-field, %d below top-%d/frame (%s); %d kept",
+                 dropped_off, dropped_topn, topn,
+                 getattr(game, "game_format", None) or config.FORMAT_DEFAULT, len(tracks_df))
+        if _frames_capped:
+            log.warning(
+                "  -> top-%d/frame cap BIT on %d of %d frames (%.1f%%): %d detections cut. "
+                "The cap drops the SHORTEST-LIVED tracks first, so a just-subbed-on or "
+                "re-acquired player can lose exactly the frames they are hardest to track in. "
+                "If this is high, check the format (%s) is right for this game.",
+                topn, _frames_capped, _frames_total,
+                100.0 * _frames_capped / max(_frames_total, 1), dropped_topn,
+                getattr(game, "game_format", None) or config.FORMAT_DEFAULT,
+            )
 
     # 3.4 Halftime split — enforce "no track spans the break". The tracker is
     # reset at halftime and its id counter carried across (see _new_tracker call

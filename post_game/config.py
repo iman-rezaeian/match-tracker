@@ -528,8 +528,14 @@ PITCH_NAN_MAX_TSU = int(os.environ.get("PITCH_NAN_MAX_TSU", "1"))
 # fits are 0.27-0.65 m RMS; the un-anchored legacy fits are 0.94-1.47 m. See
 # post_game/calibration_qc.py (the only consumer) + CALIBRATION_SCALE_PLAN.md.
 CALIB_MAX_RMS_M = 1.0            # scaled_lsq fit RMS above this = re-calibrate
-CALIB_WIDTH_MIN = 20.0          # plausible field width band (also the solver's bounds)
-CALIB_WIDTH_MAX = 50.0
+# Plausible field width band. These ARE the solver's bounds too — calibration_solve
+# .solve_sphere_scaled defaults w_bounds to them, so the QC gate and the optimizer
+# can never drift apart (they used to be separate literals encoding one fact).
+# Upper bound covers 9v9: US Youth Soccer specifies 45-55 yd (41-50 m) wide, so a
+# 50 m ceiling put a legal wide pitch exactly ON the bound, where the "pinned at a
+# solver bound" check then rejected it. Our 7v7 fields solve to ~31 m.
+CALIB_WIDTH_MIN = 20.0
+CALIB_WIDTH_MAX = 60.0
 CALIB_WIDTH_CONSISTENCY_TOL_M = 2.5   # same field's width must agree run-to-run within this
                                       # (two real scaled fits of adjacent fields agreed to 0.8 m)
 
@@ -791,6 +797,35 @@ SUB_SLACK_CLUSTER_GAP_S = float(os.environ.get("SUB_SLACK_CLUSTER_GAP_S", "90.0"
 # widen a window until the filter stops filtering.
 SUB_SLACK_MAX_S = float(os.environ.get("SUB_SLACK_MAX_S", "150.0"))
 
+# --- Match format --------------------------------------------------------
+# Players per side, by the game doc's `format` field (written by the PWA). 7v7
+# for Canadian festivals/tournaments; 9v9 for US tournaments from the 2026-27
+# season. Games predating the field are all 7v7.
+FORMAT_ON_FIELD = {"7v7": 7, "9v9": 9}
+FORMAT_DEFAULT = "7v7"
+# Extra bodies the top-N-per-frame filter must tolerate beyond the 2x on-field
+# players: the referee, plus slack for a coach stepping on for an injury and for
+# the brief overlap while a substitution is in progress.
+TOPN_EXTRA_BODIES = int(os.environ.get("TOPN_EXTRA_BODIES", "6"))
+
+
+def on_field_per_side(game_format: str | None) -> int:
+    """Players per side for a format string, defaulting to 7v7."""
+    return FORMAT_ON_FIELD.get(str(game_format or FORMAT_DEFAULT), FORMAT_ON_FIELD[FORMAT_DEFAULT])
+
+
+def topn_per_frame(game_format: str | None) -> int:
+    """Per-frame detection budget for the stage-3c top-N filter.
+
+    2 x on-field + slack: 20 for 7v7 (unchanged from the old hardcoded literal,
+    so existing caches are bit-identical) and 24 for 9v9. Measured on the two
+    clean-tracked 7v7 games, RAW detections already average 22-24 bodies/frame
+    with 77-95% of frames at or over 20, so this cap is load-bearing rather than
+    a formality — at 9v9 a fixed 20 would silently delete real players.
+    """
+    return 2 * on_field_per_side(game_format) + TOPN_EXTRA_BODIES
+
+
 # --- Kit-hue team vote (pipeline stage 2 -> 4) --------------------------------
 # team_classifier.sample_jersey_hsv drops the grass band (35<=H<=85, S>60, V>50)
 # to stop pitch pixels dominating a small player's ROI. Our kit #16a34a is H71
@@ -799,11 +834,14 @@ SUB_SLACK_MAX_S = float(os.environ.get("SUB_SLACK_MAX_S", "150.0"))
 # team's defining colour, and when the drop removes almost everything the
 # fallback returns the unfiltered ROI, so a green player ends up characterised
 # by grass, skin and shorts. Measured consequence: the classifier splits
-# 2479 ours : 634 opp (3.9:1, 14 vs 2 bodies per frame) where 7v7 needs ~1:1.
-# Deciding instead by WHICH kit hue the torso is nearer needs no grass drop at
-# all; on the same frames that splits 1.11:1 with 8 ours / 7 opp per frame
-# (tracking/grass_filter_probe.py). The vote has to be taken during tracking
-# because it needs the video frame, not the stored post-drop samples.
+# 2479 ours : 634 opp (3.9:1, 14 vs 2 bodies per frame) where the two teams must
+# come out ~1:1. Deciding instead by WHICH kit hue the torso is nearer needs no
+# grass drop at all; on the same frames that splits 1.11:1 with 8 ours / 7 opp
+# per frame (tracking/grass_filter_probe.py). The vote has to be taken during
+# tracking because it needs the video frame, not the stored post-drop samples.
+# NOTE: the ~1:1 target holds for ANY format (both teams field the same count);
+# the absolute per-frame counts quoted above are from 7v7 games and are ~4/frame
+# higher at 9v9.
 KIT_VOTE_ENABLED = os.environ.get("KIT_VOTE_ENABLED", "1") != "0"
 # The team owns TWO kits and they need different discriminators. Green
 # (#16a34a, S221) separates from a blue opponent by hue. Black (#0a0a0a, S0)
