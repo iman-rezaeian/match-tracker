@@ -582,6 +582,12 @@ def main() -> None:
 
     key = f"click_{fi}_{band_i}"
     pt = sic(crop, key=key)
+    # Ignore a coordinate we have already turned into a pending click. Without
+    # this the widget's sticky last-value re-arms `pending` on the very rerun
+    # that follows a save, so the next name lands on the previous body.
+    if pt and st.session_state.get("consumed_click") == (
+            float(pt["x"]), float(pt["y"]), int(fi), int(band_i)):
+        pt = None
     if pt:
         ex = box[0] + int(band_i) * seg_w + pt["x"]
         ey = box[1] + pt["y"]
@@ -592,6 +598,13 @@ def main() -> None:
             "raw_x_eq": ex, "raw_y_eq": ey,
             "snapped_track_id": tid,
         }
+        # Stamp the click so a stale component value cannot be re-consumed. The
+        # image-coordinates widget keeps returning its LAST click on every rerun,
+        # so after naming a player the same coordinates were still on offer and a
+        # second name could be attached to one body -- measured in the coach's
+        # own data: Duncan and Garland both recorded at pixel (3963, 2019).
+        st.session_state["pending_click_id"] = (float(pt["x"]), float(pt["y"]),
+                                                int(fi), int(band_i))
         st.rerun()            # redraw immediately so the yellow ring appears
 
     pend = st.session_state.get("pending")
@@ -617,6 +630,7 @@ def main() -> None:
                                           use_container_width=True):
                 append_sample(root, {**pend, "player_id": p["id"]})
                 st.session_state.pop("pending", None)
+                st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
                 st.toast(f"✅ saved {button_label(p)}")
                 st.rerun()
         with st.expander(f"not in these {len(choices)}? show whole squad"):
@@ -633,6 +647,7 @@ def main() -> None:
                     append_sample(root, {**pend, "player_id": p["id"],
                                          "off_window": True})
                     st.session_state.pop("pending", None)
+                    st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
                     st.toast(f"✅ saved {button_label(p)} (outside his logged window)")
                     st.rerun()
         st.divider()
@@ -641,10 +656,12 @@ def main() -> None:
         # is what produced 26 "can't tell" of 30 in the earlier composition pass.
         if c1.button("↩︎ can't tell — discard"):
             st.session_state.pop("pending", None)
+            st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
             st.rerun()
         if c2.button("opponent / ref / adult"):
             append_sample(root, {**pend, "player_id": "__not_ours__"})
             st.session_state.pop("pending", None)
+            st.session_state["consumed_click"] = st.session_state.get("pending_click_id")
             st.toast("✅ saved as not-ours")
             st.rerun()
 

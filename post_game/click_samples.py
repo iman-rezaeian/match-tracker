@@ -54,6 +54,11 @@ log = logging.getLogger(__name__)
 MIN_CLICKS = 20
 # Thirds boundaries along the depth axis, matching config.THIRDS_FRACTIONS.
 THIRDS = (1 / 3, 2 / 3)
+# How far outside the pitch a click may project and still be treated as a real
+# player clamped to the line rather than a mis-click. The far touchline is the
+# horizon in this geometry, so a player standing on it can project several metres
+# negative from a few pixels of click error.
+FAR_CLAMP_M = 8.0
 
 
 @dataclass
@@ -86,18 +91,47 @@ def load_clicks(path: str | Path) -> list[dict]:
 
 
 def to_field(
-    clicks: list[dict], field_cal,
+    clicks: list[dict], field_cal, report: dict | None = None,
 ) -> list[dict]:
-    """Project each click from equirect pixels to field metres."""
+    """Project each click from equirect pixels to field metres.
+
+    ⚠ Clicks near the FAR touchline project to negative width, and that is
+    geometry rather than coach error. The far line is effectively the horizon
+    here: measured on Game 1 at mid-pitch, pixel row 2030 maps to y = +0.4 m
+    while 2019 -- eleven pixels higher -- maps to **-3.0 m**, and 1995 maps to
+    -13.5 m. A player standing ON the far line is therefore a few pixels from
+    reading as several metres off the pitch.
+
+    Such clicks are CLAMPED to the touchline and counted, not discarded: the
+    player was really there, and the depth error is a known property of the rig
+    (see ACCURACY_AUDIT.md on far-touchline compression). A click far outside the
+    pitch in either axis is a genuine mis-click and IS dropped.
+    """
     from . import calibration as _cal
 
     fp = _cal.FieldProjector(field_cal)
+    L, W = float(field_cal.length_m), float(field_cal.width_m)
+    rep = report if report is not None else {}
+    rep.setdefault("clamped_far_touchline", 0)
+    rep.setdefault("dropped_off_pitch", 0)
     out = []
     for c in clicks:
         if c.get("player_id") in (None, "__not_ours__"):
             continue
         x_m, y_m = fp.pixel_to_field(float(c["click_x_eq"]), float(c["click_y_eq"]))
-        out.append({**c, "x_m": float(x_m), "y_m": float(y_m)})
+        if np.isnan(x_m) or np.isnan(y_m):
+            rep["dropped_off_pitch"] += 1
+            continue
+        # Beyond the far line by a plausible projection error -> clamp.
+        if -FAR_CLAMP_M <= y_m < 0.0:
+            y_m = 0.0
+            rep["clamped_far_touchline"] += 1
+        elif y_m > W + FAR_CLAMP_M or y_m < -FAR_CLAMP_M \
+                or x_m < -FAR_CLAMP_M or x_m > L + FAR_CLAMP_M:
+            rep["dropped_off_pitch"] += 1
+            continue
+        out.append({**c, "x_m": float(np.clip(x_m, 0.0, L)),
+                    "y_m": float(np.clip(y_m, 0.0, W))})
     return out
 
 
@@ -131,9 +165,10 @@ def compute_click_stats(
     """
     L = float(field_cal.length_m)
     W = float(field_cal.width_m)
-    pts = to_field(clicks, field_cal)
-    report: dict = {"n_clicks_total": len(clicks), "n_usable": len(pts),
-                    "under_sampled": [], "min_clicks": min_clicks}
+    report: dict = {"n_clicks_total": len(clicks), "under_sampled": [],
+                    "min_clicks": min_clicks}
+    pts = to_field(clicks, field_cal, report)
+    report["n_usable"] = len(pts)
     if not pts:
         return [], report
 

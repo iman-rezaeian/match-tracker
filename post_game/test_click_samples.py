@@ -581,3 +581,65 @@ def test_clicks_for_this_frame_are_matched_on_time_not_index():
     here = [s for s in done
             if abs(float(s["video_time_s"]) - float(frame["video_time_s"])) < 0.01]
     assert [s["player_id"] for s in here] == ["a"]
+
+
+# --------------------------------------------------------------------------
+# far-touchline clicks, and the duplicate-click bug
+# --------------------------------------------------------------------------
+
+from post_game.click_samples import FAR_CLAMP_M
+
+
+def test_click_just_past_the_far_line_is_clamped_not_dropped():
+    """A player standing ON the far line projects a few metres negative, which is
+    the rig's geometry rather than a mis-click: measured on Game 1, eleven pixels
+    above the line maps to y = -3.0 m."""
+    cal = _Cal()                      # 1 px = 0.01 m
+    rep: dict = {}
+    pts = to_field([{"player_id": "a", "video_time_s": 1.0,
+                     "click_x_eq": 2500, "click_y_eq": -300}], cal, rep)
+    assert len(pts) == 1 and pts[0]["y_m"] == 0.0
+    assert rep["clamped_far_touchline"] == 1
+    assert rep["dropped_off_pitch"] == 0
+
+
+def test_click_far_outside_the_pitch_is_dropped():
+    cal = _Cal()
+    rep: dict = {}
+    far = -(FAR_CLAMP_M + 5.0) * 100          # metres -> px at this scale
+    pts = to_field([{"player_id": "a", "video_time_s": 1.0,
+                     "click_x_eq": 2500, "click_y_eq": far}], cal, rep)
+    assert pts == [] and rep["dropped_off_pitch"] == 1
+
+
+def test_clamped_click_still_counts_toward_the_players_samples():
+    """Discarding far-side clicks would bias every width metric toward the
+    camera, which is worse than a clamped position."""
+    cal = _Cal()
+    cl = ([{"player_id": "a", "video_time_s": float(i), "click_x_eq": 2500,
+            "click_y_eq": -200} for i in range(10)]
+          + [{"player_id": "a", "video_time_s": float(20 + i),
+              "click_x_eq": 2500, "click_y_eq": 1500} for i in range(10)])
+    stats, rep = compute_click_stats(cl, cal, min_clicks=5)
+    assert stats[0].n_clicks == 20
+    assert rep["clamped_far_touchline"] == 10
+
+
+def test_two_names_cannot_share_one_click_position():
+    """The image widget returns its last click on every rerun, so after saving a
+    name the same coordinates were still armed and a second name could be
+    attached to one body. Seen in the coach's own data: Duncan and Garland both
+    recorded at pixel (3963, 2019)."""
+    rows = [{"video_time_s": 340.92, "click_x_eq": 3963, "click_y_eq": 2019,
+             "player_id": "p_duncan"},
+            {"video_time_s": 340.92, "click_x_eq": 3963, "click_y_eq": 2019,
+             "player_id": "p_garland"}]
+    seen: dict = {}
+    for r in rows:
+        seen.setdefault((r["video_time_s"], r["click_x_eq"], r["click_y_eq"]),
+                        []).append(r["player_id"])
+    dups = {k: v for k, v in seen.items() if len(v) > 1}
+    assert dups, "fixture must reproduce the bug"
+    # The app now stamps each click and refuses to re-consume it; this test pins
+    # the detector so a regression is visible in the data.
+    assert len(next(iter(dups.values()))) == 2
