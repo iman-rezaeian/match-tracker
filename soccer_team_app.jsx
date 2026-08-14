@@ -9702,6 +9702,118 @@ const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDE
 const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
+// CLICK-SAMPLED POSITIONS — per-player position from the coach naming bodies
+// himself in the click sampler, written to analytics as `click_stats`.
+//
+// Kept VISUALLY SEPARATE from the tracking-derived player deck on purpose. That
+// deck is identity-dependent and measurably wrong (~23% of a player's attributed
+// frames belong to another child, so its distances run 3-4x low). These numbers
+// come from the coach pointing at each child, so their only error is sampling
+// noise — measured at ±1.7 m on this game — and mixing the two behind identical
+// styling would invite reading across between sources of very different quality.
+//
+// Deliberately NO distance / speed / sprints here: a click samples a position,
+// and between two samples 30 s apart a child could have run 5 m or 80 m.
+function ClickHeatmap({ flat, shape }) {
+  // `flat` is row-major (depth × width); Firestore rejects nested arrays, so the
+  // grid arrives flattened with its shape alongside.
+  if (!Array.isArray(flat) || !flat.length) return null;
+  const [gx, gy] = shape || [12, 8];
+  const max = Math.max(...flat) || 1;
+  const cw = 100 / gx, ch = 62 / gy;
+  return (
+    <svg viewBox="0 0 100 62" className="w-full rounded bg-stone-950/60">
+      {flat.map((v, i) => {
+        const dx = Math.floor(i / gy), wy = i % gy;   // row = depth, col = width
+        const a = Math.pow(v / max, 0.6);             // gamma so faint cells show
+        if (a < 0.02) return null;
+        return <rect key={i} x={dx * cw} y={wy * ch} width={cw} height={ch}
+                     fill={`rgba(163,230,53,${a.toFixed(3)})`} />;
+      })}
+      {/* thirds, so the map reads as a pitch rather than a blob */}
+      <line x1="33.3" y1="0" x2="33.3" y2="62" stroke="#57534e" strokeWidth="0.3" />
+      <line x1="66.6" y1="0" x2="66.6" y2="62" stroke="#57534e" strokeWidth="0.3" />
+      <rect x="0" y="0" width="100" height="62" fill="none" stroke="#57534e" strokeWidth="0.5" />
+    </svg>
+  );
+}
+
+function ClickStatsCard({ doc, roster }) {
+  const cs = doc && doc.click_stats;
+  if (!cs || !Array.isArray(cs.players) || !cs.players.length) return null;
+  const byId = Object.fromEntries((roster || []).map(p => [p.id, p]));
+  const label = pid => {
+    const p = byId[pid];
+    if (!p) return pid;
+    return p.jerseyNumber != null ? `#${p.jerseyNumber} ${p.name}` : p.name;
+  };
+  const L = cs.field_length_m || 55;
+  return (
+    <div className="rounded-xl border border-lime-800/50 bg-stone-900/60 p-3">
+      <div className="text-[10px] tracking-widest text-lime-300 mb-1">
+        WHERE THEY PLAYED
+        <span className="text-stone-500"> · you tagged {cs.n_clicks} positions over {cs.n_frames} moments</span>
+      </div>
+      <div className="text-[9px] text-stone-500 mb-2">
+        Position accurate to about ±{cs.median_pos_err_m} m. No distance or speed —
+        tagged moments show where a player was, not the path between them.
+      </div>
+      <div className="space-y-2">
+        {cs.players.map(p => {
+          const dr = p.drift;
+          const pctL = Math.max(0, Math.min(100, 100 * p.p10_depth_m / L));
+          const pctW = Math.max(2, Math.min(100 - pctL, 100 * (p.p90_depth_m - p.p10_depth_m) / L));
+          return (
+            <div key={p.player_id} className="rounded-lg bg-stone-950/50 p-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs text-stone-200">{label(p.player_id)}</span>
+                <span className="text-[9px] text-stone-500">{p.n_clicks} tags · ±{p.pos_err_m} m</span>
+              </div>
+              <div className="mt-1 grid grid-cols-2 gap-2">
+                <div>
+                  {/* territory: where he was 80% of the time, along the pitch */}
+                  <div className="text-[9px] text-stone-500">
+                    territory {p.p10_depth_m}–{p.p90_depth_m} m · avg {p.avg_depth_m} m
+                  </div>
+                  <div className="mt-0.5 h-2 w-full rounded bg-stone-800 relative overflow-hidden">
+                    <div className="absolute h-full bg-lime-600/60"
+                         style={{ left: `${pctL}%`, width: `${pctW}%` }} />
+                    <div className="absolute h-full w-[2px] bg-lime-300"
+                         style={{ left: `${Math.min(99, 100 * p.avg_depth_m / L)}%` }} />
+                  </div>
+                  <div className="mt-1 flex gap-2 text-[9px]">
+                    <span className="text-red-300">Def {p.pct_defensive_third}</span>
+                    <span className="text-yellow-300">Mid {p.pct_middle_third}</span>
+                    <span className="text-lime-300">Att {p.pct_attacking_third}</span>
+                  </div>
+                  <div className="mt-0.5 text-[9px] text-stone-500">
+                    L {p.pct_left} · C {p.pct_centre} · R {p.pct_right}
+                    {p.area_covered_m2 != null && <> · covers {p.area_covered_m2} m²</>}
+                  </div>
+                  {/* Only a drift whose CI excludes zero is shown as a finding;
+                      anything else is sampling noise and says nothing. */}
+                  {dr && dr.significant && (
+                    <div className="mt-1 text-[9px] text-amber-300">
+                      2nd half {dr.depth_m > 0 ? '+' : ''}{dr.depth_m} m
+                      {dr.depth_m > 0 ? ' further up' : ' deeper'}
+                    </div>
+                  )}
+                </div>
+                <ClickHeatmap flat={p.heatmap} shape={cs.heatmap_shape} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {Array.isArray(cs.under_sampled) && cs.under_sampled.length > 0 && (
+        <div className="mt-2 text-[9px] text-stone-500">
+          Not enough tags to report: {cs.under_sampled.map(u => label(u.player_id)).join(', ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // TEAM SHAPE (Tier 2) — surfaces the per-second team_time_series the pipeline
 // already writes (compactness / width / depth of the outfield block) but which
 // nothing rendered. Identity-ROBUST: it's the aggregate shape of team-0, so it
@@ -10287,6 +10399,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             </div>
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
+              <ClickStatsCard doc={doc} roster={roster} />
               <TeamShapeChart doc={doc} halfLenS={(game.halfLengthMin || 25) * 60} />
               <ShotMap games={[game]} />
               {/* 4.6 — team-centroid third occupancy: where the game lived.
