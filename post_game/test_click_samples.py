@@ -752,3 +752,49 @@ def test_already_tagged_players_are_identified_for_disabling():
     tagged = {s["player_id"] for s in here}
     assert tagged == {"p_adam", "p_hahn"}
     assert "p_gibala" not in tagged, "a tag on another frame must not disable here"
+
+
+# --------------------------------------------------------------------------
+# resume at the earliest gap, and explain the progress numbers
+# --------------------------------------------------------------------------
+
+def _todo(frames, done):
+    dt = {round(float(s["video_time_s"]), 2) for s in done}
+    return [i for i, f in enumerate(frames)
+            if round(float(f["video_time_s"]), 2) not in dt]
+
+
+def test_resume_goes_to_the_earliest_unlabelled_frame():
+    """Resuming past the FURTHEST frame worked stranded every frame the coach had
+    passed over -- 19 of them before he noticed."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0, 50.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 50.0}]
+    assert _todo(frames, done)[0] == 0
+
+
+def test_resume_is_the_last_frame_once_everything_is_labelled():
+    frames = _frames([10.0, 20.0])
+    done = [{"video_time_s": 10.0}, {"video_time_s": 20.0}]
+    todo = _todo(frames, done)
+    assert todo == []
+    assert (todo[0] if todo else len(frames) - 1) == 1
+
+
+def test_next_unlabelled_jump_wraps_to_the_earliest_gap():
+    """From beyond the last gap the jump must wrap, or a skipped frame is only
+    reachable by typing its number."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0])
+    done = [{"video_time_s": 30.0}, {"video_time_s": 40.0}]
+    todo = _todo(frames, done)          # [0, 1]
+    cur = 3
+    nxt = next((i for i in todo if i > cur), todo[0] if todo else None)
+    assert nxt == 0
+
+
+def test_skipped_frames_behind_the_current_position_are_counted():
+    """This count is what reconciles '25 labelled' with 'frame 45'."""
+    frames = _frames([float(10 * i) for i in range(1, 11)])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 50.0}]
+    todo = _todo(frames, done)
+    behind = sum(1 for i in todo if i < 6)
+    assert behind == 4          # indices 0, 2, 3, 5

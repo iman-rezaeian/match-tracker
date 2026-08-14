@@ -433,36 +433,54 @@ def main() -> None:
     # Resume where the last session stopped. Restarting at frame 0 made the app
     # re-show every frame already worked, with no sign that the earlier clicks
     # had been saved at all -- they had, but invisibly.
+    done_times = {round(float(s["video_time_s"]), 2) for s in done}
+    todo = [i for i, f in enumerate(frames)
+            if round(float(f["video_time_s"]), 2) not in done_times]
     if "fi" not in st.session_state:
-        done_times = {round(float(s["video_time_s"]), 2) for s in done}
-        # Resume AFTER the furthest frame worked, not at the first untouched one.
-        # A deliberately skipped frame (nobody nameable, or all bands empty of
-        # ours) is legitimately left blank, so "first blank" would send the coach
-        # back to the start every session. The skipped frames stay reachable via
-        # prev / the progress strip.
-        last_done = max((i for i, f in enumerate(frames)
-                         if round(float(f["video_time_s"]), 2) in done_times),
-                        default=-1)
-        st.session_state.fi = min(last_done + 1, len(frames) - 1)
+        # Start at the EARLIEST unlabelled frame. Resuming after the furthest
+        # frame worked (the previous rule) silently stranded every frame the coach
+        # had passed over -- 19 of them by the time he noticed, and nothing on
+        # screen explained why "25 frames labelled" sat next to "frame 45".
+        st.session_state.fi = todo[0] if todo else len(frames) - 1
         if done:
             st.toast(f"Resuming at frame {st.session_state.fi + 1} — "
-                     f"{len(done)} clicks already saved across "
-                     f"{len(done_times)} frame(s).")
-    _c1, _c2, _c3 = st.columns([1, 1, 6])
+                     f"{len(done)} clicks saved on {len(done_times)} frame(s), "
+                     f"{len(todo)} still to do.")
+    _c1, _c2, _c3, _c4 = st.columns([1, 1, 2, 4])
     if _c1.button("◀ prev", disabled=st.session_state.fi <= 0):
         st.session_state.fi -= 1
         st.rerun()
     if _c2.button("next ▶", disabled=st.session_state.fi >= len(frames) - 1):
         st.session_state.fi += 1
         st.rerun()
-    fi = _c3.number_input("frame", 0, len(frames) - 1,
+    # One press to the next frame with no clicks yet, wrapping to the earliest
+    # gap. Without this the only way back to a skipped frame is to notice it in
+    # the strip and type its number.
+    _nxt = next((i for i in todo if i > st.session_state.fi),
+                todo[0] if todo else None)
+    if _c3.button(f"⇥ next unlabelled ({_nxt + 1})" if _nxt is not None
+                  else "⇥ all frames labelled",
+                  disabled=_nxt is None, use_container_width=True):
+        st.session_state.fi = _nxt
+        st.rerun()
+    fi = _c4.number_input("frame", 0, len(frames) - 1,
                           st.session_state.fi, 1, key="fi")
-    # A done/todo strip, so progress through the game is visible at a glance
-    # rather than something the coach has to remember between sessions.
-    _dt = {round(float(s["video_time_s"]), 2) for s in done}
-    st.caption("progress  " + "".join(
-        "●" if round(float(f["video_time_s"]), 2) in _dt else "○"
-        for f in frames) + f"   ({len(_dt)}/{len(frames)} frames, {len(done)} clicks)")
+    # Progress strip. The earlier version marked done vs not-done and nothing
+    # else, so "25/100 frames" sitting beside "frame 45" looked like a
+    # contradiction rather than 25 labelled frames scattered below index 43.
+    # Marking the CURRENT position and counting the gaps explains both numbers.
+    _cur = int(st.session_state.get("fi", 0))
+    _strip = []
+    for i, f in enumerate(frames):
+        ch = "●" if round(float(f["video_time_s"]), 2) in done_times else "·"
+        _strip.append(f"[{ch}]" if i == _cur else ch)
+    st.caption(
+        "".join(_strip)
+        + f"\n\n**{len(done_times)}** labelled · **{len(todo)}** to do · "
+        f"{len(done)} clicks · you are at frame {_cur + 1} of {len(frames)}"
+        + (f" · ⚠ **{sum(1 for i in todo if i < _cur)} skipped frames behind you**"
+           if any(i < _cur for i in todo) else ""))
+    st.progress(len(done_times) / max(1, len(frames)))
     frame = frames[int(fi)]
     gk_id = gk_at(gk_segs, video_to_elapsed_ms(
         float(frame["video_time_s"]), h1_off, h2_off))
