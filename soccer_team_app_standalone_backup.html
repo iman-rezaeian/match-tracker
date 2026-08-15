@@ -10000,7 +10000,10 @@ function PlayerHeatmap({ grid, rows, cols }) {
   if (!grid || !grid.length || !rows || !cols) {
     return <div className="text-[11px] text-stone-500 py-2">No positional data.</div>;
   }
-  const max = Math.max(1, ...grid);
+  // Normalise against the PEAK cell, not 1: these grids are probability
+  // densities summing to 1, so on a 12x8 grid a peak cell is ~0.1 and
+  // `Math.max(1, ...)` made every cell read as near-zero.
+  const max = Math.max(...grid) || 1;
   // Build display rows top→bottom = opponent-net → our-net (data row index high→low).
   const displayRows = [];
   for (let r = rows - 1; r >= 0; r--) {
@@ -10008,16 +10011,30 @@ function PlayerHeatmap({ grid, rows, cols }) {
     for (let c = 0; c < cols; c++) cells.push(grid[r * cols + c] || 0);
     displayRows.push(cells);
   }
+  // Cells below this share of the peak are left UNPAINTED.
+  //
+  // ⚠ Why a threshold is required, not a nicety: these grids come from a kernel
+  // density estimate with a 6 m bandwidth, so every cell is strictly positive —
+  // the far end of the pitch holds ~0.0001 rather than 0. The previous ramp
+  // treated "not exactly zero" as "present" and applied a 0.25 alpha FLOOR, so
+  // all 96 cells painted and a keeper whose mass is 78% in his own two rows
+  // rendered as a uniform green sheet over the whole pitch (measured: alpha
+  // spanned only 0.25→0.37 across a 4000x range in the data). The pitch markings
+  // showing through that wash are the "bands" it appeared to show.
+  const FLOOR = 0.04;
   const heat = (v) => {
-    if (v <= 0) return 'transparent';
-    const a = Math.pow(v / max, 0.6); // gamma so low cells stay visible
-    // green → yellow → red ramp by intensity
+    const rel = v / max;
+    if (!(rel >= FLOOR)) return 'transparent';   // also catches 0 and NaN
+    // Rescale the surviving range across the FULL alpha span so the peak reads
+    // as a peak. Gamma < 1 still lifts the mid-range without flattening it.
+    const a = Math.pow((rel - FLOOR) / (1 - FLOOR), 0.75);
+    const alpha = 0.10 + 0.80 * a;
     if (a < 0.5) {
       const t = a / 0.5; // green→yellow
-      return `rgba(${Math.round(120 + 135 * t)}, ${Math.round(200)}, 40, ${0.25 + 0.55 * a})`;
+      return `rgba(${Math.round(120 + 135 * t)}, 200, 40, ${alpha})`;
     }
     const t = (a - 0.5) / 0.5; // yellow→red
-    return `rgba(255, ${Math.round(200 - 160 * t)}, 30, ${0.45 + 0.5 * a})`;
+    return `rgba(255, ${Math.round(200 - 160 * t)}, 30, ${alpha})`;
   };
   return (
     <div className="flex flex-col items-center gap-1 py-2">
@@ -10026,18 +10043,20 @@ function PlayerHeatmap({ grid, rows, cols }) {
         className="relative rounded-md overflow-hidden border border-emerald-200/20"
         style={{ width: 132, aspectRatio: `${cols} / ${rows}`, background: 'linear-gradient(180deg,#14532d,#0b3d22)' }}
       >
-        {/* pitch markings */}
+        {/* Heat cells UNDER the markings: painted cells are semi-transparent, so
+            when the lines sat on top of the pitch and under the heat, a shaded
+            cell washed them out and the halfway line read as a "band" of heat. */}
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols},1fr)`, gridTemplateRows: `repeat(${rows},1fr)` }}>
+          {displayRows.flatMap((cells, ri) => cells.map((v, ci) => (
+            <div key={`${ri}-${ci}`} style={{ background: heat(v) }} />
+          )))}
+        </div>
+        {/* pitch markings, drawn last so they stay legible over the heat */}
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute left-0 right-0 top-1/2 h-px bg-white/25" />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border border-white/25" />
           <div className="absolute left-[30%] right-[30%] top-0 h-[10%] border-x border-b border-white/20" />
           <div className="absolute left-[30%] right-[30%] bottom-0 h-[10%] border-x border-t border-white/20" />
-        </div>
-        {/* heat cells */}
-        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols},1fr)`, gridTemplateRows: `repeat(${rows},1fr)` }}>
-          {displayRows.flatMap((cells, ri) => cells.map((v, ci) => (
-            <div key={`${ri}-${ci}`} style={{ background: heat(v) }} />
-          )))}
         </div>
       </div>
       <div className="text-[9px] tracking-widest text-lime-400">OUR NET ↓</div>
@@ -15217,6 +15236,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
