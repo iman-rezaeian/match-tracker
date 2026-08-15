@@ -9274,20 +9274,63 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
   let oppScore = 0;
   let currentPeriod = 1;
   let currentElapsed = 0;
+  let anchor = null;   // the event the clock is currently reading from
   for (const e of allEvents) {
     if (e.t <= now + 0.01) {
       if (e.ourScoreAfter != null) ourScore = e.ourScoreAfter;
       if (e.oppScoreAfter != null) oppScore = e.oppScoreAfter;
       if (e.period) currentPeriod = e.period;
-      if (e.elapsed != null) currentElapsed = e.elapsed;
+      if (e.elapsed != null) { currentElapsed = e.elapsed; anchor = e; }
     } else break;
   }
-  // Row-2 label: half + minute, matching the live in-game scorebug
-  // ("1ST · 27'"). Minute is derived from the latest passed event's clock.
+  // Row-2 label: half + minute, matching the live in-game scorebug ("1ST · 27'").
+  //
+  // ⚠ The minute must ADVANCE WITH the clip, not freeze on the last event and
+  // then jump. On a HIGHLIGHTS reel only the events inside a rendered window carry
+  // a reel time at all — measured on real games, 18 of 121 / 21 of 106 / 8 of 112 —
+  // so latching on "the last event before the playhead" showed a minute from a
+  // different part of the match and looked like it was just counting up.
+  //
+  // Interpolate instead: game time advances at the same rate as playback within
+  // the clip we are in, anchored on the nearest event. `nextEv` bounds it so the
+  // number cannot run past the following event's own clock (a clip boundary is a
+  // cut in game time, and without the bound the minute would sail through it).
   const halfLenMin = Number(doc?.halfLengthMin) || 25;
-  const minuteNum = Math.max(1, Math.floor((currentElapsed || 0) / 60) + 1)
-    + (currentPeriod === 2 ? halfLenMin : 0);
-  const statusLabel = `${currentPeriod === 2 ? '2ND' : '1ST'} · ${minuteNum}'`;
+  // Prefer the SEGMENT index: it covers the whole reel, where events cover only
+  // the instants inside rendered windows. Each segment says where it starts in the
+  // reel and what the game clock read there, so the minute is exact everywhere.
+  const reelMeta = timeKey === 'tvReelTimeS' ? doc?.tv_reel : doc?.auto_highlights;
+  const segs = (reelMeta && Array.isArray(reelMeta.segments)) ? reelMeta.segments : [];
+  const seg = (() => {
+    let found = null;
+    for (const s of segs) {
+      if (s.reel_start_s == null || s.clock_s == null) continue;
+      const len = Math.max(0, (s.end_s || 0) - (s.start_s || 0));
+      if (now + 0.01 >= s.reel_start_s && now <= s.reel_start_s + len) return s;
+      if (now > s.reel_start_s) found = s;   // last one we've passed
+    }
+    return found;
+  })();
+
+  let clockPeriod = currentPeriod;
+  let clockElapsed = currentElapsed || 0;
+  if (seg) {
+    // Game time advances at playback rate within a clip.
+    clockElapsed = (seg.clock_s || 0) + Math.max(0, now - seg.reel_start_s);
+    if (seg.period) clockPeriod = seg.period;
+  } else if (anchor) {
+    // No segment index (older analytics docs): fall back to interpolating from
+    // the nearest event, bounded by the next one so the number cannot sail
+    // through a clip boundary — a cut is a jump in game time, not elapsed time.
+    const nextEv = allEvents.find(e => e.t > now + 0.01) || null;
+    clockElapsed = (anchor.elapsed || 0) + Math.max(0, now - anchor.t);
+    if (nextEv && nextEv.period === currentPeriod && nextEv.elapsed != null) {
+      clockElapsed = Math.min(clockElapsed, nextEv.elapsed);
+    }
+  }
+  const minuteNum = Math.max(1, Math.floor(clockElapsed / 60) + 1)
+    + (clockPeriod === 2 ? halfLenMin : 0);
+  const statusLabel = `${clockPeriod === 2 ? '2ND' : '1ST'} · ${minuteNum}'`;
 
   // --- Active popup selection ---------------------------------------
   // Only GOAL and SUB events show popups. Sub events that fire within

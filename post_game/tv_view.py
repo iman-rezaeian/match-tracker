@@ -103,7 +103,25 @@ TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
                          # on the touchline, refs at midfield, the ball-kid by
                          # the goalpost. Real U10 players cover way more than
                          # 5 m total even in a 30-second smoke window.
-AUTO_HIGHLIGHT_WINDOW_S = 15.0
+# Highlight clip window, ASYMMETRIC around the coach's tap.
+#
+# ⚠ It used to be symmetric +-15 s, and that chopped the build-up off every clip:
+# the coach reported the opponent's first goal appearing "only 2-3 seconds before
+# they score". A tap lands when the coach REACTS, which is after the ball crosses
+# the line, so 15 s of nominal lead is 15 s minus his reaction time. Worse, the
+# interesting part of a goal is the move that CREATED it, which typically starts
+# 20-30 s earlier — a symmetric window is the wrong shape for the thing being
+# clipped, not merely too small.
+#
+# Measured on the 3-5 Belle River game: GOAL taps land first and the ASSIST tap
+# follows 1.4-3.6 s later, so the coach taps promptly and backfills. The lag is a
+# few seconds, not a minute. 25 s of lead covers the build-up plus that lag; 10 s
+# after is enough for the restart and the celebration without padding the reel.
+AUTO_HIGHLIGHT_PRE_S = 25.0
+AUTO_HIGHLIGHT_POST_S = 10.0
+# Retained for callers/tests that referenced the symmetric constant. Kept equal to
+# the PRE roll so any old caller widens rather than narrows.
+AUTO_HIGHLIGHT_WINDOW_S = AUTO_HIGHLIGHT_PRE_S
 # Both teams' goals belong in the reel — OPP_GOAL was previously missing, so
 # the opponent's goals never made the highlight cut (a 3-6 game showed only the
 # 3 we scored). SAVE covers the opponent attacks our keeper stopped.
@@ -915,7 +933,15 @@ def _event_windows(
     period_clock_to_video_time: Callable[[int, int], float],
     video_duration_s: float,
     window_s: float,
+    post_s: Optional[float] = None,
 ) -> list[tuple[float, float]]:
+    """Merged clip windows around each highlight-worthy event.
+
+    `window_s` is the LEAD (before the tap) and `post_s` the tail after it. The
+    split is deliberate — see AUTO_HIGHLIGHT_PRE_S: a tap marks the coach's
+    reaction, so the footage worth keeping is mostly BEFORE it.
+    """
+    post = AUTO_HIGHLIGHT_POST_S if post_s is None else float(post_s)
     raw: list[tuple[float, float]] = []
     for ev in events:
         if ev.type not in AUTO_HIGHLIGHT_EVENT_TYPES:
@@ -924,7 +950,7 @@ def _event_windows(
         if t < 0:
             continue
         a = max(0.0, t - window_s)
-        b = min(video_duration_s, t + window_s)
+        b = min(video_duration_s, t + post)
         if b > a:
             raw.append((a, b))
     if not raw:
@@ -1260,7 +1286,8 @@ def extract_auto_highlights(
     game_id: str,
     field_length_m: float,
     field_width_m: float,
-    window_s: float = AUTO_HIGHLIGHT_WINDOW_S,
+    window_s: float = AUTO_HIGHLIGHT_PRE_S,
+    post_s: float = AUTO_HIGHLIGHT_POST_S,
     upload: bool = True,
     analyzed_windows: Optional[list[tuple[float, float]]] = None,
     aim_cfg: Optional[AimConfig] = None,
@@ -1282,7 +1309,8 @@ def extract_auto_highlights(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration_s = total_frames / fps if fps else 0.0
 
-    windows = _event_windows(events, period_clock_to_video_time, duration_s, window_s)
+    windows = _event_windows(events, period_clock_to_video_time, duration_s,
+                             window_s, post_s)
     if analyzed_windows:
         clipped: list[tuple[float, float]] = []
         for (ea, eb) in windows:

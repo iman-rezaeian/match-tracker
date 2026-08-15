@@ -135,6 +135,36 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     return f
 
 
+def video_time_to_period_clock_factory(game: GameDoc) -> Callable[[float], tuple[int, float]]:
+    """Inverse of period_clock_to_video_time_factory: f(video_t) -> (period, clock_s).
+
+    Needed to label a rendered clip with the game minute it came from. The forward
+    map is a per-period linear offset, so the inverse just picks the period whose
+    kickoff is the latest one at or before `video_t`.
+
+    Second half wins ties: at exactly the H2 kickoff position the clock should read
+    "2nd half, 0:00", not "1st half, <half length>".
+    """
+    offset = float(game.video_offset_h1_kickoff_s or 0.0)
+    half_len_s = game.half_length_min * 60
+    halftime_gap_s = _halftime_seconds(game)
+    pp = game.pause_periods[0] if game.pause_periods else None
+    if pp and pp.started_at and game.started_at:
+        h1_play_s = (pp.started_at - game.started_at) / 1000.0
+    else:
+        h1_play_s = float(half_len_s)
+    h2_override = float(getattr(game, "video_offset_h2_kickoff_s", 0.0) or 0.0)
+    h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
+
+    def f(video_t: float) -> tuple[int, float]:
+        t = float(video_t)
+        if t >= h2_kickoff_in_video:
+            return (2, max(0.0, t - h2_kickoff_in_video))
+        return (1, max(0.0, t - offset))
+
+    return f
+
+
 def _track_lifetimes(tracks_df: pd.DataFrame) -> dict[int, tuple[float, float]]:
     g = tracks_df.groupby("track_id")["time_s"]
     return {int(tid): (float(t.min()), float(t.max())) for tid, t in g}

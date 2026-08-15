@@ -23,7 +23,9 @@ from .calibration import (
 from .detection import Detector
 from .formation import compute_formation
 from .highlights import extract_clips
-from .identity import assign_identities, half_windows, period_clock_to_video_time_factory, _onfield_intervals
+from .identity import (assign_identities, half_windows,
+                       period_clock_to_video_time_factory,
+                       video_time_to_period_clock_factory, _onfield_intervals)
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tracklet_thumbs import generate_tracklet_thumbnails
@@ -882,6 +884,8 @@ def run(
     # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
+    # Inverse, for labelling rendered clips with the minute they came from.
+    _video_to_clock = video_time_to_period_clock_factory(game)
 
     # --- camera-corrected on-field windows (sub_correct) ---------------------
     # Coaches tap SUB late during multi-sub moments, biasing the logged on/off
@@ -1472,8 +1476,10 @@ def run(
         # earlier filters shipped while cutting our own players.
         "team_shape_filter": adult_report or None,
         "clip_count": len(clips),
-        "tv_reel": _tv_meta_to_dict(tv_reel_meta),
-        "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
+        # Segments carry their game-clock position so the PWA scorebug can show
+        # the right minute anywhere in a reel, not just at the events.
+        "tv_reel": _tv_meta_to_dict(tv_reel_meta, _video_to_clock),
+        "auto_highlights": _tv_meta_to_dict(auto_hl_meta, _video_to_clock),
         # Convenience top-level URLs the PWA can read without diving into
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
@@ -2094,21 +2100,41 @@ def _sanitize_json(obj):
     return obj
 
 
-def _tv_meta_to_dict(meta) -> dict | None:
+def _tv_meta_to_dict(meta, video_to_clock=None) -> dict | None:
     """asdict(TvViewMeta) but with segments flattened to a list of dicts.
 
     Firestore disallows arrays inside arrays; the dataclass stores
     segments as list[tuple[float, float]] which sanitizes to nested
     lists \u2192 \"Property tv_reel contains an invalid nested entity.\" Map
     each segment to {\"start_s\": a, \"end_s\": b} instead.
+
+    Each segment also carries where it lands in the REEL (`reel_start_s`) and what
+    the game clock reads there (`period` + `clock_s`), when `video_to_clock` is
+    supplied. That is what lets the scorebug show the right minute anywhere in a
+    highlights reel: only the events inside a rendered window get an
+    `autoHighlightsTimeS` at all -- measured on real games, 18 of 121, 21 of 106,
+    8 of 112 -- so a player that reads the clock only from events shows a minute
+    from a different part of the match between them.
     """
     if meta is None:
         return None
     d = asdict(meta)
     segs = d.get("segments") or []
-    d["segments"] = [
-        {"start_s": float(a), "end_s": float(b)} for a, b in segs
-    ]
+    out = []
+    acc = 0.0
+    for a, b in segs:
+        a, b = float(a), float(b)
+        rec = {"start_s": a, "end_s": b, "reel_start_s": acc}
+        if video_to_clock is not None:
+            try:
+                per, clock = video_to_clock(a)
+                rec["period"] = int(per)
+                rec["clock_s"] = float(clock)
+            except Exception:
+                pass
+        out.append(rec)
+        acc += max(0.0, b - a)
+    d["segments"] = out
     return d
 
 def _player_stat_to_dict(s) -> dict:
