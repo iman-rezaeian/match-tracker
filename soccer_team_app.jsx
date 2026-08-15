@@ -9093,7 +9093,19 @@ function SeasonPlayersTab({ rows, sortKey, setSortKey, onOpenPlayer, nTagged }) 
               <div className="text-center font-display text-xs tabular-nums text-sky-700">{r.minutes}</div>
               <div className="text-center font-display text-xs tabular-nums text-lime-700">{r.goals}</div>
               <div className="text-center font-display text-xs tabular-nums text-stone-200">{r.assists}</div>
-              <div className={`text-center font-display text-sm tabular-nums ${r.score >= 6 ? 'text-lime-600' : r.score >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{r.score}</div>
+              {/* SCORE, with a logging-coverage dot. The score is a rate over the
+                  events the coach managed to tap, and DEF logging ran as low as
+                  15% of minutes on some games — so a thin score must not look as
+                  firm as a well-logged one. Amber under 50%, red under 30%. */}
+              <div className={`text-center font-display text-sm tabular-nums relative ${r.score >= 6 ? 'text-lime-600' : r.score >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>
+                {r.score}
+                {r.scoreCoverage != null && r.scoreCoverage < 50 && (
+                  <span
+                    title={`Only ~${Math.round(r.scoreCoverage)}% of his minutes carried event logging — treat this score as provisional`}
+                    className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${r.scoreCoverage < 30 ? 'bg-red-500' : 'bg-amber-400'}`}
+                  />
+                )}
+              </div>
               <div className="text-center font-display text-xs tabular-nums border-l border-lime-800/60 text-stone-400">
                 {r.tagged ? `${r.tagged}/${r.gamesWithDocs}` : '—'}
               </div>
@@ -11989,14 +12001,104 @@ function StatsView({ roster, games, weights, onBack }) {
       const t = String(g.tournament || '').toLowerCase();
       return (W.gameTypes[t] != null) ? Number(W.gameTypes[t]) : Number(W.gameTypes.default);
     };
+    // ---- Per-pillar LOGGING WEIGHT -------------------------------------------
+    // The coach taps while coaching, so how much gets logged varies enormously
+    // between games and between pillar types. Measured over 12 games:
+    //
+    //   total action events/game   95 -> 18   (5x swing)
+    //   DEF share of those         60% -> 3%  (he now taps mostly goals/shots)
+    //   DEC share                  21% +- 5%  (stable)
+    //
+    // The old rate divided each pillar's points by ALL minutes played, so a
+    // player's DEF rate was (points from the few heavily-logged games) / (minutes
+    // from every game) — diluted toward zero by games where the coach was busy.
+    // That penalised players for the coach's attention, not their play, and it
+    // put whoever happened to play in the two June games on top of the table.
+    //
+    // Fix: weight each game's MINUTES, per pillar, by how much of that pillar was
+    // logged there relative to the season's best-logged game. A game with a
+    // tenth of the usual DEF logging contributes a tenth of its minutes to the
+    // DEF denominator, so the rate stays comparable instead of being watered
+    // down. Points are unchanged — nothing is invented, the denominator is just
+    // made to match the numerator's actual coverage.
+    // ⚠ Only DISCRETIONARY events count toward coverage. Some taps track things
+    // that happen TO the team and get logged whatever the coach is doing —
+    // measured over 12 games:
+    //
+    //   SAVE      logged in 11/12 games, stdev 2.3  (tracks opponent shots)
+    //   DUEL_WIN  ZERO in 8/12 games,    stdev 6.7  (pure coach attention)
+    //
+    // Weighting a keeper's denominator down by DEF coverage inflated his rate
+    // 3.6x (44 saves over 88 weighted minutes instead of 313) and put him at
+    // double the next player. Outcome events — goals, assists, shots, saves,
+    // penalties, own goals — are excluded from the coverage calculation for that
+    // reason: their count does not scale with how much the coach was tapping.
+    const PILLAR_TYPES = {
+      atk: ['KEY_PASS', 'FOUL_ON'],
+      def: ['BLOCK', 'BALL_WIN', 'CLEAR', 'KICK_OUT', 'DUEL_WIN', 'DUEL_LOSE', 'FOUL_BY'],
+      dec: ['GIVE_GO', 'GATES', 'HOLDS_BALL', 'TURNOVER'],
+    };
+    // Events per logged minute, per pillar, per game — an intensity, so a short
+    // appearance in a well-logged game isn't mistaken for thin logging.
+    const gameLog = new Map();
+    for (const g of finished) {
+      const counts = { atk: 0, def: 0, dec: 0 };
+      for (const e of (g.events || [])) {
+        for (const k of ['atk', 'def', 'dec']) {
+          if (PILLAR_TYPES[k].includes(e.type)) counts[k] += 1;
+        }
+      }
+      // Team minutes actually played in this game, as the exposure base.
+      let teamMin = 0;
+      for (const p of roster) teamMin += playerSeconds(p.id, g) / 60;
+      const base = Math.max(teamMin, 1);
+      gameLog.set(g.id, {
+        atk: counts.atk / base, def: counts.def / base, dec: counts.dec / base,
+        inv: (counts.atk + counts.def + counts.dec) / base,
+      });
+    }
+    // Normalise against the best-logged game so the weight is a 0..1 coverage.
+    const peak = { atk: 0, def: 0, dec: 0, inv: 0 };
+    for (const v of gameLog.values()) {
+      for (const k of ['atk', 'def', 'dec', 'inv']) peak[k] = Math.max(peak[k], v[k]);
+    }
+    // Floor so a game with genuinely sparse logging still counts a little — a
+    // player who only ever appeared in thin games must not get a 0 denominator
+    // and an explosive rate. 0.15 keeps the worst game at 15% weight.
+    const LOG_FLOOR = 0.15;
+    // Share of each pillar's POINTS that comes from discretionary events. The
+    // rest (goals, assists, shots, saves, clean sheets) is logged regardless of
+    // the coach's attention, so only this share of the denominator may be
+    // discounted — otherwise a keeper's consistently-logged saves get divided by
+    // a shrunken DEF denominator and his rate explodes.
+    //
+    // Rough, deliberately: these are fixed shares rather than a per-player
+    // decomposition, because the point is to stop over-correcting, not to model
+    // the mix exactly. ATK is nearly all outcome events (goals/assists/shots),
+    // DEF is mixed (saves are outcome, duels/blocks are discretionary), DEC is
+    // almost entirely discretionary.
+    const DISCRETIONARY_SHARE = { atk: 0.15, def: 0.5, dec: 0.85, inv: 0.5 };
+    const logWeight = (gid, k) => {
+      const v = gameLog.get(gid);
+      if (!v || !(peak[k] > 0)) return 1;
+      const cov = Math.max(LOG_FLOOR, Math.min(1, v[k] / peak[k]));
+      const s = DISCRETIONARY_SHARE[k];
+      // Blend toward 1: only the discretionary share of the exposure shrinks.
+      return (1 - s) + s * cov;
+    };
+
     // Weighted per-player sums + the squad prior in one pass.
-    const sums = {};  // pid -> { atk, def, dec, inv, wmin, wgkmin }
+    const sums = {};  // pid -> { atk, def, dec, inv, wmin: {per pillar}, wgkmin }
     const squadTot = { atk: 0, def: 0, dec: 0, inv: 0 };
-    let squadMin = 0;
+    const squadMin = { atk: 0, def: 0, dec: 0, inv: 0 };
     for (const g of finished) {
       const w = typeWeight(g);
       if (!(w > 0)) continue;
       const ev = g.events || [];
+      const lw = {
+        atk: logWeight(g.id, 'atk'), def: logWeight(g.id, 'def'),
+        dec: logWeight(g.id, 'dec'), inv: logWeight(g.id, 'inv'),
+      };
       for (const p of roster) {
         const sec = playerSeconds(p.id, g);
         if (sec <= 0) continue;
@@ -12005,35 +12107,39 @@ function StatsView({ roster, games, weights, onBack }) {
         const gx = servedAsGK ? gkExtrasForGame(p.id, g) : null;
         const f = (servedAsGK && sec > 0) ? Math.min(1, (gx.secondsAsGK || 0) / sec) : 0;
         const pts = pillarPoints(p.id, ev, f, gx, W);
-        const row = sums[p.id] || (sums[p.id] = { atk: 0, def: 0, dec: 0, inv: 0, wmin: 0, wgkmin: 0 });
+        const row = sums[p.id] || (sums[p.id] = {
+          atk: 0, def: 0, dec: 0, inv: 0,
+          wmin: { atk: 0, def: 0, dec: 0, inv: 0 }, rawMin: 0, wgkmin: 0,
+        });
         row.atk += w * pts.atk; row.def += w * pts.def;
         row.dec += w * pts.dec; row.inv += w * pts.inv;
-        row.wmin += w * min;
+        for (const k of ['atk', 'def', 'dec', 'inv']) row.wmin[k] += w * min * lw[k];
+        row.rawMin += w * min;
         row.wgkmin += w * min * f;
         // Squad prior: outfield values for everyone (it's a prior, not a score).
         const pop = pillarPoints(p.id, ev, 0, null, W);
         squadTot.atk += w * pop.atk; squadTot.def += w * pop.def;
         squadTot.dec += w * pop.dec; squadTot.inv += w * pop.inv;
-        squadMin += w * min;
+        for (const k of ['atk', 'def', 'dec', 'inv']) squadMin[k] += w * min * lw[k];
       }
     }
-    const sqPh = Math.max(squadMin, 1) / 20;
-    const squadRates = {
-      atk: squadTot.atk / sqPh, def: squadTot.def / sqPh,
-      dec: squadTot.dec / sqPh, inv: squadTot.inv / sqPh,
-    };
+    const squadRates = {};
+    for (const k of ['atk', 'def', 'dec', 'inv']) {
+      squadRates[k] = squadTot[k] / (Math.max(squadMin[k], 1) / 20);
+    }
     const map = {};
     const r = (n) => Math.round(n * 10) / 10;
     for (const p of roster) {
       const row = sums[p.id];
-      if (!row || row.wmin <= 0) continue;
-      const rate = (pts, sq) => (pts + (M / 20) * sq) / ((row.wmin + M) / 20);
-      const attacking = rate(row.atk, squadRates.atk);
-      const defending = rate(row.def, squadRates.def);
-      const decisions = rate(row.dec, squadRates.dec);
-      const involvement = rate(row.inv, squadRates.inv);
+      if (!row || row.rawMin <= 0) continue;
+      // Each pillar divides by ITS OWN logging-weighted minutes.
+      const rate = (pts, sq, wmin) => (pts + (M / 20) * sq) / ((wmin + M) / 20);
+      const attacking = rate(row.atk, squadRates.atk, row.wmin.atk);
+      const defending = rate(row.def, squadRates.def, row.wmin.def);
+      const decisions = rate(row.dec, squadRates.dec, row.wmin.dec);
+      const involvement = rate(row.inv, squadRates.inv, row.wmin.inv);
       // Pillar mix blended by the weighted share of season minutes in goal.
-      const f = Math.min(1, row.wgkmin / row.wmin);
+      const f = Math.min(1, row.wgkmin / row.rawMin);
       const PO = W.pillars.outfield, PG = W.pillars.gk;
       const pil = {
         atk: PO.atk + f * (PG.atk - PO.atk),
@@ -12042,7 +12148,19 @@ function StatsView({ roster, games, weights, onBack }) {
         inv: PO.inv + f * (PG.inv - PO.inv),
       };
       const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
-      map[p.id] = { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
+      map[p.id] = {
+        overall: r(overall), attacking: r(attacking), defending: r(defending),
+        decisions: r(decisions), involvement: r(involvement),
+        // How much of this player's minutes carried logging, per pillar. Surfaced
+        // so a score resting on thin taps reads as provisional rather than
+        // authoritative — the coach asked how much of the view is his taps, and
+        // the answer belongs on screen, not in a doc.
+        coverage: {
+          atk: r(100 * row.wmin.atk / Math.max(row.rawMin, 1)),
+          def: r(100 * row.wmin.def / Math.max(row.rawMin, 1)),
+          dec: r(100 * row.wmin.dec / Math.max(row.rawMin, 1)),
+        },
+      };
     }
     return map;
   }, [roster, finished, stats, weights]);
@@ -12067,6 +12185,10 @@ function StatsView({ roster, games, weights, onBack }) {
         goals: s.GOAL || 0,
         assists: s.ASSIST || 0,
         score: sc.overall || 0,
+        // Worst pillar coverage: the score is only as solid as its thinnest input,
+        // and DEF is usually the thin one.
+        scoreCoverage: sc.coverage
+          ? Math.min(sc.coverage.atk, sc.coverage.def, sc.coverage.dec) : null,
         // Tag side. `gamesWithDocs` is the denominator for "3/7": games in the
         // window that HAVE analytics at all, so the ratio reads as "tagged out of
         // analysed" rather than out of played.
@@ -12160,6 +12282,7 @@ function StatsView({ roster, games, weights, onBack }) {
                   <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
                   <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
                   <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
+                  <p><b className="text-amber-400">Logging coverage (Aug 2026):</b> you tap while you coach, so how much gets logged swings a lot between games — across the season the action events per game ran 95 down to 18, and defensive taps fell from 60% of them to about 3%. Each pillar now divides by the minutes that <i>actually carried logging for that pillar</i>, instead of by every minute played. So a quiet game no longer waters down a defender's rating, and nobody is penalised for the games you were too busy to tap. A <span className="text-amber-400">●</span> next to a score means under half his minutes carried logging (<span className="text-red-400">●</span> under 30%) — treat those as provisional.</p>
                 </div>
               </details>
               <SeasonPlayersTab
