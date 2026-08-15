@@ -144,6 +144,15 @@ def video_time_to_period_clock_factory(game: GameDoc) -> Callable[[float], tuple
 
     Second half wins ties: at exactly the H2 kickoff position the clock should read
     "2nd half, 0:00", not "1st half, <half length>".
+
+    ⚠ `sub_correct.video_time_to_period_clock_factory` is a second implementation of
+    this same inverse, kept because it takes `half_windows` instead of the game doc
+    (it labels corrected sub times for coach-facing display). Verified equal at
+    every instant INSIDE either half; they differ only during the halftime gap,
+    where this one clamps into period 1 and that one snaps to the nearer half. That
+    gap is not a real game instant, and clips are only ever cut from play windows,
+    so the divergence is inert. Do not "fix" one to match the other without
+    checking both callers -- they answer slightly different questions.
     """
     offset = float(game.video_offset_h1_kickoff_s or 0.0)
     half_len_s = game.half_length_min * 60
