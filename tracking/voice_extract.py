@@ -44,9 +44,30 @@ OUT_DIR = Path(__file__).resolve().parent / "outputs" / "voice_clean"
 # SUB needs both the off and on player, which narration doesn't reliably give —
 # so none of the three could ever be accepted. Removed rather than added to the
 # app: a draft the coach cannot act on is worse than no draft.
+#
+# ⚠ WHY THE DISCRETIONARY TYPES WERE ADDED (2026-08-15). The original list held
+# only the events the coach already taps reliably during a game, so voice added
+# volume but fixed nothing. Measured over 12 games, his live taps split in two:
+#
+#   outcome events   GOAL/ASSIST/SHOT/SAVE   logged every game, stable
+#   process events   DUEL_*/GATES/TURNOVER/  ZERO in 8 of 12 games; the DEF share
+#                    HOLDS_BALL/KEY_PASS/    of action events fell 60% -> 3%
+#                    BLOCK/CLEAR
+#
+# Those process events are what the DEF and DEC pillars run on, and their absence
+# is why the season score had to be coverage-weighted (see pwa_score
+# .PILLAR_EVENT_TYPES). Voice POST-game is the only realistic way to recover them:
+# the coach is watching, not coaching, so he can narrate what he could not tap.
+# CLEAR and KICK_OUT are included as the defensive pair narration does produce
+# ("cleared it", "hoofed it away"). GIVE_GO is NOT: it needs a partner player,
+# which narration rarely states.
 EVENT_TYPES = [
+    # outcome (already tapped well — kept so voice can enrich/confirm)
     "GOAL", "ASSIST", "SHOT_ON", "SHOT_OFF", "SAVE", "PEN_AWARDED",
-    "FOUL_BY", "FOUL_ON", "BALL_WIN", "OPP_GOAL",
+    "FOUL_BY", "FOUL_ON", "OPP_GOAL",
+    # discretionary / process — the ones live tapping loses
+    "BALL_WIN", "DUEL_WIN", "DUEL_LOSE", "BLOCK", "CLEAR", "KICK_OUT",
+    "KEY_PASS", "GATES", "TURNOVER", "HOLDS_BALL",
 ]
 
 _SCHEMA = {
@@ -118,8 +139,25 @@ def _extract(lines: list[str], roster_desc: str, model: str) -> list[dict]:
         "the type enum). Do not stop early. Ignore pep-talk, warmups, and vague "
         "commentary ('trying to move up').\n"
         "- Whisper mangles words. EVENT phonetics: 'Padalti'/'Penalty shot'→"
-        "PEN_AWARDED (NOT a player name), 'corner kick'→CORNER, 'offside'→OFFSIDE. "
-        "Do not turn a mangled event word into a player.\n"
+        "PEN_AWARDED (NOT a player name). Do not turn a mangled event word into a "
+        "player. 'corner'/'offside' are NOT in the enum — skip them entirely.\n"
+        "- PROCESS events matter as much as goals. Map the coach's ordinary "
+        "phrasing:\n"
+        "    won it / won the ball / nicked it / stole it / intercepted   -> BALL_WIN\n"
+        "    won the 1v1 / beat him / held him off / shrugged him off     -> DUEL_WIN\n"
+        "    lost it / got beaten / dispossessed / muscled off the ball   -> DUEL_LOSE\n"
+        "    blocked / got a foot in / charged it down                    -> BLOCK\n"
+        "    cleared it / headed it clear / got it out                    -> CLEAR\n"
+        "    hoofed it / booted it away / just kicked it out              -> KICK_OUT\n"
+        "    great ball / lovely pass / played him in / through ball      -> KEY_PASS\n"
+        "    split them / through the gap / between the two              -> GATES\n"
+        "    gave it away / turned it over / bad pass / straight to them  -> TURNOVER\n"
+        "    held it too long / should have released / dwelt on it        -> HOLDS_BALL\n"
+        "  These are judgements the coach states out loud while watching back; take "
+        "them at face value. If he says a name with one of these, attach it.\n"
+        "- Do NOT invent process events from neutral commentary. 'He's got the "
+        "ball', 'we're pushing up', 'good shape' are NOT events. Only emit when the "
+        "coach describes a completed action or makes an explicit judgement.\n"
         "- player_first_name: the first name the coach used for the player who did "
         "it; '' if none stated or it's the opponent (use OPP_GOAL for opponent "
         "goals). Normalize obvious name phonetics to a plausible roster first name "
