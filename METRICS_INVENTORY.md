@@ -105,19 +105,23 @@ An absolute pixel threshold does not transfer between those regimes.
 
 ---
 
-## Where a coach finds each of these today
+## Where a coach finds each of these
 
-| Screen | Route | Sources | Notes |
-|---|---|---|---|
-| **STATS** | Home → STATS | 1 only | Season event totals + performance score |
-| **FILM ROOM** | Home → FILM ROOM | 1, 2, 3 | Per-game analytics panel per game |
-| **SEASON ANALYTICS** | Film Room → 📈 button | 1, 2 | Squad table, shot map, W/D/L |
-| **Analytics panel** | Film Room → a game | 1, 2, 3 | The per-player deck lives here |
+**One stats destination**, three tabs (consolidated 2026-08-14):
 
-This layout is the actual scattering complaint: **STATS** and **SEASON
-ANALYTICS** are both season-level and reachable from different places, and the
-per-game deck is buried two taps into Film Room. See
-`STATS_CONSOLIDATION_PLAN.md` for the proposal.
+| Route | Sources | Shows |
+|---|---|---|
+| Home → **STATS** → SEASON | 1, 2 | One per-player table: taps left of the divider, tags right of it. Tap a player for his breakdown + pooled season heatmap |
+| Home → **STATS** → GAMES | 1, 2, 3 | One row per game → that game's analytics panel |
+| Home → **STATS** → TEAM | 1 | Record, GF/GA/GD/CS, shot map |
+| Home → **FILM ROOM** | — | Video and review only: TV reel, highlights, confirm queue, voice drafts |
+
+Before this there were two season-level per-player tables on separate routes (both
+showing GP and MIN, neither acknowledging the other) and the season roll-up was a
+button buried inside the per-game film room. See `STATS_CONSOLIDATION_PLAN.md`.
+
+⚠ Both STATS → GAMES and Film Room open the same `AnalyticsPanel` — deliberate,
+because the reels live inside it.
 
 ---
 

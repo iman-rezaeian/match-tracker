@@ -2627,9 +2627,9 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
 
       <div className="grid grid-cols-2 gap-3 px-4 pt-3">
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
-        <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
+        <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Players · games · team" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
-        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
+        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · video · review`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         {/* Owner-only: usage analytics across parents/coaches/players. Other
             coaches don't see this tile (local dev with no Firebase shows it). */}
@@ -8492,7 +8492,6 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
 
 function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onConfirmBookmark, onConfirmVoiceDraft, onDismissVoiceDraft }) {
   const [openGameId, setOpenGameId] = useState(null);
-  const [showSeason, setShowSeason] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const finished = useMemo(() => (
@@ -8610,23 +8609,20 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           )}
         </button>
 
-        {/* SEASON AGGREGATE — opens season-wide rollup */}
-        <button
-          onClick={() => setShowSeason(true)}
-          disabled={finished.length === 0}
-          className={`w-full bg-stone-900 border border-stone-800 rounded-2xl p-4 flex items-center gap-3 transition ${finished.length === 0 ? 'opacity-60 cursor-not-allowed' : 'hover:border-lime-500/40 active:scale-[0.99]'}`}
-        >
-          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">📈</div>
-          <div className="flex-1 text-left">
-            <div className="font-display text-base">SEASON ANALYTICS</div>
-            <div className="text-xs text-stone-400">Aggregate across past games {finished.length > 0 ? `· ${finished.length} game${finished.length === 1 ? '' : 's'}` : '· no data yet'}</div>
-          </div>
-          {finished.length > 0 && <span className="text-[10px] font-bold text-lime-400">OPEN →</span>}
-        </button>
+        {/* SEASON ANALYTICS used to be a button here, opening a modal with its own
+            per-player table — a season roll-up buried inside a per-GAME screen,
+            duplicating the one on the Home grid. Both now live in the single STATS
+            destination (Home → STATS). Film Room keeps video and review.
+
+            The game list below still opens AnalyticsPanel, and so does STATS →
+            GAMES. That is deliberate: the panel is where the TV reel and the
+            highlights live, so the video route needs it too. One panel reached from
+            two places is not the duplication that was the problem — that was two
+            DIFFERENT per-player tables of the same season. */}
 
         {finished.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            No finished games yet. Analytics show up here after you end a match.
+            No finished games yet. Reels and review items show up here after you end a match.
           </div>
         ) : (
           <div className="space-y-2">
@@ -8658,13 +8654,18 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
-                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
+                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">🎬 OPEN</div>
                   </div>
                 </button>
               );
             })}
           </div>
         )}
+
+        <div className="text-[10px] text-stone-600 leading-snug px-1 pt-1">
+          Looking for numbers? Season and per-player stats live in{' '}
+          <span className="text-stone-400 font-bold">STATS</span> on the home screen.
+        </div>
       </div>
 
       {openGame && (
@@ -8673,14 +8674,6 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           roster={roster}
           onClose={() => setOpenGameId(null)}
           onSeekVideo={() => setOpenGameId(null)}
-        />
-      )}
-
-      {showSeason && (
-        <SeasonAnalyticsView
-          games={finished}
-          roster={roster}
-          onClose={() => setShowSeason(false)}
         />
       )}
 
@@ -8784,41 +8777,26 @@ function VoiceDraftRow({ game, draft, roster, onAccept, onDismiss }) {
   );
 }
 
-/* ---------- SEASON ANALYTICS ----------
- * Aggregates per-game analytics/v1 docs into season-to-date and last-N rollups.
- * Best practice for U10 (15-25 game season): show both SEASON and LAST 5 in a
- * tab toggle so coaches compare all-time vs. recent form with one tap.
- * Last 3 is too noisy (one outlier swings 33%); last 10 overlaps season-to-date.
+/* ---------- SEASON AGGREGATION ----------
+ * Aggregates per-game analytics summary docs into season-to-date and last-N
+ * rollups. Best practice for U10 (15-25 game season): show both SEASON and
+ * LAST 5 in a tab toggle so coaches compare all-time vs. recent form with one
+ * tap. Last 3 is too noisy (one outlier swings 33%); last 10 overlaps
+ * season-to-date.
+ *
+ * This used to be a modal (`SeasonAnalyticsView`) opened from inside FILM ROOM —
+ * a per-GAME screen — which is how the season roll-up came to be hidden two taps
+ * deep behind a video browser while a second, different season screen sat on the
+ * Home grid. It is now a hook consumed by the SEASON and TEAM tabs of the single
+ * STATS destination. See STATS_CONSOLIDATION_PLAN.md.
  */
 const ROLLING_WINDOW = 5;
 
-function SeasonAnalyticsView({ games, roster, onClose }) {
+// Fetches every finished game's analytics summary and derives the season/rolling
+// window plus the per-player aggregate. One fetch serves all three STATS tabs.
+function useSeasonAnalytics(games, mode) {
   const [docs, setDocs] = useState({}); // gameId -> analytics doc
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState('season'); // 'season' | 'rolling'
-  // Default to minutes: the one per-player season figure that comes from the
-  // coach's own taps rather than from tracking. ('workRate' used to be the
-  // default, sorting the squad by a contaminated distance rate.)
-  const [sortKey, setSortKey] = useState('avgMin');
-  const [expandedId, setExpandedId] = useState(null);
-
-  // Swipe-back closes the modal (coordinated with nested modals + view stack).
-  useModalHistory('seasonAnalytics', onClose);
-  // Lock body scroll so the page underneath keeps its position.
-  useEffect(() => {
-    const scrollY = window.scrollY;
-    const body = document.body;
-    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
-    body.style.position = 'fixed';
-    body.style.top = `-${scrollY}px`;
-    body.style.width = '100%';
-    return () => {
-      body.style.position = prev.position;
-      body.style.top = prev.top;
-      body.style.width = prev.width;
-      window.scrollTo(0, scrollY);
-    };
-  }, []);
 
   // Fetch the SUMMARY doc for every finished game in parallel — not analytics/v1.
   //
@@ -8869,10 +8847,19 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
   const fellBackToSeason = mode === 'rolling' && gamesWithAnalytics.length < ROLLING_WINDOW;
 
   // gameId -> playerId -> tagged click stats, for the games the coach tagged.
+  //
+  // ⚠ Skips games with `oriented: false`. Teams switch ends at half time, so
+  // depth figures are only comparable once each half is flipped into a common
+  // frame; when the keeper's median sits mid-pitch the pipeline REFUSES to guess
+  // the orientation rather than risk mirroring a whole half. Such a game's depth
+  // and thirds are in an undefined frame, and averaging it into a season figure
+  // would silently mirror half its contribution. Excluded, not blended.
   const clickByGame = useMemo(() => {
     const out = {};
     Object.entries(docs).forEach(([gid, d]) => {
-      const players = (d && d.click_stats && d.click_stats.players) || [];
+      const cs = (d && d.click_stats) || null;
+      if (!cs || cs.oriented === false) return;
+      const players = cs.players || [];
       if (players.length) {
         out[gid] = Object.fromEntries(players.map(p => [p.player_id, p]));
       }
@@ -8942,170 +8929,208 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
     return { games: windowGames.length, gf, ga, gd: gf - ga, w, d, l, cleanSheets };
   }, [windowGames]);
 
-  const sortedPlayers = useMemo(() => {
-    const key = sortKey;
-    return [...playerAgg].sort((a, b) => {
-      const av = key === 'name' ? '' : (a[key] || 0);
-      const bv = key === 'name' ? '' : (b[key] || 0);
-      if (key === 'name') {
-        const ap = roster.find(r => r.id === a.pid)?.name || '';
-        const bp = roster.find(r => r.id === b.pid)?.name || '';
-        return ap.localeCompare(bp);
-      }
-      return bv - av;
-    });
-  }, [playerAgg, sortKey, roster]);
+  // playerAgg is keyed by pid so the STATS table can merge it against the
+  // event-derived stats that view computes itself. The two sources stay separate
+  // all the way to the cell: never summed, averaged together, or substituted for
+  // one another.
+  const aggByPid = useMemo(
+    () => Object.fromEntries(playerAgg.map(r => [r.pid, r])), [playerAgg]);
 
-  const playerName = (pid) => {
-    const p = roster.find(r => r.id === pid);
-    if (!p) return pid || '—';
-    return p.number != null ? `#${p.number} ${p.name}` : p.name;
-  };
+  return { docs, loading, gamesWithAnalytics, windowGames, fellBackToSeason,
+           clickByGame, playerAgg, aggByPid, teamAgg };
+}
 
+/* TEAM tab — record, goals and the shot map for the selected window, plus a
+ * pointer to the per-game team shape. Every number here comes from the coach's
+ * taps or from team-level shape; none of it is per-player tracking. */
+function SeasonTeamTab({ season, mode }) {
+  const { teamAgg, windowGames } = season;
   return (
-    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
-      <div
-        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-      >
-        <h2 className="font-display text-lg truncate pr-3">📈 SEASON ANALYTICS</h2>
-        <button
-          onClick={onClose}
-          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
-        >
-          CLOSE ✕
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="p-10 text-center text-stone-400 animate-pulse">Loading season analytics…</div>
-      ) : gamesWithAnalytics.length === 0 ? (
-        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300">
-          No analytics docs found yet for any finished games. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+    <div className="space-y-3">
+      <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+        <div className="text-xs text-stone-500 uppercase mb-3">
+          Record — {mode === 'season' ? 'season' : `last ${windowGames.length}`}
         </div>
-      ) : (
-        <div className="p-4 space-y-5 max-w-3xl mx-auto">
-          {/* Window toggle */}
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
-            <button
-              onClick={() => setMode('season')}
-              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'season' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
-            >
-              SEASON · {gamesWithAnalytics.length}
-            </button>
-            <button
-              onClick={() => setMode('rolling')}
-              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'rolling' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
-            >
-              LAST {ROLLING_WINDOW}
-            </button>
-          </div>
-          {fellBackToSeason && (
-            <div className="text-xs text-amber-400 -mt-3 text-center">
-              Need {ROLLING_WINDOW - gamesWithAnalytics.length} more game{(ROLLING_WINDOW - gamesWithAnalytics.length) === 1 ? '' : 's'} for rolling window — showing season instead.
-            </div>
-          )}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
+          <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
+          <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
+        </div>
+        <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
+          <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
+        </div>
+      </section>
 
-          {/* Team rollup */}
-          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-            <div className="text-xs text-stone-500 uppercase mb-3">Team — {mode === 'season' ? 'season' : `last ${windowGames.length}`}</div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
-              <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
-              <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
-            </div>
-            <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
-              <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
-            </div>
-            {/* Season shot map (4.2) — respects the season/rolling window */}
-            <div className="mt-3">
-              <ShotMap games={windowGames} />
-            </div>
-          </section>
+      <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+        <div className="text-xs text-stone-500 uppercase mb-2">Shots</div>
+        <ShotMap games={windowGames} />
+      </section>
 
-          {/* Per-player rollup */}
-          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs text-stone-500 uppercase">Players</div>
-              <div className="flex gap-1 text-[10px]">
-                {[
-                  ['avgMin', 'MIN'],
-                  ['games', 'GP'],
-                  ['name', 'A-Z'],
-                ].map(([k, label]) => (
-                  <button
-                    key={k}
-                    onClick={() => setSortKey(k)}
-                    className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
-                  >{label}</button>
-                ))}
+      <div className="text-[10px] text-stone-600 leading-snug px-1">
+        Per-game team shape — field tilt, compactness, momentum — sits on each game
+        in the GAMES tab. Those are team-level measurements, so they survive the
+        identity problem that retired the per-player movement numbers.
+      </div>
+    </div>
+  );
+}
+
+/* GAMES tab — one row per finished game, opening that game's analytics panel.
+ *
+ * This list used to be FILM ROOM's job, which is why the per-game analytics deck
+ * ended up behind a video browser. Film Room keeps the video; the numbers live
+ * here, next to the season numbers they belong with. */
+function SeasonGamesTab({ games, tagged, onOpenGame }) {
+  if (!games.length) {
+    return (
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+        No finished games yet. They appear here once you end a match.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {games.map(g => {
+        const result = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+        const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
+          : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+            : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+        return (
+          <button
+            key={g.id}
+            onClick={() => onOpenGame(g.id)}
+            className="w-full bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-2xl p-3 flex items-center gap-3 active:scale-[0.99] transition"
+          >
+            <span className={`shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border font-display text-base ${resultClass}`}>{result}</span>
+            <div className="flex-1 min-w-0 text-left">
+              <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+              <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                {g.tournament && <TournamentChip value={g.tournament} />}
+                <FormatChip value={g.format} />
+                <span>{formatDate(g.date)}</span>
+                {tagged[g.id] && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-lime-500/15 text-lime-300 border border-lime-700">
+                    🖱 TAGGED
+                  </span>
+                )}
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-stone-500 border-b border-stone-800">
-                    <th className="text-left py-1 pr-2">Player</th>
-                    <th className="text-right py-1 px-1">GP</th>
-                    <th className="text-right py-1 px-1">Min/g</th>
-                    <th className="text-right py-1 px-1">Total min</th>
-                    <th className="text-right py-1 px-1">Tagged</th>
-                    <th className="text-right py-1 pl-1">Minutes trend</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedPlayers.map(p => {
-                    const expanded = expandedId === p.pid;
-                    return (
-                      <React.Fragment key={p.pid}>
-                        <tr
-                          onClick={() => setExpandedId(expanded ? null : p.pid)}
-                          className="border-b border-stone-800/50 cursor-pointer hover:bg-stone-800/40"
-                        >
-                          <td className="py-1.5 pr-2 truncate max-w-[120px]">{playerName(p.pid)}</td>
-                          <td className="text-right px-1 tabular-nums">{p.games}</td>
-                          <td className="text-right px-1 tabular-nums font-bold text-lime-300">{p.avgMin.toFixed(0)}</td>
-                          <td className="text-right px-1 tabular-nums text-stone-500">{p.minutes.toFixed(0)}</td>
-                          <td className="text-right px-1 tabular-nums text-stone-500">{p.tagged ? `${p.tagged}/${p.games}` : '—'}</td>
-                          <td className="text-right pl-1"><Sparkline values={p.minSeries} color="#a3e635" /></td>
-                        </tr>
-                        {expanded && (
-                          <tr className="bg-stone-800/30">
-                            <td colSpan={6} className="px-2 py-3">
-                              <SparkBlock label="Minutes per game" values={p.minSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
-                              {p.avgAttPct == null ? (
-                                <div className="mt-3 pt-3 border-t border-stone-700 text-[10px] text-stone-500">
-                                  No tagged games in this window — where he played comes from
-                                  tagging, so there is nothing to average yet.
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="mt-3 pt-3 border-t border-stone-700 grid grid-cols-3 gap-2 text-center text-[11px]">
-                                    <div><div className="text-stone-500 text-[9px] uppercase">Att third</div><div className="tabular-nums">{p.avgAttPct.toFixed(0)}%</div></div>
-                                    <div><div className="text-stone-500 text-[9px] uppercase">Mid third</div><div className="tabular-nums">{p.avgMidPct.toFixed(0)}%</div></div>
-                                    <div><div className="text-stone-500 text-[9px] uppercase">Def third</div><div className="tabular-nums">{p.avgDefPct.toFixed(0)}%</div></div>
-                                  </div>
-                                  <div className="mt-1 text-[9px] text-lime-700">
-                                    from {p.tagged} tagged game{p.tagged === 1 ? '' : 's'}
-                                  </div>
-                                </>
-                              )}
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="shrink-0 text-right">
+              <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
+              <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
             </div>
-            <div className="text-[10px] text-stone-500 mt-2">Tap a row to expand sparkline trend across the {mode === 'season' ? 'season' : `last ${windowGames.length} games`}.</div>
-          </section>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* SEASON tab — ONE per-player table, replacing the two that used to exist on
+ * separate screens (both showing GP and MIN, neither acknowledging the other).
+ *
+ * Columns are grouped by SOURCE with a visible divider, because the two groups do
+ * not have the same standing: the left comes from the coach's own taps, the right
+ * from positions he tagged himself. They are never combined into one number, and
+ * a player with no tagged games shows "—" rather than a tracked substitute — the
+ * whole point of the consolidation. See METRICS_INVENTORY.md. */
+function SeasonPlayersTab({ rows, sortKey, setSortKey, onOpenPlayer, nTagged }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <div className="text-[10px] text-stone-500 uppercase tracking-wider">Sort</div>
+        <div className="flex gap-1 text-[10px]">
+          {[['score', 'SCORE'], ['avgMin', 'MIN'], ['goals', 'G'], ['name', 'A-Z']].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setSortKey(k)}
+              className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+            >{label}</button>
+          ))}
         </div>
-      )}
+      </div>
+
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+        {/* Source banner: the columns below mean different things and the coach
+            must be able to see which is which without reading a footnote. */}
+        <div className="grid grid-cols-[1fr_9.5rem] text-[9px] font-bold tracking-wider">
+          <div className="px-3 py-1.5 bg-stone-800/60 text-stone-300">FROM YOUR TAPS</div>
+          <div className="px-2 py-1.5 bg-lime-500/10 text-lime-300 border-l border-lime-800/60">FROM YOUR TAGS</div>
+        </div>
+        <div className="grid grid-cols-[1.75rem_1fr_1.75rem_2.25rem_1.5rem_1.5rem_2.5rem_3rem_6.5rem] gap-1 px-3 py-2 text-[9px] font-bold tracking-wider text-stone-400 border-b border-stone-800">
+          <div>#</div>
+          <div>PLAYER</div>
+          <div className="text-center">GP</div>
+          <div className="text-center">MIN</div>
+          <div className="text-center">G</div>
+          <div className="text-center">A</div>
+          <div className="text-center">SCORE</div>
+          <div className="text-center border-l border-lime-800/60">TAGGED</div>
+          <div className="text-center">WHERE HE PLAYED</div>
+        </div>
+        <div className="divide-y divide-stone-800">
+          {rows.map(r => (
+            <button
+              key={r.pid}
+              onClick={() => onOpenPlayer(r.pid)}
+              className="w-full grid grid-cols-[1.75rem_1fr_1.75rem_2.25rem_1.5rem_1.5rem_2.5rem_3rem_6.5rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-950 transition"
+            >
+              <PlayerAvatar player={r.player} sizeClass="w-7 h-7" textSize="text-xs" numberClasses="bg-stone-900 text-stone-100" />
+              <div className="min-w-0">
+                <div className="font-bold text-xs truncate">{r.player?.name || r.pid}</div>
+                {r.player?.position && <div className="text-[9px] text-stone-500 font-bold tracking-wider">{r.player.position}</div>}
+              </div>
+              <div className="text-center font-display text-xs tabular-nums text-stone-200">{r.gamesPlayed}</div>
+              <div className="text-center font-display text-xs tabular-nums text-sky-700">{r.minutes}</div>
+              <div className="text-center font-display text-xs tabular-nums text-lime-700">{r.goals}</div>
+              <div className="text-center font-display text-xs tabular-nums text-stone-200">{r.assists}</div>
+              <div className={`text-center font-display text-sm tabular-nums ${r.score >= 6 ? 'text-lime-600' : r.score >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{r.score}</div>
+              <div className="text-center font-display text-xs tabular-nums border-l border-lime-800/60 text-stone-400">
+                {r.tagged ? `${r.tagged}/${r.gamesWithDocs}` : '—'}
+              </div>
+              <div>
+                {r.avgDefPct == null ? (
+                  <div className="text-[9px] text-stone-600 text-center">not tagged</div>
+                ) : (
+                  <ThirdsBar def={r.avgDefPct} mid={r.avgMidPct} att={r.avgAttPct} />
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="text-[10px] text-stone-600 leading-snug px-1">
+        <span className="text-stone-400">Left of the divider</span> comes from your
+        taps during the game — exact. <span className="text-lime-600">Right of it</span>
+        {' '}comes from the moments you tagged in the film-room sampler, accurate to
+        about ±1.7 m, averaged over tagged games only.
+        {nTagged === 0
+          ? ' No games tagged yet — about 10 minutes of tagging per game fills that side in.'
+          : ` ${nTagged} game${nTagged === 1 ? '' : 's'} tagged so far.`}
+        {' '}Tap a player for his full breakdown.
+      </div>
+    </div>
+  );
+}
+
+/* A compact def/mid/att occupancy bar, for one table cell. */
+function ThirdsBar({ def, mid, att }) {
+  return (
+    <div>
+      <div className="flex h-1.5 rounded-full overflow-hidden">
+        <div style={{ width: `${def || 0}%`, background: '#ef4444' }} />
+        <div style={{ width: `${mid || 0}%`, background: '#eab308' }} />
+        <div style={{ width: `${att || 0}%`, background: '#a3e635' }} />
+      </div>
+      <div className="flex justify-between text-[8px] text-stone-500 mt-0.5 tabular-nums">
+        <span>{Math.round(def || 0)}</span>
+        <span>{Math.round(mid || 0)}</span>
+        <span>{Math.round(att || 0)}</span>
+      </div>
     </div>
   );
 }
@@ -11874,7 +11899,18 @@ function TagSheet({ event, roster, onSave, onClose }) {
 /* ---------- STATS ---------- */
 function StatsView({ roster, games, weights, onBack }) {
   const [detailPlayerId, setDetailPlayerId] = useState(null);
-  const finished = games.filter(g => g.status === 'finished');
+  // The single stats destination: SEASON (per-player), GAMES (one game), TEAM.
+  // Before this, season stats lived here AND in a modal inside FILM ROOM, with
+  // two different per-player tables that both showed GP and MIN. See
+  // STATS_CONSOLIDATION_PLAN.md.
+  const [tab, setTab] = useState('season');
+  const [mode, setMode] = useState('season'); // window: 'season' | 'rolling'
+  const [sortKey, setSortKey] = useState('score');
+  const [openGameId, setOpenGameId] = useState(null);
+  const finished = useMemo(() => games
+    .filter(g => g.status === 'finished')
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0)),
+  [games]);
 
   const stats = useMemo(() => {
     const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, CLEAR: 0, KICK_OUT: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0, gkSeconds: 0, cleanSheets: 0, oppGoalsConceded: 0, gamesAsGK: 0 });
@@ -11986,72 +12022,151 @@ function StatsView({ roster, games, weights, onBack }) {
     return map;
   }, [roster, finished, stats, weights]);
 
-  const sorted = [...roster].sort((a, b) => (seasonScores[b.id]?.overall || 0) - (seasonScores[a.id]?.overall || 0));
+  // The merged per-player rows: event stats (left of the divider) and tagged
+  // positions (right of it), joined on player id but never blended.
+  const season = useSeasonAnalytics(finished, mode);
+  const taggedGameIds = useMemo(
+    () => Object.fromEntries(Object.keys(season.clickByGame).map(id => [id, true])),
+    [season.clickByGame]);
+
+  const rows = useMemo(() => {
+    const out = roster.map(p => {
+      const s = stats[p.id] || {};
+      const sc = seasonScores[p.id] || {};
+      const agg = season.aggByPid[p.id] || null;
+      return {
+        pid: p.id,
+        player: p,
+        gamesPlayed: s.gamesPlayed || 0,
+        minutes: Math.round((s.totalSeconds || 0) / 60),
+        goals: s.GOAL || 0,
+        assists: s.ASSIST || 0,
+        score: sc.overall || 0,
+        // Tag side. `gamesWithDocs` is the denominator for "3/7": games in the
+        // window that HAVE analytics at all, so the ratio reads as "tagged out of
+        // analysed" rather than out of played.
+        tagged: agg ? agg.tagged : 0,
+        gamesWithDocs: agg ? agg.games : 0,
+        avgDefPct: agg ? agg.avgDefPct : null,
+        avgMidPct: agg ? agg.avgMidPct : null,
+        avgAttPct: agg ? agg.avgAttPct : null,
+        minSeries: agg ? agg.minSeries : [],
+      };
+    });
+    const cmp = {
+      score: (a, b) => b.score - a.score,
+      avgMin: (a, b) => (b.gamesPlayed ? b.minutes / b.gamesPlayed : 0)
+        - (a.gamesPlayed ? a.minutes / a.gamesPlayed : 0),
+      goals: (a, b) => b.goals - a.goals,
+      name: (a, b) => (a.player?.name || '').localeCompare(b.player?.name || ''),
+    }[sortKey] || ((a, b) => b.score - a.score);
+    return out.sort(cmp);
+  }, [roster, stats, seasonScores, season.aggByPid, sortKey]);
+
   const detailPlayer = roster.find(p => p.id === detailPlayerId);
+  const openGame = finished.find(g => g.id === openGameId) || null;
+  const nTagged = Object.keys(season.clickByGame).length;
+
+  const TABS = [
+    ['season', 'SEASON', 'per player'],
+    ['games', 'GAMES', `${finished.length}`],
+    ['team', 'TEAM', 'shape'],
+  ];
 
   return (
     <div className="pb-24">
-      <Header title="SEASON STATS" onBack={onBack} />
+      <Header title="STATS" onBack={onBack} />
 
-      <div className="px-4 pt-5">
-        <div className="text-xs text-stone-400 mb-1">Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.</div>
-        <div className="text-xs text-stone-400 italic mb-2">Sorted by performance score. Tap a player for full breakdown.</div>
-        <details className="bg-stone-900 border border-stone-800 rounded-xl mb-3 text-stone-300">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold text-stone-200">ⓘ How this score works</summary>
-          <div className="px-3 pb-3 text-xs text-stone-400 space-y-1.5">
-            <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
-            <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
-            <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
-            <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
-          </div>
-        </details>
+      {/* Tabs. Three questions a coach actually asks — how is this kid doing,
+          what happened in that game, how is the team playing — rather than one
+          scroll that mixes them. */}
+      <div className="px-4 pt-4">
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
+          {TABS.map(([k, label, sub]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${tab === k ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              {label}
+              <span className={`ml-1 text-[9px] font-normal ${tab === k ? 'text-stone-800' : 'text-stone-500'}`}>{sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {roster.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            Add players to track stats.
+      {/* Window toggle applies to SEASON and TEAM; GAMES is a list, not an
+          aggregate, so it always shows everything. */}
+      {tab !== 'games' && season.gamesWithAnalytics.length > 0 && (
+        <div className="px-4 pt-2">
+          <div className="flex gap-1 text-[10px]">
+            <button
+              onClick={() => setMode('season')}
+              className={`px-2 py-1 rounded font-bold ${mode === 'season' ? 'bg-stone-700 text-stone-100' : 'bg-stone-900 text-stone-500'}`}
+            >SEASON · {season.gamesWithAnalytics.length}</button>
+            <button
+              onClick={() => setMode('rolling')}
+              className={`px-2 py-1 rounded font-bold ${mode === 'rolling' ? 'bg-stone-700 text-stone-100' : 'bg-stone-900 text-stone-500'}`}
+            >LAST {ROLLING_WINDOW}</button>
+            {season.fellBackToSeason && (
+              <span className="px-1 py-1 text-amber-500">
+                need {ROLLING_WINDOW - season.gamesWithAnalytics.length} more — showing season
+              </span>
+            )}
           </div>
-        ) : (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-2 bg-stone-900 text-[9px] font-bold tracking-wider text-stone-300">
-              <div>#</div>
-              <div>PLAYER</div>
-              <div className="text-center">GP</div>
-              <div className="text-center">MIN</div>
-              <div className="text-center">G</div>
-              <div className="text-center">A</div>
-              <div className="text-center">SCORE</div>
+        </div>
+      )}
+
+      <div className="px-4 pt-3">
+        {tab === 'season' && (
+          roster.length === 0 ? (
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+              Add players to track stats.
             </div>
-            <div className="divide-y divide-stone-800">
-              {sorted.map(p => {
-                const s = stats[p.id] || {};
-                const min = Math.round((s.totalSeconds || 0) / 60);
-                const sc = seasonScores[p.id] || {};
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setDetailPlayerId(p.id)}
-                    className="w-full grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-950 transition"
-                  >
-                    <PlayerAvatar player={p} sizeClass="w-9 h-9" textSize="text-base" numberClasses="bg-stone-900 text-stone-100" />
-                    <div className="min-w-0">
-                      <div className="font-bold text-sm truncate">{p.name}</div>
-                      {p.position && <div className="text-[10px] text-stone-400 font-bold tracking-wider">{p.position}</div>}
-                    </div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.gamesPlayed || 0}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-sky-700">{min}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-lime-700">{s.GOAL || 0}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.ASSIST || 0}</div>
-                    <div className={`text-center font-display text-base tabular-nums ${(sc.overall || 0) >= 6 ? 'text-lime-600' : (sc.overall || 0) >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{sc.overall || 0}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="text-xs text-stone-400 mb-2">
+                Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.
+              </div>
+              <details className="bg-stone-900 border border-stone-800 rounded-xl mb-3 text-stone-300">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold text-stone-200">ⓘ How the SCORE works</summary>
+                <div className="px-3 pb-3 text-xs text-stone-400 space-y-1.5">
+                  <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
+                  <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
+                  <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
+                  <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
+                </div>
+              </details>
+              <SeasonPlayersTab
+                rows={rows}
+                sortKey={sortKey}
+                setSortKey={setSortKey}
+                onOpenPlayer={setDetailPlayerId}
+                nTagged={nTagged}
+              />
+            </>
+          )
         )}
 
-        <div className="mt-4 bg-stone-900 rounded-xl p-3 text-xs text-stone-300">
-          <span className="font-bold">SCORE</span> = weighted per-20min rate (ATK 30% · DEF 25% · DEC 30% · INV 15%) · <span className="font-bold">GP</span> Games · <span className="font-bold">MIN</span> Minutes · <span className="font-bold">G</span> Goals · <span className="font-bold">A</span> Assists
-        </div>
+        {tab === 'games' && (
+          <SeasonGamesTab
+            games={finished}
+            tagged={taggedGameIds}
+            onOpenGame={setOpenGameId}
+          />
+        )}
+
+        {tab === 'team' && (
+          season.loading ? (
+            <div className="p-10 text-center text-stone-400 animate-pulse">Loading team analytics…</div>
+          ) : season.gamesWithAnalytics.length === 0 ? (
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 text-sm text-stone-300">
+              No analytics yet for any finished game. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+            </div>
+          ) : (
+            <SeasonTeamTab season={season} mode={mode} />
+          )
+        )}
       </div>
 
       {detailPlayer && (
@@ -12059,15 +12174,93 @@ function StatsView({ roster, games, weights, onBack }) {
           player={detailPlayer}
           stats={stats[detailPlayer.id] || {}}
           score={seasonScores[detailPlayer.id] || {}}
+          row={rows.find(r => r.pid === detailPlayer.id) || null}
+          // Only the games where THIS player was tagged, so the detail sheet
+          // fetches a couple of docs rather than the whole season.
+          taggedGames={finished.filter(g => season.clickByGame[g.id]
+            && season.clickByGame[g.id][detailPlayer.id])}
           onClose={() => setDetailPlayerId(null)}
+        />
+      )}
+
+      {openGame && (
+        <AnalyticsPanel
+          game={openGame}
+          roster={roster}
+          onClose={() => setOpenGameId(null)}
+          onSeekVideo={() => setOpenGameId(null)}
         />
       )}
     </div>
   );
 }
 
+/* Pools a player's TAGGED heatmaps across games, fetched on demand.
+ *
+ * Heatmaps are deliberately excluded from analytics/summary (96 floats per player
+ * per game, and no season screen drew one), so this reaches for the full
+ * analytics/v1 docs — but ONLY for the games where this player was tagged, and
+ * only when a detail sheet is actually opened. That keeps the fan-out that caused
+ * the season-view black screen from coming back through a side door.
+ *
+ * ⚠ Skips `oriented: false` games. Teams switch ends at half time; when the
+ * pipeline cannot resolve which way we attacked it refuses to guess rather than
+ * risk mirroring a half, and pooling such a grid would smear the result.
+ */
+function usePlayerSeasonHeatmap(playerId, games, open) {
+  const [state, setState] = useState({ loading: false, grid: null, rows: 12, cols: 8, nGames: 0, nClicks: 0 });
+  const gameIds = useMemo(() => (games || []).map(g => g.id).join(','), [games]);
+
+  useEffect(() => {
+    if (!open || !playerId || !window.fbDb || !gameIds) return undefined;
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true }));
+    const ids = gameIds.split(',');
+    Promise.all(ids.map(id => window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(id).collection('analytics').doc('v1').get()
+      .then(snap => (snap.exists ? snap.data() : null))
+      .catch(() => null)))
+      .then(docs => {
+        if (cancelled) return;
+        let acc = null, rows = 12, cols = 8, nGames = 0, nClicks = 0;
+        docs.forEach(d => {
+          const cs = d && d.click_stats;
+          if (!cs || cs.oriented === false) return;
+          const me = (cs.players || []).find(p => p.player_id === playerId);
+          if (!me || !Array.isArray(me.heatmap) || !me.heatmap.length) return;
+          const shape = cs.heatmap_shape || [12, 8];
+          // A grid of a different shape cannot be summed cell-wise. Rather than
+          // resample (and invent detail), keep the first shape seen and skip the
+          // rest — shape only changes if the pipeline's grid is retuned.
+          if (acc && (shape[0] !== rows || shape[1] !== cols)) return;
+          rows = shape[0]; cols = shape[1];
+          // Each game's grid is already normalised to sum 1, so weight by the
+          // player's click count: a 90-click game should count for more than a
+          // 12-click one, and an unweighted mean would treat them equally.
+          const w = me.n_clicks || 1;
+          if (!acc) acc = new Array(me.heatmap.length).fill(0);
+          if (acc.length !== me.heatmap.length) return;
+          for (let i = 0; i < acc.length; i++) acc[i] += (me.heatmap[i] || 0) * w;
+          nGames += 1; nClicks += w;
+        });
+        if (acc) {
+          const total = acc.reduce((a, b) => a + b, 0) || 1;
+          acc = acc.map(v => v / total);
+        }
+        setState({ loading: false, grid: acc, rows, cols, nGames, nClicks });
+      });
+    return () => { cancelled = true; };
+  }, [playerId, gameIds, open]);
+
+  return state;
+}
+
 /* ---------- PLAYER STATS DETAIL ---------- */
-function PlayerStatsDetail({ player, stats, score, onClose }) {
+function PlayerStatsDetail({ player, stats, score, row, taggedGames, onClose }) {
+  // Fetch ONLY the games where this player was tagged — never the whole season.
+  // The full docs are ~1 MB each; fanning out over all of them is exactly what
+  // made the season view open to a black screen.
+  const heat = usePlayerSeasonHeatmap(player.id, taggedGames, !!(row && row.tagged));
   const min = Math.round((stats.totalSeconds || 0) / 60);
   const gkMin = Math.round((stats.gkSeconds || 0) / 60);
   const isGK = gkMin > 0 || player.position === 'GK';
@@ -12129,6 +12322,57 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
               <PillarMini label="INV" value={score.involvement || 0} />
             </div>
           </div>
+
+          {/* WHERE HE PLAYED — pooled across the games the coach tagged. This is
+              the ±1.7 m source; there is deliberately no tracked fallback, so a
+              player with no tagged games sees a prompt rather than a wrong map. */}
+          {row && (
+            <div className="bg-stone-950 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-display text-base">WHERE HE PLAYED</div>
+                {row.tagged > 0 && (
+                  <div className="text-[10px] text-lime-500">
+                    {row.tagged} tagged game{row.tagged === 1 ? '' : 's'}
+                  </div>
+                )}
+              </div>
+              {row.tagged === 0 ? (
+                <div className="text-[11px] text-stone-500 leading-snug">
+                  Not tagged yet. Tagging a game in the film-room sampler takes about
+                  10 minutes and gives his heatmap, territory and thirds — accurate to
+                  about ±1.7 m. The camera can't reliably tell your players apart on its
+                  own, so there is nothing to show until then.
+                </div>
+              ) : (
+                <>
+                  {row.avgDefPct != null && (
+                    <div className="mb-2">
+                      <ThirdsBar def={row.avgDefPct} mid={row.avgMidPct} att={row.avgAttPct} />
+                      <div className="flex justify-between text-[9px] text-stone-500 mt-1">
+                        <span>Def</span><span>Mid</span><span>Att</span>
+                      </div>
+                    </div>
+                  )}
+                  {heat.loading ? (
+                    <div className="text-[11px] text-stone-500 animate-pulse py-6 text-center">Pooling his tagged positions…</div>
+                  ) : heat.grid ? (
+                    <>
+                      <PlayerHeatmap grid={heat.grid} rows={heat.rows} cols={heat.cols} />
+                      <div className="text-[9px] text-stone-600 mt-1">
+                        {heat.nClicks} tagged positions over {heat.nGames} game{heat.nGames === 1 ? '' : 's'},
+                        each game weighted by how many times you tagged him.
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-[11px] text-stone-500">
+                      No pooled map available — his tagged games don't carry heatmap
+                      grids yet. Re-run analytics for those games to generate them.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <div className="divide-y divide-stone-800">
             {rows.map(r => (

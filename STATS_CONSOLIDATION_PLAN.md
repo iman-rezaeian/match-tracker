@@ -1,16 +1,34 @@
-# Centralising stats in the PWA — proposal
+# Centralising stats in the PWA — BUILT
 
-Written 2026-08-14, in response to: *"it seems we have stats in many different
-places… it seems unorganized."*
+Written 2026-08-14 in response to *"it seems we have stats in many different
+places… it seems unorganized."*, and **implemented the same day** — all five steps.
+Kept as the record of what changed and why.
 
 Read `METRICS_INVENTORY.md` first — it establishes what each number is and how
 much to trust it. This document is only about **where the coach finds it**.
 
+## Status
+
+| # | Step | State |
+|---|---|---|
+| 1 | SEASON ANALYTICS out of Film Room into a tabbed STATS | ✅ built |
+| 2 | Merge the two per-player season tables | ✅ built |
+| 3 | Per-game analytics panel under a GAMES tab | ✅ built |
+| 4 | Season heatmap in the player detail | ✅ built |
+| 5 | Strip Film Room to video + review | ✅ built |
+
+Verified by rendering the real `StatsView` in a browser against stubbed Firestore:
+all three tabs mount with zero console errors, and an **unoriented game is
+excluded** from both the `TAGGED` ratio and the pooled heatmap (`1/2`, not `2/2`).
+Two oriented games pool to "120 tagged positions over 2 games" with the 90-click
+game's band rendering brighter than the 30-click game's. Structural invariants are
+pinned in `post_game/test_stats_consolidation.py` (16 tests, mutation-checked).
+
 ---
 
-## The actual problem, measured
+## The actual problem, measured (before)
 
-Stats live in **four** places reachable by **three** different routes:
+Stats lived in **four** places reachable by **three** different routes:
 
 ```
 Home ─┬─ STATS ──────────────── season, event metrics only
@@ -109,17 +127,23 @@ The `analytics/summary` doc already carries per-game `click_stats.players[]` wit
 thirds and `avg_depth_m`, so the season table's columns need **no new pipeline
 work** — just a weighted mean over tagged games in the client.
 
-A pooled season *heatmap* does need pipeline work: heatmaps are excluded from the
-summary doc on purpose (96 floats per player per game). Options, cheapest first:
+A pooled season *heatmap* needed a fetch path, since heatmaps are excluded from
+the summary doc on purpose (96 floats per player per game).
 
-1. **Client-side pool from the full docs, on demand** — only when a player detail
-   is opened, fetching that player's games. No pipeline change; one extra fetch
-   per drill-down.
-2. **Add a pooled `season_click_stats` doc** written by a new script that reads
-   every game's clicks at once. Correct place for it long-term, since pooling
-   clicks in field coordinates is what the KDE wants anyway.
+**Shipped option 1: client-side pool, on demand.** `usePlayerSeasonHeatmap`
+fetches full docs only when a player detail is opened, and only for the games
+where *that* player was tagged — typically one or two docs, never the season.
+Fanning out over every full doc is what caused the black screen; the fix must not
+reintroduce it through a side door.
 
-Recommend (1) first — it needs no backfill and proves the feature is wanted.
+Each per-game grid is already normalised to sum 1, so pooling weights by the
+player's click count and renormalises — an unweighted mean would give a 12-click
+game the same say as a 90-click one. Grids of a differing shape are skipped rather
+than resampled (resampling would invent detail).
+
+The long-term alternative, if drill-downs ever feel slow: a pooled
+`season_click_stats` doc written by a script that reads every game's clicks at
+once, which is also the right place to pool in field coordinates for the KDE.
 
 ⚠ Pooling across games requires the **half-orientation flip** to be applied per
 game before combining, or two games' halves cancel each other. `click_publish.py`
@@ -135,19 +159,15 @@ The summary doc carries the flag for exactly this reason.
 
 ---
 
-## Sequencing
+## What Film Room kept
 
-Each step ships independently and leaves the app coherent.
+Film Room is now video and review: the confirm queue, voice drafts, and the game
+list. Its rows still open `AnalyticsPanel`, and so does STATS → GAMES.
 
-| # | Step | Size | Risk |
-|---|---|---|---|
-| 1 | Move SEASON ANALYTICS out of Film Room into a tabbed STATS | small | layout only |
-| 2 | Merge the two per-player season tables into one | medium | must keep the source boundary visible |
-| 3 | Move the per-game analytics panel under a GAMES tab | small | it is already a modal; only the opener moves |
-| 4 | Season heatmap in the player detail (option 1 above) | medium | new fetch path |
-| 5 | Strip Film Room to video + tagging | small | do last, once nothing else routes through it |
-
-Steps 1 and 3 are pure navigation and could ship together in one pass.
+That shared panel is deliberate, not a leftover duplicate: the TV reel and the
+highlight video live *inside* it, so the video route needs it. One panel reached
+from two places was never the problem — two **different** per-player tables of the
+same season was.
 
 ---
 
