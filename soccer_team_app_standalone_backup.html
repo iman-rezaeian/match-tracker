@@ -2213,6 +2213,21 @@ function CoachApp() {
     setPendingEvent(null);
   };
 
+  // Where each player has been pinned on the board, over every game we have
+  // (including the one in progress). Feeds the multi-sub position matching.
+  // Recomputed only when a POSITION event is added — cheap, but it walks every
+  // game's event list, so it shouldn't run on every tick of the match clock.
+  //
+  // ⚠ MUST stay above the early returns below. It used to sit after them, which
+  // made the hook COUNT depend on `unlocked`/`loaded`: the first render bailed at
+  // "Checking access…" having run N hooks, then the unlocked re-render ran N+1,
+  // and React threw #310 ("rendered more hooks than during the previous render")
+  // — a black DUGOUT screen. Any new hook goes here, never after a return.
+  const bandHist = useMemo(
+    () => bandHistory(games),
+    [games.reduce((n, g) => n + (g.events?.length || 0), 0), games.length]
+  );
+
   if (!unlocked) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-950">
@@ -2233,15 +2248,6 @@ function CoachApp() {
 
   const activeGame = games.find(g => g.id === activeGameId) || games.find(g => g.status === 'active');
   const viewingGame = games.find(g => g.id === viewingGameId);
-
-  // Where each player has been pinned on the board, over every game we have
-  // (including the one in progress). Feeds the multi-sub position matching.
-  // Recomputed only when a POSITION event is added — cheap, but it walks every
-  // game's event list, so it shouldn't run on every tick of the match clock.
-  const bandHist = useMemo(
-    () => bandHistory(games),
-    [games.reduce((n, g) => n + (g.events?.length || 0), 0), games.length]
-  );
 
   return (
     <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100 max-w-2xl mx-auto sm:border-x sm:border-stone-900">
@@ -15211,6 +15217,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
