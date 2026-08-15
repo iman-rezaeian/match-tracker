@@ -140,6 +140,25 @@ def test_the_declared_key_lists_stay_in_sync_with_the_view():
     assert "player_stats" in _SUMMARY_KEYS
 
 
+def test_click_publish_refreshes_the_summary():
+    """Publishing tags must update the doc the season view actually reads.
+
+    click_publish writes click_stats into analytics/v1, but the season table and
+    the pooled heatmap read analytics/summary. Without this refresh a freshly
+    tagged game keeps rendering as untagged — which is exactly what happened on
+    the first real publish after the summary doc was introduced.
+    """
+    import inspect
+
+    from tracking import click_publish
+    src = inspect.getsource(click_publish)
+    assert "write_analytics_summary" in src, \
+        "click_publish does not refresh analytics/summary"
+    # Must summarise the STORED doc, not the click_stats-only payload: the latter
+    # would blank player_stats and field_tilt out of the projection.
+    assert "read_analytics(args.game_id)" in src
+
+
 if __name__ == "__main__":
     import traceback
     bad = 0
