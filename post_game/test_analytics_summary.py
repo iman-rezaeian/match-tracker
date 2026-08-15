@@ -140,6 +140,57 @@ def test_the_declared_key_lists_stay_in_sync_with_the_view():
     assert "player_stats" in _SUMMARY_KEYS
 
 
+def test_a_full_write_preserves_the_coachs_clicks():
+    """A re-render must not destroy hand-tagged positions.
+
+    `write_analytics` uses set() without merge, so the full pipeline run for the
+    Caboto game wiped the click_stats produced by 275 coach clicks — about ten
+    minutes of his labour, and the only trustworthy per-player positional source
+    in the app. Keys the pipeline does not produce have to be carried across.
+    """
+    import post_game.firestore_io as fio
+
+    stored: dict = {"click_stats": {"n_clicks": 275}, "player_stats": ["old"]}
+    written: dict = {}
+
+    class _Snap:
+        exists = True
+
+        @staticmethod
+        def to_dict():
+            return stored
+
+    class _Ref:
+        def collection(self, _n):
+            return self
+
+        def document(self, _n):
+            return self
+
+        def get(self):
+            return _Snap()
+
+        def set(self, payload, merge=False):
+            written.update(payload)
+
+    orig = fio._team_doc
+    fio._team_doc = lambda: _Ref()
+    try:
+        # A pipeline payload that knows nothing about clicks.
+        fio.write_analytics("g1", {"player_stats": ["new"], "tv_reel_url": "u"})
+    finally:
+        fio._team_doc = orig
+
+    assert written["player_stats"] == ["new"], "pipeline keys must be replaced"
+    assert written.get("click_stats") == {"n_clicks": 275}, \
+        "the coach's clicks were destroyed by a full write"
+
+
+def test_the_preserve_list_names_click_stats():
+    from post_game.firestore_io import _PRESERVE_ON_FULL_WRITE
+    assert "click_stats" in _PRESERVE_ON_FULL_WRITE
+
+
 def test_click_publish_refreshes_the_summary():
     """Publishing tags must update the doc the season view actually reads.
 

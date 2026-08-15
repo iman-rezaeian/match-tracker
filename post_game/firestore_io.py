@@ -424,10 +424,35 @@ def set_game_field(game_id: str, field_key: str) -> None:
     )
 
 
+# Keys the pipeline does NOT produce and must therefore never destroy on a full
+# write. `click_stats` is the coach's own hand-tagged positions -- ~10 minutes of
+# his labour per game, published by tracking/click_publish.py, and the ONLY
+# trustworthy per-player positional source in the app. A full re-render wiped it
+# on the Caboto game (2026-08-15) simply because `set()` replaces the document.
+_PRESERVE_ON_FULL_WRITE = ("click_stats",)
+
+
 def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
-    _team_doc().collection("games").document(game_id).collection("analytics").document(
-        config.ANALYTICS_DOC_VERSION
-    ).set(analytics)
+    """Replace the analytics doc, preserving keys the pipeline never writes.
+
+    `set()` without merge is deliberate for everything the pipeline DOES own -- a
+    stale key from a previous schema should disappear rather than linger. But keys
+    owned by another producer have to be carried across explicitly, or a re-render
+    silently destroys them.
+    """
+    ref = (_team_doc().collection("games").document(game_id)
+           .collection("analytics").document(config.ANALYTICS_DOC_VERSION))
+    payload = dict(analytics)
+    try:
+        prev = ref.get()
+        old = prev.to_dict() if prev.exists else None
+    except Exception:  # a read failure must not block the write
+        old = None
+    if old:
+        for key in _PRESERVE_ON_FULL_WRITE:
+            if key not in payload and old.get(key) is not None:
+                payload[key] = old[key]
+    ref.set(payload)
 
 
 def write_analytics_merge(game_id: str, fields: dict[str, Any]) -> None:
