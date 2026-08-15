@@ -488,6 +488,12 @@ def write_analytics_summary(game_id: str, analytics: dict[str, Any]) -> None:
             "n_clicks": cs.get("n_clicks"),
             "n_frames": cs.get("n_frames"),
             "median_pos_err_m": cs.get("median_pos_err_m"),
+            # Load-bearing for any cross-game pooling: when the keeper's median
+            # sits mid-pitch the orientation resolver REFUSES rather than guess,
+            # and this game's depth figures are then in an undefined frame.
+            # Averaging an unoriented game into a season figure mirrors half of
+            # its contribution. Callers must exclude `oriented: false` games.
+            "oriented": cs.get("oriented"),
             "players": [{"player_id": p.get("player_id"),
                          "n_clicks": p.get("n_clicks"),
                          "avg_depth_m": p.get("avg_depth_m"),

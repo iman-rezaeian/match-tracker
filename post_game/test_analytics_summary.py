@@ -110,6 +110,19 @@ def test_click_stats_are_summarised_not_dropped():
     assert "heatmap" not in cs["players"][0]
 
 
+def test_the_oriented_flag_survives_the_projection():
+    """Load-bearing for cross-game pooling.
+
+    When the keeper's median sits mid-pitch the orientation resolver refuses
+    rather than guess, and that game's depth figures are in an undefined frame.
+    A season average that silently includes it mirrors half its contribution, so
+    the flag must reach the client that does the pooling.
+    """
+    full = _full_doc()
+    full["click_stats"] = {"n_clicks": 10, "oriented": False, "players": []}
+    assert _write(full)["payload"]["click_stats"]["oriented"] is False
+
+
 def test_a_doc_without_optional_keys_is_still_written():
     """An older or partial doc must summarise, not raise."""
     p = _write({"player_stats": []})["payload"]
