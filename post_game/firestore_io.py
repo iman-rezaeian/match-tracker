@@ -85,11 +85,6 @@ class GameDoc:
     # until BOTH are confirmed. H2 may be confirmed with the auto-derived start.
     video_offset_h1_confirmed: bool = False
     video_offset_h2_confirmed: bool = False
-    # Measured clock->video anchors, per period: {1: [{elapsed_s, video_s}, ...]}.
-    # Ground truth the coach read off the source file. Two per period pin the RATE
-    # as well as the offset, which a single kickoff offset cannot — see
-    # identity.clock_video_anchors for the Caboto case that forced this.
-    video_clock_anchors: dict = field(default_factory=dict)
     # Match format: "7v7" (Canadian festivals/tournaments) or "9v9" (US
     # tournaments, from the 2026-27 season). Sets how many bodies the pipeline
     # should expect on the pitch. Every game predating the field is 7v7, so an
@@ -197,7 +192,6 @@ def get_game(game_id: str) -> GameDoc:
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
         video_offset_h1_confirmed=bool(d.get("videoOffsetH1Confirmed", False)),
         video_offset_h2_confirmed=bool(d.get("videoOffsetH2Confirmed", False)),
-        video_clock_anchors=dict(d.get("videoClockAnchors") or {}),
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
         identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
         game_format=str(d.get("format") or "7v7"),
@@ -734,23 +728,6 @@ def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float,
     _team_doc().collection("games").document(game_id).set(
         {"videoOffsetH1KickoffS": float(offset_s),
          "videoOffsetH1Confirmed": bool(confirmed)}, merge=True
-    )
-
-
-def set_video_clock_anchors(game_id: str, anchors: dict) -> None:
-    """Persist measured clock->video anchors: {period: [(elapsed_s, video_s), ...]}.
-
-    ADDITIVE and read-only with respect to `game.events` — the coach's taps are
-    never rewritten. The anchors sit alongside them and only change how a game-clock
-    time is projected into the source video, which is exactly where the error was.
-    """
-    payload = {
-        str(int(per)): [{"elapsed_s": float(e), "video_s": float(v)}
-                        for e, v in pts]
-        for per, pts in (anchors or {}).items() if pts
-    }
-    _team_doc().collection("games").document(game_id).set(
-        {"videoClockAnchors": payload}, merge=True
     )
 
 

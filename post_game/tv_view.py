@@ -115,10 +115,21 @@ TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
 #
 # Measured on the 3-5 Belle River game: GOAL taps land first and the ASSIST tap
 # follows 1.4-3.6 s later, so the coach taps promptly and backfills. The lag is a
-# few seconds, not a minute. 25 s of lead covers the build-up plus that lag; 10 s
-# after is enough for the restart and the celebration without padding the reel.
+# few seconds, not a minute. 25 s of lead covers the build-up plus that lag.
+#
+# ⚠ THE TAIL IS 40 s, NOT 10 s, AND THAT IS DELIBERATE SLOP. The clock->video map
+# is only as good as the game's kickoff offset, and that offset is a hand-entered
+# number: Caboto shipped with 0.0 (its same-day sibling had 40.9), which put every
+# first-half goal 7-33 s later in the video than the map claimed, so a 10 s tail
+# ended the clip BEFORE the ball crossed. Reading three goal times off that file by
+# hand still left a ~26 s spread in the implied offset, i.e. the residual
+# uncertainty is tens of seconds and cannot be cheaply driven to zero.
+# A generous tail absorbs it: the cost is a few seconds of restart footage per clip,
+# and the benefit is that the goal is IN THE CLIP even when the anchor is off by
+# half a minute. Do not "tighten" this back without first making the offset
+# trustworthy to a couple of seconds.
 AUTO_HIGHLIGHT_PRE_S = 25.0
-AUTO_HIGHLIGHT_POST_S = 10.0
+AUTO_HIGHLIGHT_POST_S = 40.0
 # Retained for callers/tests that referenced the symmetric constant. Kept equal to
 # the PRE roll so any old caller widens rather than narrows.
 AUTO_HIGHLIGHT_WINDOW_S = AUTO_HIGHLIGHT_PRE_S

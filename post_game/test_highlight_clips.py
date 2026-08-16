@@ -38,9 +38,19 @@ def _clock_to_video(period, elapsed):
     return (40.92 if period == 1 else 1753.08) + float(elapsed)
 
 
-def test_the_window_leads_the_tap_by_more_than_it_trails():
-    """A tap is a reaction, so most of the footage worth keeping precedes it."""
-    assert AUTO_HIGHLIGHT_PRE_S > AUTO_HIGHLIGHT_POST_S
+def test_the_tail_absorbs_a_wrong_kickoff_offset():
+    """The tail is generous ON PURPOSE — it is slop, not framing taste.
+
+    This assertion used to be the reverse (`PRE > POST`), on the theory that a tap
+    is a reaction so the footage worth keeping precedes it. Caboto disproved it:
+    its kickoff offset shipped as 0.0 (its same-day sibling: 40.9), so every
+    first-half goal sat 7-33 s later in the video than the map claimed and a 10 s
+    tail ended the clip BEFORE the ball crossed. Reading three goal times off the
+    file by hand still left a ~26 s spread in the implied offset, so the tail has to
+    cover tens of seconds of anchor error or the reel silently omits goals.
+    """
+    assert AUTO_HIGHLIGHT_POST_S >= 30.0, (
+        "tail too short to survive a mis-entered kickoff offset")
 
 
 def test_the_lead_is_long_enough_for_the_build_up():
@@ -57,11 +67,14 @@ def test_the_opponents_first_goal_gets_real_build_up():
     assert b - t >= 5.0, "no tail for the restart"
 
 
-def test_windows_are_asymmetric_end_to_end():
+def test_the_window_covers_both_the_build_up_and_a_late_goal_end_to_end():
+    """Both sides matter: the move that created the goal, and the goal itself even
+    when the clock->video anchor is tens of seconds out (see the tail test)."""
     (a, b), = _event_windows([_Ev(1, 600, "GOAL")], _clock_to_video,
                              10_000.0, AUTO_HIGHLIGHT_PRE_S)
     t = _clock_to_video(1, 600)
-    assert (t - a) > (b - t)
+    assert (t - a) >= 20.0, "lost the build-up"
+    assert (b - t) >= 30.0, "a mis-anchored goal would fall outside the clip"
 
 
 def test_post_roll_is_overridable():

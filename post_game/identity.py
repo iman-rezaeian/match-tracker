@@ -101,76 +101,13 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
     return [(win_start, h1_end), (h2_start, h2_end)]
 
 
-def clock_video_anchors(game: GameDoc) -> dict[int, list[tuple[float, float]]]:
-    """Per-period [(elapsed_s, video_s), ...] anchors the coach read off the file.
-
-    An anchor is ground truth: the coach scrubbed the source video and reported the
-    time at which a known event is visible. Two or more per period pin BOTH the
-    offset and the RATE, which a single kickoff offset cannot.
-
-    Why this exists — Caboto (mri01pvelv46d), measured 2026-08-16. Its stored
-    `videoOffsetH1KickoffS` was 0.0 (its sibling from the same day: 40.9), because
-    pressing "Confirm 1st-half kickoff" with an EMPTY box recorded 0.0 as a
-    deliberate confirmation. The three first-half goals then sat 7 s, 26 s and 33 s
-    later in the video than the map predicted, so highlight clips cut before the
-    goal and the scorebug credited it early. Crucially the error GREW through the
-    half, so no single offset fixes it: fitting the coach's anchors gives
-    `video = 4.1 + 1.0197 * elapsed`, i.e. the two clocks disagree by ~2%.
-
-    ⚠ The game clock itself is sound — `elapsed` matches wallclock-since-startedAt
-    within 1 s across all 55 first-half events — and the video is continuous
-    (29.97 fps, zero packet gaps). Do NOT "fix" either. The discrepancy is between
-    the phone's clock and the camera's, and only measured anchors resolve it.
-    """
-    raw = getattr(game, "video_clock_anchors", None) or {}
-    out: dict[int, list[tuple[float, float]]] = {}
-    for per, pts in (raw.items() if isinstance(raw, dict) else []):
-        try:
-            p = int(per)
-        except (TypeError, ValueError):
-            continue
-        clean = []
-        for pt in pts or []:
-            try:
-                e, v = float(pt["elapsed_s"]), float(pt["video_s"])
-            except (TypeError, ValueError, KeyError):
-                continue
-            if v >= 0:
-                clean.append((e, v))
-        if clean:
-            out[p] = sorted(clean)
-    return out
-
-
-def _fit_anchors(pts: list[tuple[float, float]]) -> tuple[float, float]:
-    """Least-squares (offset, rate) for video = offset + rate * elapsed.
-
-    One anchor can only pin the offset, so rate falls back to 1.0 — still strictly
-    better than assuming the video starts at kickoff.
-    """
-    if len(pts) == 1:
-        return pts[0][1] - pts[0][0], 1.0
-    n = len(pts)
-    se = sum(e for e, _ in pts)
-    sv = sum(v for _, v in pts)
-    see = sum(e * e for e, _ in pts)
-    sev = sum(e * v for e, v in pts)
-    den = n * see - se * se
-    if abs(den) < 1e-9:                      # all anchors at the same clock time
-        return sv / n - se / n, 1.0
-    rate = (n * sev - se * sv) / den
-    return (sv - rate * se) / n, rate
-
-
 def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], float]:
     """Returns f(period, elapsed_s) -> seconds into the source video.
 
-    Prefers measured `video_clock_anchors` (see `clock_video_anchors`) for any
-    period that has them, because those pin the RATE as well as the offset. Falls
-    back to `video_offset_h1_kickoff_s` plus the wallclock-derived halftime gap,
-    and finally to "the video starts at kickoff" (legacy behaviour).
+    Uses `video_offset_h1_kickoff_s` (1st-half kickoff position in video) plus
+    the wallclock-derived halftime gap from `pause_periods`. If no offset was
+    set, assumes the video starts at kickoff (legacy behaviour).
     """
-    anchors = clock_video_anchors(game)
     # May be negative when recording started after kickoff (see half_windows).
     offset = float(game.video_offset_h1_kickoff_s or 0.0)
     half_len_s = game.half_length_min * 60
@@ -188,15 +125,9 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     h2_override = float(getattr(game, "video_offset_h2_kickoff_s", 0.0) or 0.0)
     h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
 
-    fits = {p: _fit_anchors(pts) for p, pts in anchors.items()}
-
     def f(period: int, elapsed_s: int) -> float:
         # Clamp to 0: events in the first |offset| s (kickoff before recording
         # began) map to the earliest available footage, video t=0.
-        fit = fits.get(int(period))
-        if fit is not None:
-            off, rate = fit
-            return max(0.0, off + rate * float(elapsed_s))
         if period == 1:
             return max(0.0, offset + float(elapsed_s))
         return max(0.0, h2_kickoff_in_video + float(elapsed_s))
