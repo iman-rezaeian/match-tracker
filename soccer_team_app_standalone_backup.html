@@ -11270,9 +11270,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     <div className={`grid ${cp ? 'grid-cols-4' : 'grid-cols-1'} gap-1.5 mb-1`}>
                       {(cp ? [
                         [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN'],
-                        [`${cp.avg_depth_m}`, 'AVG m OUT'],
-                        [`${cp.p90_depth_m - cp.p10_depth_m}`, 'RANGE m'],
-                        [`${cp.area_covered_m2}`, 'AREA m²'],
+                        [`${(cp.avg_depth_m || 0).toFixed(1)}`, 'AVG m OUT'],
+                        // Subtracting two 1-dp floats is not 1-dp: 46.6-11.2 is
+                        // 35.400000000000006 in IEEE 754, and it rendered raw.
+                        [`${((cp.p90_depth_m || 0) - (cp.p10_depth_m || 0)).toFixed(1)}`, 'RANGE m'],
+                        [`${Math.round(cp.area_covered_m2 || 0)}`, 'AREA m²'],
                       ] : [
                         [`${(s.minutes_played || 0).toFixed(0)}'`, 'MINUTES PLAYED'],
                       ]).map(([v, l]) => (
@@ -15402,6 +15404,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
