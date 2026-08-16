@@ -115,5 +115,15 @@ a whole game has no such anchor — `voice_union` does not handle that case. If 
 record on your phone, **say "kickoff" at each half's kickoff** so there is a marker
 to align to.
 
-⚠ Needs a working `ANTHROPIC_API_KEY` / gateway route; extraction runs on Haiku
-because Opus is gateway-blocked on the corp network.
+**Auth.** No `ANTHROPIC_API_KEY` needed. `voice_clean` and `voice_extract` mint an
+OAuth bearer from the `ant` CLI, so `ant auth login` once is enough. Extraction runs
+on **Opus 5** — measured reachable over that bearer on the corp network (the earlier
+"Opus is gateway-blocked" note was about the raw corp API key, which is
+entitlement-limited to Haiku and 429s instantly on the bigger models). Corp TLS is
+handled by clearing only OpenSSL's X509_STRICT flag, so the certificate chain and
+hostname are still verified. Pass `--model claude-haiku-4-5` for a cheap dry run.
+
+⚠ **Yield is UNMEASURED.** No game has been narrated post-game end to end yet, so
+nobody knows how many usable process events 50 minutes of narration actually
+produces. Narrate ONE game first and count what lands in the confirm queue before
+committing to narrating the season.

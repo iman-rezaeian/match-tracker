@@ -309,6 +309,85 @@ def _match_player(name: str, first_to_ids: dict[str, list[str]]) -> tuple[str | 
     return None, len(uniq) > 1
 
 
+# Repeat-collapsing windows. A goal is shouted through the restart, so its window
+# is long; process events keep a short one because two duels 25 s apart really are
+# two duels, not one repeated.
+CELEBRATION_WINDOW_S = 75.0
+DEFAULT_WINDOW_S = 20.0
+CELEBRATION_TYPES = frozenset({"GOAL", "OPP_GOAL"})
+
+
+def dedupe_repeats(events: list[dict]) -> list[dict]:
+    """Collapse the coach's excited repeats into one event per real occurrence.
+
+    Takes time-sorted events, keeps the FIRST mention's time (that is when the
+    action happened), and merges later repeats into it — taking the best confidence
+    and filling in a player if the first mention lacked one.
+
+    ⚠ Two bugs lived here, both found on the Amherstburg narration, where ONE goal
+    produced FOUR GOAL drafts — a duplicate-goal generator, since accepting those
+    drafts would have overstated the score.
+
+      1. The window was measured from the KEPT event, so a celebration that drifts
+         in steps longer than the window chained indefinitely: "Goal!" at 267 / 299 /
+         325 / 363 s is 96 s of ONE goal, and since each gap exceeded 20 s each
+         started a new "occurrence". Now the window is measured from the LAST
+         ABSORBED repeat, so a run collapses however long the celebration lasts, as
+         long as consecutive mentions stay close.
+      2. 20 s is too short for a goal at all — hence the two windows above.
+
+    Keyed on (type, player) so two different children scoring inside one window stay
+    two goals; an UNATTRIBUTED repeat still folds into a named event of the same type
+    ("Goal! Goal!" following "Goal by Jason"), which is the common narration shape.
+    """
+    deduped: list[dict] = []
+    last_seen: dict[tuple, float] = {}   # (type, player_id) -> last absorbed time
+    for e in events:
+        win = (CELEBRATION_WINDOW_S if e["type"] in CELEBRATION_TYPES
+               else DEFAULT_WINDOW_S)
+        key = (e["type"], e.get("player_id"))
+        prev = None
+        if key in last_seen and e["videoTimeS"] - last_seen[key] <= win:
+            prev = next((d for d in reversed(deduped)
+                         if d["type"] == e["type"]
+                         and d.get("player_id") == e.get("player_id")), None)
+        if prev is None:
+            # Cross-attribution fold, in BOTH directions, because a celebration is
+            # narrated either way round: a bare "Goal! Goal!" after "Goal by Jason",
+            # or — just as often — a bare "Goal!" first with the name a beat later.
+            # Only ever pair a named event with an unattributed one; two different
+            # NAMED scorers stay separate (see the two-scorers test).
+            best_t = None
+            for k, t in last_seen.items():
+                if k[0] != e["type"] or e["videoTimeS"] - t > win:
+                    continue
+                if k[1] and e.get("player_id") and k[1] != e["player_id"]:
+                    continue          # two different named scorers: not a repeat
+                if best_t is None or t > best_t:
+                    best_t, key = t, k
+            if best_t is not None:
+                prev = next((d for d in reversed(deduped)
+                             if d["type"] == e["type"]
+                             and d.get("player_id") == key[1]), None)
+        if prev is None:
+            key = (e["type"], e.get("player_id"))
+            deduped.append(e)
+        else:
+            if not prev.get("player_id") and e.get("player_id"):
+                prev["player_id"] = e["player_id"]
+                prev["player_first_name"] = e.get("player_first_name")
+                # The merged event is now ATTRIBUTED, so retire the unattributed
+                # key and chain under the named one — otherwise a later bare repeat
+                # would not find it and would start a spurious third event.
+                last_seen.pop(key, None)
+                key = (e["type"], e["player_id"])
+            prev["confidence"] = max(prev.get("confidence") or 0,
+                                     e.get("confidence") or 0)
+        # Chain from the LAST mention absorbed, so a long run collapses as one.
+        last_seen[key] = e["videoTimeS"]
+    return deduped
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--annotated", required=True, help="voice_clean .annotated.json")
@@ -352,20 +431,7 @@ def main() -> None:
             "source": "voice_draft",
         })
     events.sort(key=lambda x: x["videoTimeS"])
-
-    # Cross-chunk / repetition dedup: same type within 20s = one occurrence
-    # (keep the higher-confidence, and its player if the winner lacked one).
-    deduped: list[dict] = []
-    for e in events:
-        prev = next((d for d in reversed(deduped)
-                     if d["type"] == e["type"] and e["videoTimeS"] - d["videoTimeS"] <= 20), None)
-        if prev is None:
-            deduped.append(e)
-        else:
-            if not prev["player_id"] and e["player_id"]:
-                prev["player_id"], prev["player_first_name"] = e["player_id"], e["player_first_name"]
-            prev["confidence"] = max(prev["confidence"], e["confidence"])
-    events = deduped
+    events = dedupe_repeats(events)
 
     from collections import Counter
     print(f"\nextracted {len(events)} draft events:", dict(Counter(e["type"] for e in events)))
