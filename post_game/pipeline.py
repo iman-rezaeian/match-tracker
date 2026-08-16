@@ -1524,16 +1524,30 @@ def run(
     # the analytics subcollection. Firestore rules then lock analytics/
     # to coaches.
     public_fields: dict = {}
-    # Public fields point at the AMBIENCE (stadium-audio) copies when present so
-    # parents never hear the original audio; the coach analytics doc above keeps
-    # the original-audio URLs for the dugout. Falls back to original if the swap
-    # is disabled or failed.
+    # Public fields point ONLY at the AMBIENCE (stadium-audio) copies; the coach
+    # analytics doc above keeps the original-audio URLs for the dugout.
+    #
+    # ⚠ NO FALLBACK TO THE ORIGINAL-AUDIO REEL. This used to read
+    # `public_tv_url or tv_reel_meta.r2_url`, so whenever the swap was disabled or
+    # errored, the PARENT-FACING field silently pointed at the dugout cut — coach
+    # voice, kids' names, sideline chatter. Combined with PUBLIC_AUDIO_ENABLED
+    # defaulting off, that is exactly what shipped. Publishing nothing is the
+    # correct failure mode for a privacy control: a missing video is visible and
+    # fixable, a leaked one is neither.
     if tv_reel_meta and tv_reel_meta.r2_url:
-        public_fields["videoFullGameUrl"] = public_tv_url or tv_reel_meta.r2_url
-        public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        if public_tv_url:
+            public_fields["videoFullGameUrl"] = public_tv_url
+            public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio full-game reel — publishing NO "
+                        "public full-game URL rather than the dugout cut.")
     if auto_hl_meta and auto_hl_meta.r2_url:
-        public_fields["videoHighlightsUrl"] = public_hl_url or auto_hl_meta.r2_url
-        public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        if public_hl_url:
+            public_fields["videoHighlightsUrl"] = public_hl_url
+            public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio highlights reel — publishing NO "
+                        "public highlights URL rather than the dugout cut.")
     # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
     # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never
     # clobber the live public reel/broadcast docs.

@@ -715,7 +715,14 @@ ID_ITERATIVE_DIST_CAP_M = float(os.environ.get("ID_ITERATIVE_DIST_CAP_M", "12.0"
 # --- Public-reel audio swap (public_audio.py, stage 7b) ---
 # Replace the PUBLIC reel's audio with a stadium-ambience bed + goal roars so the
 # coach voice / kids' names never leave the dugout. Dugout reel keeps original.
-PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "") == "1"
+#
+# ⚠ DEFAULTS ON, and it must stay that way. This used to default OFF (requiring
+# PUBLIC_AUDIO_ENABLED=1, which was in nobody's .env), so the stage silently never
+# ran — and because the publisher falls back to the original-audio URL when the
+# _public file is absent, every parent-facing reel shipped with the coach's voice
+# and the kids' names on it. A privacy control that is off by default is not a
+# control. Set PUBLIC_AUDIO_ENABLED=0 to disable deliberately.
+PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "1") != "0"
 PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/stadium_ambience.mp3")
 PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
 PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-8"))     # stadium bed level (dB rel. to source) — was -20 (too dim)
