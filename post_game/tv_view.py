@@ -127,6 +127,23 @@ AUTO_HIGHLIGHT_WINDOW_S = AUTO_HIGHLIGHT_PRE_S
 # 3 we scored). SAVE covers the opponent attacks our keeper stopped.
 AUTO_HIGHLIGHT_EVENT_TYPES = ("GOAL", "OPP_GOAL", "SHOT_ON", "SAVE", "KEY_PASS")
 
+# Output sharpening (unsharp mask) for the reel.
+#
+# The reel is an UPSCALE, not a downsample: a 70 deg horizontal slice of the 8K
+# equirect is ~1493 source px rendered to 1920, so no setting can add detail that
+# was never captured, and Lanczos — while the best resample available here — still
+# smooths the edge contrast the eye reads as "sharp". An unsharp mask restores
+# that acutance. Measured on a real goal frame: laplacian variance 27 -> 49.
+#
+# ⚠ This CANNOT create resolution, so it is cosmetic by construction; it is also
+# the only lever left short of raising the camera. Keep the amount modest — high
+# values halo the white pitch lines and crunch the grass texture in motion, which
+# a still frame will not reveal. Applied to the reel only, never to detection
+# tiles (sharpening changes the pixel statistics YOLO was trained on).
+TV_SHARPEN_ENABLED = True
+TV_SHARPEN_SIGMA = 1.2
+TV_SHARPEN_AMOUNT = 1.6
+
 
 @dataclass
 class TvViewMeta:
@@ -889,6 +906,18 @@ def diagnose_aim(
 
 # --- segment render ------------------------------------------------------
 
+def _sharpen(img: np.ndarray) -> np.ndarray:
+    """Unsharp-mask a rendered reel frame (see TV_SHARPEN_* for the rationale).
+
+    Returns the input unchanged when disabled, so the render path stays a single
+    branch-free call site.
+    """
+    if not TV_SHARPEN_ENABLED:
+        return img
+    blur = cv2.GaussianBlur(img, (0, 0), TV_SHARPEN_SIGMA)
+    return cv2.addWeighted(img, TV_SHARPEN_AMOUNT, blur, 1.0 - TV_SHARPEN_AMOUNT, 0)
+
+
 def _render_segment(
     cap: cv2.VideoCapture,
     writer: "H264PipeWriter | cv2.VideoWriter",
@@ -902,6 +931,7 @@ def _render_segment(
     out_h: int,
     aim_fovs: Optional[np.ndarray] = None,
 ) -> int:
+    """Render [start_s, end_s) of the source into `writer`, following the aim."""
     start_f = max(0, int(round(start_s * fps)))
     end_f = int(round(end_s * fps))
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
@@ -921,7 +951,7 @@ def _render_segment(
         # enlarged from a ~70° slice of the sphere, so the resample quality
         # is one of the few real levers on perceived sharpness.
         crop = render_perspective(frame, lon, lat, fov, out_w, out_h, interp=cv2.INTER_LANCZOS4)
-        writer.write(crop)
+        writer.write(_sharpen(crop))
         written += 1
     return written
 
