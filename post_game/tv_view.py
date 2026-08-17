@@ -1342,7 +1342,11 @@ def extract_auto_highlights(
     field_length_m: float,
     field_width_m: float,
     window_s: float = AUTO_HIGHLIGHT_PRE_S,
-    post_s: float = AUTO_HIGHLIGHT_POST_S,
+    # ⚠ None, NOT AUTO_HIGHLIGHT_POST_S. A concrete default here is an OVERRIDE in
+    # `_event_windows`, which suppressed the per-type tail entirely: every shot and
+    # key pass rendered with the goal's 10 s tail instead of 5 s, and the bug was
+    # invisible because the number looked correct.
+    post_s: Optional[float] = None,
     upload: bool = True,
     analyzed_windows: Optional[list[tuple[float, float]]] = None,
     aim_cfg: Optional[AimConfig] = None,

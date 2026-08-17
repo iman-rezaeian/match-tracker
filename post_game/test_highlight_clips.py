@@ -56,6 +56,23 @@ def test_a_goal_keeps_its_celebration_and_a_shot_does_not():
     assert "SHOT_ON" not in AUTO_HIGHLIGHT_LONG_TAIL_TYPES
 
 
+def test_the_renderer_does_not_override_the_per_type_tail():
+    """The bug the direct `_event_windows` tests could not see.
+
+    `extract_auto_highlights` defaulted post_s to AUTO_HIGHLIGHT_POST_S, and in
+    `_event_windows` a concrete post_s is an OVERRIDE — so every shot and key pass
+    rendered with the goal's 10 s tail. Nothing looked wrong: the value was a real
+    constant, just the wrong one for those types. The default has to stay None so the
+    per-type branch runs.
+    """
+    import inspect
+
+    from post_game.tv_view import extract_auto_highlights
+    sig = inspect.signature(extract_auto_highlights)
+    assert sig.parameters["post_s"].default is None, (
+        "a concrete post_s default silently disables the per-type tail")
+
+
 def test_the_per_type_tail_is_applied_end_to_end():
     from post_game.tv_view import AUTO_HIGHLIGHT_POST_OTHER_S
     (ga, gb), = _event_windows([_Ev(1, 600, "GOAL")], _clock_to_video,
