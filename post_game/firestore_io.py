@@ -85,6 +85,18 @@ class GameDoc:
     # until BOTH are confirmed. H2 may be confirmed with the auto-derived start.
     video_offset_h1_confirmed: bool = False
     video_offset_h2_confirmed: bool = False
+    # EXACT source-video second for individual events, keyed "<period>:<elapsed>",
+    # read off the file by the coach. Overrides the kickoff-offset arithmetic for
+    # those events only.
+    #
+    # ⚠ Needed because the residual error CHANGES SIGN between events, so no single
+    # offset can fix it. Measured on Caboto with its offset corrected to 22.0, the
+    # six goals were still out by -15.0, +4.0, +11.0, +2.1, -7.9 s. The scorebug
+    # popup and the goal-roar audio both fire at the mapped time, so a sign-changing
+    # error reads as "the cheer sometimes lands before the goal and sometimes long
+    # after" — one bug, two symptoms. A generous clip window hides the problem for
+    # clipping but does nothing for these two, which need the real instant.
+    video_event_times: dict = field(default_factory=dict)
     # Match format: "7v7" (Canadian festivals/tournaments) or "9v9" (US
     # tournaments, from the 2026-27 season). Sets how many bodies the pipeline
     # should expect on the pitch. Every game predating the field is 7v7, so an
@@ -192,6 +204,8 @@ def get_game(game_id: str) -> GameDoc:
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
         video_offset_h1_confirmed=bool(d.get("videoOffsetH1Confirmed", False)),
         video_offset_h2_confirmed=bool(d.get("videoOffsetH2Confirmed", False)),
+        video_event_times={str(k): float(v) for k, v in
+                           (d.get("videoEventTimes") or {}).items()},
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
         identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
         game_format=str(d.get("format") or "7v7"),
@@ -728,6 +742,18 @@ def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float,
     _team_doc().collection("games").document(game_id).set(
         {"videoOffsetH1KickoffS": float(offset_s),
          "videoOffsetH1Confirmed": bool(confirmed)}, merge=True
+    )
+
+
+def set_video_event_times(game_id: str, times: dict) -> None:
+    """Persist exact source-video seconds for events: {"<period>:<elapsed>": video_s}.
+
+    ADDITIVE — `game.events` is never rewritten. These only change where an event is
+    LOOKED UP in the video, which is the thing that was wrong.
+    """
+    payload = {str(k): float(v) for k, v in (times or {}).items()}
+    _team_doc().collection("games").document(game_id).set(
+        {"videoEventTimes": payload}, merge=True
     )
 
 
