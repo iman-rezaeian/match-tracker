@@ -727,12 +727,22 @@ PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/s
 PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
 PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-8"))     # stadium bed level (dB rel. to source) — was -20 (too dim)
 PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-13"))  # goal-roar level — was -6 (too loud vs bed); ~8dB above bed now
-# The coach logs a goal ~tap_delay AFTER it happens, and goal-moment detection is
-# unreliable here (near-mic chatter / far-side crowd). So lead the roar earlier and
-# fade it IN so it BUILDS rather than banging at a wrong instant — the build hides
-# the timing slop and reads like a real crowd swelling as the goal goes in.
-PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "7"))   # start the roar this many s before the tap
-PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-in (build) duration
+# Roar placement. A real crowd reacts just AFTER the ball crosses, so the roar
+# starts a beat late and rises fast.
+#
+# ⚠ THE LEAD USED TO BE 7 s AND MUST NOT GO BACK. That was deliberate compensation
+# for not knowing when the goal actually happened: the tap was assumed to trail the
+# goal, and a long fade-in was meant to "hide the timing slop" by having the crowd
+# swell through the uncertainty. Once events carry exact source-video times
+# (video_event_times), the slop is gone and the lead became pure error — the coach
+# heard the cheer before the ball crossed. A 7 s pre-roll cannot be corrected by
+# better timestamps; it has to be removed.
+#
+# The knob shifts the roar EARLIER, so a small NEGATIVE value starts it slightly
+# after the goal — which is what a crowd does: a beat of recognition, then noise.
+# Keep the fade short so it reads as a reaction, not a build.
+PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "-0.4"))  # NEGATIVE lead = start AFTER the goal
+PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "0.35"))  # quick rise, not a swell
 
 # --- Halftime split (pipeline.py, stage 3 -> 4) ---
 # No player is one continuous body across the halftime break, so any track_id

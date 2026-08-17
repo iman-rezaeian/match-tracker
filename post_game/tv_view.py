@@ -117,19 +117,26 @@ TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
 # follows 1.4-3.6 s later, so the coach taps promptly and backfills. The lag is a
 # few seconds, not a minute. 25 s of lead covers the build-up plus that lag.
 #
-# ⚠ THE TAIL IS 40 s, NOT 10 s, AND THAT IS DELIBERATE SLOP. The clock->video map
-# is only as good as the game's kickoff offset, and that offset is a hand-entered
-# number: Caboto shipped with 0.0 (its same-day sibling had 40.9), which put every
-# first-half goal 7-33 s later in the video than the map claimed, so a 10 s tail
-# ended the clip BEFORE the ball crossed. Reading three goal times off that file by
-# hand still left a ~26 s spread in the implied offset, i.e. the residual
-# uncertainty is tens of seconds and cannot be cheaply driven to zero.
-# A generous tail absorbs it: the cost is a few seconds of restart footage per clip,
-# and the benefit is that the goal is IN THE CLIP even when the anchor is off by
-# half a minute. Do not "tighten" this back without first making the offset
-# trustworthy to a couple of seconds.
+# Tails are per-type: a goal earns the celebration and the restart, a shot or a save
+# resolves almost immediately.
+#
+# ⚠ The tail was briefly 40 s for everything, as SLOP. At that point the clock->video
+# map depended on a hand-entered kickoff offset — Caboto shipped with 0.0 while its
+# same-day sibling had 40.9 — which put first-half goals up to 33 s later in the video
+# than the map claimed, so a 10 s tail ended the clip before the ball crossed. The
+# wide tail bought correctness at the cost of a minute of dead footage per clip.
+#
+# That slop is no longer needed: events can now carry an EXACT source-video second
+# (see firestore_io.video_event_times), so the goal lands where the map says. Tails
+# are back to what the football actually wants. If a future game shows goals drifting
+# again, fix the OFFSET or add exact times — do not re-widen the tail, which hides the
+# error instead of removing it and pads every clip to do so.
 AUTO_HIGHLIGHT_PRE_S = 25.0
-AUTO_HIGHLIGHT_POST_S = 40.0
+AUTO_HIGHLIGHT_POST_S = 10.0        # goals: celebration + restart
+AUTO_HIGHLIGHT_POST_OTHER_S = 5.0   # shots / saves / key passes: resolve fast
+# Types that get the longer tail. A goal is the only event with an aftermath worth
+# keeping; everything else is over the moment the ball is cleared or gathered.
+AUTO_HIGHLIGHT_LONG_TAIL_TYPES = frozenset({"GOAL", "OPP_GOAL"})
 # Retained for callers/tests that referenced the symmetric constant. Kept equal to
 # the PRE roll so any old caller widens rather than narrows.
 AUTO_HIGHLIGHT_WINDOW_S = AUTO_HIGHLIGHT_PRE_S
@@ -978,11 +985,12 @@ def _event_windows(
 ) -> list[tuple[float, float]]:
     """Merged clip windows around each highlight-worthy event.
 
-    `window_s` is the LEAD (before the tap) and `post_s` the tail after it. The
-    split is deliberate — see AUTO_HIGHLIGHT_PRE_S: a tap marks the coach's
-    reaction, so the footage worth keeping is mostly BEFORE it.
+    `window_s` is the LEAD (before the tap); the tail is PER TYPE — a goal keeps the
+    celebration and restart (AUTO_HIGHLIGHT_POST_S), while a shot or save is over as
+    soon as the ball is gathered (AUTO_HIGHLIGHT_POST_OTHER_S). Passing `post_s`
+    overrides both, which the diagnostic harnesses rely on.
     """
-    post = AUTO_HIGHLIGHT_POST_S if post_s is None else float(post_s)
+    override = None if post_s is None else float(post_s)
     raw: list[tuple[float, float]] = []
     for ev in events:
         if ev.type not in AUTO_HIGHLIGHT_EVENT_TYPES:
@@ -990,6 +998,12 @@ def _event_windows(
         t = float(period_clock_to_video_time(ev.period, ev.elapsed))
         if t < 0:
             continue
+        if override is not None:
+            post = override
+        elif ev.type in AUTO_HIGHLIGHT_LONG_TAIL_TYPES:
+            post = AUTO_HIGHLIGHT_POST_S
+        else:
+            post = AUTO_HIGHLIGHT_POST_OTHER_S
         a = max(0.0, t - window_s)
         b = min(video_duration_s, t + post)
         if b > a:

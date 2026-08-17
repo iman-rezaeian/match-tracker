@@ -38,19 +38,33 @@ def _clock_to_video(period, elapsed):
     return (40.92 if period == 1 else 1753.08) + float(elapsed)
 
 
-def test_the_tail_absorbs_a_wrong_kickoff_offset():
-    """The tail is generous ON PURPOSE — it is slop, not framing taste.
+def test_a_goal_keeps_its_celebration_and_a_shot_does_not():
+    """Tails are per-type, sized to the football rather than to timing slop.
 
-    This assertion used to be the reverse (`PRE > POST`), on the theory that a tap
-    is a reaction so the footage worth keeping precedes it. Caboto disproved it:
-    its kickoff offset shipped as 0.0 (its same-day sibling: 40.9), so every
-    first-half goal sat 7-33 s later in the video than the map claimed and a 10 s
-    tail ended the clip BEFORE the ball crossed. Reading three goal times off the
-    file by hand still left a ~26 s spread in the implied offset, so the tail has to
-    cover tens of seconds of anchor error or the reel silently omits goals.
+    History worth keeping: this assertion has been all three ways round. First
+    `PRE > POST`, on the theory that a tap trails the action. Then `POST >= 30` as
+    deliberate SLOP, after Caboto's kickoff offset shipped as 0.0 and put goals up to
+    33 s later in the video than the map claimed, so a 10 s tail ended the clip before
+    the ball crossed. Exact per-event video times removed that uncertainty, so the
+    tail no longer has to hide it — and a 40 s tail on a saved shot is a minute of
+    dead footage per clip.
     """
-    assert AUTO_HIGHLIGHT_POST_S >= 30.0, (
-        "tail too short to survive a mis-entered kickoff offset")
+    from post_game.tv_view import (AUTO_HIGHLIGHT_LONG_TAIL_TYPES,
+                                   AUTO_HIGHLIGHT_POST_OTHER_S)
+    assert AUTO_HIGHLIGHT_POST_S > AUTO_HIGHLIGHT_POST_OTHER_S
+    assert "GOAL" in AUTO_HIGHLIGHT_LONG_TAIL_TYPES
+    assert "SHOT_ON" not in AUTO_HIGHLIGHT_LONG_TAIL_TYPES
+
+
+def test_the_per_type_tail_is_applied_end_to_end():
+    from post_game.tv_view import AUTO_HIGHLIGHT_POST_OTHER_S
+    (ga, gb), = _event_windows([_Ev(1, 600, "GOAL")], _clock_to_video,
+                               10_000.0, AUTO_HIGHLIGHT_PRE_S)
+    (sa, sb), = _event_windows([_Ev(1, 600, "SHOT_ON")], _clock_to_video,
+                               10_000.0, AUTO_HIGHLIGHT_PRE_S)
+    t = _clock_to_video(1, 600)
+    assert abs((gb - t) - AUTO_HIGHLIGHT_POST_S) < 0.01
+    assert abs((sb - t) - AUTO_HIGHLIGHT_POST_OTHER_S) < 0.01
 
 
 def test_the_lead_is_long_enough_for_the_build_up():
@@ -67,14 +81,13 @@ def test_the_opponents_first_goal_gets_real_build_up():
     assert b - t >= 5.0, "no tail for the restart"
 
 
-def test_the_window_covers_both_the_build_up_and_a_late_goal_end_to_end():
-    """Both sides matter: the move that created the goal, and the goal itself even
-    when the clock->video anchor is tens of seconds out (see the tail test)."""
+def test_the_window_keeps_the_build_up_and_the_aftermath():
+    """The move that created the goal, plus enough after it to see it go in."""
     (a, b), = _event_windows([_Ev(1, 600, "GOAL")], _clock_to_video,
                              10_000.0, AUTO_HIGHLIGHT_PRE_S)
     t = _clock_to_video(1, 600)
     assert (t - a) >= 20.0, "lost the build-up"
-    assert (b - t) >= 30.0, "a mis-anchored goal would fall outside the clip"
+    assert (b - t) >= 8.0, "no room for the ball to cross and the celebration"
 
 
 def test_post_roll_is_overridable():
