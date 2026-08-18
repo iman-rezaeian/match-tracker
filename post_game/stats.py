@@ -50,6 +50,14 @@ class PlayerStats:
     # tracklet ping-pong). A clean track is ~0; a swap-polluted one is high.
     # The UI uses this (not "top speed == cap") to flag unreliable movement.
     implausible_step_frac: float = 0.0
+    # --- MEASUREMENT ONLY (2026-08-18): statue-aware coverage --------------
+    # coverage_frac counts statue time (standers welded into the identity) as
+    # tracked time. These two fields measure what coverage WOULD be with
+    # statue steps excluded, so the semantics change can be decided on data.
+    # NOTHING consumes them yet — the parentSeason gate and the dist_est
+    # rate math still run on coverage_frac.
+    coverage_frac_statue_aware: float = 0.0
+    statue_frac_of_tracked: float = 0.0
 
 
 def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
@@ -461,6 +469,13 @@ def compute_player_stats(
         # Coverage = fraction of the coach-logged minutes we actually tracked.
         # This is THE trust dial for the rate-based estimates below.
         coverage_frac = (tracked_min / coach_min) if coach_min > 0 else 0.0
+        # Measurement-only twin: coverage with statue steps excluded (a step
+        # counts as statue when BOTH endpoints are statue samples). See the
+        # PlayerStats field comment — nothing consumes these yet.
+        _step_statue = _statue[1:] & _statue[:-1]
+        _tracked_s_sa = float(dt[real & ~_step_statue].sum())
+        statue_frac = ((tracked_s - _tracked_s_sa) / tracked_s) if tracked_s > 0 else 0.0
+        coverage_statue_aware = ((_tracked_s_sa / 60.0) / coach_min) if coach_min > 0 else 0.0
         # Rate-based estimates (plan 4.4): scale per-tracked-minute rates to
         # coach-logged minutes. Two guards make the estimate honest:
         #   1. Absolute floor (>= 3 tracked min): below a sliver the rate itself
@@ -523,5 +538,7 @@ def compute_player_stats(
             sprint_threshold_ms=sprint_thr,
             coverage_frac=float(coverage_frac),
             dist_est_capped=bool(dist_est_capped),
+            coverage_frac_statue_aware=float(coverage_statue_aware),
+            statue_frac_of_tracked=float(statue_frac),
         ))
     return out
