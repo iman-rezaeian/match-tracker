@@ -15724,7 +15724,7 @@ function ParentSeasonPanel({ mode, playerId, roster, onBack }) {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const [expandedId, setExpandedId] = useState(null);
   const title = `${String(first).toUpperCase()}${num ? ` #${num}` : ''} — ${mode === 'heatmaps' ? 'HEATMAPS' : 'MATCH STATS'}`;
-  const sub = mode === 'heatmaps' ? 'Position maps from tracked minutes' : 'From the coach’s live match log';
+  const sub = mode === 'heatmaps' ? 'From the coach’s tagged positions' : 'From the coach’s live match log';
 
   let body;
   if (loading) {
@@ -15765,7 +15765,7 @@ function ParentSeasonPanel({ mode, playerId, roster, onBack }) {
                 <div className="h-24 flex items-center justify-center text-stone-600">
                   <div className="text-center">
                     <div className="font-display text-2xl leading-none">–</div>
-                    <div className="text-[10px] mt-1">{g.attended ? 'Not tracked enough' : 'Didn’t play'}</div>
+                    <div className="text-[10px] mt-1">{g.attended ? 'Not tagged yet' : 'Didn’t play'}</div>
                   </div>
                 </div>
               )}
@@ -16024,6 +16024,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
