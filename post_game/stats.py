@@ -50,6 +50,14 @@ class PlayerStats:
     # tracklet ping-pong). A clean track is ~0; a swap-polluted one is high.
     # The UI uses this (not "top speed == cap") to flag unreliable movement.
     implausible_step_frac: float = 0.0
+    # --- MEASUREMENT ONLY (2026-08-18): statue-aware coverage --------------
+    # coverage_frac counts statue time (standers welded into the identity) as
+    # tracked time. These two fields measure what coverage WOULD be with
+    # statue steps excluded, so the semantics change can be decided on data.
+    # NOTHING consumes them yet — the parentSeason gate and the dist_est
+    # rate math still run on coverage_frac.
+    coverage_frac_statue_aware: float = 0.0
+    statue_frac_of_tracked: float = 0.0
 
 
 def _smooth(arr: np.ndarray, window: int) -> np.ndarray:
@@ -396,12 +404,50 @@ def compute_player_stats(
         mid = (d >= boundaries_x[0]) & (d < boundaries_x[1])
         dfn = d < boundaries_x[0]
 
+        # Statue guard: a track that spends 3+ minutes inside a ~3 m circle is
+        # a stander (waiting sub, coach, touchline figure) mis-attributed to
+        # this player, not the player himself — on-field windows can't catch
+        # it because it happens DURING his play time. Excluded from the grid
+        # only; a genuinely parked cell from real play survives because real
+        # kids' tracks never hold a 3 m circle that long.
+        _tids = sub["track_id"].to_numpy()
+        _statue = np.zeros(len(sub), dtype=bool)
+        for _tid in np.unique(_tids):
+            _m = _tids == _tid
+            if int(_m.sum()) < 10:
+                continue
+            _dur = float(t[_m].max() - t[_m].min())
+            if _dur < config.STATUE_MIN_DURATION_S:
+                continue
+            _cx, _cy = float(np.median(x[_m])), float(np.median(y[_m]))
+            _rad = float(np.percentile(np.hypot(x[_m] - _cx, y[_m] - _cy), 95))
+            if _rad <= config.STATUE_MAX_RADIUS_M:
+                _statue |= _m
+        # Spot-dwell pass: fragmentation shatters a long stander into many
+        # short tracks the loop above can't see, so also flag any fine spatial
+        # cell holding an implausible cumulative dwell for THIS player.
+        _cell = config.STATUE_SPOT_CELL_M
+        _key = (np.clip((x / _cell).astype(int), 0, 10_000) * 100_000
+                + np.clip((y / _cell).astype(int), 0, 10_000))
+        _dts = np.concatenate([[float(np.median(dt)) if len(dt) else 0.2], dt])
+        _uniq, _inv = np.unique(_key, return_inverse=True)
+        _dwell = np.bincount(_inv, weights=_dts)
+        _hot = _dwell[_inv] >= config.STATUE_SPOT_DWELL_S
+        _statue |= _hot
+        if _statue.any():
+            log.warning(
+                "  stats: %s heatmap drops %d statue samples (%.0f%%) — "
+                "stationary track(s) parked %.1f+ min inside %.1f m",
+                pid, int(_statue.sum()), 100.0 * _statue.mean(),
+                config.STATUE_MIN_DURATION_S / 60.0, config.STATUE_MAX_RADIUS_M)
+
         # Heatmap grid in canonical coords: row 0 = our-net end, last row =
         # opponent-net end; col 0 .. last = consistent left → right. The UI
         # renders row 0 at the BOTTOM (our net).
         gh, gw = heatmap_grid_shape
+        _live = ~_statue
         grid = np.histogram2d(
-            d, w, bins=[gh, gw],
+            d[_live], w[_live], bins=[gh, gw],
             range=[[0, field_length_m], [0, field_width_m]],
         )[0].astype(int).tolist()
 
@@ -423,6 +469,13 @@ def compute_player_stats(
         # Coverage = fraction of the coach-logged minutes we actually tracked.
         # This is THE trust dial for the rate-based estimates below.
         coverage_frac = (tracked_min / coach_min) if coach_min > 0 else 0.0
+        # Measurement-only twin: coverage with statue steps excluded (a step
+        # counts as statue when BOTH endpoints are statue samples). See the
+        # PlayerStats field comment — nothing consumes these yet.
+        _step_statue = _statue[1:] & _statue[:-1]
+        _tracked_s_sa = float(dt[real & ~_step_statue].sum())
+        statue_frac = ((tracked_s - _tracked_s_sa) / tracked_s) if tracked_s > 0 else 0.0
+        coverage_statue_aware = ((_tracked_s_sa / 60.0) / coach_min) if coach_min > 0 else 0.0
         # Rate-based estimates (plan 4.4): scale per-tracked-minute rates to
         # coach-logged minutes. Two guards make the estimate honest:
         #   1. Absolute floor (>= 3 tracked min): below a sliver the rate itself
@@ -485,5 +538,7 @@ def compute_player_stats(
             sprint_threshold_ms=sprint_thr,
             coverage_frac=float(coverage_frac),
             dist_est_capped=bool(dist_est_capped),
+            coverage_frac_statue_aware=float(coverage_statue_aware),
+            statue_frac_of_tracked=float(statue_frac),
         ))
     return out

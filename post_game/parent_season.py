@@ -6,9 +6,9 @@ allowedUsers row. Content policy (coach's standing rules):
 
   * Outcome stats only — goals, assists, GK saves, minutes. No INV/mistake
     counts, no performance score, no distance/speed (retired family).
-  * The 12x8 heatmap ships per game only when tracking coverage clears
-    COVERAGE_HEATMAP_MIN — a family should see "–" rather than a
-    confidently-wrong map (coverage_frac trust dial: ≳0.5 solid, <0.25 sliver).
+  * The heatmap is the coach's TAGGED-positions map (click_stats), identical
+    to the dugout Analytics tab — never the automatic tracking grid. A game
+    the coach hasn't tagged shows "Not tagged yet", exactly like the dugout.
   * Every roster player gets a row per finished game, so absences render
     as the explicit "–" row the coach asked for (attended: false).
 
@@ -28,8 +28,13 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-# Below this tracked-coverage fraction the per-game heatmap is withheld.
-COVERAGE_HEATMAP_MIN = 0.30
+# DUGOUT PARITY (coach's call, 2026-08-18): the family heatmap IS the coach's
+# tagged-positions map (analytics click_stats — human-verified moments, KDE-
+# smoothed, the map the dugout Analytics tab shows). One heatmap source, the
+# best one. The automatic tracking grid (PlayerStats.heatmap_grid, statue-
+# cleaned) stays coach-side only and is NEVER published to families — the
+# coach judged it not good enough for parents. Games without tags show
+# "Not tagged yet", exactly like the dugout.
 
 
 def _first_name(name: Optional[str]) -> str:
@@ -54,6 +59,9 @@ def publish_parent_season(game_id: str, db: Optional[firestore.Client] = None) -
                .collection("analytics").document(config.ANALYTICS_DOC_VERSION).get())
     an = an_snap.to_dict() if an_snap.exists else {}
     pstats = {p.get("player_id"): p for p in (an.get("player_stats") or [])}
+    _cs = an.get("click_stats") or {}
+    _cshape = _cs.get("heatmap_shape") or [12, 8]
+    tagged = {p.get("player_id"): p for p in (_cs.get("players") or [])}
 
     goals: dict[str, int] = {}
     assists: dict[str, int] = {}
@@ -80,7 +88,11 @@ def publish_parent_season(game_id: str, db: Optional[firestore.Client] = None) -
         minutes = float(st.get("minutes_played") or 0.0)
         attended = bool(pid in squad or minutes > 0
                         or pid in goals or pid in assists or pid in saves)
-        coverage = float(st.get("coverage_frac") or 0.0)
+        # Statue-aware coverage when the analytics doc carries it (games
+        # re-run since 2026-08-18); raw coverage_frac as fallback for docs
+        # that predate the measurement fields.
+        _sa = st.get("coverage_frac_statue_aware")
+        coverage = float(_sa if _sa is not None else (st.get("coverage_frac") or 0.0))
         row: dict[str, Any] = {
             "gameId": game_id,
             "date": date,
@@ -98,12 +110,12 @@ def publish_parent_season(game_id: str, db: Optional[firestore.Client] = None) -
             "saves": saves.get(pid, 0),
             "coverage": round(coverage, 3),
         }
-        grid = st.get("heatmap_grid")
-        rows_n, cols_n = st.get("heatmap_grid_rows"), st.get("heatmap_grid_cols")
-        if attended and grid and rows_n and cols_n and coverage >= COVERAGE_HEATMAP_MIN:
-            row["heatmap"] = list(grid)
-            row["heatmapRows"] = int(rows_n)
-            row["heatmapCols"] = int(cols_n)
+        cp = tagged.get(pid)
+        if attended and cp and cp.get("heatmap"):
+            row["heatmap"] = list(cp["heatmap"])
+            row["heatmapRows"] = int(_cshape[0])
+            row["heatmapCols"] = int(_cshape[1])
+            row["tagged"] = int(cp.get("n_clicks") or 0)
 
         ref = team.collection("parentSeason").document(pid)
         snap = ref.get()
