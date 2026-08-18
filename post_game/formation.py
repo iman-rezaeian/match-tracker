@@ -33,12 +33,34 @@ class TeamTimeSeries:
     centroid_x_m: list[float]
 
 
-def _label_formation_outfield(xs: np.ndarray) -> str:
-    """Row-count label ("2-3-1") from 1-D depth values, defense row first.
+# Outfield counts for which a FOUR-row shape is worth considering: EXACTLY 8,
+# i.e. a real 9v9 board (9 on field, keeper excluded), where 3-2-2-1 and 2-3-2-1
+# are ordinary shapes. 7v7's 6 outfielders are never four banks.
+#
+# Deliberately an exact match rather than ">= 8": a board carrying MORE than 8
+# outfielders is not a bigger formation, it's a corrupt board — halftime-welded
+# tracklets put 10 players on one board in the real data, and treating those as
+# a four-row shape just relabels a known data bug. Measured: with ">= 8", two
+# real 7v7 boards (8 and 10 outfielders) changed label.
+FOUR_ROW_OUTFIELD = {8}
+# A 4th row always fits at least as well as 3 (more free parameters), so it must
+# pay for itself by a wide margin. Measured on synthetic boards: a GENUINE
+# 3-2-2-1 cuts within-row variance to 0.026 of the 3-row fit, while a flat
+# 8-player line reaches 0.44 and a true 3-3-2 reaches 0.67. Anything above this
+# cut is a 3-row shape being over-fitted.
+FOUR_ROW_MAX_COST_RATIO = 0.10
 
-    Rows are contiguous in depth, so the optimal 3-way split is found exactly
-    by trying every pair of split points (n is tiny) and keeping the minimum
-    within-row variance — deterministic, unlike the KMeans it replaced.
+
+def _label_formation_outfield(xs: np.ndarray) -> str:
+    """Row-count label ("2-3-1", or "3-2-2-1" at 9v9) from 1-D depth values,
+    defense row first.
+
+    Rows are contiguous in depth, so the optimal split for a given row count is
+    found exactly by trying every combination of split points (n is tiny) and
+    keeping the minimum within-row variance — deterministic, unlike the KMeans
+    it replaced. Three rows is the default; four is considered only when there
+    are enough outfielders for it to mean anything AND it fits materially
+    better (see FOUR_ROW_MIN_GAIN), because more rows can never fit worse.
     """
     n = len(xs)
     if n == 0:
@@ -56,6 +78,19 @@ def _label_formation_outfield(xs: np.ndarray) -> str:
             cost = _var_sum(v[:i]) + _var_sum(v[i:j]) + _var_sum(v[j:])
             if best is None or cost < best[0]:
                 best = (cost, (i, j - i, n - j))
+
+    if n in FOUR_ROW_OUTFIELD:
+        best4: tuple[float, tuple[int, int, int, int]] | None = None
+        for i in range(1, n - 2):
+            for j in range(i + 1, n - 1):
+                for k in range(j + 1, n):
+                    cost = (_var_sum(v[:i]) + _var_sum(v[i:j])
+                            + _var_sum(v[j:k]) + _var_sum(v[k:]))
+                    if best4 is None or cost < best4[0]:
+                        best4 = (cost, (i, j - i, k - j, n - k))
+        if best4 is not None and best4[0] <= best[0] * FOUR_ROW_MAX_COST_RATIO:
+            return "-".join(str(c) for c in best4[1])
+
     return "-".join(str(c) for c in best[1])
 
 

@@ -80,9 +80,13 @@ def render_public_audio(
     idx = 2
     for i, rt in enumerate(goal_rts):
         inputs += ["-i", roar_path]
-        ms = max(0, int((rt - lead_s) * 1000))   # lead: start the roar before the tap
-        # afade=in builds the roar over fade_s so a few seconds of timing slop is
-        # masked (crowd swelling), instead of a sharp hit at the wrong instant.
+        # `lead_s` shifts the roar EARLIER; a negative value therefore starts it
+        # after the goal, which is the shipped default — a crowd reacts a beat late.
+        # It was +7 s to mask not knowing when the goal happened, and that made the
+        # cheer arrive before the ball crossed; exact event times removed the need.
+        ms = max(0, int((rt - lead_s) * 1000))
+        # Short fade so this reads as a REACTION. A long build was the other half of
+        # the old slop-hiding and made the early start even more audible.
         filt.append(f"[{idx}:a]afade=t=in:d={fade_s},adelay={ms}|{ms},volume={roar_db}dB[g{i}]")
         mix_labels.append(f"[g{i}]")
         idx += 1

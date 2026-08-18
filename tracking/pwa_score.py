@@ -51,11 +51,18 @@ def _now_ms() -> int:
 
 
 # --- EVENT_TYPES (non-silent ids only) — mirrors the jsx map ---------------
+# The JS side derives this from EVENT_TYPES itself (`!def.silent`), so it picks
+# up new event types for free; this copy has to be kept in step by hand. Keep it
+# ordered like the jsx map and re-check on every event-type addition —
+# PEN_MISSED / OPP_PEN_MISSED were missed here, which under-counted Involvement
+# on every game containing one and shifted the squad INV prior for everyone
+# else. post_game/test_score_mirror.py fails if the two ever diverge again.
 KNOWN_NONSILENT_EVENTS = frozenset({
     "GOAL", "ASSIST", "KEY_PASS", "SAVE", "SHOT_ON", "SHOT_OFF", "BLOCK",
     "BALL_WIN", "CLEAR", "KICK_OUT", "DUEL_WIN", "DUEL_LOSE", "GIVE_GO",
     "GATES", "TURNOVER", "HOLDS_BALL", "OPP_GOAL",
     "FOUL_BY", "FOUL_ON", "PEN_CONCEDED", "PEN_AWARDED",
+    "PEN_MISSED", "OPP_PEN_MISSED",
 })
 
 # v2: mistake events already priced in DEF/DEC earn no Involvement credit.
@@ -64,6 +71,31 @@ INV_EXCLUDED = frozenset({"TURNOVER", "DUEL_LOSE", "FOUL_BY"})
 # Pressure multiplier (plan 4.3): positive DEC-pillar actions under pressure are
 # scaled by PRESSURE_DEC_MULT. Mirrors soccer_team_app.jsx exactly.
 PRESSURE_DEC_MULT = 1.5
+
+# DISCRETIONARY event types per pillar — the ones whose count reflects how much
+# the coach was tapping rather than what happened. Mirrors PILLAR_TYPES in
+# soccer_team_app.jsx seasonScores.
+#
+# ⚠ Outcome events (GOAL, ASSIST, SHOT_*, SAVE, PEN_*, own goals) are deliberately
+# ABSENT. Measured over 12 games: SAVE is logged in 11/12 with stdev 2.3 because it
+# tracks opponent shots, while DUEL_WIN is ZERO in 8/12 with stdev 6.7 because it
+# tracks the coach's attention. Including saves inflated the keeper's DEF rate 3.6x
+# (44 saves over 88 weighted minutes instead of 313) and doubled his overall score.
+PILLAR_EVENT_TYPES: dict[str, frozenset[str]] = {
+    "atk": frozenset({"KEY_PASS", "FOUL_ON"}),
+    "def": frozenset({"BLOCK", "BALL_WIN", "CLEAR", "KICK_OUT",
+                      "DUEL_WIN", "DUEL_LOSE", "FOUL_BY"}),
+    "dec": frozenset({"GIVE_GO", "GATES", "HOLDS_BALL", "TURNOVER"}),
+}
+
+# Minimum weight a game's minutes keep for a pillar, however thin its logging.
+# Without a floor, a player who only ever appeared in barely-logged games would
+# get a near-zero denominator and an explosive rate. Mirrors LOG_FLOOR in the jsx.
+LOG_COVERAGE_FLOOR = 0.15
+
+# Share of each pillar's POINTS that comes from discretionary events, so only that
+# share of the exposure may be discounted. Mirrors DISCRETIONARY_SHARE in the jsx.
+DISCRETIONARY_SHARE = {"atk": 0.15, "def": 0.5, "dec": 0.85, "inv": 0.5}
 
 SCORING_VERSION = 2
 
@@ -417,14 +449,45 @@ def season_score(player_id: str, finished_games: list[dict],
     W = merge_weights(weights)
     M = max(0.0, float(W["shrinkMinutes"]))
     squad = roster if roster else ([roster_player] if roster_player else [{"id": player_id}])
+
+    # Per-pillar LOGGING WEIGHT — mirrors StatsView.seasonScores. The coach taps
+    # while coaching, so logging intensity swings hugely between games (measured
+    # over 12 games: 95 -> 18 action events/game; the DEF share of them 60% -> 3%).
+    # Dividing each pillar by ALL minutes played diluted it toward zero on the
+    # games he was too busy to tap. Each pillar now divides by the minutes that
+    # actually carried logging FOR THAT PILLAR.
+    log: dict[str, dict[str, float]] = {}
+    for g in finished_games:
+        counts = {k: 0 for k in PILLAR_EVENT_TYPES}
+        for e in (g.get("events") or []):
+            for k, types in PILLAR_EVENT_TYPES.items():
+                if e.get("type") in types:
+                    counts[k] += 1
+        team_min = sum(player_seconds(p["id"], g) for p in squad) / 60
+        base = max(team_min, 1.0)
+        row_log = {k: counts[k] / base for k in PILLAR_EVENT_TYPES}
+        row_log["inv"] = sum(counts.values()) / base
+        log[id(g)] = row_log
+    peak = {k: max((v[k] for v in log.values()), default=0.0)
+            for k in ("atk", "def", "dec", "inv")}
+
+    def _lw(g: dict, k: str) -> float:
+        v = log.get(id(g))
+        if not v or not peak[k] > 0:
+            return 1.0
+        cov = max(LOG_COVERAGE_FLOOR, min(1.0, v[k] / peak[k]))
+        s = DISCRETIONARY_SHARE[k]
+        return (1 - s) + s * cov
+
     sums: dict[str, dict] = {}
     squad_tot = {"atk": 0.0, "def": 0.0, "dec": 0.0, "inv": 0.0}
-    squad_min = 0.0
+    squad_min = {"atk": 0.0, "def": 0.0, "dec": 0.0, "inv": 0.0}
     for g in finished_games:
         w = _type_weight(g, W)
         if not w > 0:
             continue
         ev = g.get("events") or []
+        lw = {k: _lw(g, k) for k in ("atk", "def", "dec", "inv")}
         for p in squad:
             pid = p["id"]
             sec = player_seconds(pid, g)
@@ -435,27 +498,33 @@ def season_score(player_id: str, finished_games: list[dict],
             gx = gk_extras_for_game(pid, g) if sgk else None
             f = min(1.0, ((gx or {}).get("secondsAsGK") or 0) / sec) if (sgk and sec > 0) else 0
             pts = pillar_points(pid, ev, f, gx, W)
-            row = sums.setdefault(pid, {"atk": 0.0, "def": 0.0, "dec": 0.0, "inv": 0.0,
-                                        "wmin": 0.0, "wgkmin": 0.0})
+            row = sums.setdefault(pid, {
+                "atk": 0.0, "def": 0.0, "dec": 0.0, "inv": 0.0,
+                "wmin": {"atk": 0.0, "def": 0.0, "dec": 0.0, "inv": 0.0},
+                "rawMin": 0.0, "wgkmin": 0.0})
             for k in ("atk", "def", "dec", "inv"):
                 row[k] += w * pts[k]
-            row["wmin"] += w * minutes
+                row["wmin"][k] += w * minutes * lw[k]
+            row["rawMin"] += w * minutes
             row["wgkmin"] += w * minutes * f
             pop = pillar_points(pid, ev, 0, None, W)
             for k in ("atk", "def", "dec", "inv"):
                 squad_tot[k] += w * pop[k]
-            squad_min += w * minutes
+                squad_min[k] += w * minutes * lw[k]
     row = sums.get(player_id)
-    if not row or row["wmin"] <= 0:
+    if not row or row["rawMin"] <= 0:
         return None
-    sq_ph = max(squad_min, 1.0) / 20
-    squad_rates = {k: v / sq_ph for k, v in squad_tot.items()}
-    rate = lambda p, sq: (p + (M / 20) * sq) / ((row["wmin"] + M) / 20)
-    attacking = rate(row["atk"], squad_rates["atk"])
-    defending = rate(row["def"], squad_rates["def"])
-    decisions = rate(row["dec"], squad_rates["dec"])
-    involvement = rate(row["inv"], squad_rates["inv"])
-    f = min(1.0, row["wgkmin"] / row["wmin"])
+    squad_rates = {k: squad_tot[k] / (max(squad_min[k], 1.0) / 20)
+                   for k in ("atk", "def", "dec", "inv")}
+
+    def rate(p: float, sq: float, wmin: float) -> float:
+        return (p + (M / 20) * sq) / ((wmin + M) / 20)
+
+    attacking = rate(row["atk"], squad_rates["atk"], row["wmin"]["atk"])
+    defending = rate(row["def"], squad_rates["def"], row["wmin"]["def"])
+    decisions = rate(row["dec"], squad_rates["dec"], row["wmin"]["dec"])
+    involvement = rate(row["inv"], squad_rates["inv"], row["wmin"]["inv"])
+    f = min(1.0, row["wgkmin"] / row["rawMin"])
     PO, PG = W["pillars"]["outfield"], W["pillars"]["gk"]
     pil = {k: PO[k] + f * (PG[k] - PO[k]) for k in ("atk", "def", "dec", "inv")}
     overall = (pil["atk"] * attacking + pil["def"] * defending
@@ -466,8 +535,12 @@ def season_score(player_id: str, finished_games: list[dict],
         "defending": js_round1(defending),
         "decisions": js_round1(decisions),
         "involvement": js_round1(involvement),
-        "_minutes": js_round_int(row["wmin"]),
-        "_weighted_minutes": round(row["wmin"], 1),
+        "coverage": {k: js_round1(100 * row["wmin"][k] / max(row["rawMin"], 1.0))
+                     for k in ("atk", "def", "dec")},
+        "_minutes": js_round_int(row["rawMin"]),
+        "_weighted_minutes": round(row["rawMin"], 1),
+        "_logging_weighted_minutes": {k: round(row["wmin"][k], 1)
+                                      for k in ("atk", "def", "dec", "inv")},
         "_gk_fraction": round(f, 4),
         "_was_gk_any": f > 0,
     }

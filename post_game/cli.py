@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -28,6 +29,12 @@ def run(
     reuse_tv_reel: bool = typer.Option(False, "--reuse-tv-reel", help="Reuse an already-rendered outputs/<game>/tv_view/tv_reel.mp4 instead of re-rendering it (the multi-hour part). Implies --tv-view. Use to recover a run that died after the reel rendered but before uploads/analytics. Auto-highlights still render fresh."),
     stats_only: bool = typer.Option(False, "--stats-only", help="Re-apply FIX-IDS overrides and recompute ONLY the identity-dependent analytics (player_stats, formation, field_tilt, tracklets, identity_assignments), then MERGE them into the existing doc. Leaves the reel, audio, broadcast index, and all public fields untouched — no re-render, no re-upload. Fast (~1-2 min/game)."),
     skip_calibration_qc: bool = typer.Option(False, "--skip-calibration-qc", help="OVERRIDE: run even if the calibration-quality gate would block (poor RMS, implausible/inconsistent width). Downgrades the hard block to a warning. Use only for a legitimately-odd field you've verified by hand."),
+    # Tri-state on purpose: None = follow config.VLM_IDENTITY (now ON), and
+    # --vlm-identity / --no-vlm-identity force it either way. Declaring this as
+    # `bool = Option(False, ...)` passed False on every run that didn't name the
+    # flag, which silently overrode the config default and made turning it on
+    # impossible except per-invocation.
+    vlm_identity: Optional[bool] = typer.Option(None, "--vlm-identity/--no-vlm-identity", help="Read each tracklet's jersey number with a VLM and write per-tracklet identity SUGGESTION drafts to game.identityDrafts (the PWA FIX-IDS Accept chips). Keyed by THIS run's tracklet ids so they match the analytics doc. ON by default (lifts naming from ~5% to ~35% of tracked time for ~9 min); needs the raw video + an Opus-capable ANTHROPIC_OAUTH_TOKEN (ant auth). Suggestions only — never auto-applied."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the Tier A pipeline on a single finished game."""
@@ -51,12 +58,12 @@ def run(
         reuse_tv_reel=reuse_tv_reel,
         stats_only=stats_only,
         skip_calibration_qc=skip_calibration_qc,
+        vlm_identity=vlm_identity,
     )
     console.print_json(json.dumps({
         "game_id": game_id,
         "players_analyzed": len(analytics.get("player_stats", [])),
         "clips": analytics.get("clip_count", 0),
-        "gk_events": len(analytics.get("gk_positions", [])),
         "tv_reel": (analytics.get("tv_reel") or {}).get("r2_url") or None,
         "auto_highlights": (analytics.get("auto_highlights") or {}).get("r2_url") or None,
     }))
@@ -285,12 +292,26 @@ def calibrate(
         map_length_m=map_length, field_key=field_key,
     )
     gs = payload.get("ground_similarity", {}) if payload else {}
+    # `rms_weighted_m` was reported here for a long time but NOTHING ever wrote
+    # it, so the field always printed null (accuracy-audit B6). Report what the
+    # solve genuinely produces instead: the level-fit RMS before the tilt solve
+    # and the RMS after, which together show whether solving camera pitch/roll
+    # actually helped, plus the worst single reference point — a near-zero mean
+    # RMS can still hide one badly-placed far-side point, and that point is
+    # where field-position error is largest.
+    resid = gs.get("residuals") or []
+    worst = max(resid, key=lambda r: r.get("err_m") or 0.0) if resid else None
     console.print_json(json.dumps({
         "game_id": game_id,
         "calibration_saved": bool(payload),
         "reference_points": len(payload.get("reference_points", [])) if payload else 0,
+        "solver": gs.get("solver"),
         "rms_m": gs.get("rms_m"),
-        "rms_weighted_m": gs.get("rms_weighted_m"),
+        "rms_level_m": gs.get("rms_level_m"),
+        "camera_pitch_deg": payload.get("camera_pitch_deg") if payload else None,
+        "camera_roll_deg": payload.get("camera_roll_deg") if payload else None,
+        "worst_point": worst.get("key") if worst else None,
+        "worst_point_err_m": round(worst["err_m"], 3) if worst else None,
     }))
 
 

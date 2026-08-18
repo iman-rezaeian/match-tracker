@@ -324,7 +324,8 @@ def _format_row(r: dict) -> str:
     score = f"{r['our_score']}-{r['opp_score']}"
     flags = "".join([
         "🎥" if r["has_video"] else "  ",
-        "⏱" if r.get("has_video_offset") else "  ",
+        # ⏱ only when BOTH half kickoffs are confirmed (the Run-Analysis gate).
+        "⏱" if (r.get("video_offset_h1_confirmed") and r.get("video_offset_h2_confirmed")) else "  ",
         "📐" if r["has_calibration"] else "  ",
         "📊" if r["has_analytics"] else "  ",
     ])
@@ -439,7 +440,7 @@ if not rows:
     st.warning("No games found.")
     st.stop()
 
-st.markdown("**Legend**: 🎥 video attached · ⏱ 1st-half kickoff set · 📐 calibrated · 📊 analytics ran")
+st.markdown("**Legend**: 🎥 video attached · ⏱ both kickoffs confirmed · 📐 calibrated · 📊 analytics ran")
 labels = [_format_row(r) for r in rows]
 idx = st.radio("Pick a game", range(len(rows)), format_func=lambda i: labels[i])
 game = rows[idx]
@@ -542,7 +543,7 @@ if _preview_path is not None:
         # Estimate auto-derived H2 to use as default seek for the player.
         _h1_for_seek = float(game.get("video_offset_h1_kickoff_s") or 0.0)
         _h2_auto_guess = max(
-            _h1_for_seek + float(game.get("half_length_min") or 30) * 60 + 300.0,
+            _h1_for_seek + float(game.get("half_length_min") or 25) * 60 + 300.0,
             _h1_for_seek + 60.0,
         )
         _start_at = int(_h2_auto_guess) if _h1_for_seek > 0 else 0
@@ -595,49 +596,106 @@ else:
     st.caption("(Attach a video above to enable the inline scrub preview.)")
 
 current_offset = float(game.get("video_offset_h1_kickoff_s") or 0.0)
+_h1_confirmed = bool(game.get("video_offset_h1_confirmed"))
+st.caption(("\u2705 1st-half kickoff CONFIRMED" if _h1_confirmed
+            else "\u26a0\ufe0f 1st-half kickoff NOT confirmed \u2014 required before Run Analysis"))
 offset_str = st.text_input(
     "1st-half kickoff timestamp in the source video",
     value=_seconds_to_hms(current_offset) if current_offset else "",
     placeholder="00:01:23  or  83",
-    help="Where in the recording the ref blew the 1st-half kickoff whistle.",
+    help="Where in the recording the ref blew the 1st-half kickoff whistle. "
+         "Enter 0 (or leave blank) if the video starts exactly at the whistle \u2014 "
+         "then Confirm. Confirmation is mandatory: this anchors every player's minutes.",
 )
-
-if st.button("Save kickoff offset", disabled=is_running or not offset_str.strip()):
+_h1_zero_ack = st.checkbox(
+    "The video really does start at the kickoff whistle (0:00)",
+    key="h1_zero_ack",
+    help="Only tick this if you have scrubbed to 0:00 and the whistle is there. "
+         "Leaving the box blank used to confirm 0.0 silently — that is how the "
+         "Caboto game shipped with a 33-second clip misalignment.",
+)
+if st.button("Confirm 1st-half kickoff", disabled=is_running):
     try:
-        seconds = _parse_offset_str(offset_str)
+        if not offset_str.strip():
+            # ⚠ A BLANK box must not mean "kickoff at 0:00". That is exactly how
+            # mri01pvelv46d got videoOffsetH1KickoffS=0.0 marked CONFIRMED while
+            # its same-day sibling had 40.9: every highlight clip was then cut
+            # 7-33 s before the goal it was supposed to show. Require an explicit
+            # acknowledgement for the one legitimate zero case.
+            if not _h1_zero_ack:
+                raise ValueError(
+                    "Enter the kickoff timestamp, or tick the box above to state "
+                    "that the video genuinely starts at the whistle.")
+            seconds = 0.0
+        else:
+            seconds = _parse_offset_str(offset_str)
         if seconds < 0:
             raise ValueError("Offset must be non-negative.")
-        firestore_io.set_video_offset_h1_kickoff_s(game_id, seconds)
-        st.success(f"\u2713 1st-half kickoff @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
+        firestore_io.set_video_offset_h1_kickoff_s(game_id, seconds, confirmed=True)
+        st.success(f"\u2713 1st-half kickoff CONFIRMED @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
         _list_games.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Bad timestamp: {e}")
 
-# Optional 2nd-half kickoff override (when the "start 2nd half" button was
-# pressed late, etc.). Leave blank / 0 to fall back to the wallclock-derived
-# H2 start.
+# 2nd-half kickoff \u2014 MANDATORY confirm. Either enter a timestamp override, or
+# accept the wallclock-auto-derived H2 start. Either way the coach must confirm.
 current_h2_offset = float(game.get("video_offset_h2_kickoff_s") or 0.0)
+_h2_confirmed = bool(game.get("video_offset_h2_confirmed"))
+# auto-derived H2 start (what half_windows would use when no override): shown so
+# the coach can accept it rather than eyeball a timestamp.
+_h2_auto = None
+try:
+    from post_game.identity import half_windows as _half_windows
+    _g = firestore_io.get_game(game_id)
+    # half_windows clamps to the video length; a generous duration is fine here
+    # (we only want the auto-derived H2 START for display).
+    _hw = _half_windows(_g, 1e9)
+    _h2_auto = _hw[1][0] if _hw and len(_hw) > 1 else None
+except Exception:
+    _h2_auto = None
+st.caption(("\u2705 2nd-half kickoff CONFIRMED" if _h2_confirmed
+            else "\u26a0\ufe0f 2nd-half kickoff NOT confirmed \u2014 required before Run Analysis"))
+if _h2_auto is not None:
+    st.caption(f"Auto-derived 2nd-half kickoff: {_seconds_to_hms(_h2_auto)} ({_h2_auto:.0f}s) "
+               "\u2014 accept it, or enter an override below.")
 h2_offset_str = st.text_input(
-    "2nd-half kickoff timestamp in the source video (optional override)",
+    "2nd-half kickoff timestamp in the source video (blank = accept auto-derived)",
     value=_seconds_to_hms(current_h2_offset) if current_h2_offset else "",
     placeholder="00:39:12  or  2352",
-    help="Override when 'start 2nd half' was pressed late. Leave blank to auto-derive from halftime wallclock.",
+    help="Enter the H2 kickoff timestamp to OVERRIDE, or leave blank to accept the "
+         "auto-derived value shown above. Either way, Confirm \u2014 it's mandatory.",
 )
-if st.button("Save 2nd-half kickoff override", disabled=is_running):
+_c1, _c2 = st.columns(2)
+if _c1.button("Confirm 2nd-half kickoff (override)", disabled=is_running or not h2_offset_str.strip()):
     try:
-        seconds = _parse_offset_str(h2_offset_str) if h2_offset_str.strip() else 0.0
+        seconds = _parse_offset_str(h2_offset_str)
         if seconds < 0:
             raise ValueError("Offset must be non-negative.")
-        firestore_io.set_video_offset_h2_kickoff_s(game_id, seconds)
-        if seconds > 0:
-            st.success(f"\u2713 2nd-half kickoff override @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
-        else:
-            st.success("\u2713 Cleared 2nd-half override (back to auto-derived)")
+        firestore_io.set_video_offset_h2_kickoff_s(game_id, seconds, confirmed=True)
+        st.success(f"\u2713 2nd-half kickoff CONFIRMED (override) @ {_seconds_to_hms(seconds)} ({seconds:.1f}s)")
         _list_games.clear()
         st.rerun()
     except Exception as e:
         st.error(f"Bad timestamp: {e}")
+_accept_auto = _c2.button("Confirm auto-derived 2nd-half", disabled=is_running)
+if _accept_auto and current_h2_offset and not st.session_state.get("_h2_drop_ok"):
+    # This clears a manual override, and H2's offset anchors every player's
+    # on-field window for the half \u2014 so make discarding one deliberate rather
+    # than a mis-tap on the button next door.
+    st.session_state["_h2_drop_ok"] = True
+    st.warning(
+        f"This DISCARDS the saved 2nd-half override "
+        f"({_seconds_to_hms(current_h2_offset)}) and falls back to the "
+        f"auto-derived kickoff. Press the button again to confirm."
+    )
+elif _accept_auto:
+    # accept the auto-derived H2 (clear any override \u2192 0) and mark confirmed
+    firestore_io.set_video_offset_h2_kickoff_s(game_id, 0.0, confirmed=True)
+    st.session_state.pop("_h2_drop_ok", None)
+    st.success("\u2713 2nd-half kickoff CONFIRMED (auto-derived)")
+    _list_games.clear()
+    st.rerun()
 
 # Show derived boundaries so the user can sanity-check
 if current_offset > 0:
@@ -700,8 +758,15 @@ if _existing_cal:
         _prior = firestore_io.get_field_scale(_fk) if _fk else None
         _calib_verdict = evaluate_calibration(_raw, _prior)
         _calib_ok = _calib_verdict.ok
-    except Exception:
-        _calib_ok, _calib_verdict = True, None
+    except Exception as _e:
+        # Fail CLOSED. The point of this gate is that the coach never has to ask
+        # a developer whether a calibration is good enough to run; defaulting to
+        # "fine" on an evaluator error hands him exactly that judgement call,
+        # silently. The pipeline blocks independently, so the worst case here is
+        # a run refused at the UI that the CLI would also have refused.
+        _calib_ok, _calib_verdict = False, None
+        st.warning(f"Could not evaluate calibration quality ({_e}). "
+                   "Re-calibrate, or run from the CLI with --skip-calibration-qc.")
     _when = f" · saved {_saved_ts}" if _saved_ts else ""
     _sph = _existing_cal.sphere
     if _sph:
@@ -836,6 +901,15 @@ run_cols = st.columns([1, 1, 2])
 # so this is the standing default for a normal game.
 tv_view = run_cols[0].checkbox("--tv-view (broadcast + auto-highlights)", value=True)
 verbose = run_cols[1].checkbox("Verbose logs", value=False)
+# Default ON: read each tracklet's jersey number with a VLM and write per-tracklet
+# identity SUGGESTION drafts (the FIX PLAYER IDS Accept chips). Keyed to THIS run's
+# tracklets so they match. Needs `ant auth login` once for Opus; auto-mints the
+# token and skips silently if unavailable, so a normal run never breaks on it.
+vlm_identity = run_cols[2].checkbox(
+    "--vlm-identity (jersey-number ID suggestions)", value=True,
+    help="Reads each player's jersey number with Opus and pre-fills the FIX PLAYER IDS "
+         "Accept chips. Suggestions only — never auto-applied. Adds a few min of VLM calls; "
+         "needs `ant auth login` once (skips cleanly if not set up).")
 
 smoke_cols = st.columns([1, 1, 1, 1])
 smoke_test = smoke_cols[0].checkbox(
@@ -864,11 +938,24 @@ if not current_video:
 if not game["has_calibration"]:
     st.warning("Game has no calibration — calibrate first (step 2) or the pipeline will fail.")
 
+# Hard-block: both half kickoffs must be marked AND confirmed by the coach —
+# the offsets anchor every player's on-field window / minutes; an unconfirmed
+# (silent default-0) offset shifts everyone. Same verdict the pipeline enforces.
+_kick_ok = bool(game.get("video_offset_h1_confirmed")) and bool(game.get("video_offset_h2_confirmed"))
+if not _kick_ok:
+    _need = []
+    if not game.get("video_offset_h1_confirmed"):
+        _need.append("1st-half")
+    if not game.get("video_offset_h2_confirmed"):
+        _need.append("2nd-half")
+    st.warning(f"🚫 Confirm the {' & '.join(_need)} kickoff in step 1.5 before running "
+               "— it anchors every player's minutes / on-field time.")
+
 # Hard-block: don't let the coach launch a multi-hour track on a calibration
 # that fails the quality gate. `_calib_ok` is the SAME verdict the pipeline
 # enforces (defense in depth); its block reasons are already shown above.
 if st.button("▶︎ Run analytics", type="primary",
-             disabled=not current_video or is_running or not _calib_ok):
+             disabled=not current_video or is_running or not _calib_ok or not _kick_ok):
     args = ["run", "--game-id", game_id]
     if tv_view:
         args.append("--tv-view")
@@ -882,6 +969,8 @@ if st.button("▶︎ Run analytics", type="primary",
         args.append("--skip-clips")
     if skip_upload:
         args.append("--skip-upload")
+    if vlm_identity:
+        args.append("--vlm-identity")
     _start_subprocess("run", game_id, args)
     st.rerun()
 

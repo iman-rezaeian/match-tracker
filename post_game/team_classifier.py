@@ -103,6 +103,47 @@ def _median_hsv(stacked: np.ndarray) -> np.ndarray:
                     dtype=np.float32)
 
 
+def classify_from_kit_votes(
+    tracks_df: pd.DataFrame,
+    kit_votes: dict[int, tuple[int, int]],
+    min_votes: int = 3,
+    min_margin: float = 0.60,
+) -> dict[int, int]:
+    """Team per track from per-detection kit-hue votes taken during tracking.
+
+    `kit_votes` maps track_id -> (n_our, n_opp), accumulated by
+    `tracking_pitch._det_kit_color` while the video frame was in hand.
+
+    Why this exists instead of the HSV path below: `sample_jersey_hsv` drops
+    pixels in the grass band (35<=H<=85, S>60, V>50) and our kit #16a34a is
+    H71 S221 — inside it — while the opponent's #2563eb is H110, outside. The
+    filter is asymmetric by construction, so it deletes exactly one team's
+    defining pixels and the classifier then splits 3.9:1 where the two teams must
+    come out ~1:1 (true of any format — both sides field the same count).
+    Deciding by which kit hue the torso is NEARER needs no grass drop at all;
+    measured on the same frames it splits 1.11:1 (8 ours / 7 opp per frame).
+
+    A track needs `min_votes` decisive detections and a `min_margin` majority;
+    anything weaker returns -1 (unknown) rather than guessing, so an ambiguous
+    track is excluded rather than handed to the wrong team.
+    """
+    out: dict[int, int] = {}
+    for tid in sorted(set(int(t) for t in tracks_df["track_id"].unique())):
+        n_our, n_opp = kit_votes.get(tid, (0, 0))
+        total = n_our + n_opp
+        if total < min_votes:
+            out[tid] = -1
+            continue
+        frac = n_our / total
+        if frac >= min_margin:
+            out[tid] = 0
+        elif (1.0 - frac) >= min_margin:
+            out[tid] = 1
+        else:
+            out[tid] = -1
+    return out
+
+
 def classify_tracks(
     tracks_df: pd.DataFrame,
     track_jersey_samples: dict[int, list[np.ndarray]],

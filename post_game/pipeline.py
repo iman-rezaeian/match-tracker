@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 
 from . import config, firestore_io
+from .adult_filter import drop_sideline_adults
 from .calibration import (
     FieldProjector,
     aim_from_calibration,
@@ -22,7 +23,9 @@ from .calibration import (
 from .detection import Detector
 from .formation import compute_formation
 from .highlights import extract_clips
-from .identity import assign_identities, half_windows, period_clock_to_video_time_factory, _onfield_intervals
+from .identity import (assign_identities, half_windows,
+                       period_clock_to_video_time_factory,
+                       video_time_to_period_clock_factory, _onfield_intervals)
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tracklet_thumbs import generate_tracklet_thumbnails
@@ -49,6 +52,7 @@ def run(
     stats_only: bool = False,
     pin_partition: tuple[dict[int, int], dict[int, int]] | None = None,
     skip_calibration_qc: bool = False,
+    vlm_identity: bool | None = None,
 ) -> dict:
     """Run the full Tier A pipeline on one game. Returns the analytics dict
     written to Firestore.
@@ -105,6 +109,24 @@ def run(
                 )
         else:
             log.info("Calibration QC: %s", _verdict.summary().splitlines()[0])
+
+        # 1b. Kickoff-confirmation gate. Every on-field window (and thus minutes,
+        # distance, formation, identity budget) is anchored on the H1/H2 kickoff
+        # offsets. An UNconfirmed offset is likely a silent default 0 that shifts
+        # every player's window (a bench player reads as on-field, etc.). Require
+        # the coach to have deliberately confirmed BOTH halves in calibration.
+        # Same --skip-calibration-qc override; stats-only exempt (reuses cache).
+        _missing = [h for h, ok in (("1st", game.video_offset_h1_confirmed),
+                                    ("2nd", game.video_offset_h2_confirmed)) if not ok]
+        if _missing:
+            _msg = (f"Kickoff not confirmed for the {' & '.join(_missing)} half. "
+                    "Mark + confirm both kickoffs in the calibration step "
+                    "(their offsets anchor every player's on-field time / minutes) "
+                    "or pass --skip-calibration-qc to override.")
+            if skip_calibration_qc:
+                log.warning("Kickoff-confirmation gate: %s (overridden)", _msg)
+            else:
+                raise RuntimeError(_msg)
 
     # Stats-only refresh runs entirely off the cached tracks checkpoint, so the
     # (possibly long-deleted) source video is never needed — synthesize the bits
@@ -164,6 +186,10 @@ def run(
              play_windows[0][0], play_windows[0][1],
              play_windows[1][0], play_windows[1][1])
     h1_end_s = play_windows[0][1]
+    # The coach-derived break, captured BEFORE smoke mode overwrites the windows
+    # below — the halftime split hints its detector with this, and the smoke
+    # windows would be a nonsense hint.
+    logged_break_s = (play_windows[0][1], play_windows[1][0]) if len(play_windows) > 1 else None
 
     # Smoke-test mode: keep a window of `max_play_s` seconds centered on the
     # MIDDLE of each half. Sampling from the middle catches active play
@@ -229,12 +255,15 @@ def run(
     tracks_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.parquet"
     jersey_ckpt = ckpt_dir / f"jersey_samples{ckpt_suffix}.npz"
     emb_ckpt = ckpt_dir / f"embeddings{ckpt_suffix}.npz"
+    prov_ckpt = ckpt_dir / f"tracks_raw{ckpt_suffix}.provenance.json"
+    votes_ckpt = ckpt_dir / f"kit_votes{ckpt_suffix}.npz"
 
     # A pinned-partition refresh skips classify+stitch, so the (multi-GB,
     # often-deleted) jersey npz isn't needed — only tracks_raw is.
     if tracks_ckpt.exists() and (jersey_ckpt.exists() or pin_partition is not None):
         import pandas as pd
         log.info("Stage 2/6: loading cached tracks from %s", tracks_ckpt)
+        _check_tracks_provenance(prov_ckpt, tracks_ckpt)
         tracks_df = pd.read_parquet(tracks_ckpt)
         if jersey_ckpt.exists():
             with np.load(jersey_ckpt, allow_pickle=True) as nz:
@@ -250,10 +279,49 @@ def run(
             with np.load(emb_ckpt, allow_pickle=True) as nz:
                 track_embeddings = {int(k): np.asarray(nz[k], dtype=np.float32) for k in nz.files}
             log.info("  -> loaded Re-ID embeddings for %d tracks", len(track_embeddings))
+        # Kit-hue votes (sidecar; absent on caches taken before kit voting →
+        # classification falls back to the jersey-HSV path).
+        kit_votes: dict[int, tuple[int, int]] = {}
+        if votes_ckpt.exists():
+            with np.load(votes_ckpt) as nz:
+                kit_votes = {int(k): (int(nz[k][0]), int(nz[k][1])) for k in nz.files}
+            log.info("  -> loaded kit votes for %d tracks", len(kit_votes))
     else:
         detector = Detector()
         tracker = _new_tracker()
         current_half = 1
+
+        # Per-track kit-hue tally: track_id -> (n_our, n_opp). Filled from the
+        # video frame during tracking; consumed by classify_from_kit_votes.
+        kit_votes: dict[int, tuple[int, int]] = {}
+        # Raw torso VALUES per detection, kept only for the value axis so the kit
+        # anchors can be fitted to the footage after the pass (see the
+        # fit_value_anchors call below). A hex is the fabric in a swatch; a black
+        # kit in sunlight photographs at V150-200, not its nominal V10, and on
+        # the value axis that gap is the whole decision.
+        kit_value_samples: dict[int, list[float]] = {}
+        _kit_vote_on = config.KIT_VOTE_ENABLED and bool(game.away_color)
+        if _kit_vote_on:
+            from .kit_vote import hex_to_hsv, pick_axis, torso_roi, vote_detection
+            _our_hex, _opp_hex = _our_color(game), game.away_color
+            # The team owns a green kit and a black one, and they need different
+            # discriminators: green separates from a blue opponent by HUE, black
+            # from a white/grey one only by BRIGHTNESS (S0 — it has no hue). The
+            # axis is chosen from the two anchors so both regimes work.
+            _kit_axis = pick_axis(_our_hex, _opp_hex)
+            log.info("  kit vote ON: ours %s %s vs opp %s %s — deciding on %s",
+                     _our_hex, tuple(int(v) for v in hex_to_hsv(_our_hex)),
+                     _opp_hex, tuple(int(v) for v in hex_to_hsv(_opp_hex)),
+                     _kit_axis.upper())
+        elif config.KIT_VOTE_ENABLED:
+            log.warning("  kit vote OFF: game has no awayColor to compare against")
+
+        # Opponent pre-filter accounting (see the 2a block below). Logged after
+        # the pass so a run that quietly filtered nothing — or filtered far too
+        # much — is visible rather than inferred from downstream weirdness.
+        n_dropped_opp = 0
+        n_dropped_off = 0
+        n_kept_after_filter = 0
 
         all_tracks: list[TrackedDetection] = []
         track_jersey_samples: dict[int, list[np.ndarray]] = {}
@@ -329,6 +397,45 @@ def run(
                 dets, projector, config.DETECT_TILE_DEDUPE_M,
             )
 
+            # 2a0. OFF-FIELD PRE-FILTER — the stage-3b test, moved before the
+            # tracker. Runs FIRST because it is pure geometry on coordinates we
+            # already have, so it shrinks the set the (pixel-reading) kit vote
+            # below has to process. Same +-1.5 m buffer as stage 3b, so the two
+            # agree and 3b becomes a no-op on whatever this already removed.
+            if config.TRACK_DROP_OFFFIELD and dets:
+                _feet = np.array([[(d.bbox_eq[0] + d.bbox_eq[2]) / 2.0, d.bbox_eq[3]]
+                                  for d in dets], dtype=np.float64)
+                _xy = projector.pixel_to_field_batch(_feet)
+                _L, _W = field_cal.length_m, field_cal.width_m
+                _ok = ((_xy[:, 0] >= -1.5) & (_xy[:, 0] <= _L + 1.5)
+                       & (_xy[:, 1] >= -1.5) & (_xy[:, 1] <= _W + 1.5)
+                       & np.isfinite(_xy).all(axis=1))
+                n_dropped_off += int((~_ok).sum())
+                dets = [d for d, k in zip(dets, _ok) if k]
+
+            # 2a. OPPONENT PRE-FILTER — decide team BEFORE association, not after.
+            # Halves the number of bodies the tracker can confuse ours with (see
+            # config.TRACK_DROP_OPPONENTS for the measurement). Only a CONFIDENT
+            # opponent read removes a detection; `vote_detection` returns 0 when
+            # the torso is too small, too washed, or sits between the two kit
+            # anchors, and those are KEPT — an unclear frame must never be able to
+            # end a real player's track. The per-track tally below re-votes on the
+            # surviving boxes and still has the final say.
+            if _kit_vote_on and config.TRACK_DROP_OPPONENTS:
+                _keep = []
+                for d in dets:
+                    if vote_detection(sample.eq_frame, d.bbox_eq,
+                                      _our_hex, _opp_hex, axis=_kit_axis,
+                                      min_s=config.PITCH_COLOR_MIN_S,
+                                      min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                      hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                      value_margin=config.KIT_VOTE_VALUE_MARGIN) == -1:
+                        n_dropped_opp += 1
+                        continue
+                    _keep.append(d)
+                n_kept_after_filter += len(_keep)
+                dets = _keep
+
             # ReID + tracker run on the equirect frame directly. BotSort
             # crops ROIs by xyxy so any frame works as long as the bboxes
             # are in that frame's coordinate space.
@@ -345,6 +452,31 @@ def run(
                     track_jersey_samples.setdefault(t.track_id, []).append(hsv)
                 if t.appearance_embedding is not None:
                     track_embeddings[t.track_id] = t.appearance_embedding
+                # Kit vote, taken here because it needs the FRAME: which of the
+                # two kit hues is this torso nearer? sample_jersey_hsv above
+                # can't answer it — it drops the grass band, and our green kit
+                # lives inside that band while the opponent's blue does not, so
+                # its samples are missing exactly the colour that identifies us.
+                if _kit_vote_on:
+                    _v = vote_detection(sample.eq_frame, t.bbox_eq,
+                                        _our_hex, _opp_hex, axis=_kit_axis,
+                                        min_s=config.PITCH_COLOR_MIN_S,
+                                        min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                        hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                        value_margin=config.KIT_VOTE_VALUE_MARGIN)
+                    if _v:
+                        _o, _p = kit_votes.get(t.track_id, (0, 0))
+                        kit_votes[t.track_id] = (_o + (_v == 1), _p + (_v == -1))
+                    # Stash the torso brightness so the anchors can be re-fitted
+                    # once the whole game's distribution is known. Cheap (one
+                    # median per detection) and only on the axis that needs it.
+                    if _kit_axis == "value":
+                        import cv2 as _cv2
+                        _roi = torso_roi(sample.eq_frame, t.bbox_eq)
+                        if _roi is not None and _roi.size:
+                            _v_med = float(np.median(
+                                _cv2.cvtColor(_roi, _cv2.COLOR_BGR2HSV)[:, :, 2]))
+                            kit_value_samples.setdefault(t.track_id, []).append(_v_med)
 
             # Debug-frame dump (cheap; runs only when requested). Renders a
             # downscaled equirect preview with ALL detection bboxes drawn,
@@ -400,7 +532,108 @@ def run(
                 )
                 last_log_t = now
 
+        if config.TRACK_DROP_OFFFIELD:
+            log.info("  -> off-field pre-filter: dropped %d detections before tracking",
+                     n_dropped_off)
+            if n_dropped_off == 0:
+                log.warning("  !! off-field pre-filter removed NOTHING — expected "
+                            "17-27%% on this footage; check the calibration")
+
+        if config.TRACK_DROP_OPPONENTS and _kit_vote_on:
+            _seen = n_dropped_opp + n_kept_after_filter
+            log.info("  -> opponent pre-filter: dropped %d of %d detections (%.0f%%) "
+                     "before tracking; %d kept (ours + unclear)",
+                     n_dropped_opp, _seen,
+                     100.0 * n_dropped_opp / max(_seen, 1), n_kept_after_filter)
+            if _seen and n_dropped_opp / _seen > 0.75:
+                log.warning("  !! pre-filter removed >75%% of detections — the kit "
+                            "anchors are probably inverted; expect our team to be "
+                            "missing from the output")
+
         tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
+
+        # 2b. RE-VOTE on data-fitted kit anchors (value axis only).
+        # The per-detection votes above used the kit hexes, which describe the
+        # fabric in a swatch rather than in sunlight. On mrhvbvwi1gjpn the black
+        # kit's nominal V10 fell BELOW the entire observed range (p1-p99 =
+        # 28-250), so every one of our players sat nearer the opponent anchor:
+        # the split came out 948/2217 where 7v7 demands ~1:1, and 54% of the
+        # "opponent" tracks were achromatic — called opponent purely for being
+        # bright. Now that the whole game's distribution is in hand, fit the
+        # anchors to it and recount. Hue needs none of this (it is roughly
+        # illumination-invariant), so this touches only the value axis and
+        # leaves every hue game byte-identical.
+        if _kit_vote_on and _kit_axis == "value" and kit_value_samples:
+            from .kit_vote import fit_value_anchors
+            _per_track = {t: float(np.median(v)) for t, v in kit_value_samples.items()}
+            _our_v, _opp_v, _note = fit_value_anchors(
+                list(_per_track.values()), _our_hex, _opp_hex)
+            if _our_v is None:
+                # Abstained: the distribution can't support anchors (one team
+                # barely present, flat light). Keep the hex votes rather than
+                # bisect one blob and confidently mislabel half a team.
+                log.warning("  -> kit anchors NOT fitted, keeping hex values: %s", _note)
+            else:
+                _margin = config.KIT_VOTE_VALUE_MARGIN
+                _before = sum(1 for o, p in kit_votes.values() if o > p)
+                kit_votes = {}
+                for _t, _vals in kit_value_samples.items():
+                    _o = _p = 0
+                    for _val in _vals:
+                        _d_our, _d_opp = abs(_val - _our_v), abs(_val - _opp_v)
+                        if _d_opp - _d_our >= _margin:
+                            _o += 1
+                        elif _d_our - _d_opp >= _margin:
+                            _p += 1
+                    if _o or _p:
+                        kit_votes[_t] = (_o, _p)
+                _after = sum(1 for o, p in kit_votes.values() if o > p)
+                log.info("  -> kit anchors fitted from footage: %s", _note)
+                log.info("     tracks voting OURS: %d -> %d (of %d)",
+                         _before, _after, len(kit_votes))
+
+        # 2c. PRUNE OPPONENT TRACKS — the tag-don't-drop replacement for the
+        # pre-tracking filter (see TRACK_DROP_OPPONENTS in config for why that
+        # one deleted a third of our own team).
+        #
+        # This runs HERE, after the block above has fitted the kit anchors to
+        # the footage, so the threshold separating the two kits is the measured
+        # one rather than the hex midpoint. Nothing was deleted during tracking:
+        # every detection was tagged, the votes accumulated per track, and only
+        # now — with a whole track's worth of evidence and the right anchors —
+        # is anything removed.
+        #
+        # Requires a strong majority of DECISIVE votes (abstains ignored, they
+        # are not evidence either way). Asymmetric on purpose: dropping a real
+        # player costs their whole stint, keeping an opponent costs one extra
+        # candidate in the association.
+        n_pruned_opp = 0
+        if config.TRACK_TAG_OPPONENTS and kit_votes and not tracks_df.empty:
+            _opp_tracks = set()
+            for _t, (_o, _p) in kit_votes.items():
+                _decisive = _o + _p
+                if _decisive < config.KIT_TAG_MIN_VOTES:
+                    continue
+                if _p / _decisive >= config.KIT_TAG_TRACK_MAJORITY:
+                    _opp_tracks.add(_t)
+            if _opp_tracks:
+                _before_rows = len(tracks_df)
+                tracks_df = tracks_df[
+                    ~tracks_df["track_id"].isin(_opp_tracks)].reset_index(drop=True)
+                n_pruned_opp = _before_rows - len(tracks_df)
+                # Report what was REMOVED, not just what survived. The drop
+                # version was only auditable because a pre-filter cache happened
+                # to survive on disk; a filter should not need luck to be
+                # reviewable.
+                log.info("  -> opponent track prune: removed %d tracks "
+                         "(%d detections, %.1f%%) at >=%.0f%% of >=%d decisive votes",
+                         len(_opp_tracks), n_pruned_opp,
+                         100.0 * n_pruned_opp / max(1, _before_rows),
+                         100 * config.KIT_TAG_TRACK_MAJORITY, config.KIT_TAG_MIN_VOTES)
+            else:
+                log.warning("  -> TRACK_TAG_OPPONENTS on but nothing met the "
+                            "prune bar (%d tracks voted)", len(kit_votes))
+
         # Persist before any downstream filter touches the data — so a bug in
         # filtering / identity / stats doesn't cost another detection pass.
         tracks_df.to_parquet(tracks_ckpt)
@@ -410,6 +643,10 @@ def run(
         )
         if track_embeddings:
             np.savez(emb_ckpt, **{str(k): v for k, v in track_embeddings.items()})
+        if kit_votes:
+            np.savez(votes_ckpt, **{str(k): np.array(v, dtype=np.int32)
+                                    for k, v in kit_votes.items()})
+        _write_tracks_provenance(prov_ckpt)
         log.info("  -> checkpoint written: %s + %s%s", tracks_ckpt.name, jersey_ckpt.name,
                  (" + " + emb_ckpt.name) if track_embeddings else " (no embeddings captured)")
         _n_unique_tracks = tracks_df["track_id"].nunique() if not tracks_df.empty else 0
@@ -443,10 +680,56 @@ def run(
         dropped_off = int((~on_field).sum())
         tracks_df = tracks_df.loc[on_field].reset_index(drop=True)
 
-        # 3c. TOP-N PER FRAME — soccer has ≤ 16 people on the field (7v7 + ref
-        # + occasional coach for injury). Cap at 20 per frame ranked by
+        # 3b2. NEVER-ENTERS-THE-PITCH FILTER — the touchline coaches.
+        # The buffer above is a per-DETECTION test, so it cannot tell a coach
+        # standing 0.5 m outside the line from a player taking a throw-in from
+        # the same spot. A whole TRACK can: a player crosses the line and comes
+        # back, a coach never does.
+        #
+        # The threshold is TUNED, not safe-by-construction — an earlier version
+        # of this comment claimed the distribution was sharply bimodal with a
+        # thin valley, which measurement refuted (the middle holds 591/482
+        # substantial tracks). See DROP_NEVER_OUTSIDE_FRAC in config for the
+        # tuning table; 1.0 leaked ~50k touchline detections per game because a
+        # single frame of projection noise saved a track.
+        #
+        # Confirmed these are adults, not our kids: within 5-15 m of the camera
+        # (where the coaches stand) their boxes are 1.61x taller than on-pitch
+        # players at the same distance. Beyond 15 m the ratio inverts (0.79-0.89)
+        # because those are distant spectators, not coaches.
+        #
+        # This is deliberately NOT the near-sideline-only rule it looks like it
+        # should be. The coach reported these appear on the near side, but the
+        # FAR sideline holds more never-enter tracks in both games (245 vs 112,
+        # 188 vs 111) — near-side ones are simply larger and easier to notice.
+        # A side-specific buffer would fix the visible half and miss the bigger
+        # half, while also cutting the ~10x more player-detections that share
+        # that strip.
+        if config.DROP_NEVER_ONFIELD and not tracks_df.empty:
+            _outside = ((tracks_df["x_m"] < 0) | (tracks_df["x_m"] > L)
+                        | (tracks_df["y_m"] < 0) | (tracks_df["y_m"] > W))
+            _per = tracks_df.assign(_o=_outside).groupby("track_id")["_o"].agg(
+                ["mean", "size"])
+            _never = _per.index[(_per["mean"] >= config.DROP_NEVER_OUTSIDE_FRAC)
+                                & (_per["size"] >= config.DROP_NEVER_MIN_DETS)]
+            if len(_never):
+                _before_n = len(tracks_df)
+                tracks_df = tracks_df[~tracks_df["track_id"].isin(_never)].reset_index(drop=True)
+                log.info("  -> never-on-pitch filter: dropped %d tracks (%d detections) "
+                         "that spent their whole life outside the touchlines",
+                         len(_never), _before_n - len(tracks_df))
+
+        # 3c. TOP-N PER FRAME — cap the bodies kept per frame, ranked by
         # (track lifetime × detection confidence) so established tracks beat
         # one-off background detections that survived the off-field filter.
+        #
+        # The budget scales with the match format (config.topn_per_frame): 20 for
+        # 7v7, 24 for 9v9. It MUST scale, because the rank key favours long-lived
+        # tracks — what a too-small cap deletes is the NEWEST track, i.e. a
+        # just-subbed-on player or one re-acquired after an occlusion, exactly
+        # when they are most fragile. That loss is per-player and invisible in
+        # the team-level ratios, so it gets a WARNING rather than an info line.
+        topn = config.topn_per_frame(getattr(game, "game_format", None))
         if not tracks_df.empty and "track_id" in tracks_df.columns:
             lifetime = tracks_df.groupby("track_id").size().rename("track_lifetime")
             tracks_df = tracks_df.merge(lifetime, on="track_id")
@@ -456,14 +739,65 @@ def run(
                 score = score * tracks_df[conf_col].astype(float).clip(lower=0.1)
             tracks_df["_rank_score"] = score
             ranked = tracks_df.sort_values(["frame", "_rank_score"], ascending=[True, False])
-            top_n = ranked.groupby("frame", group_keys=False).head(20)
+            top_n = ranked.groupby("frame", group_keys=False).head(topn)
             dropped_topn = len(tracks_df) - len(top_n)
+            _frames_capped = int((tracks_df.groupby("frame").size() > topn).sum())
+            _frames_total = int(tracks_df["frame"].nunique())
             tracks_df = top_n.drop(columns=["_rank_score", "track_lifetime"]).reset_index(drop=True)
         else:
             dropped_topn = 0
+            _frames_capped = _frames_total = 0
 
-        log.info("  -> filters: dropped %d off-field, %d below top-20/frame; %d kept",
-                 dropped_off, dropped_topn, len(tracks_df))
+        log.info("  -> filters: dropped %d off-field, %d below top-%d/frame (%s); %d kept",
+                 dropped_off, dropped_topn, topn,
+                 getattr(game, "game_format", None) or config.FORMAT_DEFAULT, len(tracks_df))
+        if _frames_capped:
+            log.warning(
+                "  -> top-%d/frame cap BIT on %d of %d frames (%.1f%%): %d detections cut. "
+                "The cap drops the SHORTEST-LIVED tracks first, so a just-subbed-on or "
+                "re-acquired player can lose exactly the frames they are hardest to track in. "
+                "If this is high, check the format (%s) is right for this game.",
+                topn, _frames_capped, _frames_total,
+                100.0 * _frames_capped / max(_frames_total, 1), dropped_topn,
+                getattr(game, "game_format", None) or config.FORMAT_DEFAULT,
+            )
+
+    # 3.4 Halftime split — enforce "no track spans the break". The tracker is
+    # reset at halftime and its id counter carried across (see _new_tracker call
+    # site), but that only rules out id COLLISION; a boundary derived from the
+    # coach's taps can still be misplaced relative to the real whistle. Detect
+    # the break from the footage (the pitch empties) and cut anything that still
+    # spans it, so the invariant holds regardless of which cause produced it.
+    # Runs BEFORE gap-split/classification so one id universe flows downstream.
+    # Skipped on the pinned path (ids must stay byte-stable for coach overrides).
+    # NOT skipped for smoke runs: excluding them meant a smoke run could never
+    # rehearse this stage, which is most of what a smoke run is for. Safety comes
+    # from detect_halftime_break itself — it returns None unless the footage
+    # actually contains a long enough empty-pitch run near the logged break, so
+    # on a window that doesn't span halftime this is a no-op that says so.
+    if (config.HALFTIME_SPLIT_ENABLED and not tracks_df.empty
+            and pin_partition is None):
+        from .halftime_split import detect_halftime_break, split_tracks_at_halftime
+        # Hint the detector with the coach-derived break so an injury stoppage
+        # can't be mistaken for halftime; it falls back to the logged time when
+        # the footage is inconclusive.
+        _logged_break = logged_break_s
+        _bw = detect_halftime_break(tracks_df, logged_break=_logged_break)
+        if _bw is None:
+            log.info("  -> halftime split: no break detected in the footage; "
+                     "keeping ids as-is (logged break %s)", _logged_break)
+        else:
+            _n0 = tracks_df["track_id"].nunique()
+            tracks_df, track_jersey_samples, track_embeddings, _ = split_tracks_at_halftime(
+                tracks_df, _bw, track_jersey_samples, track_embeddings,
+            )
+            _shift = (_bw[0] - _logged_break[0]) if _logged_break else 0.0
+            log.info("  -> halftime split: break %.0f-%.0fs (logged %.0f-%.0fs, "
+                     "shift %+.0fs) · %d -> %d track ids",
+                     _bw[0], _bw[1],
+                     (_logged_break[0] if _logged_break else 0.0),
+                     (_logged_break[1] if _logged_break else 0.0),
+                     _shift, _n0, tracks_df["track_id"].nunique())
 
     # 3.5 Gap-split — break "zombie" tracks (one id kept alive across long gaps,
     # teleporting between bodies) into clean contiguous sub-tracks BEFORE team
@@ -498,12 +832,26 @@ def run(
     else:
         log.info("Stage 4/6: team classification...")
         our_color = _our_color(game)
-        team_of_track = classify_tracks(
-            tracks_df, track_jersey_samples,
-            our_home_color_hex=our_color,
-            opp_color_hex=game.away_color,
-            ref_color_hex=game.ref_color,
-        )
+        # Prefer the kit-hue votes taken during tracking. They see the raw torso
+        # pixels; the jersey-HSV path below sees them after the grass drop has
+        # removed our green kit's own colour, which splits the teams ~3.9:1
+        # instead of the ~1:1 a 7v7 game must produce. Falls back automatically
+        # for caches taken before voting existed.
+        if kit_votes:
+            from .team_classifier import classify_from_kit_votes
+            team_of_track = classify_from_kit_votes(tracks_df, kit_votes)
+            _vc = sum(1 for v in team_of_track.values() if v == 0)
+            _vo = sum(1 for v in team_of_track.values() if v == 1)
+            log.info("  -> kit-hue votes: %d ours / %d opp / %d unknown (ratio %.2f:1)",
+                     _vc, _vo, sum(1 for v in team_of_track.values() if v == -1),
+                     (_vc / _vo) if _vo else float("inf"))
+        else:
+            team_of_track = classify_tracks(
+                tracks_df, track_jersey_samples,
+                our_home_color_hex=our_color,
+                opp_color_hex=game.away_color,
+                ref_color_hex=game.ref_color,
+            )
         _team_counts: dict[int, int] = {}
         for _t in team_of_track.values():
             _team_counts[_t] = _team_counts.get(_t, 0) + 1
@@ -536,6 +884,42 @@ def run(
     # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
+    # Inverse, for labelling rendered clips with the minute they came from.
+    _video_to_clock = video_time_to_period_clock_factory(game)
+
+    # --- camera-corrected on-field windows (sub_correct) ---------------------
+    # Coaches tap SUB late during multi-sub moments, biasing the logged on/off
+    # times that drive minutes/distance/identity. Use the tracklets the coach
+    # ACCEPTED (identity_overrides → player) as ground truth: the union of a
+    # player's accepted tracklet spans corrects their on-field window. ADDITIVE
+    # (SUB events untouched), recomputed each run, guarded (half-clamp +
+    # plausibility). Derived from COACH accepts (not the greedy pass's output)
+    # and BEFORE assign, so the corrected minute budget reflects confirmed
+    # presence, not the assignment we're about to make. Empty → no-op (default).
+    sub_corrections: dict[str, dict] = {}
+    if game.identity_overrides:
+        from .sub_correct import compute_sub_corrections
+        _tl_span = (tracks_df.assign(
+            _tl=tracks_df["track_id"].map(lambda t: tracklet_of_track.get(int(t), int(t))))
+            .groupby("_tl")["time_s"].agg(["min", "max"]))
+        _accepted: dict[str, list[tuple[float, float]]] = {}
+        for _k, _pid in game.identity_overrides.items():
+            if not _pid or str(_pid).startswith("__"):
+                continue  # non-player sentinel / drop
+            try:
+                _tl = int(_k)
+            except (TypeError, ValueError):
+                continue
+            if _tl in _tl_span.index:
+                _accepted.setdefault(str(_pid), []).append(
+                    (float(_tl_span.loc[_tl, "min"]), float(_tl_span.loc[_tl, "max"])))
+        _logged = _onfield_intervals(game.starting_lineup, game.events, clock_to_video)
+        sub_corrections = compute_sub_corrections(
+            _accepted, play_windows, _logged)
+        if sub_corrections:
+            log.info("  -> sub-timeline: camera-corrected on-field window for %d player(s)",
+                     len(sub_corrections))
+
     # Board orientation per period, resolved by the identity search — reused by
     # the tag pre-fill (3.3) to map field meters back to coach zone vocab.
     board_flips: dict[int, tuple] = {}
@@ -558,6 +942,7 @@ def run(
         squad=game.squad,
         resolved_flips_out=board_flips,
         orientation_ambiguous_out=board_orient_ambiguous,
+        onfield_corrections=sub_corrections or None,
     )
     if game.identity_overrides:
         log.info("  -> %d coach identity override(s) loaded from game doc",
@@ -590,12 +975,24 @@ def run(
                     "(2) coach events fall outside the smoke window so no votes were cast, "
                     "(3) tracks at event times don't match team 0.")
 
-    # 6. Stats + Formation + GK positioning
-    log.info("Stage 6/6: stats, formation, GK positioning...")
+    # 6. Stats + Formation
+    log.info("Stage 6/6: stats, formation...")
     attack_dir = _attack_direction(game, tracks_df, identity_by_track, field_cal.length_m)
     # Coach-logged minutes per player (ground truth) = on-field intervals
     # (lineup + subs) clipped to the play windows. Used for minutes_played.
-    _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video)
+    # `sub_corrections` (camera-derived, from accepted tracklets) override a late
+    # SUB tap on the relevant edge; empty → identical to the pure coach log.
+    _onf = _onfield_intervals(game.starting_lineup, game.events, clock_to_video,
+                              corrections=sub_corrections or None)
+    # `played_minutes` below is the coach's ANSWER for how long each child was on
+    # — the denominator for coverage and the base for extrapolation. It must keep
+    # using the raw log: widening it would hand every player minutes they didn't
+    # play. Only the attribution FILTER gets slack, so a detection near a messy
+    # rotation stops being deleted while the minutes it counts against stay honest.
+    from .sub_slack import relax_intervals, sub_times_from_events
+    _onf_filter = relax_intervals(
+        _onf, sub_times_from_events(game.events, clock_to_video), log_fn=log.info)
+
     played_minutes: dict[str, float] = {}
     for _pid, _ivs in _onf.items():
         _tot = 0.0
@@ -605,6 +1002,27 @@ def run(
                 if _hi > _lo:
                     _tot += _hi - _lo
         played_minutes[str(_pid)] = _tot / 60.0
+
+    # Analytics echo of the camera-corrections, for the PWA to SHOW the coach
+    # (before→after) and to source the corrected minutes from (its own
+    # playerSeconds uses a different, wall-clock axis). Times converted back to
+    # game-clock (period+elapsed) for display; correctedSeconds = the corrected
+    # on-field length clipped to play windows (matches played_minutes*60).
+    sub_corrections_echo: list[dict] = []
+    if sub_corrections:
+        from .sub_correct import clock_or_none_factory
+        # Renders a correction edge as a game clock, or None for the "played to
+        # the final whistle" sentinel (never-subbed-off), so the echo never
+        # carries a 1e9-derived garbage clock time.
+        _clk = clock_or_none_factory(play_windows, clock_to_video)
+        for _pid, _c in sub_corrections.items():
+            sub_corrections_echo.append({
+                "playerId": _pid,
+                "correctedSeconds": round(played_minutes.get(str(_pid), 0.0) * 60.0, 1),
+                "onCorrected": _clk(_c.get("onS")), "offCorrected": _clk(_c.get("offS")),
+                "onLogged": _clk(_c.get("loggedOnS")), "offLogged": _clk(_c.get("loggedOffS")),
+            })
+
     # Personalized sprint thresholds (plan 4.5): per player,
     # max(floor, frac × season speed) from prior games' analytics docs.
     # Median of per-game p99s, dropping cap-pinned (swap-polluted) games.
@@ -627,6 +1045,10 @@ def run(
     except Exception as e:
         log.warning("Personalized sprint thresholds failed (using fixed %.1f): %s",
                     config.SPRINT_THRESHOLD_MS, e)
+    # Physically-impossible instants (one player in two places at once — a
+    # tracker/stitch merge) are dropped from every stat and reported here so the
+    # coach can see which of his labelled tracklets are in conflict.
+    player_conflicts: dict[str, dict] = {}
     player_stats = compute_player_stats(
         tracks_field_df=tracks_df,
         identity_by_track=identity_by_track,
@@ -638,9 +1060,49 @@ def run(
         gk_player_id=game.gk_player_id,
         played_minutes=played_minutes,
         sprint_thresholds=sprint_thresholds,
+        conflicts_out=player_conflicts,
+        tracklet_of_track=tracklet_of_track,
+        # The coach's SUB taps as an independent filter: a detection credited to a
+        # player while the log says he was on the bench is the wrong child. The
+        # boundaries are relaxed by each substitution's own tap spread first —
+        # the taps are trustworthy about WHO changed, but only as trustworthy
+        # about WHEN as the rotation was quick to enter. See sub_slack.
+        onfield_intervals={str(k): v for k, v in _onf_filter.items()},
     )
+    # The report mixes two independent defect kinds per player, so every read is
+    # .get(): `conflict_seconds` (physically impossible — two places at once) and
+    # `offwindow_frac` (credited while the SUB log says he was on the bench). A
+    # player can have either, both, or neither.
+    if player_conflicts:
+        _conf = {p: v for p, v in player_conflicts.items() if v.get("conflict_seconds")}
+        _off = {p: v for p, v in player_conflicts.items() if v.get("offwindow_detections")}
+        if _conf:
+            _cs = sum(v.get("conflict_seconds", 0) for v in _conf.values())
+            log.warning("  identity CONFLICTS: %d player(s), %.0fs of provably "
+                        "impossible time excluded from stats (worst: %s)",
+                        len(_conf), _cs,
+                        ", ".join(f"{p}={v.get('conflict_seconds', 0)}s" for p, v in
+                                  sorted(_conf.items(),
+                                         key=lambda kv: -kv[1].get("conflict_seconds", 0))[:3]))
+        if _off:
+            log.warning("  BENCH-TIME leak: %d player(s) had detections credited while "
+                        "the SUB log says they were off (worst: %s)",
+                        len(_off),
+                        ", ".join(f"{p}={100*v.get('offwindow_frac', 0):.0f}%" for p, v in
+                                  sorted(_off.items(),
+                                         key=lambda kv: -kv[1].get("offwindow_frac", 0))[:3]))
+    # Team shape is a function of the SET of bodies present, so it is immune to
+    # identity confusion but fully exposed to non-players: on a clicked frame
+    # only ~25% of tracked rows are ours. Restrict it to player-sized boxes
+    # before aggregating. Per-player stats above deliberately do NOT get this —
+    # they are gated on identity, and cutting a real player's near-camera frames
+    # would bias his own numbers instead of cleaning a shared one.
+    _shape_df = tracks_df
+    adult_report: dict = {}
+    if config.TEAM_SHAPE_SIZE_FILTER:
+        _shape_df = drop_sideline_adults(tracks_df, report=adult_report)
     formation_snaps, team_ts = compute_formation(
-        tracks_df, identity_by_track, team_of_player,
+        _shape_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
         gk_player_id=game.gk_player_id,
         coach_events=game.events,
@@ -690,8 +1152,20 @@ def run(
     # the identity-dependent analytics and MERGE them in, leaving the reel / audio /
     # broadcast-index (identity-independent) untouched — no re-render, no re-upload.
     if stats_only:
+        # The VLM draft stage lives at 7c-bis, well past this early return, and
+        # it needs the source video to render number crops — which a stats-only
+        # refresh deliberately never opens. Passing --vlm-identity here used to
+        # be accepted and then silently do nothing; say so instead.
+        if (config.VLM_IDENTITY if vlm_identity is None else vlm_identity):
+            log.warning("--vlm-identity has no effect with --stats-only: the VLM "
+                        "stage renders crops from the source video, which a "
+                        "stats-only refresh does not open. Re-run without "
+                        "--stats-only (cached tracks are still reused).")
         _tlrecs = _build_tracklet_index(tracks_df, tracklet_of_track, assignments,
-                                        fps_sampled, field_cal.length_m, field_cal.width_m)
+                                        fps_sampled, field_cal.length_m, field_cal.width_m,
+                                        track_jersey_samples=track_jersey_samples,
+                                        our_color_hex=_our_color(game),
+                                        opp_color_hex=game.away_color)
         try:  # preserve existing thumbnail URLs (crops don't change with identity)
             _prev = firestore_io.read_analytics(game_id) or {}
             _thumbs = {t.get("tracklet_id"): t.get("thumb_url")
@@ -712,12 +1186,30 @@ def run(
                 for f in formation_snaps
             ],
             "team_time_series": asdict(team_ts),
+            # What the size filter removed from the TEAM metrics above. Reported
+            # as data, not a log line: a filter scored only on its survivors is
+            # how two earlier filters shipped while cutting our own players.
+            "team_shape_filter": adult_report or None,
             "field_tilt": field_tilt,
+            "sub_corrections": sub_corrections_echo,
+            # Provably-impossible spans (one player in two places at once) that
+            # were EXCLUDED from the stats above, so the coach can see which of
+            # his labelled tracklets conflict instead of trusting a silent average.
+            "player_conflicts": player_conflicts,
             "generated_at_ms": int(time.time() * 1000),
         }
         if board_orient_ambiguous:
             _update["orientation_ambiguous_periods"] = board_orient_ambiguous
         firestore_io.write_analytics_merge(game_id, _sanitize_json(_update))
+        # Refresh the season-view projection. Built from the doc as it now stands,
+        # NOT from `_update`: this path is a merge, so the update alone is missing
+        # keys the summary carries (click_stats above all) and summarising it
+        # would silently blank them.
+        try:
+            firestore_io.write_analytics_summary(
+                game_id, firestore_io.read_analytics(game_id) or _update)
+        except Exception as e:
+            log.warning("season summary write failed: %s", e)
         log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
                  game_id, len(player_stats))
         return _update
@@ -888,7 +1380,64 @@ def run(
     # with its current player + a representative crop so the coach can fix swaps;
     # corrections come back as `identityOverrides` on the game doc.
     tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
-                                             field_cal.length_m, field_cal.width_m)
+                                             field_cal.length_m, field_cal.width_m,
+                                             track_jersey_samples=track_jersey_samples,
+                                             our_color_hex=_our_color(game),
+                                             opp_color_hex=game.away_color)
+
+    # 7c-bis. VLM jersey-number identity DRAFTS. Runs HERE, inside the run, so
+    # drafts key by THIS run's tracklet ids — the exact ids the analytics doc +
+    # PWA FIX-IDS use (a standalone tool can't reproduce them). Reads the number
+    # off number-optimized crops, writes suggestions to game.identityDrafts;
+    # never auto-applies. ON by default: it lifts naming from ~4.6% of tracked
+    # time to ~35% for ~9 min of a ~2 h run, and jersey numbers are the only
+    # signal that tells identically-dressed children apart. Needs the raw video
+    # and an Opus token; the try/except below keeps a missing token from costing
+    # the run, since everything else is already computed by this point.
+    _vlm_on = config.VLM_IDENTITY if vlm_identity is None else vlm_identity
+    if _vlm_on and tracklet_records and not stats_only:
+        try:
+            from tracking.vlm_identity import generate_drafts
+            _cur = {int(r["tracklet_id"]): (r.get("player_id"), float(r.get("minutes") or 0.0))
+                    for r in tracklet_records}
+            _vlm_team: dict[int, str] = {}
+            _drafts = generate_drafts(
+                tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
+                team_of_track=team_of_track, roster=roster, game=game,
+                video_path=str(video_path), field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m, current_of_tl=_cur,
+                model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
+                max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
+                # Camera ground position, so crop choice can prefer frames where
+                # the player's back is turned. Read from the calibration rather
+                # than assumed: on this field the camera sits BEYOND the far
+                # touchline (y=34.6 of a 30 m pitch), so guessing the sideline
+                # would invert the test.
+                cam_xy=_camera_ground_xy(field_cal),
+                min_digit_px=config.VLM_MIN_DIGIT_PX, min_away=config.VLM_MIN_AWAY,
+                dt=(1.0 / fps_sampled if fps_sampled else 0.1),
+                log_fn=lambda m: log.info("%s", m), team_out=_vlm_team)
+            firestore_io.write_identity_drafts(game_id, _drafts)
+            log.info("  -> VLM identity: wrote %d draft(s) to game.identityDrafts", len(_drafts))
+            # VLM team-read prune: the VLM reliably tags each tracklet's team by
+            # kit colour. Drop UNASSIGNED tracklets it calls opponent/other from
+            # the review list (the coarse-pixel prune misses washed opponents;
+            # the VLM read catches them). Coach-decided tracklets stay visible.
+            if _vlm_team:
+                _kept, _dropped = [], 0
+                for _r in tracklet_records:
+                    _t = _vlm_team.get(int(_r["tracklet_id"]))
+                    if not _r.get("player_id") and _t in ("opponent", "other"):
+                        _dropped += 1
+                        continue
+                    _kept.append(_r)
+                if _dropped:
+                    log.info("  -> VLM team-read pruned %d opponent/coach tracklet(s) from review list",
+                             _dropped)
+                tracklet_records = _kept
+        except Exception as e:
+            log.warning("VLM identity drafts failed (non-fatal): %s", e)
+
     if tracklet_records:
         try:
             thumbs = generate_tracklet_thumbnails(
@@ -922,9 +1471,15 @@ def run(
             for f in formation_snaps
         ],
         "team_time_series": asdict(team_ts),
+        # What the size filter removed from the TEAM metrics above. Reported as
+        # data, not a log line: a filter scored only on its survivors is how two
+        # earlier filters shipped while cutting our own players.
+        "team_shape_filter": adult_report or None,
         "clip_count": len(clips),
-        "tv_reel": _tv_meta_to_dict(tv_reel_meta),
-        "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
+        # Segments carry their game-clock position so the PWA scorebug can show
+        # the right minute anywhere in a reel, not just at the events.
+        "tv_reel": _tv_meta_to_dict(tv_reel_meta, _video_to_clock),
+        "auto_highlights": _tv_meta_to_dict(auto_hl_meta, _video_to_clock),
         # Convenience top-level URLs the PWA can read without diving into
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
@@ -933,6 +1488,9 @@ def run(
         "review_labels_url": review_labels_url,
         # Team-centroid third occupancy (4.6) — no-ball possession proxy.
         "field_tilt": field_tilt,
+        "sub_corrections": sub_corrections_echo,
+        # See the stats-only branch: impossible spans excluded from every stat.
+        "player_conflicts": player_conflicts,
         "tv_reel_duration_s": (tv_reel_meta.duration_s if tv_reel_meta else None),
         "auto_highlights_duration_s": (auto_hl_meta.duration_s if auto_hl_meta else None),
         # Per-event timeline for the on-screen scorebug / goal-popup overlay.
@@ -953,22 +1511,43 @@ def run(
     if board_orient_ambiguous:
         analytics["orientation_ambiguous_periods"] = board_orient_ambiguous
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
+    # Small companion doc the season view fans out over instead of these ~1 MB
+    # docs. Non-fatal: a missing summary degrades that one view, and losing the
+    # whole run's analytics over it would be a far worse trade.
+    try:
+        firestore_io.write_analytics_summary(game_id, _sanitize_json(analytics))
+    except Exception as e:
+        log.warning("season summary write failed: %s", e)
 
     # Public-safe slice on the game doc itself so parents can render the
     # broadcast video + scorebug without being able to read the rest of
     # the analytics subcollection. Firestore rules then lock analytics/
     # to coaches.
     public_fields: dict = {}
-    # Public fields point at the AMBIENCE (stadium-audio) copies when present so
-    # parents never hear the original audio; the coach analytics doc above keeps
-    # the original-audio URLs for the dugout. Falls back to original if the swap
-    # is disabled or failed.
+    # Public fields point ONLY at the AMBIENCE (stadium-audio) copies; the coach
+    # analytics doc above keeps the original-audio URLs for the dugout.
+    #
+    # ⚠ NO FALLBACK TO THE ORIGINAL-AUDIO REEL. This used to read
+    # `public_tv_url or tv_reel_meta.r2_url`, so whenever the swap was disabled or
+    # errored, the PARENT-FACING field silently pointed at the dugout cut — coach
+    # voice, kids' names, sideline chatter. Combined with PUBLIC_AUDIO_ENABLED
+    # defaulting off, that is exactly what shipped. Publishing nothing is the
+    # correct failure mode for a privacy control: a missing video is visible and
+    # fixable, a leaked one is neither.
     if tv_reel_meta and tv_reel_meta.r2_url:
-        public_fields["videoFullGameUrl"] = public_tv_url or tv_reel_meta.r2_url
-        public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        if public_tv_url:
+            public_fields["videoFullGameUrl"] = public_tv_url
+            public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio full-game reel — publishing NO "
+                        "public full-game URL rather than the dugout cut.")
     if auto_hl_meta and auto_hl_meta.r2_url:
-        public_fields["videoHighlightsUrl"] = public_hl_url or auto_hl_meta.r2_url
-        public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        if public_hl_url:
+            public_fields["videoHighlightsUrl"] = public_hl_url
+            public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio highlights reel — publishing NO "
+                        "public highlights URL rather than the dugout cut.")
     # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
     # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never
     # clobber the live public reel/broadcast docs.
@@ -997,6 +1576,114 @@ def run(
 
 
 # --- helpers -------------------------------------------------------------
+
+# Modules whose content determines what Stage 2 produces. A cache written before
+# any of these changed may be stale in a way no downstream stage can detect —
+# the parquet looks perfectly well-formed either way. Deliberately NOT the whole
+# repo: edits to stats/tv_view/identity don't invalidate a tracking pass.
+# Every module whose code changes what Stage 2 WRITES. kit_vote.py earns its
+# place because the kit votes are produced in the Stage-2 loop and cached beside
+# the tracks: when the value anchors moved from the kit hex to a fitted
+# threshold, the fingerprint stayed identical and the guard said nothing about a
+# cache whose votes were built the old way — the very silence this guard was
+# added to break.
+_TRACKING_SOURCES = ("tracking.py", "tracking_field.py", "tracking_pitch.py",
+                     "detection.py", "video.py", "calibration.py", "kit_vote.py")
+# Config values that change Stage-2 output. Recorded so a cache taken at a
+# different sample rate / tile count is never silently mixed with a fresh one.
+_TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
+                         "DETECT_CONFIDENCE", "TRACK_BUFFER_S", "CROP_W", "CROP_H",
+                         "YOLO_MODEL", "TRACK_FIELD_SPACE", "TRACK_PITCH",
+                         # Association thresholds + the lost-track rescue. These
+                         # live in config.py, which is NOT in _TRACKING_SOURCES,
+                         # so without them here a threshold sweep would change
+                         # Stage-2 output while leaving the fingerprint identical
+                         # and a stale cache would be reused in silence.
+                         "TRACK_HIGH_THRESH", "TRACK_NEW_THRESH",
+                         "TRACK_LOW_THRESH", "TRACK_RESCUE_LOST",
+                         "TRACK_APPEARANCE", "TRACK_APPEARANCE_THRESH",
+                         "TRACK_DROP_OPPONENTS", "TRACK_DROP_OFFFIELD",
+                         # Inference resolution changes what the detector sees,
+                         # so a cache taken at another imgsz is not comparable.
+                         "DETECT_IMGSZ",
+                         "TRACK_HEADING_WEIGHT", "TRACK_HEADING_MIN_SPEED_FRAC",
+                         "TRACK_HEADING_CAP",
+                         # Tag-don't-drop opponent pruning and the never-on-pitch
+                         # threshold. Both change which tracks reach the cached
+                         # parquet, so both must move the fingerprint.
+                         # The association algorithm itself. This sat in config
+                         # unused for months while BotSort was hardcoded, so a
+                         # cache taken on one tracker must never be reused for
+                         # another.
+                         "TRACKER_TYPE",
+                         "TRACK_TAG_OPPONENTS", "KIT_TAG_TRACK_MAJORITY",
+                         "KIT_TAG_MIN_VOTES", "DROP_NEVER_ONFIELD",
+                         "DROP_NEVER_OUTSIDE_FRAC", "DROP_NEVER_MIN_DETS")
+
+
+def _tracking_fingerprint() -> dict:
+    """Fingerprint of everything that determines Stage-2 output."""
+    import hashlib
+    h = hashlib.sha256()
+    for name in _TRACKING_SOURCES:
+        p = Path(__file__).with_name(name)
+        if p.exists():
+            h.update(p.read_bytes())
+    return {
+        "code_sha256": h.hexdigest()[:16],
+        "config": {k: str(getattr(config, k, None)) for k in _TRACKING_CONFIG_KEYS},
+        "written_at_ms": int(time.time() * 1000),
+    }
+
+
+def _write_tracks_provenance(path: Path) -> None:
+    """Record what produced this checkpoint, next to it."""
+    import json
+    try:
+        path.write_text(json.dumps(_tracking_fingerprint(), indent=2))
+    except OSError as e:   # a missing sidecar only costs the staleness warning
+        log.warning("Could not write cache provenance %s: %s", path.name, e)
+
+
+def _check_tracks_provenance(path: Path, tracks_ckpt: Path) -> None:
+    """Warn when a reused Stage-2 cache predates the current tracking code.
+
+    This is the guard that was missing when the halftime id-collision fix
+    (`_next_id` carried across the tracker reset) landed: every existing cache
+    predated it, so months of offline measurement ran on data where ~40-57% of
+    tracked time sat in ids that welded two different children together — and
+    nothing in the pipeline said a word, because the checkpoint reuse test is
+    just `tracks_ckpt.exists()`. Warn loudly rather than block: a stale cache is
+    still the right input for a deliberate stats-only refresh.
+    """
+    import json
+    cur = _tracking_fingerprint()
+    if not path.exists():
+        log.warning(
+            "  !! cache %s has NO provenance sidecar — it predates provenance "
+            "tracking and may have been produced by different tracking code. "
+            "Re-track before trusting any measurement derived from it.",
+            tracks_ckpt.name)
+        return
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        log.warning("  !! cache provenance %s unreadable (%s); treating as stale",
+                    path.name, e)
+        return
+    if old.get("code_sha256") != cur["code_sha256"]:
+        log.warning(
+            "  !! cache %s was produced by DIFFERENT tracking code "
+            "(cache %s vs current %s). Downstream numbers may not reflect the "
+            "current pipeline — re-track for a clean baseline.",
+            tracks_ckpt.name, old.get("code_sha256"), cur["code_sha256"])
+    drift = {k: (v, cur["config"].get(k))
+             for k, v in (old.get("config") or {}).items()
+             if cur["config"].get(k) != v}
+    if drift:
+        log.warning("  !! cache %s config drift: %s", tracks_ckpt.name,
+                    ", ".join(f"{k}: {o} -> {n}" for k, (o, n) in sorted(drift.items())))
+
 
 def _build_broadcast_events_index(
     game,
@@ -1267,6 +1954,26 @@ def _ensure_local_video(url: str, game_id: str) -> Path:
     return firestore_io.download_video(url, dest)
 
 
+def _camera_ground_xy(field_cal) -> Optional[tuple[float, float]]:
+    """Where the camera stands, in field metres — or None on the planar model.
+
+    The sphere solve puts the camera at the origin of its own frame, so the
+    similarity that maps camera-frame ground points into field coordinates sends
+    (0, 0) to exactly (tx, ty). Used to work out which way a player is facing:
+    the number is on their back, so it is only readable while they run away from
+    THIS point. Worth deriving rather than assuming a sideline — on W8 the rig
+    sits at y=34.6 m on a 30 m-wide pitch, i.e. beyond the far touchline, and an
+    assumed y=0 would get the sign backwards on every tracklet.
+    """
+    s = getattr(field_cal, "sphere", None)
+    if not s:
+        return None
+    try:
+        return (float(s["tx"]), float(s["ty"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _our_color(game) -> str:
     # home_color is ALWAYS our jersey — GameSetup labels it "LASALLE STOMPERS
     # JERSEY" (away_color is the opponent's), independent of is_home. The old
@@ -1299,7 +2006,10 @@ def _attack_direction(game, tracks_df, identity_by_track, field_length_m) -> dic
 
 
 def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled: float,
-                          field_length_m: float, field_width_m: float) -> list[dict]:
+                          field_length_m: float, field_width_m: float,
+                          track_jersey_samples: Optional[dict] = None,
+                          our_color_hex: Optional[str] = None,
+                          opp_color_hex: Optional[str] = None) -> list[dict]:
     """Aggregate the per-track identity assignments into per-tracklet records for
     the coach IdentityFixView. Our-team tracklets only (opponent tracks carry no
     `breakdown.tracklet`). Sorted worst-confidence first so the coach reviews the
@@ -1326,6 +2036,31 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
         inb = ((df["x_m"] >= -m) & (df["x_m"] <= field_length_m + m)
                & (df["y_m"] >= -m) & (df["y_m"] <= field_width_m + m))
         onpitch_frac = df.assign(_inb=inb).groupby("tracklet")["_inb"].mean().to_dict()
+    # Coarse OPPONENT-colour prune: the fine-hue team classifier mis-teams
+    # opponents into our team (66% of the W8 review list was opp/coach). When we
+    # can CONFIDENTLY bucket a tracklet's jersey to the OPPONENT's coarse colour
+    # family (e.g. blue), drop it from the review list. Conservative: a washed /
+    # achromatic / unsure tracklet returns None → stays (never hide a real player
+    # we're unsure about). Only prunes UNASSIGNED tracklets (an assigned/coach
+    # tracklet is a decision to keep visible).
+    opp_family = None
+    tl_family: dict[int, str] = {}
+    if opp_color_hex and track_jersey_samples:
+        from .team_color import color_family, tracklet_family
+        opp_family = color_family(hex=opp_color_hex)
+        our_family = color_family(hex=our_color_hex) if our_color_hex else None
+        if opp_family and opp_family != our_family:   # only if the kits differ coarsely
+            members: dict[int, list[int]] = {}
+            for _t, _r in tracklet_of_track.items():
+                members.setdefault(int(_r), []).append(int(_t))
+            for _tl in set(tracklet_of_track.values()):
+                _samps = []
+                for _m in members.get(int(_tl), [int(_tl)]):
+                    _samps.extend(track_jersey_samples.get(_m, []))
+                _fam = tracklet_family(_samps)
+                if _fam is not None:
+                    tl_family[int(_tl)] = _fam
+
     by_tl: dict[int, object] = {}
     for a in assignments:
         tl = (a.breakdown or {}).get("tracklet")
@@ -1349,6 +2084,8 @@ def _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled
                 continue
             if onpitch_frac and onpitch_frac.get(tl, 1.0) < config.TRACKLET_REVIEW_ONPITCH_FRAC:
                 continue  # mostly off-pitch → not one of our players
+            if opp_family and tl_family.get(tl) == opp_family:
+                continue  # confidently the opponent's kit colour → not ours
         out.append({
             "tracklet_id": int(tl),
             "player_id": a.player_id,
@@ -1377,21 +2114,41 @@ def _sanitize_json(obj):
     return obj
 
 
-def _tv_meta_to_dict(meta) -> dict | None:
+def _tv_meta_to_dict(meta, video_to_clock=None) -> dict | None:
     """asdict(TvViewMeta) but with segments flattened to a list of dicts.
 
     Firestore disallows arrays inside arrays; the dataclass stores
     segments as list[tuple[float, float]] which sanitizes to nested
     lists \u2192 \"Property tv_reel contains an invalid nested entity.\" Map
     each segment to {\"start_s\": a, \"end_s\": b} instead.
+
+    Each segment also carries where it lands in the REEL (`reel_start_s`) and what
+    the game clock reads there (`period` + `clock_s`), when `video_to_clock` is
+    supplied. That is what lets the scorebug show the right minute anywhere in a
+    highlights reel: only the events inside a rendered window get an
+    `autoHighlightsTimeS` at all -- measured on real games, 18 of 121, 21 of 106,
+    8 of 112 -- so a player that reads the clock only from events shows a minute
+    from a different part of the match between them.
     """
     if meta is None:
         return None
     d = asdict(meta)
     segs = d.get("segments") or []
-    d["segments"] = [
-        {"start_s": float(a), "end_s": float(b)} for a, b in segs
-    ]
+    out = []
+    acc = 0.0
+    for a, b in segs:
+        a, b = float(a), float(b)
+        rec = {"start_s": a, "end_s": b, "reel_start_s": acc}
+        if video_to_clock is not None:
+            try:
+                per, clock = video_to_clock(a)
+                rec["period"] = int(per)
+                rec["clock_s"] = float(clock)
+            except Exception:
+                pass
+        out.append(rec)
+        acc += max(0.0, b - a)
+    d["segments"] = out
     return d
 
 def _player_stat_to_dict(s) -> dict:

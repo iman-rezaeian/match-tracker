@@ -17,9 +17,20 @@ shift || true
 LOG="/tmp/${GAME_ID}.run.log"
 
 # Inner command: load env + venv, then run under caffeinate.
+#
+# The Anthropic token (Stage 5's VLM jersey-number reads) comes from the macOS
+# Keychain, not .env — a bearer token in a dotfile is one `cat` away from a log,
+# a screen-share, or a chat transcript. `security` prints it only to this
+# process's stdout, and it lives solely in the child's environment. Absent or
+# expired just means no drafts: the pipeline wraps the VLM stage in try/except,
+# so tracking still completes (re-mint with `ant auth print-credentials
+# --access-token` and re-run with --stats-only... except the VLM needs the raw
+# video, so a fresh token BEFORE the run is worth the ten seconds).
 read -r -d '' INNER <<EOF || true
 cd "$(pwd)"
 set -a; [ -f .env ] && source .env; set +a
+export ANTHROPIC_OAUTH_TOKEN="\$(security find-generic-password -s anthropic-oauth-token -a "\$USER" -w 2>/dev/null)"
+[ -n "\$ANTHROPIC_OAUTH_TOKEN" ] || echo "WARNING: no anthropic-oauth-token in Keychain — VLM drafts will be skipped"
 source .venv-post-game/bin/activate
 exec caffeinate -dimsu python -m post_game.cli run --game-id "${GAME_ID}" ${*:-}
 EOF

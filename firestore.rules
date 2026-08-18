@@ -5,10 +5,12 @@ rules_version = '2';
 // PRIVACY MODEL
 // ─────────────
 // Public (parents/spectators, unauthenticated or anonymous):
-//   - can READ the team doc (name, roster summary, schedule)
-//     and the games collection (scoreboard, events, goals)
-//   - CAN read the new public broadcast fields on each game doc
-//     (videoHighlightsUrl, videoFullGameUrl, broadcastEvents, …)
+//   - can READ the games collection (scoreboard, events, goals)
+//   - CAN read the public broadcast fields on each game doc
+//     (videoHighlightsUrl, videoFullGameUrl, …) and games/<id>/public/broadcast
+//   - CANNOT read the team doc — it holds the ROSTER, which carries every
+//     child's full name and photo_url. Public pages get their player names
+//     from the first-name-only fields in the broadcast index instead.
 //   - CANNOT read the analytics/ subcollection or the clips/ subcollection
 //     under games (which contain per-player stats, GK positioning,
 //     identity confidence, sample-rate-level tracks, etc.)
@@ -25,7 +27,9 @@ rules_version = '2';
 //
 // Note: the public "broadcast events" index on each game doc only contains
 // first name + jersey number for goal scorers / subs — see
-// _build_broadcast_events_index in post_game/pipeline.py.
+// _build_broadcast_events_index in post_game/pipeline.py. It DOES carry
+// playerId, which is why the roster behind those ids must not be public: the
+// two together would reconstitute the full names the index takes care to omit.
 //
 // Deploy from the Firebase console: Firestore → Rules → paste this file.
 
@@ -66,8 +70,21 @@ service cloud.firestore {
     }
 
     // --- teams/main ---------------------------------------------------
+    // SIGNED-IN ONLY. The roster on this doc carries every child's FULL name
+    // and photo_url, and it used to be world-readable. The public pages render
+    // first names only and never show a photo, and the broadcast index is
+    // scrubbed to first name + jersey number — but that index also publishes
+    // playerId, so anyone could pull the roster over the REST API and join it
+    // straight back to the full names. The scrubbing was cosmetic; this makes
+    // the data layer enforce what the app already assumes.
+    //
+    // Subcollection rules do NOT inherit from this one, so games/{id} and
+    // games/{id}/public below stay public: the live scoreboard, the event feed
+    // and the reel overlay index all keep working signed-out. Only the roster
+    // lookup is lost, and the public UI falls back to the first names carried
+    // in the broadcast index itself.
     match /teams/main {
-      allow read: if true;          // public can read team doc + roster
+      allow read: if isSignedIn();
       allow write: if isCoach();
 
       // --- fields/<name>: calibration presets (coach-only) -----------
