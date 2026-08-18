@@ -164,3 +164,42 @@ Layout (coach's spec):
 - Pending requesters see only the waiting screen.
 - Featured hero card stays above the tiles.
 - Approved viewers without a kid link get PAST GAMES + TRAINING + schedule.
+
+## Cutover runbook (state as of 2026-08-18)
+
+DONE, live in production data:
+- allowedUsers seeded: 26 parents + 3 coach-parents (owner, Houssein, Matt)
+  + Arian's two accounts (viewerLog reconcile — the only non-listed sign-ins ever).
+- parentSeason backfilled for all 14 finished games (16 players each).
+- Secrets migrated: team stream key → teams/main/private/liveInput;
+  19 dugout voice segment URLs across 6 games → games/*/voice/segments;
+  legacy fields deleted.
+
+DONE, on branches: dev + beta carry the new app (access gate, tile home,
+kid views, ACCESS panel, secret-aware live flows). firestore.rules rewritten
+in the repo but NOT yet deployed.
+
+REMAINING STEPS, in order:
+1. Coach verifies on https://beta.match-tracker-843.pages.dev
+   (corp laptop: this alias works; stompers2016.com is filtered):
+   a. Coach account → app opens as before; dugout regression: home tiles,
+      ACCESS tile shows the seeded families, live-game panel unchanged.
+   b. Work email (not allowlisted) → should see REQUEST ACCESS screen;
+      send a request with a note.
+   c. Coach account → ACCESS tile badge shows 1 → approve, link any player
+      → work-email tab flips into the app by itself; kid tiles render.
+      (Heatmaps/stats data unlocks only after step 3's rules deploy —
+      expect "could not load" until then.)
+   d. Remove the work email from FAMILIES afterwards.
+2. Promote beta → main (usual chain) so prod runs the gate BEFORE rules flip.
+3. Flip rules: Firebase console → Firestore → Rules → paste the repo's
+   firestore.rules → Publish. This is the moment strangers lose data access.
+4. Re-check on prod: coach dugout, one parent account if available, and
+   that kid tiles now load data. Stale-cached strangers see an error page
+   until their PWA picks up the new service worker — expected.
+5. Announce to the team WhatsApp: parents sign in with Google on
+   stompers2016.com; if they see "request access", tap it — coach approves
+   from the dugout.
+
+ROLLBACK: repaint the previous rules from git history (git show
+5763fb9^:firestore.rules) — the app tolerates both rule sets.
