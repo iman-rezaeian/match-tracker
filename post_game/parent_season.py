@@ -29,7 +29,12 @@ from . import config
 log = logging.getLogger(__name__)
 
 # Below this tracked-coverage fraction the per-game heatmap is withheld.
-COVERAGE_HEATMAP_MIN = 0.30
+# Runs on STATUE-AWARE coverage (coach-approved 2026-08-18): the old 0.30 bar
+# on raw coverage_frac was calibrated against statue-inflated numbers (0-80%
+# of "tracked time" was standers welded into identities). With statues now
+# removed from the grids at the source, a clean 15% sample answers "where did
+# he play" honestly — and at 0.15 every map that passed the old gate survives.
+COVERAGE_HEATMAP_MIN = 0.15
 
 
 def _first_name(name: Optional[str]) -> str:
@@ -80,7 +85,11 @@ def publish_parent_season(game_id: str, db: Optional[firestore.Client] = None) -
         minutes = float(st.get("minutes_played") or 0.0)
         attended = bool(pid in squad or minutes > 0
                         or pid in goals or pid in assists or pid in saves)
-        coverage = float(st.get("coverage_frac") or 0.0)
+        # Statue-aware coverage when the analytics doc carries it (games
+        # re-run since 2026-08-18); raw coverage_frac as fallback for docs
+        # that predate the measurement fields.
+        _sa = st.get("coverage_frac_statue_aware")
+        coverage = float(_sa if _sa is not None else (st.get("coverage_frac") or 0.0))
         row: dict[str, Any] = {
             "gameId": game_id,
             "date": date,
