@@ -10032,10 +10032,16 @@ function PlayerHeatmap({ grid, rows, cols }) {
   if (!grid || !grid.length || !rows || !cols) {
     return <div className="text-[11px] text-stone-500 py-2">No positional data.</div>;
   }
-  // Normalise against the PEAK cell, not 1: these grids are probability
-  // densities summing to 1, so on a 12x8 grid a peak cell is ~0.1 and
-  // `Math.max(1, ...)` made every cell read as near-zero.
-  const max = Math.max(...grid) || 1;
+  // Normalise against a HIGH-PERCENTILE cell, not the raw max. One poisoned
+  // cell (halftime-huddle time counted as pitch time, a mis-assigned
+  // touchline stander) used to become the reference and push every genuine
+  // cell under the paint floor — the map rendered as four lonely squares.
+  // The p95 nonzero cell is the effective peak; anything above it saturates.
+  // On healthy smooth grids p95 ≈ max, so this is a no-op there.
+  const nonzero = grid.filter((v) => v > 0).sort((a, b) => a - b);
+  const max = (nonzero.length
+    ? nonzero[Math.min(nonzero.length - 1, Math.floor(0.95 * (nonzero.length - 1)))]
+    : 0) || Math.max(...grid) || 1;
   // Build display rows top→bottom = opponent-net → our-net (data row index high→low).
   const displayRows = [];
   for (let r = rows - 1; r >= 0; r--) {
@@ -10055,7 +10061,7 @@ function PlayerHeatmap({ grid, rows, cols }) {
   // showing through that wash are the "bands" it appeared to show.
   const FLOOR = 0.04;
   const heat = (v) => {
-    const rel = v / max;
+    const rel = Math.min(1, v / max);            // cells above the p95 peak saturate
     if (!(rel >= FLOOR)) return 'transparent';   // also catches 0 and NaN
     // Rescale the surviving range across the FULL alpha span so the peak reads
     // as a peak. Gamma < 1 still lifts the mid-range without flattening it.

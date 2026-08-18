@@ -992,6 +992,21 @@ def run(
     from .sub_slack import relax_intervals, sub_times_from_events
     _onf_filter = relax_intervals(
         _onf, sub_times_from_events(game.events, clock_to_video), log_fn=log.info)
+    # Clip the attribution filter to the PLAY windows. An interval that spans
+    # halftime (on at the end of H1, no SUB tap during the break) counts the
+    # kid's 10-15 stationary minutes at the bench-side huddle as pitch time —
+    # measured on G1 Jul-12: 80% of Rezaeian's heatmap mass sat in two
+    # touchline cells (the huddle spot, mirrored by the half flip). Post-game
+    # milling leaks the same way through the video-end sentinel. Sub slack
+    # survives inside each half; the break, warmup and post-whistle do not.
+    # (played_minutes above was already play-window-clipped; this makes the
+    # sample filter consistent with the denominator.)
+    _onf_filter = {
+        _pid: ([(max(_a, _pa), min(_b, _pb))
+                for (_a, _b) in _ivs for (_pa, _pb) in play_windows
+                if min(_b, _pb) > max(_a, _pa)] or _ivs)
+        for _pid, _ivs in _onf_filter.items()
+    }
 
     played_minutes: dict[str, float] = {}
     for _pid, _ivs in _onf.items():
