@@ -38,3 +38,6 @@ tracking/outputs/click_samples/
 
 # click-sampler run log
 run*.log
+
+# local parent contact data (never commit — kids/parents PII)
+parent_contacts.local.json
