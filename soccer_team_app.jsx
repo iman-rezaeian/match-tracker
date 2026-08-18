@@ -138,13 +138,11 @@ function loadYouTubeIframeApi() {
 // Bundle, or to 'youtube' to use the free @Stompers2016 auto-detect path.
 const LIVE_MODE = 'off';
 
-// Minimum tracked-time coverage before the M/MIN work rate is shown at all.
-// A rate divides coverage out only while the tracked sample REPRESENTS the
-// player's minutes; detection favours a moving player, so a sliver sample skews
-// high (W8 keeper: 83 m/min from 10% coverage vs a 4.6 km/h average). Matches
-// post_game/config.py DIST_EST_MIN_COVERAGE, the same floor the pipeline uses
-// before it will extrapolate a distance.
-const WORK_RATE_MIN_COVERAGE = 0.25;
+// WORK_RATE_MIN_COVERAGE was here — the coverage floor below which the M/MIN
+// work rate was hidden. Both the per-game and season work-rate columns are gone
+// (they aggregated the contaminated per-player tracked distances), so there is no
+// longer a rate to gate. post_game/config.py DIST_EST_MIN_COVERAGE still governs
+// whether the PIPELINE extrapolates a distance into the analytics doc.
 
 // ---- Usage tracking (feeds the owner-only VIEWERS page) ----
 // The app owner is excluded from ALL tracking (he lives in the app building
@@ -861,6 +859,146 @@ function workerPost(path, body = {}) {
   }));
 }
 
+/* ---------- ACCESS GATE (request-access model, 2026-08-18) ----------
+ * Sign-in (the shell AuthGate) proves WHO you are; this layer decides WHAT
+ * you are: coach, approved family member, pending requester, or unknown.
+ * Membership lives in allowedUsers/{email} (doc id = LOWERCASED email; the
+ * Firestore rules compare token.email.lower()). We LISTEN to our own doc
+ * rather than get() it so the waiting screen flips into the app the moment
+ * the coach approves — no reload, no re-sign-in.
+ */
+function useAccess() {
+  const [access, setAccess] = useState({ status: 'checking', playerIds: [], role: null });
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return undefined;
+    const email = (window.fbUserInfo.email || '').toLowerCase();
+    if (!email) { setAccess({ status: 'unknown', playerIds: [], role: null }); return undefined; }
+    let cancelled = false;
+    // Cold-start watchdog: if neither snapshot nor error arrives, re-arm.
+    const stuck = setTimeout(() => { if (!cancelled && nonce < 3) setNonce(nonce + 1); }, 15000);
+    const unsub = window.fbDb.collection('allowedUsers').doc(email).onSnapshot(
+      (doc) => {
+        if (cancelled) return;
+        clearTimeout(stuck);
+        if (doc.exists) {
+          const d = doc.data() || {};
+          setAccess({
+            status: d.role === 'coach' ? 'coach' : 'allowed',
+            playerIds: Array.isArray(d.playerIds) ? d.playerIds : [],
+            role: d.role || 'parent',
+          });
+        } else {
+          // Not on the list: distinguish "never asked" from "asked, waiting"
+          // so reopening the app lands back on the waiting screen.
+          window.fbDb.collection('accessRequests').doc(email).get().then((r) => {
+            if (!cancelled) setAccess({ status: r.exists ? 'pending' : 'unknown', playerIds: [], role: null });
+          }).catch(() => {
+            if (!cancelled) setAccess({ status: 'unknown', playerIds: [], role: null });
+          });
+        }
+      },
+      () => {
+        if (cancelled) return;
+        clearTimeout(stuck);
+        // Listener failure (flaky signal, rules mid-deploy): retry, then fall
+        // through to the request screen rather than spin forever.
+        if (nonce < 3) setTimeout(() => { if (!cancelled) setNonce(nonce + 1); }, 2000);
+        else setAccess({ status: 'unknown', playerIds: [], role: null });
+      }
+    );
+    return () => { cancelled = true; clearTimeout(stuck); unsub(); };
+  }, [nonce]);
+  return [access, setAccess];
+}
+
+function RequestAccessScreen({ onRequested }) {
+  const u = (typeof window !== 'undefined' && window.fbUserInfo) || {};
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { if (typeof window !== 'undefined') window.__appReady = true; }, []);
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const email = (u.email || '').toLowerCase();
+      await window.fbDb.collection('accessRequests').doc(email).set({
+        email, name: u.name || '', photo: u.photo || '',
+        note: note.trim(), ts: Date.now(), status: 'pending',
+      });
+      trackUsage('access:request', {}, false);
+      onRequested();
+    } catch (e) {
+      setError(e && e.message ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="min-h-screen stripes-bg text-white flex items-center justify-center p-6">
+      <style>{FONT_STYLES}</style>
+      <div className="max-w-sm w-full space-y-5">
+        <div className="text-center space-y-3">
+          <img src="./stompers_logo.png" alt="" className="w-20 h-20 mx-auto drop-shadow" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          <h1 className="font-display text-3xl leading-tight">STOMPERS FAMILIES</h1>
+          <p className="text-white/70 text-sm">
+            This app is private to LaSalle Stompers 2016 families. Send a
+            request and the coach will let you in.
+          </p>
+        </div>
+        <div className="bg-white/10 rounded-2xl p-4 flex items-center gap-3">
+          {u.photo && <img src={u.photo} className="w-10 h-10 rounded-full" referrerPolicy="no-referrer" />}
+          <div className="min-w-0">
+            <div className="font-bold text-sm truncate">{u.name || 'Google account'}</div>
+            <div className="text-xs text-white/60 truncate">{u.email}</div>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-bold tracking-wider text-white/60">WHICH PLAYER ARE YOU WITH? (OPTIONAL)</label>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. Liam's grandpa"
+            className="mt-1 w-full bg-stone-950/60 border border-white/20 rounded-xl px-3 py-3 text-sm text-white placeholder-white/30"
+          />
+        </div>
+        <button
+          onClick={submit}
+          disabled={busy}
+          className="w-full bg-lime-500 hover:bg-lime-400 text-stone-950 font-display text-lg rounded-xl py-3 active:scale-[0.98] disabled:opacity-60"
+        >
+          {busy ? 'SENDING…' : 'REQUEST ACCESS'}
+        </button>
+        {error && <p className="text-red-300 text-xs text-center">{error}</p>}
+        <button onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }} className="w-full text-xs text-white/50 underline">
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AccessWaitingScreen() {
+  const u = (typeof window !== 'undefined' && window.fbUserInfo) || {};
+  useEffect(() => { if (typeof window !== 'undefined') window.__appReady = true; }, []);
+  return (
+    <div className="min-h-screen stripes-bg text-white flex items-center justify-center p-6">
+      <style>{FONT_STYLES}</style>
+      <div className="max-w-sm w-full text-center space-y-4">
+        <div className="text-5xl">⏳</div>
+        <h1 className="font-display text-3xl">REQUEST SENT</h1>
+        <p className="text-white/70 text-sm">
+          Waiting for the coach to approve <span className="font-bold">{u.email}</span>.
+          The app opens by itself the moment he does — you can close this in
+          the meantime.
+        </p>
+        <button onClick={() => { if (window.fbAuth) window.fbAuth.signOut(); }} className="text-xs text-white/50 underline">
+          Not you? Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- ROUTER (client-side, 2026-06-12) ----------
  * Every surface lives in this one bundle, yet navigation used to go through
  * full page loads (?live=, ?coach) — each tap re-ran the bundle, re-inited
@@ -887,6 +1025,7 @@ function parseRoute() {
 
 export default function App() {
   const [route, setRoute] = useState(parseRoute);
+  const [access, setAccess] = useAccess();
   const navDepthRef = useRef(0);
 
   useEffect(() => {
@@ -920,8 +1059,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Access gating comes BEFORE routing: unknown/pending accounts see only
+  // the request/waiting screens no matter which URL they arrived on.
+  if (access.status === 'checking') return <PublicLoadingScreen />;
+  if (access.status === 'unknown') {
+    return <RequestAccessScreen onRequested={() => setAccess({ status: 'pending', playerIds: [], role: null })} />;
+  }
+  if (access.status === 'pending') return <AccessWaitingScreen />;
+
   if (route.kind === 'live') return <LiveScorePage key={route.gameId} gameId={route.gameId} />;
-  if (route.kind !== 'coach') return <PublicHomePage />;
+  if (route.kind !== 'coach') return <PublicHomePage access={access} />;
   return <CoachApp />;
 }
 
@@ -1154,6 +1301,22 @@ function CoachApp() {
     if (view) trackUsage('coach:' + view);
   }, [view]);
 
+  // Team-level live-input creds moved to the coach-only subdoc
+  // teams/main/private/liveInput (2026-08). Production loads them here; the
+  // legacy teamLiveInput field on the team doc is no longer read or written.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb) return undefined;
+    const unsub = window.fbDb.collection('teams').doc('main')
+      .collection('private').doc('liveInput').onSnapshot(
+        (doc) => {
+          const d = doc.exists ? doc.data() : null;
+          setTeamLiveInput(d && d.uid ? d : null);
+        },
+        () => {}
+      );
+    return unsub;
+  }, []);
+
   const persistRoster = async (next) => {
     setRoster(next);
     try { await storageSet(STORAGE_KEYS.ROSTER, JSON.stringify(next)); } catch (e) {}
@@ -1269,10 +1432,18 @@ function CoachApp() {
       gkChanges: [],
       pausePeriods: [],
       autoRecord: !!autoRecord,
-      ...(liveInput ? { liveInput } : {}),
+      // Only the PUBLIC piece of the live input lives on the game doc
+      // (families play hlsUrl); rtmpsUrl/streamKey are credentials and go
+      // to the coach-only private subdoc right below.
+      ...(liveInput ? { liveInput: { hlsUrl: liveInput.hlsUrl || null, createdAt: liveInput.createdAt || now } } : {}),
       ...(youtubeVideoId ? { youtubeVideoId } : {}),
     };
     persistGames(prev => [game, ...prev]);
+    if (liveInput && typeof window !== 'undefined' && window.fbDb) {
+      window.fbDb.collection('teams').doc('main').collection('games').doc(game.id)
+        .collection('private').doc('liveInput').set(liveInput)
+        .catch((e) => console.error('live-input private save error:', e));
+    }
     setActiveGameId(game.id);
     setView('activeGame');
   };
@@ -1991,6 +2162,21 @@ function CoachApp() {
     setPendingEvent(null);
   };
 
+  // Where each player has been pinned on the board, over every game we have
+  // (including the one in progress). Feeds the multi-sub position matching.
+  // Recomputed only when a POSITION event is added — cheap, but it walks every
+  // game's event list, so it shouldn't run on every tick of the match clock.
+  //
+  // ⚠ MUST stay above the early returns below. It used to sit after them, which
+  // made the hook COUNT depend on `unlocked`/`loaded`: the first render bailed at
+  // "Checking access…" having run N hooks, then the unlocked re-render ran N+1,
+  // and React threw #310 ("rendered more hooks than during the previous render")
+  // — a black DUGOUT screen. Any new hook goes here, never after a return.
+  const bandHist = useMemo(
+    () => bandHistory(games),
+    [games.reduce((n, g) => n + (g.events?.length || 0), 0), games.length]
+  );
+
   if (!unlocked) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-stone-950">
@@ -2011,15 +2197,6 @@ function CoachApp() {
 
   const activeGame = games.find(g => g.id === activeGameId) || games.find(g => g.status === 'active');
   const viewingGame = games.find(g => g.id === viewingGameId);
-
-  // Where each player has been pinned on the board, over every game we have
-  // (including the one in progress). Feeds the multi-sub position matching.
-  // Recomputed only when a POSITION event is added — cheap, but it walks every
-  // game's event list, so it shouldn't run on every tick of the match clock.
-  const bandHist = useMemo(
-    () => bandHistory(games),
-    [games.reduce((n, g) => n + (g.events?.length || 0), 0), games.length]
-  );
 
   return (
     <div className="min-h-screen bg-stone-950 font-sans-pro text-stone-100 max-w-2xl mx-auto sm:border-x sm:border-stone-900">
@@ -2066,6 +2243,7 @@ function CoachApp() {
           onViewSchedule={() => setView('schedule')}
           onViewHelp={() => setView('help')}
           onViewViewers={() => setView('viewers')}
+          onViewAccess={() => setView('access')}
           onViewFilmRoom={() => setView('filmRoom')}
           onViewTraining={() => setView('training')}
         />
@@ -2400,6 +2578,10 @@ function CoachApp() {
         <ViewersPanel games={games} onBack={() => setView('home')} />
       )}
 
+      {view === 'access' && (
+        <ManageAccessPanel roster={roster} onBack={() => setView('home')} />
+      )}
+
       {view === 'filmRoom' && (
         <FilmRoomView
           games={games}
@@ -2468,7 +2650,18 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining }) {
+function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, onStartScheduled, onResumeGame, onViewGame, onViewStats, onViewWeights, onViewSchedule, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining, onViewAccess }) {
+  // Pending family requests → badge on the ACCESS tile. Errors stay silent
+  // (rules not deployed yet / offline) — the tile just shows no count.
+  const [pendingAccess, setPendingAccess] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb) return undefined;
+    const unsub = window.fbDb.collection('accessRequests').onSnapshot(
+      (snap) => setPendingAccess(snap.size),
+      () => setPendingAccess(0)
+    );
+    return unsub;
+  }, []);
   const finishedGames = games.filter(g => g.status === 'finished')
     // Newest first by DATE then time-of-day (startedAt) — so two games on the
     // same festival day order correctly, like the upcoming-games list.
@@ -2629,15 +2822,21 @@ function HomeView({ roster, games, schedule, activeGame, onGoRoster, onNewGame, 
 
       <div className="grid grid-cols-2 gap-3 px-4 pt-3">
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
-        <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Season totals" />
+        <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Players · games · team" />
         <TileButton onClick={onViewSchedule} icon={<Calendar className="w-6 h-6" />} label="SCHEDULE" sub={`${schedule.filter(s => new Date(s.date + 'T' + (s.time || '00:00')) >= new Date()).length} upcoming`} />
-        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · analytics`} />
+        <TileButton onClick={onViewFilmRoom} icon={<span className="text-2xl leading-none">🎥</span>} label="FILM ROOM" sub={`${finishedGames.length} game${finishedGames.length === 1 ? '' : 's'} · video · review`} />
         <TileButton onClick={onViewWeights} icon={<span className="text-2xl leading-none">⚙</span>} label="SCORING" sub="Tune weights" />
         {/* Owner-only: usage analytics across parents/coaches/players. Other
             coaches don't see this tile (local dev with no Firebase shows it). */}
         {(isOwner() || (typeof window !== 'undefined' && !window.fbDb)) && (
           <TileButton onClick={onViewViewers} icon={<span className="text-2xl leading-none">👁</span>} label="VIEWERS" sub="Usage analytics" />
         )}
+        <TileButton
+          onClick={onViewAccess}
+          icon={<span className="text-2xl leading-none">🔑</span>}
+          label="ACCESS"
+          sub={pendingAccess > 0 ? `${pendingAccess} request${pendingAccess === 1 ? '' : 's'} waiting` : 'Family approvals'}
+        />
         <TileButton onClick={onViewTraining} icon={<span className="text-2xl leading-none">🎓</span>} label="TRAINING" sub="Skill videos" />
       </div>
 
@@ -4739,14 +4938,20 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
   // recovery must not wedge on a missing doc.
   try {
     if (window.fbDb) {
-      const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId);
-      const snap = await ref.get();
-      if (snap.exists) {
-        const cur = snap.data().voiceSegments || [];
-        await ref.update({ voiceSegments: [...cur, { startedAt, url: publicUrl, durationS, mime }] });
+      // Raw dugout audio index is COACH-ONLY: it lives in the voice/
+      // subcollection (rules lock it), never on the family-readable game doc.
+      const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId)
+        .collection('voice').doc('segments');
+      const seg = { startedAt, url: publicUrl, durationS, mime };
+      const fv = (typeof firebase !== 'undefined' && firebase.firestore) ? firebase.firestore.FieldValue : null;
+      if (fv) await ref.set({ list: fv.arrayUnion(seg) }, { merge: true });
+      else {
+        const snap = await ref.get();
+        const cur = (snap.exists && snap.data().list) || [];
+        await ref.set({ list: [...cur, seg] }, { merge: true });
       }
     }
-  } catch (e) { console.warn('voiceSegments doc write failed (audio is in R2):', e); }
+  } catch (e) { console.warn('voice segment index write failed (audio is in R2):', e); }
   return publicUrl;
 }
 
@@ -8494,7 +8699,6 @@ function ConfirmQueueView({ items, roster, onClose, onUpdateEvent, onDeleteEvent
 
 function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onConfirmBookmark, onConfirmVoiceDraft, onDismissVoiceDraft }) {
   const [openGameId, setOpenGameId] = useState(null);
-  const [showSeason, setShowSeason] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const finished = useMemo(() => (
@@ -8612,23 +8816,20 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           )}
         </button>
 
-        {/* SEASON AGGREGATE — opens season-wide rollup */}
-        <button
-          onClick={() => setShowSeason(true)}
-          disabled={finished.length === 0}
-          className={`w-full bg-stone-900 border border-stone-800 rounded-2xl p-4 flex items-center gap-3 transition ${finished.length === 0 ? 'opacity-60 cursor-not-allowed' : 'hover:border-lime-500/40 active:scale-[0.99]'}`}
-        >
-          <div className="w-10 h-10 rounded-lg bg-lime-500/15 text-lime-300 flex items-center justify-center text-xl">📈</div>
-          <div className="flex-1 text-left">
-            <div className="font-display text-base">SEASON ANALYTICS</div>
-            <div className="text-xs text-stone-400">Aggregate across past games {finished.length > 0 ? `· ${finished.length} game${finished.length === 1 ? '' : 's'}` : '· no data yet'}</div>
-          </div>
-          {finished.length > 0 && <span className="text-[10px] font-bold text-lime-400">OPEN →</span>}
-        </button>
+        {/* SEASON ANALYTICS used to be a button here, opening a modal with its own
+            per-player table — a season roll-up buried inside a per-GAME screen,
+            duplicating the one on the Home grid. Both now live in the single STATS
+            destination (Home → STATS). Film Room keeps video and review.
+
+            The game list below still opens AnalyticsPanel, and so does STATS →
+            GAMES. That is deliberate: the panel is where the TV reel and the
+            highlights live, so the video route needs it too. One panel reached from
+            two places is not the duplication that was the problem — that was two
+            DIFFERENT per-player tables of the same season. */}
 
         {finished.length === 0 ? (
           <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            No finished games yet. Analytics show up here after you end a match.
+            No finished games yet. Reels and review items show up here after you end a match.
           </div>
         ) : (
           <div className="space-y-2">
@@ -8660,13 +8861,18 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
-                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
+                    <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">🎬 OPEN</div>
                   </div>
                 </button>
               );
             })}
           </div>
         )}
+
+        <div className="text-[10px] text-stone-600 leading-snug px-1 pt-1">
+          Looking for numbers? Season and per-player stats live in{' '}
+          <span className="text-stone-400 font-bold">STATS</span> on the home screen.
+        </div>
       </div>
 
       {openGame && (
@@ -8675,14 +8881,6 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
           roster={roster}
           onClose={() => setOpenGameId(null)}
           onSeekVideo={() => setOpenGameId(null)}
-        />
-      )}
-
-      {showSeason && (
-        <SeasonAnalyticsView
-          games={finished}
-          roster={roster}
-          onClose={() => setShowSeason(false)}
         />
       )}
 
@@ -8786,50 +8984,50 @@ function VoiceDraftRow({ game, draft, roster, onAccept, onDismiss }) {
   );
 }
 
-/* ---------- SEASON ANALYTICS ----------
- * Aggregates per-game analytics/v1 docs into season-to-date and last-N rollups.
- * Best practice for U10 (15-25 game season): show both SEASON and LAST 5 in a
- * tab toggle so coaches compare all-time vs. recent form with one tap.
- * Last 3 is too noisy (one outlier swings 33%); last 10 overlaps season-to-date.
+/* ---------- SEASON AGGREGATION ----------
+ * Aggregates per-game analytics summary docs into season-to-date and last-N
+ * rollups. Best practice for U10 (15-25 game season): show both SEASON and
+ * LAST 5 in a tab toggle so coaches compare all-time vs. recent form with one
+ * tap. Last 3 is too noisy (one outlier swings 33%); last 10 overlaps
+ * season-to-date.
+ *
+ * This used to be a modal (`SeasonAnalyticsView`) opened from inside FILM ROOM —
+ * a per-GAME screen — which is how the season roll-up came to be hidden two taps
+ * deep behind a video browser while a second, different season screen sat on the
+ * Home grid. It is now a hook consumed by the SEASON and TEAM tabs of the single
+ * STATS destination. See STATS_CONSOLIDATION_PLAN.md.
  */
 const ROLLING_WINDOW = 5;
 
-function SeasonAnalyticsView({ games, roster, onClose }) {
+// Fetches every finished game's analytics summary and derives the season/rolling
+// window plus the per-player aggregate. One fetch serves all three STATS tabs.
+function useSeasonAnalytics(games, mode) {
   const [docs, setDocs] = useState({}); // gameId -> analytics doc
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState('season'); // 'season' | 'rolling'
-  const [sortKey, setSortKey] = useState('workRate');
-  const [expandedId, setExpandedId] = useState(null);
 
-  // Swipe-back closes the modal (coordinated with nested modals + view stack).
-  useModalHistory('seasonAnalytics', onClose);
-  // Lock body scroll so the page underneath keeps its position.
-  useEffect(() => {
-    const scrollY = window.scrollY;
-    const body = document.body;
-    const prev = { position: body.style.position, top: body.style.top, width: body.style.width };
-    body.style.position = 'fixed';
-    body.style.top = `-${scrollY}px`;
-    body.style.width = '100%';
-    return () => {
-      body.style.position = prev.position;
-      body.style.top = prev.top;
-      body.style.width = prev.width;
-      window.scrollTo(0, scrollY);
-    };
-  }, []);
-
-  // Fetch analytics/v1 for every finished game in parallel.
+  // Fetch the SUMMARY doc for every finished game in parallel — not analytics/v1.
+  //
+  // This view fans out over every game at once, and the full docs run 420-970 KB
+  // each: ~5 MB across seven games, of which ~3.4 MB is `identity_assignments`,
+  // a per-track array this view never reads (it touches player_stats and nothing
+  // else). That download plus the main-thread JSON parse is what made the view
+  // open to a black screen on a phone, and it grew with every game played.
+  // analytics/summary carries the same fields at ~2.5 KB — 0.018 MB total.
+  //
+  // Falls back to v1 per-game if a summary is missing, so a game analysed by an
+  // older pipeline still appears (slowly) rather than vanishing from the season.
   useEffect(() => {
     if (!window.fbDb || !games || games.length === 0) { setLoading(false); return; }
     let cancelled = false;
-    Promise.all(games.map(g => (
-      window.fbDb.collection('teams').doc('main')
-        .collection('games').doc(g.id)
-        .collection('analytics').doc('v1').get()
-        .then(snap => [g.id, snap.exists ? snap.data() : null])
-        .catch(() => [g.id, null])
-    ))).then(results => {
+    Promise.all(games.map(g => {
+      const analytics = window.fbDb.collection('teams').doc('main')
+        .collection('games').doc(g.id).collection('analytics');
+      return analytics.doc('summary').get()
+        .then(snap => snap.exists
+          ? [g.id, snap.data()]
+          : analytics.doc('v1').get().then(f => [g.id, f.exists ? f.data() : null]))
+        .catch(() => [g.id, null]);
+    })).then(results => {
       if (cancelled) return;
       const map = {};
       results.forEach(([id, d]) => { if (d) map[id] = d; });
@@ -8855,8 +9053,35 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
 
   const fellBackToSeason = mode === 'rolling' && gamesWithAnalytics.length < ROLLING_WINDOW;
 
-  // Per-player aggregate: avg minutes, total/avg distance, top speed (max),
-  // avg sprints, avg thirds-pct. Also collects per-game series for sparklines.
+  // gameId -> playerId -> tagged click stats, for the games the coach tagged.
+  //
+  // ⚠ Skips games with `oriented: false`. Teams switch ends at half time, so
+  // depth figures are only comparable once each half is flipped into a common
+  // frame; when the keeper's median sits mid-pitch the pipeline REFUSES to guess
+  // the orientation rather than risk mirroring a whole half. Such a game's depth
+  // and thirds are in an undefined frame, and averaging it into a season figure
+  // would silently mirror half its contribution. Excluded, not blended.
+  const clickByGame = useMemo(() => {
+    const out = {};
+    Object.entries(docs).forEach(([gid, d]) => {
+      const cs = (d && d.click_stats) || null;
+      if (!cs || cs.oriented === false) return;
+      const players = cs.players || [];
+      if (players.length) {
+        out[gid] = Object.fromEntries(players.map(p => [p.player_id, p]));
+      }
+    });
+    return out;
+  }, [docs]);
+
+  // Per-player season aggregate: MINUTES (from the coach's SUB taps) and thirds
+  // occupancy from TAGGED games only.
+  //
+  // Distance, sprints and work-rate columns were removed here for the same reason
+  // as on the per-game card: they aggregate the tracked per-player source, which
+  // carries ~23% wrong-child contamination, so a season mean is a more confident
+  // presentation of the same wrong number. A sortable table made it worse — the
+  // top row read as "hardest worker of the season".
   const playerAgg = useMemo(() => {
     const byPid = new Map();
     // Iterate oldest-first so series sparkline reads left-to-right chronologically.
@@ -8867,54 +9092,35 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
         if (!pid) return;
         let row = byPid.get(pid);
         if (!row) {
-          row = { pid, games: 0, minutes: 0, distance: 0, sprints: 0,
-                  attPct: 0, midPct: 0, defPct: 0,
-                  // rawDist/trkMin accumulate MEASURED distance over MEASURED time so
-                  // the season work rate is a true pooled rate, never a sum of
-                  // per-game extrapolations (which compound each game's coverage error).
-                  rawDist: 0, trkMin: 0,
-                  distSeries: [], sprintSeries: [] };
+          row = { pid, games: 0, tagged: 0, minutes: 0,
+                  attPct: 0, midPct: 0, defPct: 0, minSeries: [] };
           byPid.set(pid, row);
         }
-        // 4.4: rate-based estimates when present (fairer across players with
-        // unequal tracked coverage); raw sums for older docs.
-        const dist = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
-        const sprints = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
         row.games += 1;
         row.minutes += s.minutes_played || 0;
-        row.distance += dist;
-        // Pool the work-rate numerator/denominator ONLY from games whose coverage
-        // is thick enough for the rate to be representative. A sliver game is
-        // motion-biased (see WORK_RATE_MIN_COVERAGE) and would drag the pooled
-        // season rate up, which is worse here than on a single card: the squad
-        // table is sortable, so a keeper's 10%-coverage game could top M/MIN.
-        const gameCov = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
-          ? (s.tracked_seconds / 60) / s.minutes_played : null;
-        if (gameCov == null || gameCov >= WORK_RATE_MIN_COVERAGE) {
-          row.rawDist += s.distance_m || 0;
-          row.trkMin += (s.tracked_seconds || 0) / 60;
+        row.minSeries.push(s.minutes_played || 0);
+        // Thirds occupancy comes from TAGGED positions when the game was tagged,
+        // and is skipped entirely when it wasn't. Averaging a tagged game's
+        // thirds together with a tracked game's would blend a ±1.7 m measurement
+        // into a ~23%-contaminated one and report the mean as a season figure.
+        const cp = clickByGame[g.id] && clickByGame[g.id][pid];
+        if (cp) {
+          row.tagged += 1;
+          row.attPct += cp.pct_attacking_third || 0;
+          row.midPct += cp.pct_middle_third || 0;
+          row.defPct += cp.pct_defensive_third || 0;
         }
-        row.sprints += sprints;
-        row.attPct += s.pct_attacking_third || 0;
-        row.midPct += s.pct_middle_third || 0;
-        row.defPct += s.pct_defensive_third || 0;
-        row.distSeries.push(dist);
-        row.sprintSeries.push(sprints);
       });
     });
     return [...byPid.values()].map(r => ({
       ...r,
       avgMin: r.games ? r.minutes / r.games : 0,
-      avgDist: r.games ? r.distance / r.games : 0,
-      // Pooled across the window: total measured metres / total measured minutes.
-      // Needs >=2 min of tracking in the window before it means anything.
-      workRate: r.trkMin >= 2 ? r.rawDist / r.trkMin : null,
-      avgSprints: r.games ? r.sprints / r.games : 0,
-      avgAttPct: r.games ? r.attPct / r.games : 0,
-      avgMidPct: r.games ? r.midPct / r.games : 0,
-      avgDefPct: r.games ? r.defPct / r.games : 0,
+      // Averaged over TAGGED games only, hence the separate denominator.
+      avgAttPct: r.tagged ? r.attPct / r.tagged : null,
+      avgMidPct: r.tagged ? r.midPct / r.tagged : null,
+      avgDefPct: r.tagged ? r.defPct / r.tagged : null,
     }));
-  }, [windowGames, docs]);
+  }, [windowGames, docs, clickByGame]);
 
   // Team rollup
   const teamAgg = useMemo(() => {
@@ -8930,165 +9136,220 @@ function SeasonAnalyticsView({ games, roster, onClose }) {
     return { games: windowGames.length, gf, ga, gd: gf - ga, w, d, l, cleanSheets };
   }, [windowGames]);
 
-  const sortedPlayers = useMemo(() => {
-    const key = sortKey;
-    return [...playerAgg].sort((a, b) => {
-      const av = key === 'name' ? '' : (a[key] || 0);
-      const bv = key === 'name' ? '' : (b[key] || 0);
-      if (key === 'name') {
-        const ap = roster.find(r => r.id === a.pid)?.name || '';
-        const bp = roster.find(r => r.id === b.pid)?.name || '';
-        return ap.localeCompare(bp);
-      }
-      return bv - av;
-    });
-  }, [playerAgg, sortKey, roster]);
+  // playerAgg is keyed by pid so the STATS table can merge it against the
+  // event-derived stats that view computes itself. The two sources stay separate
+  // all the way to the cell: never summed, averaged together, or substituted for
+  // one another.
+  const aggByPid = useMemo(
+    () => Object.fromEntries(playerAgg.map(r => [r.pid, r])), [playerAgg]);
 
-  const playerName = (pid) => {
-    const p = roster.find(r => r.id === pid);
-    if (!p) return pid || '—';
-    return p.number != null ? `#${p.number} ${p.name}` : p.name;
-  };
+  return { docs, loading, gamesWithAnalytics, windowGames, fellBackToSeason,
+           clickByGame, playerAgg, aggByPid, teamAgg };
+}
 
+/* TEAM tab — record, goals and the shot map for the selected window, plus a
+ * pointer to the per-game team shape. Every number here comes from the coach's
+ * taps or from team-level shape; none of it is per-player tracking. */
+function SeasonTeamTab({ season, mode }) {
+  const { teamAgg, windowGames } = season;
   return (
-    <div className="fixed inset-0 bg-stone-950 z-50 overflow-y-auto">
-      <div
-        className="sticky top-0 stripes-bg text-white border-b border-stone-800 px-4 pb-3 flex items-center justify-between z-10"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-      >
-        <h2 className="font-display text-lg truncate pr-3">📈 SEASON ANALYTICS</h2>
-        <button
-          onClick={onClose}
-          className="shrink-0 h-9 px-3 rounded-full bg-white/15 hover:bg-white/25 text-white font-display text-xs flex items-center gap-1 border border-white/20 active:scale-95"
-        >
-          CLOSE ✕
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="p-10 text-center text-stone-400 animate-pulse">Loading season analytics…</div>
-      ) : gamesWithAnalytics.length === 0 ? (
-        <div className="m-4 p-4 bg-stone-900 border border-stone-800 rounded-xl text-sm text-stone-300">
-          No analytics docs found yet for any finished games. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+    <div className="space-y-3">
+      <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+        <div className="text-xs text-stone-500 uppercase mb-3">
+          Record — {mode === 'season' ? 'season' : `last ${windowGames.length}`}
         </div>
-      ) : (
-        <div className="p-4 space-y-5 max-w-3xl mx-auto">
-          {/* Window toggle */}
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
-            <button
-              onClick={() => setMode('season')}
-              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'season' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
-            >
-              SEASON · {gamesWithAnalytics.length}
-            </button>
-            <button
-              onClick={() => setMode('rolling')}
-              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${mode === 'rolling' ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
-            >
-              LAST {ROLLING_WINDOW}
-            </button>
-          </div>
-          {fellBackToSeason && (
-            <div className="text-xs text-amber-400 -mt-3 text-center">
-              Need {ROLLING_WINDOW - gamesWithAnalytics.length} more game{(ROLLING_WINDOW - gamesWithAnalytics.length) === 1 ? '' : 's'} for rolling window — showing season instead.
-            </div>
-          )}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
+          <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
+          <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
+        </div>
+        <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
+          <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
+          <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
+        </div>
+      </section>
 
-          {/* Team rollup */}
-          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-            <div className="text-xs text-stone-500 uppercase mb-3">Team — {mode === 'season' ? 'season' : `last ${windowGames.length}`}</div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div><div className="text-2xl font-display tabular-nums text-lime-400">{teamAgg.w}</div><div className="text-[10px] text-stone-500 uppercase">Wins</div></div>
-              <div><div className="text-2xl font-display tabular-nums text-stone-300">{teamAgg.d}</div><div className="text-[10px] text-stone-500 uppercase">Draws</div></div>
-              <div><div className="text-2xl font-display tabular-nums text-red-400">{teamAgg.l}</div><div className="text-[10px] text-stone-500 uppercase">Losses</div></div>
-            </div>
-            <div className="grid grid-cols-4 gap-2 text-center mt-4 pt-3 border-t border-stone-800">
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.gf}</div><div className="text-[10px] text-stone-500 uppercase">GF</div></div>
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.ga}</div><div className="text-[10px] text-stone-500 uppercase">GA</div></div>
-              <div><div className={`text-lg font-display tabular-nums ${teamAgg.gd > 0 ? 'text-lime-400' : teamAgg.gd < 0 ? 'text-red-400' : ''}`}>{teamAgg.gd > 0 ? '+' : ''}{teamAgg.gd}</div><div className="text-[10px] text-stone-500 uppercase">GD</div></div>
-              <div><div className="text-lg font-display tabular-nums">{teamAgg.cleanSheets}</div><div className="text-[10px] text-stone-500 uppercase">CS</div></div>
-            </div>
-            {/* Season shot map (4.2) — respects the season/rolling window */}
-            <div className="mt-3">
-              <ShotMap games={windowGames} />
-            </div>
-          </section>
+      <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
+        <div className="text-xs text-stone-500 uppercase mb-2">Shots</div>
+        <ShotMap games={windowGames} />
+      </section>
 
-          {/* Per-player rollup */}
-          <section className="bg-stone-900 border border-stone-800 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs text-stone-500 uppercase">Players</div>
-              <div className="flex gap-1 text-[10px]">
-                {[
-                  ['workRate', 'M/MIN'],
-                  ['avgDist', 'DIST'],
-                  ['avgSprints', 'SPR'],
-                  ['avgMin', 'MIN'],
-                  ['name', 'A-Z'],
-                ].map(([k, label]) => (
-                  <button
-                    key={k}
-                    onClick={() => setSortKey(k)}
-                    className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
-                  >{label}</button>
-                ))}
+      <div className="text-[10px] text-stone-600 leading-snug px-1">
+        Per-game team shape — field tilt, compactness, momentum — sits on each game
+        in the GAMES tab. Those are team-level measurements, so they survive the
+        identity problem that retired the per-player movement numbers.
+      </div>
+    </div>
+  );
+}
+
+/* GAMES tab — one row per finished game, opening that game's analytics panel.
+ *
+ * This list used to be FILM ROOM's job, which is why the per-game analytics deck
+ * ended up behind a video browser. Film Room keeps the video; the numbers live
+ * here, next to the season numbers they belong with. */
+function SeasonGamesTab({ games, tagged, onOpenGame }) {
+  if (!games.length) {
+    return (
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+        No finished games yet. They appear here once you end a match.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {games.map(g => {
+        const result = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+        const resultClass = result === 'W' ? 'bg-lime-500/15 text-lime-300 border-lime-500/40'
+          : result === 'L' ? 'bg-red-500/15 text-red-300 border-red-500/40'
+            : 'bg-stone-500/15 text-stone-300 border-stone-500/40';
+        return (
+          <button
+            key={g.id}
+            onClick={() => onOpenGame(g.id)}
+            className="w-full bg-stone-900 border border-stone-800 hover:border-lime-500/40 rounded-2xl p-3 flex items-center gap-3 active:scale-[0.99] transition"
+          >
+            <span className={`shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg border font-display text-base ${resultClass}`}>{result}</span>
+            <div className="flex-1 min-w-0 text-left">
+              <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+              <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                {g.tournament && <TournamentChip value={g.tournament} />}
+                <FormatChip value={g.format} />
+                <span>{formatDate(g.date)}</span>
+                {tagged[g.id] && (
+                  <span className="inline-block text-[10px] font-extrabold tracking-wider px-1.5 py-0.5 rounded bg-lime-500/15 text-lime-300 border border-lime-700">
+                    🖱 TAGGED
+                  </span>
+                )}
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-stone-500 border-b border-stone-800">
-                    <th className="text-left py-1 pr-2">Player</th>
-                    <th className="text-right py-1 px-1">GP</th>
-                    <th className="text-right py-1 px-1">Min</th>
-                    <th className="text-right py-1 px-1">m/min</th>
-                    <th className="text-right py-1 px-1">Dist/g</th>
-                    <th className="text-right py-1 px-1">Spr/g</th>
-                    <th className="text-right py-1 pl-1">Trend</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedPlayers.map(p => {
-                    const expanded = expandedId === p.pid;
-                    return (
-                      <React.Fragment key={p.pid}>
-                        <tr
-                          onClick={() => setExpandedId(expanded ? null : p.pid)}
-                          className="border-b border-stone-800/50 cursor-pointer hover:bg-stone-800/40"
-                        >
-                          <td className="py-1.5 pr-2 truncate max-w-[120px]">{playerName(p.pid)}</td>
-                          <td className="text-right px-1 tabular-nums">{p.games}</td>
-                          <td className="text-right px-1 tabular-nums">{p.avgMin.toFixed(0)}</td>
-                          <td className="text-right px-1 tabular-nums font-bold text-lime-300">{p.workRate == null ? '—' : p.workRate.toFixed(0)}</td>
-                          <td className="text-right px-1 tabular-nums text-stone-500">{p.avgDist.toFixed(0)}m</td>
-                          <td className="text-right px-1 tabular-nums">{p.avgSprints.toFixed(1)}</td>
-                          <td className="text-right pl-1"><Sparkline values={p.distSeries} color="#a3e635" /></td>
-                        </tr>
-                        {expanded && (
-                          <tr className="bg-stone-800/30">
-                            <td colSpan={7} className="px-2 py-3">
-                              <div className="grid grid-cols-2 gap-3">
-                                <SparkBlock label="Distance (m)" values={p.distSeries} color="#a3e635" fmt={v => v.toFixed(0)} />
-                                <SparkBlock label="Sprints" values={p.sprintSeries} color="#fbbf24" fmt={v => v.toFixed(0)} />
-                              </div>
-                              <div className="mt-3 pt-3 border-t border-stone-700 grid grid-cols-3 gap-2 text-center text-[11px]">
-                                <div><div className="text-stone-500 text-[9px] uppercase">Att third</div><div className="tabular-nums">{p.avgAttPct.toFixed(0)}%</div></div>
-                                <div><div className="text-stone-500 text-[9px] uppercase">Mid third</div><div className="tabular-nums">{p.avgMidPct.toFixed(0)}%</div></div>
-                                <div><div className="text-stone-500 text-[9px] uppercase">Def third</div><div className="tabular-nums">{p.avgDefPct.toFixed(0)}%</div></div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="shrink-0 text-right">
+              <div className="font-display text-xl tabular-nums leading-none">{g.ourScore}<span className="text-stone-500 mx-0.5">–</span>{g.oppScore}</div>
+              <div className="text-[10px] text-lime-400 mt-1 font-bold tracking-wider">📊 OPEN</div>
             </div>
-            <div className="text-[10px] text-stone-500 mt-2">Tap a row to expand sparkline trend across the {mode === 'season' ? 'season' : `last ${windowGames.length} games`}.</div>
-          </section>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* SEASON tab — ONE per-player table, replacing the two that used to exist on
+ * separate screens (both showing GP and MIN, neither acknowledging the other).
+ *
+ * Columns are grouped by SOURCE with a visible divider, because the two groups do
+ * not have the same standing: the left comes from the coach's own taps, the right
+ * from positions he tagged himself. They are never combined into one number, and
+ * a player with no tagged games shows "—" rather than a tracked substitute — the
+ * whole point of the consolidation. See METRICS_INVENTORY.md. */
+function SeasonPlayersTab({ rows, sortKey, setSortKey, onOpenPlayer, nTagged }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between px-1">
+        <div className="text-[10px] text-stone-500 uppercase tracking-wider">Sort</div>
+        <div className="flex gap-1 text-[10px]">
+          {[['score', 'SCORE'], ['avgMin', 'MIN'], ['goals', 'G'], ['name', 'A-Z']].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setSortKey(k)}
+              className={`px-1.5 py-0.5 rounded font-bold ${sortKey === k ? 'bg-lime-500 text-stone-950' : 'bg-stone-800 text-stone-400 hover:text-stone-200'}`}
+            >{label}</button>
+          ))}
         </div>
-      )}
+      </div>
+
+      <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+        {/* Source banner: the columns below mean different things and the coach
+            must be able to see which is which without reading a footnote. */}
+        <div className="grid grid-cols-[1fr_9.5rem] text-[9px] font-bold tracking-wider">
+          <div className="px-3 py-1.5 bg-stone-800/60 text-stone-300">FROM YOUR TAPS</div>
+          <div className="px-2 py-1.5 bg-lime-500/10 text-lime-300 border-l border-lime-800/60">FROM YOUR TAGS</div>
+        </div>
+        <div className="grid grid-cols-[1.75rem_1fr_1.75rem_2.25rem_1.5rem_1.5rem_2.5rem_3rem_6.5rem] gap-1 px-3 py-2 text-[9px] font-bold tracking-wider text-stone-400 border-b border-stone-800">
+          <div>#</div>
+          <div>PLAYER</div>
+          <div className="text-center">GP</div>
+          <div className="text-center">MIN</div>
+          <div className="text-center">G</div>
+          <div className="text-center">A</div>
+          <div className="text-center">SCORE</div>
+          <div className="text-center border-l border-lime-800/60">TAGGED</div>
+          <div className="text-center">WHERE HE PLAYED</div>
+        </div>
+        <div className="divide-y divide-stone-800">
+          {rows.map(r => (
+            <button
+              key={r.pid}
+              onClick={() => onOpenPlayer(r.pid)}
+              className="w-full grid grid-cols-[1.75rem_1fr_1.75rem_2.25rem_1.5rem_1.5rem_2.5rem_3rem_6.5rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-950 transition"
+            >
+              <PlayerAvatar player={r.player} sizeClass="w-7 h-7" textSize="text-xs" numberClasses="bg-stone-900 text-stone-100" />
+              <div className="min-w-0">
+                <div className="font-bold text-xs truncate">{r.player?.name || r.pid}</div>
+                {r.player?.position && <div className="text-[9px] text-stone-500 font-bold tracking-wider">{r.player.position}</div>}
+              </div>
+              <div className="text-center font-display text-xs tabular-nums text-stone-200">{r.gamesPlayed}</div>
+              <div className="text-center font-display text-xs tabular-nums text-sky-700">{r.minutes}</div>
+              <div className="text-center font-display text-xs tabular-nums text-lime-700">{r.goals}</div>
+              <div className="text-center font-display text-xs tabular-nums text-stone-200">{r.assists}</div>
+              {/* SCORE, with a logging-coverage dot. The score is a rate over the
+                  events the coach managed to tap, and DEF logging ran as low as
+                  15% of minutes on some games — so a thin score must not look as
+                  firm as a well-logged one. Amber under 50%, red under 30%. */}
+              <div className={`text-center font-display text-sm tabular-nums relative ${r.score >= 6 ? 'text-lime-600' : r.score >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>
+                {r.score}
+                {r.scoreCoverage != null && r.scoreCoverage < 50 && (
+                  <span
+                    title={`Only ~${Math.round(r.scoreCoverage)}% of his minutes carried event logging — treat this score as provisional`}
+                    className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${r.scoreCoverage < 30 ? 'bg-red-500' : 'bg-amber-400'}`}
+                  />
+                )}
+              </div>
+              <div className="text-center font-display text-xs tabular-nums border-l border-lime-800/60 text-stone-400">
+                {r.tagged ? `${r.tagged}/${r.gamesWithDocs}` : '—'}
+              </div>
+              <div>
+                {r.avgDefPct == null ? (
+                  <div className="text-[9px] text-stone-600 text-center">not tagged</div>
+                ) : (
+                  <ThirdsBar def={r.avgDefPct} mid={r.avgMidPct} att={r.avgAttPct} />
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="text-[10px] text-stone-600 leading-snug px-1">
+        <span className="text-stone-400">Left of the divider</span> comes from your
+        taps during the game — exact. <span className="text-lime-600">Right of it</span>
+        {' '}comes from the moments you tagged in the film-room sampler, accurate to
+        about ±1.7 m, averaged over tagged games only.
+        {nTagged === 0
+          ? ' No games tagged yet — about 10 minutes of tagging per game fills that side in.'
+          : ` ${nTagged} game${nTagged === 1 ? '' : 's'} tagged so far.`}
+        {' '}Tap a player for his full breakdown.
+      </div>
+    </div>
+  );
+}
+
+/* A compact def/mid/att occupancy bar, for one table cell. */
+function ThirdsBar({ def, mid, att }) {
+  return (
+    <div>
+      <div className="flex h-1.5 rounded-full overflow-hidden">
+        <div style={{ width: `${def || 0}%`, background: '#ef4444' }} />
+        <div style={{ width: `${mid || 0}%`, background: '#eab308' }} />
+        <div style={{ width: `${att || 0}%`, background: '#a3e635' }} />
+      </div>
+      <div className="flex justify-between text-[8px] text-stone-500 mt-0.5 tabular-nums">
+        <span>{Math.round(def || 0)}</span>
+        <span>{Math.round(mid || 0)}</span>
+        <span>{Math.round(att || 0)}</span>
+      </div>
     </div>
   );
 }
@@ -9214,20 +9475,63 @@ function BroadcastVideoPlayer({ url, doc, label, onClose, timeKey, startAtS = nu
   let oppScore = 0;
   let currentPeriod = 1;
   let currentElapsed = 0;
+  let anchor = null;   // the event the clock is currently reading from
   for (const e of allEvents) {
     if (e.t <= now + 0.01) {
       if (e.ourScoreAfter != null) ourScore = e.ourScoreAfter;
       if (e.oppScoreAfter != null) oppScore = e.oppScoreAfter;
       if (e.period) currentPeriod = e.period;
-      if (e.elapsed != null) currentElapsed = e.elapsed;
+      if (e.elapsed != null) { currentElapsed = e.elapsed; anchor = e; }
     } else break;
   }
-  // Row-2 label: half + minute, matching the live in-game scorebug
-  // ("1ST · 27'"). Minute is derived from the latest passed event's clock.
+  // Row-2 label: half + minute, matching the live in-game scorebug ("1ST · 27'").
+  //
+  // ⚠ The minute must ADVANCE WITH the clip, not freeze on the last event and
+  // then jump. On a HIGHLIGHTS reel only the events inside a rendered window carry
+  // a reel time at all — measured on real games, 18 of 121 / 21 of 106 / 8 of 112 —
+  // so latching on "the last event before the playhead" showed a minute from a
+  // different part of the match and looked like it was just counting up.
+  //
+  // Interpolate instead: game time advances at the same rate as playback within
+  // the clip we are in, anchored on the nearest event. `nextEv` bounds it so the
+  // number cannot run past the following event's own clock (a clip boundary is a
+  // cut in game time, and without the bound the minute would sail through it).
   const halfLenMin = Number(doc?.halfLengthMin) || 25;
-  const minuteNum = Math.max(1, Math.floor((currentElapsed || 0) / 60) + 1)
-    + (currentPeriod === 2 ? halfLenMin : 0);
-  const statusLabel = `${currentPeriod === 2 ? '2ND' : '1ST'} · ${minuteNum}'`;
+  // Prefer the SEGMENT index: it covers the whole reel, where events cover only
+  // the instants inside rendered windows. Each segment says where it starts in the
+  // reel and what the game clock read there, so the minute is exact everywhere.
+  const reelMeta = timeKey === 'tvReelTimeS' ? doc?.tv_reel : doc?.auto_highlights;
+  const segs = (reelMeta && Array.isArray(reelMeta.segments)) ? reelMeta.segments : [];
+  const seg = (() => {
+    let found = null;
+    for (const s of segs) {
+      if (s.reel_start_s == null || s.clock_s == null) continue;
+      const len = Math.max(0, (s.end_s || 0) - (s.start_s || 0));
+      if (now + 0.01 >= s.reel_start_s && now <= s.reel_start_s + len) return s;
+      if (now > s.reel_start_s) found = s;   // last one we've passed
+    }
+    return found;
+  })();
+
+  let clockPeriod = currentPeriod;
+  let clockElapsed = currentElapsed || 0;
+  if (seg) {
+    // Game time advances at playback rate within a clip.
+    clockElapsed = (seg.clock_s || 0) + Math.max(0, now - seg.reel_start_s);
+    if (seg.period) clockPeriod = seg.period;
+  } else if (anchor) {
+    // No segment index (older analytics docs): fall back to interpolating from
+    // the nearest event, bounded by the next one so the number cannot sail
+    // through a clip boundary — a cut is a jump in game time, not elapsed time.
+    const nextEv = allEvents.find(e => e.t > now + 0.01) || null;
+    clockElapsed = (anchor.elapsed || 0) + Math.max(0, now - anchor.t);
+    if (nextEv && nextEv.period === currentPeriod && nextEv.elapsed != null) {
+      clockElapsed = Math.min(clockElapsed, nextEv.elapsed);
+    }
+  }
+  const minuteNum = Math.max(1, Math.floor(clockElapsed / 60) + 1)
+    + (clockPeriod === 2 ? halfLenMin : 0);
+  const statusLabel = `${clockPeriod === 2 ? '2ND' : '1ST'} · ${minuteNum}'`;
 
   // --- Active popup selection ---------------------------------------
   // Only GOAL and SUB events show popups. Sub events that fire within
@@ -9728,7 +10032,10 @@ function PlayerHeatmap({ grid, rows, cols }) {
   if (!grid || !grid.length || !rows || !cols) {
     return <div className="text-[11px] text-stone-500 py-2">No positional data.</div>;
   }
-  const max = Math.max(1, ...grid);
+  // Normalise against the PEAK cell, not 1: these grids are probability
+  // densities summing to 1, so on a 12x8 grid a peak cell is ~0.1 and
+  // `Math.max(1, ...)` made every cell read as near-zero.
+  const max = Math.max(...grid) || 1;
   // Build display rows top→bottom = opponent-net → our-net (data row index high→low).
   const displayRows = [];
   for (let r = rows - 1; r >= 0; r--) {
@@ -9736,16 +10043,30 @@ function PlayerHeatmap({ grid, rows, cols }) {
     for (let c = 0; c < cols; c++) cells.push(grid[r * cols + c] || 0);
     displayRows.push(cells);
   }
+  // Cells below this share of the peak are left UNPAINTED.
+  //
+  // ⚠ Why a threshold is required, not a nicety: these grids come from a kernel
+  // density estimate with a 6 m bandwidth, so every cell is strictly positive —
+  // the far end of the pitch holds ~0.0001 rather than 0. The previous ramp
+  // treated "not exactly zero" as "present" and applied a 0.25 alpha FLOOR, so
+  // all 96 cells painted and a keeper whose mass is 78% in his own two rows
+  // rendered as a uniform green sheet over the whole pitch (measured: alpha
+  // spanned only 0.25→0.37 across a 4000x range in the data). The pitch markings
+  // showing through that wash are the "bands" it appeared to show.
+  const FLOOR = 0.04;
   const heat = (v) => {
-    if (v <= 0) return 'transparent';
-    const a = Math.pow(v / max, 0.6); // gamma so low cells stay visible
-    // green → yellow → red ramp by intensity
+    const rel = v / max;
+    if (!(rel >= FLOOR)) return 'transparent';   // also catches 0 and NaN
+    // Rescale the surviving range across the FULL alpha span so the peak reads
+    // as a peak. Gamma < 1 still lifts the mid-range without flattening it.
+    const a = Math.pow((rel - FLOOR) / (1 - FLOOR), 0.75);
+    const alpha = 0.10 + 0.80 * a;
     if (a < 0.5) {
       const t = a / 0.5; // green→yellow
-      return `rgba(${Math.round(120 + 135 * t)}, ${Math.round(200)}, 40, ${0.25 + 0.55 * a})`;
+      return `rgba(${Math.round(120 + 135 * t)}, 200, 40, ${alpha})`;
     }
     const t = (a - 0.5) / 0.5; // yellow→red
-    return `rgba(255, ${Math.round(200 - 160 * t)}, 30, ${0.45 + 0.5 * a})`;
+    return `rgba(255, ${Math.round(200 - 160 * t)}, 30, ${alpha})`;
   };
   return (
     <div className="flex flex-col items-center gap-1 py-2">
@@ -9754,18 +10075,20 @@ function PlayerHeatmap({ grid, rows, cols }) {
         className="relative rounded-md overflow-hidden border border-emerald-200/20"
         style={{ width: 132, aspectRatio: `${cols} / ${rows}`, background: 'linear-gradient(180deg,#14532d,#0b3d22)' }}
       >
-        {/* pitch markings */}
+        {/* Heat cells UNDER the markings: painted cells are semi-transparent, so
+            when the lines sat on top of the pitch and under the heat, a shaded
+            cell washed them out and the halfway line read as a "band" of heat. */}
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols},1fr)`, gridTemplateRows: `repeat(${rows},1fr)` }}>
+          {displayRows.flatMap((cells, ri) => cells.map((v, ci) => (
+            <div key={`${ri}-${ci}`} style={{ background: heat(v) }} />
+          )))}
+        </div>
+        {/* pitch markings, drawn last so they stay legible over the heat */}
         <div className="absolute inset-0 pointer-events-none">
           <div className="absolute left-0 right-0 top-1/2 h-px bg-white/25" />
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-7 h-7 rounded-full border border-white/25" />
           <div className="absolute left-[30%] right-[30%] top-0 h-[10%] border-x border-b border-white/20" />
           <div className="absolute left-[30%] right-[30%] bottom-0 h-[10%] border-x border-t border-white/20" />
-        </div>
-        {/* heat cells */}
-        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${cols},1fr)`, gridTemplateRows: `repeat(${rows},1fr)` }}>
-          {displayRows.flatMap((cells, ri) => cells.map((v, ci) => (
-            <div key={`${ri}-${ci}`} style={{ background: heat(v) }} />
-          )))}
         </div>
       </div>
       <div className="text-[9px] tracking-widest text-lime-400">OUR NET ↓</div>
@@ -10191,118 +10514,6 @@ const MOMENTUM_FOR = { GOAL: 3, SHOT_ON: 2, SHOT_OFF: 1, BALL_WIN: 1, PEN_AWARDE
 const MOMENTUM_AGAINST = { OPP_GOAL: 3, SAVE: 2, BLOCK: 1, CLEAR: 1, KICK_OUT: 1, TURNOVER: 1, PEN_CONCEDED: 1, PEN_MISSED: 1 };
 const MOMENTUM_BUCKET_S = 300;
 
-// CLICK-SAMPLED POSITIONS — per-player position from the coach naming bodies
-// himself in the click sampler, written to analytics as `click_stats`.
-//
-// Kept VISUALLY SEPARATE from the tracking-derived player deck on purpose. That
-// deck is identity-dependent and measurably wrong (~23% of a player's attributed
-// frames belong to another child, so its distances run 3-4x low). These numbers
-// come from the coach pointing at each child, so their only error is sampling
-// noise — measured at ±1.7 m on this game — and mixing the two behind identical
-// styling would invite reading across between sources of very different quality.
-//
-// Deliberately NO distance / speed / sprints here: a click samples a position,
-// and between two samples 30 s apart a child could have run 5 m or 80 m.
-function ClickHeatmap({ flat, shape }) {
-  // `flat` is row-major (depth × width); Firestore rejects nested arrays, so the
-  // grid arrives flattened with its shape alongside.
-  if (!Array.isArray(flat) || !flat.length) return null;
-  const [gx, gy] = shape || [12, 8];
-  const max = Math.max(...flat) || 1;
-  const cw = 100 / gx, ch = 62 / gy;
-  return (
-    <svg viewBox="0 0 100 62" className="w-full rounded bg-stone-950/60">
-      {flat.map((v, i) => {
-        const dx = Math.floor(i / gy), wy = i % gy;   // row = depth, col = width
-        const a = Math.pow(v / max, 0.6);             // gamma so faint cells show
-        if (a < 0.02) return null;
-        return <rect key={i} x={dx * cw} y={wy * ch} width={cw} height={ch}
-                     fill={`rgba(163,230,53,${a.toFixed(3)})`} />;
-      })}
-      {/* thirds, so the map reads as a pitch rather than a blob */}
-      <line x1="33.3" y1="0" x2="33.3" y2="62" stroke="#57534e" strokeWidth="0.3" />
-      <line x1="66.6" y1="0" x2="66.6" y2="62" stroke="#57534e" strokeWidth="0.3" />
-      <rect x="0" y="0" width="100" height="62" fill="none" stroke="#57534e" strokeWidth="0.5" />
-    </svg>
-  );
-}
-
-function ClickStatsCard({ doc, roster }) {
-  const cs = doc && doc.click_stats;
-  if (!cs || !Array.isArray(cs.players) || !cs.players.length) return null;
-  const byId = Object.fromEntries((roster || []).map(p => [p.id, p]));
-  const label = pid => {
-    const p = byId[pid];
-    if (!p) return pid;
-    return p.jerseyNumber != null ? `#${p.jerseyNumber} ${p.name}` : p.name;
-  };
-  const L = cs.field_length_m || 55;
-  return (
-    <div className="rounded-xl border border-lime-800/50 bg-stone-900/60 p-3">
-      <div className="text-[10px] tracking-widest text-lime-300 mb-1">
-        WHERE THEY PLAYED
-        <span className="text-stone-500"> · you tagged {cs.n_clicks} positions over {cs.n_frames} moments</span>
-      </div>
-      <div className="text-[9px] text-stone-500 mb-2">
-        Position accurate to about ±{cs.median_pos_err_m} m. No distance or speed —
-        tagged moments show where a player was, not the path between them.
-      </div>
-      <div className="space-y-2">
-        {cs.players.map(p => {
-          const dr = p.drift;
-          const pctL = Math.max(0, Math.min(100, 100 * p.p10_depth_m / L));
-          const pctW = Math.max(2, Math.min(100 - pctL, 100 * (p.p90_depth_m - p.p10_depth_m) / L));
-          return (
-            <div key={p.player_id} className="rounded-lg bg-stone-950/50 p-2">
-              <div className="flex items-baseline justify-between">
-                <span className="text-xs text-stone-200">{label(p.player_id)}</span>
-                <span className="text-[9px] text-stone-500">{p.n_clicks} tags · ±{p.pos_err_m} m</span>
-              </div>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                <div>
-                  {/* territory: where he was 80% of the time, along the pitch */}
-                  <div className="text-[9px] text-stone-500">
-                    territory {p.p10_depth_m}–{p.p90_depth_m} m · avg {p.avg_depth_m} m
-                  </div>
-                  <div className="mt-0.5 h-2 w-full rounded bg-stone-800 relative overflow-hidden">
-                    <div className="absolute h-full bg-lime-600/60"
-                         style={{ left: `${pctL}%`, width: `${pctW}%` }} />
-                    <div className="absolute h-full w-[2px] bg-lime-300"
-                         style={{ left: `${Math.min(99, 100 * p.avg_depth_m / L)}%` }} />
-                  </div>
-                  <div className="mt-1 flex gap-2 text-[9px]">
-                    <span className="text-red-300">Def {p.pct_defensive_third}</span>
-                    <span className="text-yellow-300">Mid {p.pct_middle_third}</span>
-                    <span className="text-lime-300">Att {p.pct_attacking_third}</span>
-                  </div>
-                  <div className="mt-0.5 text-[9px] text-stone-500">
-                    L {p.pct_left} · C {p.pct_centre} · R {p.pct_right}
-                    {p.area_covered_m2 != null && <> · covers {p.area_covered_m2} m²</>}
-                  </div>
-                  {/* Only a drift whose CI excludes zero is shown as a finding;
-                      anything else is sampling noise and says nothing. */}
-                  {dr && dr.significant && (
-                    <div className="mt-1 text-[9px] text-amber-300">
-                      2nd half {dr.depth_m > 0 ? '+' : ''}{dr.depth_m} m
-                      {dr.depth_m > 0 ? ' further up' : ' deeper'}
-                    </div>
-                  )}
-                </div>
-                <ClickHeatmap flat={p.heatmap} shape={cs.heatmap_shape} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {Array.isArray(cs.under_sampled) && cs.under_sampled.length > 0 && (
-        <div className="mt-2 text-[9px] text-stone-500">
-          Not enough tags to report: {cs.under_sampled.map(u => label(u.player_id)).join(', ')}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // TEAM SHAPE (Tier 2) — surfaces the per-second team_time_series the pipeline
 // already writes (compactness / width / depth of the outfield block) but which
 // nothing rendered. Identity-ROBUST: it's the aggregate shape of team-0, so it
@@ -10653,17 +10864,21 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   // ---- derived analytics view-model (team summary + cards) ----
   const rosterById = Object.fromEntries(roster.map(p => [p.id, p]));
   const pstats = [...((doc && doc.player_stats) || [])].sort((a, b) => (b.minutes_played || 0) - (a.minutes_played || 0));
-  const teamKm = (pstats.reduce((s, p) => s + (p.distance_est_m != null ? p.distance_est_m : (p.distance_m || 0)), 0) / 1000);
+  // Coach-tagged positions, keyed by player. Written by tracking.click_publish
+  // after a click-sampling session. When a player appears here his positional
+  // figures come from his tags instead of from tracking — see the per-player card.
+  const clickStats = (doc && doc.click_stats) || null;
+  const clickByPlayer = Object.fromEntries(
+    ((clickStats && clickStats.players) || []).map(p => [p.player_id, p]));
+  const clickShape = (clickStats && clickStats.heatmap_shape) || [12, 8];
   // Team minutes come from the coach's SUB taps, so unlike a tracked peak they
   // don't depend on identity or coverage at all.
   const teamMinutes = pstats.reduce((s, p) => s + (p.minutes_played || 0), 0);
-  // Prefer the coverage-scaled sprint estimate (parity with the per-player
-  // deck); fall back to the raw count for older docs without the estimate.
-  const teamSprints = pstats.reduce((s, p) => s + (p.sprint_est_count != null ? p.sprint_est_count : (p.sprint_count || 0)), 0);
-  // minutes-weighted team thirds
-  const _wsum = pstats.reduce((s, p) => s + (p.minutes_played || 0), 0) || 1;
-  const teamThirds = ['pct_defensive_third', 'pct_middle_third', 'pct_attacking_third'].map(k =>
-    pstats.reduce((s, p) => s + (p[k] || 0) * (p.minutes_played || 0), 0) / _wsum);
+  // teamKm / teamSprints / teamThirds removed — all three were aggregates OVER
+  // the retired per-player tracked numbers, and aggregating does not repair a
+  // contaminated input when the operation is a sum or a mean over paths. Team
+  // SHAPE metrics (field tilt, compactness) are kept instead: they read the set
+  // of positions at an instant, so they never depend on which name is attached.
   // goals from the event log (GOAL = us, OPP_GOAL = them), with minute
   const _hl = game.halfLengthMin || 25;
   const goals = (game.events || [])
@@ -10826,11 +11041,21 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                 <div className={`text-[10px] tracking-widest font-bold mt-0.5 ${result === 'WIN' ? 'text-lime-400' : result === 'LOSS' ? 'text-red-400' : 'text-stone-400'}`}>{result}</div>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               {/* TOP KM/H removed: it is one player's single peak, the least
-                  reproducible number we had (repeatability 0.476). Replaced by
-                  total minutes, which comes from the coach's own taps. */}
-              {[[teamKm.toFixed(1), 'KM TOTAL'], [teamMinutes.toFixed(0), 'MINUTES'], [teamSprints, 'SPRINTS'], [pstats.length, 'PLAYERS']].map(([v, l]) => (
+                  reproducible number we had (repeatability 0.476).
+
+                  KM TOTAL and SPRINTS removed too. They are plain SUMS over the
+                  per-player tracked distances, so they inherit every defect of
+                  the per-player numbers that were just retired — summing a
+                  3-4x-low distance over 12 players gives a 3-4x-low team
+                  distance, and swap teleports inflate the sprint count. Being
+                  aggregates did NOT rescue them: unlike team SHAPE (a function of
+                  the set of positions at an instant, so permutation-invariant and
+                  identity-proof), a distance sum integrates each player's PATH,
+                  which is exactly what wrong-child contamination corrupts.
+                  MINUTES and PLAYERS come from the coach's own taps. */}
+              {[[teamMinutes.toFixed(0), 'MINUTES'], [pstats.length, 'PLAYERS'], [goals.length, 'GOAL EVENTS']].map(([v, l]) => (
                 <div key={l} className="rounded-xl border border-stone-700/60 p-2 text-center" style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
                   <div className="text-white font-display text-lg leading-none">{v}</div>
                   <div className="text-[9px] text-stone-400 mt-1">{l}</div>
@@ -10876,19 +11101,16 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                   );
                 }) : <div className="text-stone-500 text-xs">—</div>}
               </div>
-              <div className="rounded-xl border border-stone-700/60 bg-stone-900/60 p-3">
-                <div className="text-[10px] tracking-widest text-stone-400 mb-2">TIME BY THIRD</div>
-                <div className="flex h-2 rounded-full overflow-hidden mb-1">
-                  <div style={{ width: `${teamThirds[2]}%`, background: '#a3e635' }} title="Attacking" />
-                  <div style={{ width: `${teamThirds[1]}%`, background: '#eab308' }} />
-                  <div style={{ width: `${teamThirds[0]}%`, background: '#ef4444' }} />
-                </div>
-                <div className="flex justify-between text-[9px] text-stone-500"><span className="text-lime-300">Att {teamThirds[2].toFixed(0)}</span><span className="text-yellow-300">Mid {teamThirds[1].toFixed(0)}</span><span className="text-red-300">Def {teamThirds[0].toFixed(0)}</span></div>
-              </div>
+              {/* "TIME BY THIRD" was here: a minutes-weighted average of the
+                  per-player TRACKED thirds. It was a second, worse answer to the
+                  question FIELD TILT below already answers — and it inherited the
+                  per-player identity contamination, while field tilt is computed
+                  from the team CENTROID and is therefore permutation-invariant.
+                  Two bars claiming where the game lived, disagreeing, was exactly
+                  the duplication to remove. */}
             </div>
             <div className="mt-2 space-y-2">
               <MomentumChart game={game} />
-              <ClickStatsCard doc={doc} roster={roster} />
               <TeamShapeChart doc={doc} halfLenS={(game.halfLengthMin || 25) * 60} />
               <ShotMap games={[game]} />
               {/* 4.6 — team-centroid third occupancy: where the game lived.
@@ -10945,89 +11167,24 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
             <div className="space-y-3">
               {pstats.map(s => {
                 const p = rosterById[s.player_id];
-                const conf = playerConf(s.player_id);
-                const confColor = conf == null ? 'text-stone-500' : conf >= 0.8 ? 'text-lime-400' : conf >= 0.5 ? 'text-amber-400' : 'text-red-400';
-                // Identity is already settled (coach-confirmed / high confidence).
-                // When it is, low movement is a CAMERA-COVERAGE limit, not an
-                // identity mistake — so don't tell the coach to FIX IDS again.
-                const idConfirmed = conf != null && conf >= 0.8;
-                const isGK = game.gkPlayerId && s.player_id === game.gkPlayerId; // keepers legitimately cover little
-                // Coverage = tracked time / coach minutes. The camera misses
-                // players who stay deep or far-side; below ~8% coverage the
-                // movement sums are a sliver and can't be trusted. (Falls back to
-                // the old distance-rate gate for docs without tracked_seconds.)
+                // Coach-tagged positions for this player, if he tagged this game.
+                // This is the ONLY per-player positional source the card renders —
+                // see the block comments below for why the tracked fallback was
+                // removed rather than kept behind a caption.
+                const cp = clickByPlayer[s.player_id] || null;
+                // Coverage = tracked time / coach minutes. Retained purely to tell
+                // the coach how much the camera saw of an UNTAGGED player, as
+                // context for the tagging prompt. It no longer grades any number,
+                // because no tracked per-player number is shown.
                 const coverage = (s.tracked_seconds != null && (s.minutes_played || 0) > 0)
                   ? (s.tracked_seconds / 60) / s.minutes_played : null;
                 const coveragePct = coverage != null ? Math.min(100, Math.round(coverage * 100)) : null;
-                const distPerMin = (s.distance_m || 0) / Math.max(s.minutes_played || 1, 1);
-                const lowTrack = !isGK && (s.minutes_played || 0) >= 5 &&
-                  (coverage != null ? coverage < 0.08 : distPerMin < 12);
-                // Swap-polluted: a large fraction of this player's inter-detection
-                // steps are physically-impossible jumps — another player's track
-                // merged in (identity-swap teleport / concurrent-tracklet ping-
-                // pong), so distance & sprints are over-counted. implausible_step_frac
-                // is the real signal; older docs (which pinned top speed at the
-                // 32 km/h cap) fall back to that.
-                const artFrac = s.implausible_step_frac;
-                const swapPolluted = !lowTrack && (s.minutes_played || 0) >= 5 &&
-                  (artFrac != null ? artFrac >= 0.30 : ((s.top_speed_ms || 0) * 3.6) >= 30);
-                const statsBad = lowTrack || swapPolluted;
-                // analytics.player_conflicts: time where this player was detected in
-                // two places at once (two kids merged under one identity). Already
-                // EXCLUDED from the numbers below by the pipeline — shown so a large
-                // exclusion reads as "we removed bad data", not a silent shortfall.
-                const conflict = ((doc && doc.player_conflicts) || {})[String(s.player_id)];
-                const conflictSec = conflict ? (conflict.conflict_seconds || 0) : 0;
-                // 4.4: rate-based estimates (distance/sprints scaled to coach
-                // minutes) when the doc carries them; raw sums for older docs.
-                // Full-game distance estimate. No longer a headline tile (M/MIN replaced
-                // it): with median coverage ~30% this is mostly extrapolation, and
-                // `dist_est_capped` fires for nearly every player. Shown in the caption
-                // as context for the rate, not as a fact to quote.
-                const distShown = s.distance_est_m != null ? s.distance_est_m : (s.distance_m || 0);
-                const sprintsShown = s.sprint_est_count != null ? s.sprint_est_count : (s.sprint_count || 0);
-                // Graded honesty (Tier 3): one trust grade per movement tile from
-                // how much of the player we tracked (coverage) and how sure we are
-                // of their identity (conf). 3 = trustworthy, 2 = caveat, 1 = weak,
-                // 0 = untrustworthy (keeps today's dash). Null signals → grade 3 so
-                // older docs (no tracked_seconds / conf) never look broken.
-                const movementGrade = statsBad ? 0 : Math.min(
-                  coverage == null ? 3 : (coverage >= 0.5 ? 3 : coverage >= 0.25 ? 2 : 1),
-                  conf == null ? 3 : (conf >= 0.8 ? 3 : conf >= 0.5 ? 2 : 1),
-                );
-                // Avg speed is a RATE (mean, not a sum) → coverage-robust: it never
-                // earns the dash and only drops a grade for identity uncertainty.
-                const avgGrade = conf == null ? 3 : (conf >= 0.8 ? 3 : conf >= 0.5 ? 2 : 1);
-                const avgKmh = (s.avg_speed_ms || 0) * 3.6;
-                // WORK RATE (m/min) — metres covered per minute we actually SAW the
-                // player: raw distance / tracked time, never the coverage-extrapolated
-                // estimate. Being a rate it is coverage-robust the same way AVG km/h is,
-                // so it carries avgGrade (identity only) rather than movementGrade.
-                // This is the honest unit for comparing players and weeks: on W8 (median
-                // coverage 30%) the rate still clustered to an 18% stdev/mean spread
-                // while DIST m — the same data multiplied up to full minutes — is capped
-                // for 11 of 12 players. Needs >=60s of tracking to mean anything.
-                const trkMin = (s.tracked_seconds || 0) / 60;
-                // ...but "coverage-robust" assumes the tracked sample is REPRESENTATIVE
-                // of the player's minutes. At very low coverage it isn't: detection
-                // preferentially catches a player while he is MOVING (a still player
-                // far-side is missed), so the surviving instants are motion-biased and
-                // the rate reads high. This bites the keeper hardest — measured on W8,
-                // Garland showed 83 m/min (an outfielder's rate) from 5.0 tracked of
-                // 49.1 coach minutes, while his AVG speed was 4.6 km/h, a keeper's
-                // amble. Both cannot describe the same player. The GK is exempt from
-                // `lowTrack` (he legitimately covers little), so nothing else caught it.
-                // Gate the RATE on coverage, not on position: the same bias applies to
-                // any sliver-coverage player, the keeper is just where it is worst.
-                const wrCoverageOk = coverage == null || coverage >= WORK_RATE_MIN_COVERAGE;
-                const workRate = (trkMin >= 1 && wrCoverageOk)
-                  ? (s.distance_m || 0) / trkMin : null;
-                // grade → tile chrome: a corner dot + tinted border (no bg wash —
-                // a filled tint reads as an error state and would make a card with
-                // several caveated tiles look alarming on a phone).
-                const tileTint = (g) => g === 2 ? { border: 'border-amber-500/40', dot: 'bg-amber-400' }
-                  : g === 1 ? { border: 'border-red-500/40', dot: 'bg-red-400' }
-                  : { border: 'border-stone-700/60', dot: '' }; // g3 and g0 use the plain border
+                // The per-tile trust grading (amber/red borders + corner dots, plus
+                // a dashed "—" state) is gone with the movement tiles it graded.
+                // Every tile now shown is either the coach's own SUB minutes or a
+                // figure derived from his own tags, so there is no per-tile trust
+                // to communicate. Grading tiles was a way of shipping numbers
+                // known to be unreliable; removing the numbers is the fix.
                 return (
                   <div key={s.player_id} className="rounded-2xl border border-stone-800 bg-stone-900 p-4">
                     <div className="flex items-start justify-between mb-3">
@@ -11041,11 +11198,19 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         </div>
                       </div>
                       <div className="text-right shrink-0 pl-2">
-                        <div className="text-[9px] text-stone-500">IDENTITY</div>
-                        <div className={`text-xs font-bold ${confColor}`}>{conf == null ? '—' : `● ${(conf * 100).toFixed(0)}%`}</div>
-                        {swapPolluted && <div className="text-[9px] font-bold text-rose-400 mt-1">⚠ INFLATED</div>}
-                        {lowTrack && <div className="text-[9px] font-bold text-amber-400 mt-1">⚠ LOW TRACKING</div>}
-                        {conflictSec >= 10 && <div className="text-[9px] font-bold text-sky-400 mt-1">🧹 CLEANED</div>}
+                        {/* Only the TAGGED badge survives. IDENTITY %, ⚠ INFLATED,
+                            ⚠ LOW TRACKING and 🧹 CLEANED were all quality marks on
+                            the tracked movement numbers; with those numbers gone
+                            they grade nothing. They also can't be shown over
+                            tagged positions — a "48% IDENTITY" badge above
+                            positions the coach assigned himself would undermine
+                            the more trustworthy source. */}
+                        {cp && (
+                          <>
+                            <div className="text-[9px] text-stone-500">TAGGED</div>
+                            <div className="text-xs font-bold text-lime-400">● {cp.n_clicks}</div>
+                          </>
+                        )}
                       </div>
                     </div>
                     {/* TOP km/h was removed here on purpose. It is the p99 of a
@@ -11061,81 +11226,98 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         A p95-speed replacement (repeatability 0.651) is the intended
                         successor but is not computed yet; don't add a headline number
                         back until it is validated on the two ground-truth games. */}
-                    <div className="grid grid-cols-4 gap-1.5 mb-1">
-                      {[
-                        [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN', 3, false],
-                        [avgKmh.toFixed(1), 'AVG km/h', avgGrade, true],
-                        [workRate == null ? '—' : workRate.toFixed(0), 'M/MIN', avgGrade, true],
-                        [sprintsShown, 'SPRINTS', movementGrade, true],
-                      ].map(([v, l, g, movement]) => {
-                        const t = tileTint(g);
-                        const dashed = movement && g === 0;
-                        return (
-                          <div key={l} className={`relative rounded-xl border ${t.border} p-2 text-center ${dashed ? 'opacity-40' : ''}`} style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
-                            {movement && t.dot && <span className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${t.dot}`} />}
-                            <div className="text-white font-display text-sm leading-none">{dashed ? '—' : v}</div>
-                            <div className="text-[8px] text-stone-400 mt-1 leading-tight">{l}</div>
-                          </div>
-                        );
-                      })}
+                    {/* ONE set of numbers per player, and only numbers the source
+                        can carry.
+
+                        TAGGED: positions the coach assigned himself, ±1.7 m. No
+                        distance/speed/sprints — a tag samples a position, and
+                        between two samples 30 s apart a child could have run 5 m
+                        or 80 m, so no estimator recovers the path.
+
+                        UNTAGGED: movement tiles are GONE. They were AVG km/h,
+                        M/MIN and SPRINTS off the tracked source, which carries
+                        ~23% wrong-child contamination and a median 6 s track
+                        life, so distance runs 3-4x low while swaps push sprints
+                        up. Four separate caveat blocks below used to explain, per
+                        player, why the three numbers above them shouldn't be
+                        read — which is the tell that they shouldn't have been
+                        rendered. A number on a card gets quoted regardless of its
+                        footnote. MIN stays: it comes from the coach's own SUB
+                        taps, not from tracking. */}
+                    <div className={`grid ${cp ? 'grid-cols-4' : 'grid-cols-1'} gap-1.5 mb-1`}>
+                      {(cp ? [
+                        [`${(s.minutes_played || 0).toFixed(0)}'`, 'MIN'],
+                        [`${(cp.avg_depth_m || 0).toFixed(1)}`, 'AVG m OUT'],
+                        // Subtracting two 1-dp floats is not 1-dp: 46.6-11.2 is
+                        // 35.400000000000006 in IEEE 754, and it rendered raw.
+                        [`${((cp.p90_depth_m || 0) - (cp.p10_depth_m || 0)).toFixed(1)}`, 'RANGE m'],
+                        [`${Math.round(cp.area_covered_m2 || 0)}`, 'AREA m²'],
+                      ] : [
+                        [`${(s.minutes_played || 0).toFixed(0)}'`, 'MINUTES PLAYED'],
+                      ]).map(([v, l]) => (
+                        <div key={l} className="rounded-xl border border-stone-700/60 p-2 text-center" style={{ background: 'linear-gradient(160deg,#202024,#161618)' }}>
+                          <div className="text-white font-display text-sm leading-none">{v}</div>
+                          <div className="text-[8px] text-stone-400 mt-1 leading-tight">{l}</div>
+                        </div>
+                      ))}
                     </div>
-                    {coveragePct != null && (
+                    {cp && (
+                      <div className="text-[9px] text-lime-600/90 mb-2 leading-snug">
+                        🖱 Positions from {cp.n_clicks} moments you tagged yourself, accurate
+                        to ±{cp.pos_err_m} m. No distance or speed — tagging shows where he
+                        was, not the path between.
+                      </div>
+                    )}
+                    {/* One statement replaces four. The old card carried separate
+                        blocks for low coverage, swap pollution, conflict cleaning
+                        and work-rate caveats — all of them explaining why the
+                        movement numbers above them were wrong. With those numbers
+                        gone there is nothing to caveat, so this says what IS
+                        available and how to get it, once. */}
+                    {!cp && (
                       <div className="text-[9px] text-stone-500 mb-2 leading-snug">
-                        📡 {coveragePct}% of minutes tracked
-                        {workRate != null
-                          ? <span className="text-stone-400">{' — '}M/MIN &amp; AVG km/h are measured over that
-                            tracked time, so they compare fairly between players and weeks.</span>
-                          : <span className="text-stone-400">{' — '}too thin to quote a work rate: what little we
-                            tracked is mostly the moments he was moving, which reads high. AVG km/h still
-                            holds (it counts his standing time too).</span>}
-                        {workRate != null && ` ≈${(distShown / 1000).toFixed(1)}km over the full game if he held that rate — an extrapolation, not a measurement.`}
-                        {s.sprint_threshold_ms > 0 ? ` · sprint bar ${(s.sprint_threshold_ms * 3.6).toFixed(0)} km/h` : ''}
+                        🖱 Not tagged yet — positions, heatmap and territory need about
+                        10 minutes of tagging in the film-room sampler
+                        {coveragePct != null && <span> (the camera tracked {coveragePct}% of his
+                          minutes, but can't reliably tell which child is which, so those
+                          tracks can't carry his name)</span>}.
                       </div>
                     )}
-                    {conflictSec >= 10 && (
-                      <div className="text-[9px] text-sky-400/80 mb-2 leading-snug">
-                        🧹 Removed {Math.round(conflictSec)}s where the camera saw this
-                        player in two places at once{conflict.median_separation_m
-                          ? ` (typically ${conflict.median_separation_m}m apart)` : ''} —
-                        another player's track had merged into his. These numbers exclude
-                        that time, so they're lower but real.
-                      </div>
+                    {/* ONE set of positional numbers per player, from ONE source:
+                        the coach's own tags. There is deliberately no tracked
+                        fallback. The tracked per-player position carries ~23%
+                        wrong-child contamination and can rest on 12% coverage, so
+                        rendering it in the same bar and the same heatmap widget as
+                        the tagged version — differing only by a caption — invited
+                        exactly the cross-reading the coach objected to. A player
+                        without tags shows no position rather than a wrong one. */}
+                    {cp && (
+                      <>
+                        <div className="mb-2">
+                          <div className="flex h-2 rounded-full overflow-hidden">
+                            <div style={{ width: `${cp.pct_defensive_third || 0}%`, background: '#ef4444' }} />
+                            <div style={{ width: `${cp.pct_middle_third || 0}%`, background: '#eab308' }} />
+                            <div style={{ width: `${cp.pct_attacking_third || 0}%`, background: '#a3e635' }} />
+                          </div>
+                          <div className="flex justify-between text-[9px] text-stone-500 mt-1">
+                            <span>Def {(cp.pct_defensive_third || 0).toFixed(0)}%</span>
+                            <span>Mid {(cp.pct_middle_third || 0).toFixed(0)}%</span>
+                            <span>Att {(cp.pct_attacking_third || 0).toFixed(0)}%</span>
+                          </div>
+                          <div className="text-[8px] text-lime-600 mt-0.5">
+                            from your {cp.n_clicks} tagged positions · L {cp.pct_left}% C {cp.pct_centre}% R {cp.pct_right}%
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-lime-800/50 bg-stone-950/40">
+                          <div className="text-[8px] text-lime-600 px-2 pt-1">
+                            Where he played · avg {cp.avg_depth_m} m out, territory {cp.p10_depth_m}–{cp.p90_depth_m} m · ±{cp.pos_err_m} m
+                            {cp.drift && cp.drift.significant &&
+                              ` · 2nd half ${cp.drift.depth_m > 0 ? '+' : ''}${cp.drift.depth_m} m ${cp.drift.depth_m > 0 ? 'higher' : 'deeper'}`}
+                          </div>
+                          <PlayerHeatmap grid={cp.heatmap} rows={clickShape[0]} cols={clickShape[1]} />
+                        </div>
+                      </>
                     )}
-                    {lowTrack && (
-                      <div className="text-[9px] text-amber-400/80 mb-2 leading-snug">
-                        {idConfirmed ? (
-                          <>Identity confirmed, but the camera only caught {Math.round(s.tracked_seconds || 0)}s of this player's {(s.minutes_played || 0).toFixed(0)}′ on the field — they stayed deep / far-side and were rarely in frame. Movement stats (distance, speed, sprints) aren't reliable here; there's no further tracking to recover.</>
-                        ) : (
-                          <>Played {(s.minutes_played || 0).toFixed(0)}′ but the camera only captured a sliver of this player — movement stats are unreliable. Use FIX IDS to rescue their tracks.</>
-                        )}
-                      </div>
-                    )}
-                    {swapPolluted && (
-                      <div className="text-[9px] text-rose-400/80 mb-2 leading-snug">
-                        About {Math.round((artFrac || 0) * 100)}% of this player's tracked steps are identity-swap jumps — another player's movement is mixed into these tracks, so distance &amp; sprints are over-counted. Use FIX IDS to split them out.
-                      </div>
-                    )}
-                    <div className="mb-2">
-                      <div className="flex h-2 rounded-full overflow-hidden">
-                        <div style={{ width: `${s.pct_defensive_third || 0}%`, background: '#ef4444' }} />
-                        <div style={{ width: `${s.pct_middle_third || 0}%`, background: '#eab308' }} />
-                        <div style={{ width: `${s.pct_attacking_third || 0}%`, background: '#a3e635' }} />
-                      </div>
-                      <div className="flex justify-between text-[9px] text-stone-500 mt-1">
-                        <span>Def {(s.pct_defensive_third || 0).toFixed(0)}%</span>
-                        <span>Mid {(s.pct_middle_third || 0).toFixed(0)}%</span>
-                        <span>Att {(s.pct_attacking_third || 0).toFixed(0)}%</span>
-                      </div>
-                      {coveragePct != null && coverage != null && coverage < 0.5 && (
-                        <div className="text-[8px] text-stone-600 mt-0.5">of the {coveragePct}% tracked — where the camera caught them</div>
-                      )}
-                    </div>
-                    <div className="rounded-xl border border-stone-700/60 bg-stone-950/40">
-                      {coverage != null && coverage < 0.5 && (
-                        <div className="text-[8px] text-stone-600 px-2 pt-1">Partial view — positions shown are where the camera caught them</div>
-                      )}
-                      <PlayerHeatmap grid={s.heatmap_grid} rows={s.heatmap_grid_rows} cols={s.heatmap_grid_cols} />
-                    </div>
                   </div>
                 );
               })}
@@ -11208,6 +11390,25 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
     catch { window.scrollTo(0, 0); }
   }, [game.id]);
 
+  // The stream credentials (rtmpsUrl/streamKey/uid) live in the coach-only
+  // games/<id>/private/liveInput subdoc; the game doc carries only hlsUrl.
+  // This state holds the secrets while the coach has the panel open.
+  const [liveCreds, setLiveCreds] = useState(null);
+  const livePrivRef = () => (typeof window !== 'undefined' && window.fbDb)
+    ? window.fbDb.collection('teams').doc('main').collection('games').doc(game.id).collection('private').doc('liveInput')
+    : null;
+  useEffect(() => {
+    if (!showLiveCreds || liveCreds || !game.liveInput) return undefined;
+    const ref = livePrivRef();
+    if (!ref) return undefined;
+    let cancelled = false;
+    ref.get()
+      .then((d) => { if (!cancelled && d.exists) setLiveCreds(d.data()); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLiveCreds, liveCreds, game.id, game.liveInput]);
+
   const goLive = () => {
     if (!R2_UPLOAD_WORKER) { setLiveErr('Worker URL not configured'); return; }
     setLiveBusy(true);
@@ -11215,7 +11416,12 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
     workerPost('/live-input', { name: `stompers-${game.id}` })
       .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j.error || 'live-input failed')))
       .then((info) => {
-        onUpdateGame({ liveInput: { ...info, createdAt: Date.now() } });
+        const full = { ...info, createdAt: Date.now() };
+        setLiveCreds(full);
+        const ref = livePrivRef();
+        if (ref) ref.set(full).catch((e) => console.error('live-input private save error:', e));
+        // Public doc: playback URL only — never the stream key.
+        onUpdateGame({ liveInput: { hlsUrl: full.hlsUrl || null, createdAt: full.createdAt } });
         setShowLiveCreds(true);
         setShowLive(true);
       })
@@ -11224,12 +11430,19 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
   };
 
   const stopLive = () => {
-    if (!game.liveInput?.uid) { onUpdateGame({ liveInput: null }); return; }
     setLiveBusy(true);
-    workerPost(`/live-input/${game.liveInput.uid}/delete`)
+    const ref = livePrivRef();
+    const uidPromise = (liveCreds && liveCreds.uid)
+      ? Promise.resolve(liveCreds.uid)
+      : (ref ? ref.get().then((d) => (d.exists ? (d.data() || {}).uid : null)).catch(() => null)
+             : Promise.resolve(game.liveInput && game.liveInput.uid));
+    uidPromise
+      .then((inputUid) => (inputUid ? workerPost(`/live-input/${inputUid}/delete`) : null))
       .catch(() => {})
       .finally(() => {
+        if (ref) ref.delete().catch(() => {});
         onUpdateGame({ liveInput: null });
+        setLiveCreds(null);
         setShowLive(false);
         setShowLiveCreds(false);
         setLiveBusy(false);
@@ -11383,16 +11596,16 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
                   />
                 </div>
               )}
-              {showLiveCreds && game.liveInput.streamKey && (
+              {showLiveCreds && liveCreds && liveCreds.streamKey && (
                 <div className="mt-3 bg-stone-900 border border-stone-800 rounded-xl p-3 space-y-2 text-xs">
                   <p className="text-stone-400 font-bold">📡 Stream from X5 / OBS using these credentials:</p>
                   <div>
                     <div className="text-stone-500">RTMPS Server</div>
-                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{game.liveInput.rtmpsUrl}</code>
+                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{liveCreds.rtmpsUrl}</code>
                   </div>
                   <div>
                     <div className="text-stone-500">Stream Key</div>
-                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{game.liveInput.streamKey}</code>
+                    <code className="block bg-stone-800 p-2 rounded text-lime-400 break-all">{liveCreds.streamKey}</code>
                   </div>
                   <div className="flex gap-2 pt-1">
                     <button
@@ -12000,7 +12213,18 @@ function TagSheet({ event, roster, onSave, onClose }) {
 /* ---------- STATS ---------- */
 function StatsView({ roster, games, weights, onBack }) {
   const [detailPlayerId, setDetailPlayerId] = useState(null);
-  const finished = games.filter(g => g.status === 'finished');
+  // The single stats destination: SEASON (per-player), GAMES (one game), TEAM.
+  // Before this, season stats lived here AND in a modal inside FILM ROOM, with
+  // two different per-player tables that both showed GP and MIN. See
+  // STATS_CONSOLIDATION_PLAN.md.
+  const [tab, setTab] = useState('season');
+  const [mode, setMode] = useState('season'); // window: 'season' | 'rolling'
+  const [sortKey, setSortKey] = useState('score');
+  const [openGameId, setOpenGameId] = useState(null);
+  const finished = useMemo(() => games
+    .filter(g => g.status === 'finished')
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.endedAt || 0) - (a.endedAt || 0)),
+  [games]);
 
   const stats = useMemo(() => {
     const init = () => ({ GOAL: 0, ASSIST: 0, KEY_PASS: 0, SHOT_ON: 0, SHOT_OFF: 0, SAVE: 0, BLOCK: 0, BALL_WIN: 0, CLEAR: 0, KICK_OUT: 0, DUEL_WIN: 0, DUEL_LOSE: 0, GIVE_GO: 0, GIVE_GO_WALL: 0, GATES: 0, TURNOVER: 0, HOLDS_BALL: 0, gamesPlayed: 0, totalSeconds: 0, gkSeconds: 0, cleanSheets: 0, oppGoalsConceded: 0, gamesAsGK: 0 });
@@ -12054,14 +12278,104 @@ function StatsView({ roster, games, weights, onBack }) {
       const t = String(g.tournament || '').toLowerCase();
       return (W.gameTypes[t] != null) ? Number(W.gameTypes[t]) : Number(W.gameTypes.default);
     };
+    // ---- Per-pillar LOGGING WEIGHT -------------------------------------------
+    // The coach taps while coaching, so how much gets logged varies enormously
+    // between games and between pillar types. Measured over 12 games:
+    //
+    //   total action events/game   95 -> 18   (5x swing)
+    //   DEF share of those         60% -> 3%  (he now taps mostly goals/shots)
+    //   DEC share                  21% +- 5%  (stable)
+    //
+    // The old rate divided each pillar's points by ALL minutes played, so a
+    // player's DEF rate was (points from the few heavily-logged games) / (minutes
+    // from every game) — diluted toward zero by games where the coach was busy.
+    // That penalised players for the coach's attention, not their play, and it
+    // put whoever happened to play in the two June games on top of the table.
+    //
+    // Fix: weight each game's MINUTES, per pillar, by how much of that pillar was
+    // logged there relative to the season's best-logged game. A game with a
+    // tenth of the usual DEF logging contributes a tenth of its minutes to the
+    // DEF denominator, so the rate stays comparable instead of being watered
+    // down. Points are unchanged — nothing is invented, the denominator is just
+    // made to match the numerator's actual coverage.
+    // ⚠ Only DISCRETIONARY events count toward coverage. Some taps track things
+    // that happen TO the team and get logged whatever the coach is doing —
+    // measured over 12 games:
+    //
+    //   SAVE      logged in 11/12 games, stdev 2.3  (tracks opponent shots)
+    //   DUEL_WIN  ZERO in 8/12 games,    stdev 6.7  (pure coach attention)
+    //
+    // Weighting a keeper's denominator down by DEF coverage inflated his rate
+    // 3.6x (44 saves over 88 weighted minutes instead of 313) and put him at
+    // double the next player. Outcome events — goals, assists, shots, saves,
+    // penalties, own goals — are excluded from the coverage calculation for that
+    // reason: their count does not scale with how much the coach was tapping.
+    const PILLAR_TYPES = {
+      atk: ['KEY_PASS', 'FOUL_ON'],
+      def: ['BLOCK', 'BALL_WIN', 'CLEAR', 'KICK_OUT', 'DUEL_WIN', 'DUEL_LOSE', 'FOUL_BY'],
+      dec: ['GIVE_GO', 'GATES', 'HOLDS_BALL', 'TURNOVER'],
+    };
+    // Events per logged minute, per pillar, per game — an intensity, so a short
+    // appearance in a well-logged game isn't mistaken for thin logging.
+    const gameLog = new Map();
+    for (const g of finished) {
+      const counts = { atk: 0, def: 0, dec: 0 };
+      for (const e of (g.events || [])) {
+        for (const k of ['atk', 'def', 'dec']) {
+          if (PILLAR_TYPES[k].includes(e.type)) counts[k] += 1;
+        }
+      }
+      // Team minutes actually played in this game, as the exposure base.
+      let teamMin = 0;
+      for (const p of roster) teamMin += playerSeconds(p.id, g) / 60;
+      const base = Math.max(teamMin, 1);
+      gameLog.set(g.id, {
+        atk: counts.atk / base, def: counts.def / base, dec: counts.dec / base,
+        inv: (counts.atk + counts.def + counts.dec) / base,
+      });
+    }
+    // Normalise against the best-logged game so the weight is a 0..1 coverage.
+    const peak = { atk: 0, def: 0, dec: 0, inv: 0 };
+    for (const v of gameLog.values()) {
+      for (const k of ['atk', 'def', 'dec', 'inv']) peak[k] = Math.max(peak[k], v[k]);
+    }
+    // Floor so a game with genuinely sparse logging still counts a little — a
+    // player who only ever appeared in thin games must not get a 0 denominator
+    // and an explosive rate. 0.15 keeps the worst game at 15% weight.
+    const LOG_FLOOR = 0.15;
+    // Share of each pillar's POINTS that comes from discretionary events. The
+    // rest (goals, assists, shots, saves, clean sheets) is logged regardless of
+    // the coach's attention, so only this share of the denominator may be
+    // discounted — otherwise a keeper's consistently-logged saves get divided by
+    // a shrunken DEF denominator and his rate explodes.
+    //
+    // Rough, deliberately: these are fixed shares rather than a per-player
+    // decomposition, because the point is to stop over-correcting, not to model
+    // the mix exactly. ATK is nearly all outcome events (goals/assists/shots),
+    // DEF is mixed (saves are outcome, duels/blocks are discretionary), DEC is
+    // almost entirely discretionary.
+    const DISCRETIONARY_SHARE = { atk: 0.15, def: 0.5, dec: 0.85, inv: 0.5 };
+    const logWeight = (gid, k) => {
+      const v = gameLog.get(gid);
+      if (!v || !(peak[k] > 0)) return 1;
+      const cov = Math.max(LOG_FLOOR, Math.min(1, v[k] / peak[k]));
+      const s = DISCRETIONARY_SHARE[k];
+      // Blend toward 1: only the discretionary share of the exposure shrinks.
+      return (1 - s) + s * cov;
+    };
+
     // Weighted per-player sums + the squad prior in one pass.
-    const sums = {};  // pid -> { atk, def, dec, inv, wmin, wgkmin }
+    const sums = {};  // pid -> { atk, def, dec, inv, wmin: {per pillar}, wgkmin }
     const squadTot = { atk: 0, def: 0, dec: 0, inv: 0 };
-    let squadMin = 0;
+    const squadMin = { atk: 0, def: 0, dec: 0, inv: 0 };
     for (const g of finished) {
       const w = typeWeight(g);
       if (!(w > 0)) continue;
       const ev = g.events || [];
+      const lw = {
+        atk: logWeight(g.id, 'atk'), def: logWeight(g.id, 'def'),
+        dec: logWeight(g.id, 'dec'), inv: logWeight(g.id, 'inv'),
+      };
       for (const p of roster) {
         const sec = playerSeconds(p.id, g);
         if (sec <= 0) continue;
@@ -12070,35 +12384,39 @@ function StatsView({ roster, games, weights, onBack }) {
         const gx = servedAsGK ? gkExtrasForGame(p.id, g) : null;
         const f = (servedAsGK && sec > 0) ? Math.min(1, (gx.secondsAsGK || 0) / sec) : 0;
         const pts = pillarPoints(p.id, ev, f, gx, W);
-        const row = sums[p.id] || (sums[p.id] = { atk: 0, def: 0, dec: 0, inv: 0, wmin: 0, wgkmin: 0 });
+        const row = sums[p.id] || (sums[p.id] = {
+          atk: 0, def: 0, dec: 0, inv: 0,
+          wmin: { atk: 0, def: 0, dec: 0, inv: 0 }, rawMin: 0, wgkmin: 0,
+        });
         row.atk += w * pts.atk; row.def += w * pts.def;
         row.dec += w * pts.dec; row.inv += w * pts.inv;
-        row.wmin += w * min;
+        for (const k of ['atk', 'def', 'dec', 'inv']) row.wmin[k] += w * min * lw[k];
+        row.rawMin += w * min;
         row.wgkmin += w * min * f;
         // Squad prior: outfield values for everyone (it's a prior, not a score).
         const pop = pillarPoints(p.id, ev, 0, null, W);
         squadTot.atk += w * pop.atk; squadTot.def += w * pop.def;
         squadTot.dec += w * pop.dec; squadTot.inv += w * pop.inv;
-        squadMin += w * min;
+        for (const k of ['atk', 'def', 'dec', 'inv']) squadMin[k] += w * min * lw[k];
       }
     }
-    const sqPh = Math.max(squadMin, 1) / 20;
-    const squadRates = {
-      atk: squadTot.atk / sqPh, def: squadTot.def / sqPh,
-      dec: squadTot.dec / sqPh, inv: squadTot.inv / sqPh,
-    };
+    const squadRates = {};
+    for (const k of ['atk', 'def', 'dec', 'inv']) {
+      squadRates[k] = squadTot[k] / (Math.max(squadMin[k], 1) / 20);
+    }
     const map = {};
     const r = (n) => Math.round(n * 10) / 10;
     for (const p of roster) {
       const row = sums[p.id];
-      if (!row || row.wmin <= 0) continue;
-      const rate = (pts, sq) => (pts + (M / 20) * sq) / ((row.wmin + M) / 20);
-      const attacking = rate(row.atk, squadRates.atk);
-      const defending = rate(row.def, squadRates.def);
-      const decisions = rate(row.dec, squadRates.dec);
-      const involvement = rate(row.inv, squadRates.inv);
+      if (!row || row.rawMin <= 0) continue;
+      // Each pillar divides by ITS OWN logging-weighted minutes.
+      const rate = (pts, sq, wmin) => (pts + (M / 20) * sq) / ((wmin + M) / 20);
+      const attacking = rate(row.atk, squadRates.atk, row.wmin.atk);
+      const defending = rate(row.def, squadRates.def, row.wmin.def);
+      const decisions = rate(row.dec, squadRates.dec, row.wmin.dec);
+      const involvement = rate(row.inv, squadRates.inv, row.wmin.inv);
       // Pillar mix blended by the weighted share of season minutes in goal.
-      const f = Math.min(1, row.wgkmin / row.wmin);
+      const f = Math.min(1, row.wgkmin / row.rawMin);
       const PO = W.pillars.outfield, PG = W.pillars.gk;
       const pil = {
         atk: PO.atk + f * (PG.atk - PO.atk),
@@ -12107,77 +12425,173 @@ function StatsView({ roster, games, weights, onBack }) {
         inv: PO.inv + f * (PG.inv - PO.inv),
       };
       const overall = (pil.atk * attacking + pil.def * defending + pil.dec * decisions + pil.inv * involvement) / 100;
-      map[p.id] = { overall: r(overall), attacking: r(attacking), defending: r(defending), decisions: r(decisions), involvement: r(involvement) };
+      map[p.id] = {
+        overall: r(overall), attacking: r(attacking), defending: r(defending),
+        decisions: r(decisions), involvement: r(involvement),
+        // How much of this player's minutes carried logging, per pillar. Surfaced
+        // so a score resting on thin taps reads as provisional rather than
+        // authoritative — the coach asked how much of the view is his taps, and
+        // the answer belongs on screen, not in a doc.
+        coverage: {
+          atk: r(100 * row.wmin.atk / Math.max(row.rawMin, 1)),
+          def: r(100 * row.wmin.def / Math.max(row.rawMin, 1)),
+          dec: r(100 * row.wmin.dec / Math.max(row.rawMin, 1)),
+        },
+      };
     }
     return map;
   }, [roster, finished, stats, weights]);
 
-  const sorted = [...roster].sort((a, b) => (seasonScores[b.id]?.overall || 0) - (seasonScores[a.id]?.overall || 0));
+  // The merged per-player rows: event stats (left of the divider) and tagged
+  // positions (right of it), joined on player id but never blended.
+  const season = useSeasonAnalytics(finished, mode);
+  const taggedGameIds = useMemo(
+    () => Object.fromEntries(Object.keys(season.clickByGame).map(id => [id, true])),
+    [season.clickByGame]);
+
+  const rows = useMemo(() => {
+    const out = roster.map(p => {
+      const s = stats[p.id] || {};
+      const sc = seasonScores[p.id] || {};
+      const agg = season.aggByPid[p.id] || null;
+      return {
+        pid: p.id,
+        player: p,
+        gamesPlayed: s.gamesPlayed || 0,
+        minutes: Math.round((s.totalSeconds || 0) / 60),
+        goals: s.GOAL || 0,
+        assists: s.ASSIST || 0,
+        score: sc.overall || 0,
+        // Worst pillar coverage: the score is only as solid as its thinnest input,
+        // and DEF is usually the thin one.
+        scoreCoverage: sc.coverage
+          ? Math.min(sc.coverage.atk, sc.coverage.def, sc.coverage.dec) : null,
+        // Tag side. `gamesWithDocs` is the denominator for "3/7": games in the
+        // window that HAVE analytics at all, so the ratio reads as "tagged out of
+        // analysed" rather than out of played.
+        tagged: agg ? agg.tagged : 0,
+        gamesWithDocs: agg ? agg.games : 0,
+        avgDefPct: agg ? agg.avgDefPct : null,
+        avgMidPct: agg ? agg.avgMidPct : null,
+        avgAttPct: agg ? agg.avgAttPct : null,
+        minSeries: agg ? agg.minSeries : [],
+      };
+    });
+    const cmp = {
+      score: (a, b) => b.score - a.score,
+      avgMin: (a, b) => (b.gamesPlayed ? b.minutes / b.gamesPlayed : 0)
+        - (a.gamesPlayed ? a.minutes / a.gamesPlayed : 0),
+      goals: (a, b) => b.goals - a.goals,
+      name: (a, b) => (a.player?.name || '').localeCompare(b.player?.name || ''),
+    }[sortKey] || ((a, b) => b.score - a.score);
+    return out.sort(cmp);
+  }, [roster, stats, seasonScores, season.aggByPid, sortKey]);
+
   const detailPlayer = roster.find(p => p.id === detailPlayerId);
+  const openGame = finished.find(g => g.id === openGameId) || null;
+  const nTagged = Object.keys(season.clickByGame).length;
+
+  const TABS = [
+    ['season', 'SEASON', 'per player'],
+    ['games', 'GAMES', `${finished.length}`],
+    ['team', 'TEAM', 'shape'],
+  ];
 
   return (
     <div className="pb-24">
-      <Header title="SEASON STATS" onBack={onBack} />
+      <Header title="STATS" onBack={onBack} />
 
-      <div className="px-4 pt-5">
-        <div className="text-xs text-stone-400 mb-1">Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.</div>
-        <div className="text-xs text-stone-400 italic mb-2">Sorted by performance score. Tap a player for full breakdown.</div>
-        <details className="bg-stone-900 border border-stone-800 rounded-xl mb-3 text-stone-300">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold text-stone-200">ⓘ How this score works</summary>
-          <div className="px-3 pb-3 text-xs text-stone-400 space-y-1.5">
-            <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
-            <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
-            <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
-            <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
-          </div>
-        </details>
+      {/* Tabs. Three questions a coach actually asks — how is this kid doing,
+          what happened in that game, how is the team playing — rather than one
+          scroll that mixes them. */}
+      <div className="px-4 pt-4">
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-1.5 flex gap-1">
+          {TABS.map(([k, label, sub]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`flex-1 py-2 rounded-xl font-display text-sm transition ${tab === k ? 'bg-lime-500 text-stone-950' : 'text-stone-300 hover:bg-stone-800'}`}
+            >
+              {label}
+              <span className={`ml-1 text-[9px] font-normal ${tab === k ? 'text-stone-800' : 'text-stone-500'}`}>{sub}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-        {roster.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
-            Add players to track stats.
+      {/* Window toggle applies to SEASON and TEAM; GAMES is a list, not an
+          aggregate, so it always shows everything. */}
+      {tab !== 'games' && season.gamesWithAnalytics.length > 0 && (
+        <div className="px-4 pt-2">
+          <div className="flex gap-1 text-[10px]">
+            <button
+              onClick={() => setMode('season')}
+              className={`px-2 py-1 rounded font-bold ${mode === 'season' ? 'bg-stone-700 text-stone-100' : 'bg-stone-900 text-stone-500'}`}
+            >SEASON · {season.gamesWithAnalytics.length}</button>
+            <button
+              onClick={() => setMode('rolling')}
+              className={`px-2 py-1 rounded font-bold ${mode === 'rolling' ? 'bg-stone-700 text-stone-100' : 'bg-stone-900 text-stone-500'}`}
+            >LAST {ROLLING_WINDOW}</button>
+            {season.fellBackToSeason && (
+              <span className="px-1 py-1 text-amber-500">
+                need {ROLLING_WINDOW - season.gamesWithAnalytics.length} more — showing season
+              </span>
+            )}
           </div>
-        ) : (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-2 bg-stone-900 text-[9px] font-bold tracking-wider text-stone-300">
-              <div>#</div>
-              <div>PLAYER</div>
-              <div className="text-center">GP</div>
-              <div className="text-center">MIN</div>
-              <div className="text-center">G</div>
-              <div className="text-center">A</div>
-              <div className="text-center">SCORE</div>
+        </div>
+      )}
+
+      <div className="px-4 pt-3">
+        {tab === 'season' && (
+          roster.length === 0 ? (
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-sm text-stone-400">
+              Add players to track stats.
             </div>
-            <div className="divide-y divide-stone-800">
-              {sorted.map(p => {
-                const s = stats[p.id] || {};
-                const min = Math.round((s.totalSeconds || 0) / 60);
-                const sc = seasonScores[p.id] || {};
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setDetailPlayerId(p.id)}
-                    className="w-full grid grid-cols-[2.5rem_1fr_2rem_2.5rem_2rem_2rem_3rem] gap-1 px-3 py-3 items-center text-left active:bg-stone-950 transition"
-                  >
-                    <PlayerAvatar player={p} sizeClass="w-9 h-9" textSize="text-base" numberClasses="bg-stone-900 text-stone-100" />
-                    <div className="min-w-0">
-                      <div className="font-bold text-sm truncate">{p.name}</div>
-                      {p.position && <div className="text-[10px] text-stone-400 font-bold tracking-wider">{p.position}</div>}
-                    </div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.gamesPlayed || 0}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-sky-700">{min}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-lime-700">{s.GOAL || 0}</div>
-                    <div className="text-center font-display text-sm tabular-nums text-stone-200">{s.ASSIST || 0}</div>
-                    <div className={`text-center font-display text-base tabular-nums ${(sc.overall || 0) >= 6 ? 'text-lime-600' : (sc.overall || 0) >= 3 ? 'text-stone-100' : 'text-stone-400'}`}>{sc.overall || 0}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="text-xs text-stone-400 mb-2">
+                Based on {finished.length} completed game{finished.length === 1 ? '' : 's'}.
+              </div>
+              <details className="bg-stone-900 border border-stone-800 rounded-xl mb-3 text-stone-300">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold text-stone-200">ⓘ How the SCORE works</summary>
+                <div className="px-3 pb-3 text-xs text-stone-400 space-y-1.5">
+                  <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
+                  <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
+                  <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
+                  <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
+                  <p><b className="text-amber-400">Logging coverage (Aug 2026):</b> you tap while you coach, so how much gets logged swings a lot between games — across the season the action events per game ran 95 down to 18, and defensive taps fell from 60% of them to about 3%. Each pillar now divides by the minutes that <i>actually carried logging for that pillar</i>, instead of by every minute played. So a quiet game no longer waters down a defender's rating, and nobody is penalised for the games you were too busy to tap. A <span className="text-amber-400">●</span> next to a score means under half his minutes carried logging (<span className="text-red-400">●</span> under 30%) — treat those as provisional.</p>
+                </div>
+              </details>
+              <SeasonPlayersTab
+                rows={rows}
+                sortKey={sortKey}
+                setSortKey={setSortKey}
+                onOpenPlayer={setDetailPlayerId}
+                nTagged={nTagged}
+              />
+            </>
+          )
         )}
 
-        <div className="mt-4 bg-stone-900 rounded-xl p-3 text-xs text-stone-300">
-          <span className="font-bold">SCORE</span> = weighted per-20min rate (ATK 30% · DEF 25% · DEC 30% · INV 15%) · <span className="font-bold">GP</span> Games · <span className="font-bold">MIN</span> Minutes · <span className="font-bold">G</span> Goals · <span className="font-bold">A</span> Assists
-        </div>
+        {tab === 'games' && (
+          <SeasonGamesTab
+            games={finished}
+            tagged={taggedGameIds}
+            onOpenGame={setOpenGameId}
+          />
+        )}
+
+        {tab === 'team' && (
+          season.loading ? (
+            <div className="p-10 text-center text-stone-400 animate-pulse">Loading team analytics…</div>
+          ) : season.gamesWithAnalytics.length === 0 ? (
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 text-sm text-stone-300">
+              No analytics yet for any finished game. Run <code className="text-lime-400">./run_analytics.sh &lt;gameId&gt;</code> on your Mac first.
+            </div>
+          ) : (
+            <SeasonTeamTab season={season} mode={mode} />
+          )
+        )}
       </div>
 
       {detailPlayer && (
@@ -12185,15 +12599,93 @@ function StatsView({ roster, games, weights, onBack }) {
           player={detailPlayer}
           stats={stats[detailPlayer.id] || {}}
           score={seasonScores[detailPlayer.id] || {}}
+          row={rows.find(r => r.pid === detailPlayer.id) || null}
+          // Only the games where THIS player was tagged, so the detail sheet
+          // fetches a couple of docs rather than the whole season.
+          taggedGames={finished.filter(g => season.clickByGame[g.id]
+            && season.clickByGame[g.id][detailPlayer.id])}
           onClose={() => setDetailPlayerId(null)}
+        />
+      )}
+
+      {openGame && (
+        <AnalyticsPanel
+          game={openGame}
+          roster={roster}
+          onClose={() => setOpenGameId(null)}
+          onSeekVideo={() => setOpenGameId(null)}
         />
       )}
     </div>
   );
 }
 
+/* Pools a player's TAGGED heatmaps across games, fetched on demand.
+ *
+ * Heatmaps are deliberately excluded from analytics/summary (96 floats per player
+ * per game, and no season screen drew one), so this reaches for the full
+ * analytics/v1 docs — but ONLY for the games where this player was tagged, and
+ * only when a detail sheet is actually opened. That keeps the fan-out that caused
+ * the season-view black screen from coming back through a side door.
+ *
+ * ⚠ Skips `oriented: false` games. Teams switch ends at half time; when the
+ * pipeline cannot resolve which way we attacked it refuses to guess rather than
+ * risk mirroring a half, and pooling such a grid would smear the result.
+ */
+function usePlayerSeasonHeatmap(playerId, games, open) {
+  const [state, setState] = useState({ loading: false, grid: null, rows: 12, cols: 8, nGames: 0, nClicks: 0 });
+  const gameIds = useMemo(() => (games || []).map(g => g.id).join(','), [games]);
+
+  useEffect(() => {
+    if (!open || !playerId || !window.fbDb || !gameIds) return undefined;
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true }));
+    const ids = gameIds.split(',');
+    Promise.all(ids.map(id => window.fbDb.collection('teams').doc('main')
+      .collection('games').doc(id).collection('analytics').doc('v1').get()
+      .then(snap => (snap.exists ? snap.data() : null))
+      .catch(() => null)))
+      .then(docs => {
+        if (cancelled) return;
+        let acc = null, rows = 12, cols = 8, nGames = 0, nClicks = 0;
+        docs.forEach(d => {
+          const cs = d && d.click_stats;
+          if (!cs || cs.oriented === false) return;
+          const me = (cs.players || []).find(p => p.player_id === playerId);
+          if (!me || !Array.isArray(me.heatmap) || !me.heatmap.length) return;
+          const shape = cs.heatmap_shape || [12, 8];
+          // A grid of a different shape cannot be summed cell-wise. Rather than
+          // resample (and invent detail), keep the first shape seen and skip the
+          // rest — shape only changes if the pipeline's grid is retuned.
+          if (acc && (shape[0] !== rows || shape[1] !== cols)) return;
+          rows = shape[0]; cols = shape[1];
+          // Each game's grid is already normalised to sum 1, so weight by the
+          // player's click count: a 90-click game should count for more than a
+          // 12-click one, and an unweighted mean would treat them equally.
+          const w = me.n_clicks || 1;
+          if (!acc) acc = new Array(me.heatmap.length).fill(0);
+          if (acc.length !== me.heatmap.length) return;
+          for (let i = 0; i < acc.length; i++) acc[i] += (me.heatmap[i] || 0) * w;
+          nGames += 1; nClicks += w;
+        });
+        if (acc) {
+          const total = acc.reduce((a, b) => a + b, 0) || 1;
+          acc = acc.map(v => v / total);
+        }
+        setState({ loading: false, grid: acc, rows, cols, nGames, nClicks });
+      });
+    return () => { cancelled = true; };
+  }, [playerId, gameIds, open]);
+
+  return state;
+}
+
 /* ---------- PLAYER STATS DETAIL ---------- */
-function PlayerStatsDetail({ player, stats, score, onClose }) {
+function PlayerStatsDetail({ player, stats, score, row, taggedGames, onClose }) {
+  // Fetch ONLY the games where this player was tagged — never the whole season.
+  // The full docs are ~1 MB each; fanning out over all of them is exactly what
+  // made the season view open to a black screen.
+  const heat = usePlayerSeasonHeatmap(player.id, taggedGames, !!(row && row.tagged));
   const min = Math.round((stats.totalSeconds || 0) / 60);
   const gkMin = Math.round((stats.gkSeconds || 0) / 60);
   const isGK = gkMin > 0 || player.position === 'GK';
@@ -12255,6 +12747,57 @@ function PlayerStatsDetail({ player, stats, score, onClose }) {
               <PillarMini label="INV" value={score.involvement || 0} />
             </div>
           </div>
+
+          {/* WHERE HE PLAYED — pooled across the games the coach tagged. This is
+              the ±1.7 m source; there is deliberately no tracked fallback, so a
+              player with no tagged games sees a prompt rather than a wrong map. */}
+          {row && (
+            <div className="bg-stone-950 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-display text-base">WHERE HE PLAYED</div>
+                {row.tagged > 0 && (
+                  <div className="text-[10px] text-lime-500">
+                    {row.tagged} tagged game{row.tagged === 1 ? '' : 's'}
+                  </div>
+                )}
+              </div>
+              {row.tagged === 0 ? (
+                <div className="text-[11px] text-stone-500 leading-snug">
+                  Not tagged yet. Tagging a game in the film-room sampler takes about
+                  10 minutes and gives his heatmap, territory and thirds — accurate to
+                  about ±1.7 m. The camera can't reliably tell your players apart on its
+                  own, so there is nothing to show until then.
+                </div>
+              ) : (
+                <>
+                  {row.avgDefPct != null && (
+                    <div className="mb-2">
+                      <ThirdsBar def={row.avgDefPct} mid={row.avgMidPct} att={row.avgAttPct} />
+                      <div className="flex justify-between text-[9px] text-stone-500 mt-1">
+                        <span>Def</span><span>Mid</span><span>Att</span>
+                      </div>
+                    </div>
+                  )}
+                  {heat.loading ? (
+                    <div className="text-[11px] text-stone-500 animate-pulse py-6 text-center">Pooling his tagged positions…</div>
+                  ) : heat.grid ? (
+                    <>
+                      <PlayerHeatmap grid={heat.grid} rows={heat.rows} cols={heat.cols} />
+                      <div className="text-[9px] text-stone-600 mt-1">
+                        {heat.nClicks} tagged positions over {heat.nGames} game{heat.nGames === 1 ? '' : 's'},
+                        each game weighted by how many times you tagged him.
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-[11px] text-stone-500">
+                      No pooled map available — his tagged games don't carry heatmap
+                      grids yet. Re-run analytics for those games to generate them.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <div className="divide-y divide-stone-800">
             {rows.map(r => (
@@ -13249,6 +13792,202 @@ function usageActionMeta(action) {
 const BUCKET_BAR_COLOR = {
   coach: '#fbbf24', parent: '#38bdf8', player: '#a3e635', unknown: '#78716c',
 };
+
+/* ---------- MANAGE ACCESS (coach): family approvals ----------
+ * Pending accessRequests → approve (with a roster player picker) or deny.
+ * Approve = write allowedUsers/{email} {role:'parent', playerIds} then
+ * delete the request; the requester's waiting screen flips live off their
+ * own-doc listener. Members list shows every allowed account; removing a
+ * parent bounces them back to the request screen on their next open.
+ * NOTE: writes here need the 2026-08 rules deploy (allowedUsers was
+ * console-only before) — until then approvals surface a permission error.
+ */
+function ManageAccessPanel({ roster, onBack }) {
+  const [requests, setRequests] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [pickerFor, setPickerFor] = useState(null);   // email being approved / edited
+  const [picked, setPicked] = useState([]);           // playerIds in the open picker
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb) return undefined;
+    const u1 = window.fbDb.collection('accessRequests').onSnapshot(
+      (snap) => setRequests(snap.docs.map((d) => ({ ...d.data(), email: d.id })).sort((a, b) => (a.ts || 0) - (b.ts || 0))),
+      () => setRequests([])
+    );
+    const u2 = window.fbDb.collection('allowedUsers').onSnapshot(
+      (snap) => setMembers(snap.docs.map((d) => ({ ...d.data(), email: d.id }))),
+      () => setMembers([])
+    );
+    return () => { u1(); u2(); };
+  }, []);
+
+  const sortedRoster = [...(roster || [])].sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+  const nameOf = (pid) => {
+    const p = (roster || []).find((x) => x.id === pid);
+    return p ? `${(p.name || '').trim().split(/\s+/)[0]} #${p.number}` : pid;
+  };
+  const openPicker = (email, initial) => { setPickerFor(email); setPicked(initial || []); setError(null); };
+  const togglePick = (pid) => setPicked((cur) => (cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid]));
+
+  const approve = async (req) => {
+    setBusy(true); setError(null);
+    try {
+      await window.fbDb.collection('allowedUsers').doc(req.email).set({
+        role: 'parent',
+        name: req.name || '',
+        playerIds: picked,
+        addedVia: 'request',
+        addedAt: Date.now(),
+      });
+      await window.fbDb.collection('accessRequests').doc(req.email).delete();
+      setPickerFor(null); setPicked([]);
+    } catch (e) { setError(e && e.message ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const deny = async (req) => {
+    if (!window.confirm(`Deny and remove the request from ${req.email}?`)) return;
+    setBusy(true); setError(null);
+    try { await window.fbDb.collection('accessRequests').doc(req.email).delete(); }
+    catch (e) { setError(e && e.message ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const saveKids = async (member) => {
+    setBusy(true); setError(null);
+    try {
+      await window.fbDb.collection('allowedUsers').doc(member.email).set({ playerIds: picked }, { merge: true });
+      setPickerFor(null); setPicked([]);
+    } catch (e) { setError(e && e.message ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const remove = async (member) => {
+    if (!window.confirm(`Remove ${member.email}? They'll be back to "request access" next time they open the app.`)) return;
+    setBusy(true); setError(null);
+    try { await window.fbDb.collection('allowedUsers').doc(member.email).delete(); }
+    catch (e) { setError(e && e.message ? e.message : String(e)); }
+    setBusy(false);
+  };
+
+  const PlayerPicker = ({ onConfirm, confirmLabel }) => (
+    <div className="mt-3 bg-stone-950 border border-stone-800 rounded-xl p-3">
+      <div className="text-[10px] text-stone-500 tracking-wider mb-2">LINK TO PLAYER(S) — THEY ONLY EVER SEE THEIR OWN KID'S DATA</div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {sortedRoster.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => togglePick(p.id)}
+            className={`px-2 py-1.5 rounded-lg text-xs font-bold text-left border ${picked.includes(p.id) ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-300 border-stone-700'}`}
+          >
+            #{p.number} {(p.name || '').trim().split(/\s+/)[0]}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <button onClick={onConfirm} disabled={busy} className="flex-1 bg-lime-500 text-stone-950 font-display rounded-lg py-2 text-sm disabled:opacity-60">
+          {picked.length === 0 ? `${confirmLabel} (NO PLAYER LINK)` : `${confirmLabel} · ${picked.length} PLAYER${picked.length === 1 ? '' : 'S'}`}
+        </button>
+        <button onClick={() => { setPickerFor(null); setPicked([]); }} className="px-3 bg-stone-800 text-stone-300 rounded-lg text-sm">Cancel</button>
+      </div>
+    </div>
+  );
+
+  const parents = members.filter((m) => m.role !== 'coach').sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+  const coaches = members.filter((m) => m.role === 'coach').sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-100 pb-12">
+      <div className="stripes-bg text-white px-4 pt-[calc(env(safe-area-inset-top,0px)+1rem)] pb-4 flex items-center gap-3">
+        <button onClick={onBack} className="bg-white/15 hover:bg-white/25 text-xs font-bold tracking-widest px-3 py-2 rounded-lg flex items-center gap-1">
+          <ChevronLeft className="w-4 h-4" /> BACK
+        </button>
+        <div>
+          <div className="font-display text-2xl leading-none">ACCESS</div>
+          <div className="text-[11px] text-white/60 mt-0.5">Who can open the family app</div>
+        </div>
+      </div>
+
+      <div className="px-4 pt-4 max-w-2xl mx-auto space-y-6">
+        {error && <div className="bg-red-950/50 border border-red-800 text-red-200 text-xs rounded-xl px-3 py-2">{error}</div>}
+
+        <div>
+          <h3 className="font-display text-lg text-stone-200 mb-2">REQUESTS {requests.length > 0 && <span className="text-lime-400">({requests.length})</span>}</h3>
+          {requests.length === 0 ? (
+            <div className="text-stone-500 text-sm bg-stone-900 border border-stone-800 rounded-xl px-3 py-4 text-center">No pending requests.</div>
+          ) : (
+            <div className="space-y-2">
+              {requests.map((req) => (
+                <div key={req.email} className="bg-stone-900 border border-stone-800 rounded-xl p-3">
+                  <div className="flex items-center gap-3">
+                    {req.photo && <img src={req.photo} className="w-9 h-9 rounded-full" referrerPolicy="no-referrer" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm truncate">{req.name || req.email}</div>
+                      <div className="text-xs text-stone-400 truncate">{req.email}</div>
+                      {req.note && <div className="text-xs text-lime-300/80 mt-0.5 truncate">"{req.note}"</div>}
+                    </div>
+                    {pickerFor !== req.email && (
+                      <>
+                        <button onClick={() => openPicker(req.email, [])} className="bg-lime-500 text-stone-950 font-display text-xs px-3 py-2 rounded-lg">APPROVE</button>
+                        <button onClick={() => deny(req)} className="bg-stone-800 text-stone-300 text-xs px-3 py-2 rounded-lg">Deny</button>
+                      </>
+                    )}
+                  </div>
+                  {pickerFor === req.email && <PlayerPicker onConfirm={() => approve(req)} confirmLabel="APPROVE" />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h3 className="font-display text-lg text-stone-200 mb-2">FAMILIES ({parents.length})</h3>
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
+            {parents.map((m) => (
+              <div key={m.email} className="p-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate">
+                      {m.name || m.email}
+                      {m.relationship && <span className="text-stone-500 font-normal"> · {m.relationship}</span>}
+                    </div>
+                    <div className="text-xs text-stone-400 truncate">{m.email}</div>
+                    <div className="text-xs text-lime-300/80 mt-0.5 truncate">
+                      {(m.playerIds || []).length ? (m.playerIds || []).map(nameOf).join(', ') : 'No player link'}
+                    </div>
+                  </div>
+                  {pickerFor !== m.email && (
+                    <>
+                      <button onClick={() => openPicker(m.email, m.playerIds || [])} className="bg-stone-800 text-stone-200 text-xs px-2.5 py-2 rounded-lg">Kids</button>
+                      <button onClick={() => remove(m)} className="bg-red-950/60 border border-red-900 text-red-300 text-xs px-2.5 py-2 rounded-lg">Remove</button>
+                    </>
+                  )}
+                </div>
+                {pickerFor === m.email && <PlayerPicker onConfirm={() => saveKids(m)} confirmLabel="SAVE" />}
+              </div>
+            ))}
+            {parents.length === 0 && <div className="text-stone-500 text-sm px-3 py-4 text-center">No approved families yet.</div>}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-display text-lg text-stone-200 mb-2">COACHES</h3>
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
+            {coaches.map((m) => (
+              <div key={m.email} className="p-3 flex items-center gap-3">
+                <span className="text-lg">🪑</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm truncate">{m.name || m.email}</div>
+                  <div className="text-xs text-stone-400 truncate">{m.email}{(m.playerIds || []).length ? ` · ${(m.playerIds || []).map(nameOf).join(', ')}` : ''}</div>
+                </div>
+                <span className="text-[10px] text-stone-500 tracking-wider">MANAGED BY OWNER</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ViewersPanel({ games = [], onBack }) {
   const [logs, setLogs] = useState([]);
@@ -14301,14 +15040,18 @@ function ScheduledScoreboard({ item, transparent = false }) {
   );
 }
 
-function PublicHomePage() {
+function PublicHomePage({ access }) {
   const [games, setGames] = useState([]);
   const [roster, setRoster] = useState([]);
   const [schedule, setSchedule] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
-  const [isCoachUser, setIsCoachUser] = useState(false);
-  const [showTraining, setShowTraining] = useState(false);
+  const isCoachUser = !!access && access.status === 'coach';
+  // Tile hub: which full-screen panel is open ('heatmaps'|'stats'|'past'|'training').
+  const [openPanel, setOpenPanel] = useState(null);
+  // Families with several kids on the roster pick which one the kid tiles show.
+  const kidIds = (access && access.playerIds) || [];
+  const [kidId, setKidId] = useState(kidIds[0] || null);
   // Re-render once a minute so the featured card flips at 6 AM ET, kickoff,
   // and (final whistle + 1h) without needing a page reload or new snapshot.
   const [, setMinTick] = useState(0);
@@ -14333,15 +15076,6 @@ function PublicHomePage() {
     }, 12000);
     return () => clearTimeout(t);
   }, [loaded, error, retryNonce]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.fbDb || !window.fbUserInfo) return;
-    const email = window.fbUserInfo.email?.toLowerCase();
-    if (!email) return;
-    window.fbDb.collection('allowedUsers').doc(email).get().then((doc) => {
-      if (doc.exists && doc.data().role === 'coach') setIsCoachUser(true);
-    }).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) {
@@ -14455,12 +15189,6 @@ function PublicHomePage() {
   const featuredItem =
     featuredSlot?.kind === 'upcoming' || featuredSlot?.kind === 'cancelled' ? featuredSlot.item : null;
 
-  const past = finished
-    .filter((g) => !featuredGame || g.id !== featuredGame.id)
-    // Newest first by DATE then time-of-day (startedAt), matching the dugout.
-    .sort((a, b) => (b.date || '').localeCompare(a.date || '')
-      || (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0));
-
   return (
     <div className="min-h-screen bg-stone-950 pb-12 relative">
       <style>{FONT_STYLES}</style>
@@ -14567,6 +15295,50 @@ function PublicHomePage() {
           </div>
         </div>
       )}
+      {/* ---- Tile hub (coach's spec 2026-08-18): everything except the
+           upcoming schedule lives in tiles. Kid tiles render only for
+           accounts linked to a player; kid-less viewers get the two team
+           tiles. ---- */}
+      {(() => {
+        const kid = kidId ? (roster || []).find((p) => p.id === kidId) : null;
+        const kidFirst = kid ? (kid.name || '').trim().split(/\s+/)[0] : null;
+        return (
+          <div className="px-4 pt-6 max-w-2xl mx-auto space-y-3">
+            {kidIds.length > 1 && (
+              <div className="flex gap-2 flex-wrap">
+                {kidIds.map((pid) => {
+                  const p = (roster || []).find((x) => x.id === pid);
+                  const first = p ? (p.name || '').trim().split(/\s+/)[0] : '?';
+                  return (
+                    <button
+                      key={pid}
+                      onClick={() => setKidId(pid)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold border ${pid === kidId ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-300 border-stone-700'}`}
+                    >
+                      {first}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {kidId && (
+              <div>
+                <h3 className="font-display text-xl text-stone-200 mb-2">
+                  {(kidFirst || 'MY PLAYER').toUpperCase()}{kid && kid.number ? ` · #${kid.number}` : ''}
+                </h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <TileButton onClick={() => setOpenPanel('heatmaps')} icon={<span className="text-2xl leading-none">🔥</span>} label="HEATMAPS" sub="Where he played, per game" />
+                  <TileButton onClick={() => setOpenPanel('stats')} icon={<span className="text-2xl leading-none">📊</span>} label="MATCH STATS" sub="Goals & assists per game" />
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <TileButton onClick={() => setOpenPanel('past')} icon={<span className="text-2xl leading-none">🏟️</span>} label="PAST GAMES" sub="Scores, film & highlights" />
+              <TileButton onClick={() => setOpenPanel('training')} icon={<span className="text-2xl leading-none">🎬</span>} label="TRAINING" sub="Soccer & GK drills" />
+            </div>
+          </div>
+        );
+      })()}
       {(() => {
         const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
         const playedKeys = new Set((games || []).map(playedKey));
@@ -14623,51 +15395,201 @@ function PublicHomePage() {
           </div>
         );
       })()}
-      {past.length > 0 && (
-        <div className="px-4 pt-6 max-w-md mx-auto">
-          <h3 className="font-display text-xl text-stone-200 mb-2">PAST GAMES</h3>
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
-            {past.map((g) => {
-              const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
-              const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-700 text-stone-100';
-              return (
-                <a key={g.id} href={`./?live=${g.id}`} onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'live', gameId: g.id }); } }} className="flex items-center gap-3 p-3 active:bg-stone-950">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
-                  </div>
-                  <div className="font-display text-lg tabular-nums text-stone-100">{g.ourScore}–{g.oppScore}</div>
-                  <ChevronRight className="w-4 h-4 text-stone-400" />
-                </a>
-              );
-            })}
-          </div>
-
-        </div>
+      {openPanel === 'past' && (
+        <PastGamesPanel games={games} onBack={() => setOpenPanel(null)} />
       )}
-
-      {/* Single full-width Training Videos tile → opens the hub (playlists → shorts player) */}
-      <div className="px-4 pt-6 max-w-2xl mx-auto">
-        <button
-          onClick={() => setShowTraining(true)}
-          className="w-full rounded-2xl p-4 flex items-center justify-between active:scale-[0.98] transition"
-          style={{ background: 'linear-gradient(135deg,#0e7490,#155e75)', border: '1px solid rgba(34,211,238,0.2)' }}
-        >
-          <span className="flex items-center gap-3 min-w-0">
-            <span className="text-2xl">🎬</span>
-            <span className="text-left min-w-0">
-              <span className="block font-display text-base text-white">TRAINING VIDEOS</span>
-              <span className="block text-[11px] text-cyan-100/70">Soccer &amp; Goalkeeper drills</span>
-            </span>
-          </span>
-          <span className="text-white/70 shrink-0">›</span>
-        </button>
-      </div>
-      {showTraining && <TrainingHub onBack={() => setShowTraining(false)} />}
+      {openPanel === 'heatmaps' && kidId && (
+        <ParentSeasonPanel mode="heatmaps" playerId={kidId} roster={roster} onBack={() => setOpenPanel(null)} />
+      )}
+      {openPanel === 'stats' && kidId && (
+        <ParentSeasonPanel mode="stats" playerId={kidId} roster={roster} onBack={() => setOpenPanel(null)} />
+      )}
+      {openPanel === 'training' && <TrainingHub onBack={() => setOpenPanel(null)} />}
 
     </div>
   );
+}
+
+/* ---- Tile-hub panels (parent home, 2026-08-18) ---- */
+// Full-screen overlay with a sticky header — the tile views live in these so
+// the router/history machinery stays untouched (closing = plain state).
+function PanelShell({ title, sub, onBack, children }) {
+  useEffect(() => { if (typeof window !== 'undefined') window.scrollTo(0, 0); }, []);
+  return (
+    <div className="fixed inset-0 z-50 bg-stone-950 overflow-y-auto pb-12">
+      <div className="sticky top-0 z-10 stripes-bg border-b border-stone-800 px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3 flex items-center gap-3">
+        <button onClick={onBack} className="bg-white/15 hover:bg-white/25 text-white text-xs font-bold tracking-widest px-3 py-2 rounded-lg flex items-center gap-1 shrink-0">
+          <ChevronLeft className="w-4 h-4" /> BACK
+        </button>
+        <div className="min-w-0">
+          <div className="font-display text-xl text-white leading-none truncate">{title}</div>
+          {sub && <div className="text-[11px] text-white/60 mt-0.5 truncate">{sub}</div>}
+        </div>
+      </div>
+      <div className="px-4 pt-4 max-w-2xl mx-auto">{children}</div>
+    </div>
+  );
+}
+
+function PastGamesPanel({ games, onBack }) {
+  const past = (games || [])
+    .filter((g) => g.status === 'finished')
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '')
+      || (b.endedAt || b.startedAt || 0) - (a.endedAt || a.startedAt || 0));
+  return (
+    <PanelShell title="PAST GAMES" sub="Tap a game for the scoreboard, film and highlights" onBack={onBack}>
+      {past.length === 0 ? (
+        <div className="text-stone-500 text-sm text-center py-10">No finished games yet.</div>
+      ) : (
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
+          {past.map((g) => {
+            const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+            const rColor = r === 'W' ? 'bg-lime-500 text-white' : r === 'L' ? 'bg-red-500 text-white' : 'bg-stone-700 text-stone-100';
+            return (
+              <a key={g.id} href={`./?live=${g.id}`} onClick={(e) => { if (window.__navigate) { e.preventDefault(); window.__navigate({ kind: 'live', gameId: g.id }); } }} className="flex items-center gap-3 p-3 active:bg-stone-950">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm truncate">vs {g.opponent}</div>
+                  <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
+                </div>
+                <div className="font-display text-lg tabular-nums text-stone-100">{g.ourScore}–{g.oppScore}</div>
+                <ChevronRight className="w-4 h-4 text-stone-400" />
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </PanelShell>
+  );
+}
+
+// One small read per open: the per-kid season doc published by the pipeline.
+// Parents can only fetch playerIds on their own allowedUsers row (rules).
+function useParentSeason(playerId) {
+  const [state, setState] = useState({ loading: true, error: null, doc: null });
+  useEffect(() => {
+    if (!playerId || typeof window === 'undefined' || !window.fbDb) return undefined;
+    let cancelled = false;
+    setState({ loading: true, error: null, doc: null });
+    window.fbDb.collection('teams').doc('main').collection('parentSeason').doc(playerId).get()
+      .then((s) => { if (!cancelled) setState({ loading: false, error: null, doc: s.exists ? s.data() : null }); })
+      .catch(() => { if (!cancelled) setState({ loading: false, error: 'Could not load season data — try again in a bit.', doc: null }); });
+    return () => { cancelled = true; };
+  }, [playerId]);
+  return state;
+}
+
+// Both kid tiles share one panel: mode 'heatmaps' | 'stats'. Rows carry a
+// full "–" story: attended=false → didn't play; attended but no heatmap →
+// below the tracking-coverage bar (we don't show confidently-wrong maps).
+function ParentSeasonPanel({ mode, playerId, roster, onBack }) {
+  const { loading, error, doc } = useParentSeason(playerId);
+  const kid = (roster || []).find((p) => p.id === playerId);
+  const first = (doc && doc.playerFirstName) || (kid ? (kid.name || '').trim().split(/\s+/)[0] : 'Player');
+  const num = (doc && doc.playerNumber) || (kid && kid.number) || '';
+  const rows = ((doc && doc.games) || []).slice()
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const [expandedId, setExpandedId] = useState(null);
+  const title = `${String(first).toUpperCase()}${num ? ` #${num}` : ''} — ${mode === 'heatmaps' ? 'HEATMAPS' : 'MATCH STATS'}`;
+  const sub = mode === 'heatmaps' ? 'Position maps from tracked minutes' : 'From the coach’s live match log';
+
+  let body;
+  if (loading) {
+    body = <div className="text-stone-400 animate-pulse text-sm text-center py-10">Loading…</div>;
+  } else if (error) {
+    body = <div className="text-stone-400 text-sm text-center py-10">{error}</div>;
+  } else if (rows.length === 0) {
+    body = (
+      <div className="text-stone-500 text-sm text-center py-10">
+        No season data yet — this fills in after the next game analysis.
+      </div>
+    );
+  } else if (mode === 'heatmaps') {
+    const expanded = rows.find((g) => g.gameId === expandedId);
+    body = (
+      <div className="space-y-3">
+        {expanded && expanded.heatmap && (
+          <button onClick={() => setExpandedId(null)} className="block w-full bg-stone-900 border border-lime-600/50 rounded-2xl p-4 text-left">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-bold text-sm">vs {expanded.opponent} · {formatDate(expanded.date)}</div>
+              <span className="text-[10px] text-stone-400 tracking-wider">TAP TO SHRINK</span>
+            </div>
+            <PlayerHeatmap grid={expanded.heatmap} rows={expanded.heatmapRows || 12} cols={expanded.heatmapCols || 8} />
+          </button>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          {rows.map((g) => (
+            <button
+              key={g.gameId}
+              onClick={() => (g.heatmap ? setExpandedId(g.gameId === expandedId ? null : g.gameId) : null)}
+              className={`bg-stone-900 border rounded-2xl p-3 text-left ${g.gameId === expandedId ? 'border-lime-600/50' : 'border-stone-800'}`}
+            >
+              <div className="text-xs font-bold truncate">vs {g.opponent}</div>
+              <div className="text-[10px] text-stone-500 mb-2">{formatDate(g.date)}</div>
+              {g.attended && g.heatmap ? (
+                <PlayerHeatmap grid={g.heatmap} rows={g.heatmapRows || 12} cols={g.heatmapCols || 8} />
+              ) : (
+                <div className="h-24 flex items-center justify-center text-stone-600">
+                  <div className="text-center">
+                    <div className="font-display text-2xl leading-none">–</div>
+                    <div className="text-[10px] mt-1">{g.attended ? 'Not tracked enough' : 'Didn’t play'}</div>
+                  </div>
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  } else {
+    const attended = rows.filter((g) => g.attended);
+    const sum = (k) => attended.reduce((s, g) => s + (Number(g[k]) || 0), 0);
+    const showSaves = rows.some((g) => (g.saves || 0) > 0);
+    // Minutes can be null (no sub-log data for that game) — distinct from 0.
+    const minCell = (g) => (!g.attended || g.minutes == null ? '–' : Math.round(Number(g.minutes) || 0));
+    body = (
+      <div className="space-y-3">
+        <div className="grid grid-cols-4 gap-2">
+          {[['GAMES', attended.length], ['GOALS', sum('goals')], ['ASSISTS', sum('assists')], ['MINUTES', Math.round(sum('minutes'))]].map(([label, v]) => (
+            <div key={label} className="bg-stone-900 border border-stone-800 rounded-xl p-2 text-center">
+              <div className="font-display text-xl text-lime-400 tabular-nums leading-none">{v}</div>
+              <div className="text-[9px] text-stone-500 tracking-wider mt-1">{label}</div>
+            </div>
+          ))}
+        </div>
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden">
+          <div className={`grid ${showSaves ? 'grid-cols-[1fr_2rem_2rem_2rem_2.6rem]' : 'grid-cols-[1fr_2rem_2rem_2.6rem]'} gap-1 px-3 py-2 text-[10px] text-stone-500 tracking-wider border-b border-stone-800`}>
+            <div>GAME</div><div className="text-center">G</div><div className="text-center">A</div>{showSaves && <div className="text-center">SV</div>}<div className="text-center">MIN</div>
+          </div>
+          {rows.map((g) => {
+            const r = g.ourScore > g.oppScore ? 'W' : g.ourScore < g.oppScore ? 'L' : 'D';
+            const rColor = r === 'W' ? 'text-lime-400' : r === 'L' ? 'text-red-400' : 'text-stone-400';
+            const cell = (v) => (g.attended ? (Number(v) || 0) : '–');
+            return (
+              <div key={g.gameId} className={`grid ${showSaves ? 'grid-cols-[1fr_2rem_2rem_2rem_2.6rem]' : 'grid-cols-[1fr_2rem_2rem_2.6rem]'} gap-1 px-3 py-2.5 border-b border-stone-800/60 last:border-0 items-center ${g.attended ? '' : 'opacity-50'}`}>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold truncate">
+                    <span className={`font-display mr-1 ${rColor}`}>{r}</span>
+                    vs {g.opponent}
+                  </div>
+                  <div className="text-[10px] text-stone-500">{formatDate(g.date)} · {g.ourScore}–{g.oppScore}</div>
+                </div>
+                <div className="text-center text-sm tabular-nums">{cell(g.goals)}</div>
+                <div className="text-center text-sm tabular-nums">{cell(g.assists)}</div>
+                {showSaves && <div className="text-center text-sm tabular-nums">{cell(g.saves)}</div>}
+                <div className="text-center text-sm tabular-nums">{minCell(g)}</div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-stone-600 text-center">
+          "–" means {first} didn’t play that game. Minutes come from the coach’s sub log.
+        </p>
+      </div>
+    );
+  }
+
+  return <PanelShell title={title} sub={sub} onBack={onBack}>{body}</PanelShell>;
 }
 
 /* ---- shared public-mode helpers ---- */

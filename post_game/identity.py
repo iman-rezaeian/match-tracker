@@ -104,10 +104,19 @@ def half_windows(game: GameDoc, video_duration_s: float) -> list[tuple[float, fl
 def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], float]:
     """Returns f(period, elapsed_s) -> seconds into the source video.
 
-    Uses `video_offset_h1_kickoff_s` (1st-half kickoff position in video) plus
-    the wallclock-derived halftime gap from `pause_periods`. If no offset was
-    set, assumes the video starts at kickoff (legacy behaviour).
+    An EXACT time from `video_event_times` wins for the events that have one; every
+    other event falls back to `video_offset_h1_kickoff_s` plus the wallclock-derived
+    halftime gap, and finally to "the video starts at kickoff" (legacy).
+
+    ⚠ The exact-time table exists because the residual error CHANGES SIGN between
+    events, so no offset can fix it. On Caboto, with the offset corrected from a
+    wrongly-stored 0.0 to 22.0, the six goals were still out by -15.0, +4.0, +11.0,
+    +2.1 and -7.9 s. Both the scorebug popup and the goal-roar audio fire at the
+    mapped time, so that reads as cheers landing before some goals and well after
+    others. Widening the clip window hid it for clipping but could not help these.
     """
+    exact = {str(k): float(v)
+             for k, v in (getattr(game, "video_event_times", None) or {}).items()}
     # May be negative when recording started after kickoff (see half_windows).
     offset = float(game.video_offset_h1_kickoff_s or 0.0)
     half_len_s = game.half_length_min * 60
@@ -126,11 +135,53 @@ def period_clock_to_video_time_factory(game: GameDoc) -> Callable[[int, int], fl
     h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
 
     def f(period: int, elapsed_s: int) -> float:
+        hit = exact.get(f"{int(period)}:{int(elapsed_s)}")
+        if hit is not None:
+            return max(0.0, hit)
         # Clamp to 0: events in the first |offset| s (kickoff before recording
         # began) map to the earliest available footage, video t=0.
         if period == 1:
             return max(0.0, offset + float(elapsed_s))
         return max(0.0, h2_kickoff_in_video + float(elapsed_s))
+
+    return f
+
+
+def video_time_to_period_clock_factory(game: GameDoc) -> Callable[[float], tuple[int, float]]:
+    """Inverse of period_clock_to_video_time_factory: f(video_t) -> (period, clock_s).
+
+    Needed to label a rendered clip with the game minute it came from. The forward
+    map is a per-period linear offset, so the inverse just picks the period whose
+    kickoff is the latest one at or before `video_t`.
+
+    Second half wins ties: at exactly the H2 kickoff position the clock should read
+    "2nd half, 0:00", not "1st half, <half length>".
+
+    ⚠ `sub_correct.video_time_to_period_clock_factory` is a second implementation of
+    this same inverse, kept because it takes `half_windows` instead of the game doc
+    (it labels corrected sub times for coach-facing display). Verified equal at
+    every instant INSIDE either half; they differ only during the halftime gap,
+    where this one clamps into period 1 and that one snaps to the nearer half. That
+    gap is not a real game instant, and clips are only ever cut from play windows,
+    so the divergence is inert. Do not "fix" one to match the other without
+    checking both callers -- they answer slightly different questions.
+    """
+    offset = float(game.video_offset_h1_kickoff_s or 0.0)
+    half_len_s = game.half_length_min * 60
+    halftime_gap_s = _halftime_seconds(game)
+    pp = game.pause_periods[0] if game.pause_periods else None
+    if pp and pp.started_at and game.started_at:
+        h1_play_s = (pp.started_at - game.started_at) / 1000.0
+    else:
+        h1_play_s = float(half_len_s)
+    h2_override = float(getattr(game, "video_offset_h2_kickoff_s", 0.0) or 0.0)
+    h2_kickoff_in_video = h2_override if h2_override > 0 else (offset + h1_play_s + halftime_gap_s)
+
+    def f(video_t: float) -> tuple[int, float]:
+        t = float(video_t)
+        if t >= h2_kickoff_in_video:
+            return (2, max(0.0, t - h2_kickoff_in_video))
+        return (1, max(0.0, t - offset))
 
     return f
 

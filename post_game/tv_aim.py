@@ -39,8 +39,20 @@ import numpy as np
 # the dead-ball restarts the coach logs from the touchline — the free edge no
 # commercial system has (EIGHT_K_RETEST.md §2). KICK_OUT is this team's
 # goal-kick / keeper-distribution tag (a dead-ball restart).
+#
+# ⚠ GOAL and SHOT_ON are deliberately NOT here, and must not be re-added. They
+# are LIVE-ACTION moments, not restarts: there is nothing to establish, and the
+# widen actively destroys the shot you most want. `event_framing` takes
+# max(current, event_widen_fov_deg), so including GOAL overrode the dynamic FOV
+# at exactly the goal instant — measured on both Jul-12 games, ALL 6 of Game 2's
+# goals and 3 of Game 1's 8 rendered at exactly 84.0 deg against a 55.7 deg
+# median for normal play. On a low sideline pole an 84 deg crop takes in sky,
+# tree line, car park and foreground tents, shrinking the players to a thin band
+# in the upper third; the coach reported not being able to see his team's second
+# goal at all. It also costs sharpness (a wider slice of equirect into the same
+# 1920 px). Dead balls keep the widen because the box genuinely needs to fill.
 EVENT_FRAMING_TYPES: frozenset[str] = frozenset(
-    {"CORNER", "GOAL_KICK", "KICK_OUT", "THROW_IN", "FREE_KICK", "GOAL", "SHOT_ON"}
+    {"CORNER", "GOAL_KICK", "KICK_OUT", "THROW_IN", "FREE_KICK"}
 )
 
 
@@ -114,8 +126,20 @@ class AimConfig:
     safe_zone_lat_frac: float = 0.20   # vertical safe band (×~21.5° half-FOV)
 
     # --- Phase 1: dead-zone / Schmitt hysteresis -------------------------
-    dead_zone_frac: float = 0.33       # fraction of the HALF-FOV the action may
-                                       # drift before the camera re-centres
+    dead_zone_frac: float = 0.15       # fraction of the HALF-FOV the action may
+                                       # drift before the camera re-centres.
+                                       # Was 0.33, which at a 35 deg half-FOV is
+                                       # an 11.6 deg band — wider than the
+                                       # MEASURED median aim lag of 4.7 deg, so
+                                       # the camera provably sat still while the
+                                       # play it should have followed drifted
+                                       # inside the band ("the camera falls
+                                       # behind the ball"). 0.15 ≈ 5.2 deg — the
+                                       # same ORDER as that median rather than
+                                       # 2.5x it, so typical drift now commits a
+                                       # pan while sub-degree wobble is still
+                                       # ignored. Coach picked this in a
+                                       # side-by-side motion comparison.
     dead_zone_lat_frac: float = 0.45   # vertical play spread is small → allow
                                        # a wider vertical dead zone
     max_pan_deg_s: float = 25.0        # slew ceiling on the catch-up move so the

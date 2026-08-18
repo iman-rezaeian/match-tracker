@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 
 from . import config, firestore_io
+from .adult_filter import drop_sideline_adults
 from .calibration import (
     FieldProjector,
     aim_from_calibration,
@@ -22,7 +23,9 @@ from .calibration import (
 from .detection import Detector
 from .formation import compute_formation
 from .highlights import extract_clips
-from .identity import assign_identities, half_windows, period_clock_to_video_time_factory, _onfield_intervals
+from .identity import (assign_identities, half_windows,
+                       period_clock_to_video_time_factory,
+                       video_time_to_period_clock_factory, _onfield_intervals)
 from .identity_assign import assign_identities_v2
 from .reid_stitch import stitch_tracklets, stitch_stats
 from .tracklet_thumbs import generate_tracklet_thumbnails
@@ -881,6 +884,8 @@ def run(
     # POSITION events to anchor on).
     log.info("Stage 5/6: identity assignment...")
     clock_to_video = period_clock_to_video_time_factory(game)
+    # Inverse, for labelling rendered clips with the minute they came from.
+    _video_to_clock = video_time_to_period_clock_factory(game)
 
     # --- camera-corrected on-field windows (sub_correct) ---------------------
     # Coaches tap SUB late during multi-sub moments, biasing the logged on/off
@@ -1086,8 +1091,18 @@ def run(
                         ", ".join(f"{p}={100*v.get('offwindow_frac', 0):.0f}%" for p, v in
                                   sorted(_off.items(),
                                          key=lambda kv: -kv[1].get("offwindow_frac", 0))[:3]))
+    # Team shape is a function of the SET of bodies present, so it is immune to
+    # identity confusion but fully exposed to non-players: on a clicked frame
+    # only ~25% of tracked rows are ours. Restrict it to player-sized boxes
+    # before aggregating. Per-player stats above deliberately do NOT get this —
+    # they are gated on identity, and cutting a real player's near-camera frames
+    # would bias his own numbers instead of cleaning a shared one.
+    _shape_df = tracks_df
+    adult_report: dict = {}
+    if config.TEAM_SHAPE_SIZE_FILTER:
+        _shape_df = drop_sideline_adults(tracks_df, report=adult_report)
     formation_snaps, team_ts = compute_formation(
-        tracks_df, identity_by_track, team_of_player,
+        _shape_df, identity_by_track, team_of_player,
         periods=_periods_seconds(game, meta["duration_s"], clock_to_video),
         gk_player_id=game.gk_player_id,
         coach_events=game.events,
@@ -1171,6 +1186,10 @@ def run(
                 for f in formation_snaps
             ],
             "team_time_series": asdict(team_ts),
+            # What the size filter removed from the TEAM metrics above. Reported
+            # as data, not a log line: a filter scored only on its survivors is
+            # how two earlier filters shipped while cutting our own players.
+            "team_shape_filter": adult_report or None,
             "field_tilt": field_tilt,
             "sub_corrections": sub_corrections_echo,
             # Provably-impossible spans (one player in two places at once) that
@@ -1182,6 +1201,22 @@ def run(
         if board_orient_ambiguous:
             _update["orientation_ambiguous_periods"] = board_orient_ambiguous
         firestore_io.write_analytics_merge(game_id, _sanitize_json(_update))
+        # Refresh the season-view projection. Built from the doc as it now stands,
+        # NOT from `_update`: this path is a merge, so the update alone is missing
+        # keys the summary carries (click_stats above all) and summarising it
+        # would silently blank them.
+        try:
+            firestore_io.write_analytics_summary(
+                game_id, firestore_io.read_analytics(game_id) or _update)
+        except Exception as e:
+            log.warning("season summary write failed: %s", e)
+        # Identity fixes change per-kid minutes/heatmaps → refresh the family
+        # rollup too (same guard as the full-run path: never fail the refresh).
+        try:
+            from . import parent_season
+            parent_season.publish_parent_season(game_id)
+        except Exception as e:
+            log.warning("parentSeason publish failed: %s", e)
         log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
                  game_id, len(player_stats))
         return _update
@@ -1443,9 +1478,15 @@ def run(
             for f in formation_snaps
         ],
         "team_time_series": asdict(team_ts),
+        # What the size filter removed from the TEAM metrics above. Reported as
+        # data, not a log line: a filter scored only on its survivors is how two
+        # earlier filters shipped while cutting our own players.
+        "team_shape_filter": adult_report or None,
         "clip_count": len(clips),
-        "tv_reel": _tv_meta_to_dict(tv_reel_meta),
-        "auto_highlights": _tv_meta_to_dict(auto_hl_meta),
+        # Segments carry their game-clock position so the PWA scorebug can show
+        # the right minute anywhere in a reel, not just at the events.
+        "tv_reel": _tv_meta_to_dict(tv_reel_meta, _video_to_clock),
+        "auto_highlights": _tv_meta_to_dict(auto_hl_meta, _video_to_clock),
         # Convenience top-level URLs the PWA can read without diving into
         # the nested meta dicts above.
         "tv_reel_url": (tv_reel_meta.r2_url if tv_reel_meta else None),
@@ -1477,22 +1518,43 @@ def run(
     if board_orient_ambiguous:
         analytics["orientation_ambiguous_periods"] = board_orient_ambiguous
     firestore_io.write_analytics(game_id, _sanitize_json(analytics))
+    # Small companion doc the season view fans out over instead of these ~1 MB
+    # docs. Non-fatal: a missing summary degrades that one view, and losing the
+    # whole run's analytics over it would be a far worse trade.
+    try:
+        firestore_io.write_analytics_summary(game_id, _sanitize_json(analytics))
+    except Exception as e:
+        log.warning("season summary write failed: %s", e)
 
     # Public-safe slice on the game doc itself so parents can render the
     # broadcast video + scorebug without being able to read the rest of
     # the analytics subcollection. Firestore rules then lock analytics/
     # to coaches.
     public_fields: dict = {}
-    # Public fields point at the AMBIENCE (stadium-audio) copies when present so
-    # parents never hear the original audio; the coach analytics doc above keeps
-    # the original-audio URLs for the dugout. Falls back to original if the swap
-    # is disabled or failed.
+    # Public fields point ONLY at the AMBIENCE (stadium-audio) copies; the coach
+    # analytics doc above keeps the original-audio URLs for the dugout.
+    #
+    # ⚠ NO FALLBACK TO THE ORIGINAL-AUDIO REEL. This used to read
+    # `public_tv_url or tv_reel_meta.r2_url`, so whenever the swap was disabled or
+    # errored, the PARENT-FACING field silently pointed at the dugout cut — coach
+    # voice, kids' names, sideline chatter. Combined with PUBLIC_AUDIO_ENABLED
+    # defaulting off, that is exactly what shipped. Publishing nothing is the
+    # correct failure mode for a privacy control: a missing video is visible and
+    # fixable, a leaked one is neither.
     if tv_reel_meta and tv_reel_meta.r2_url:
-        public_fields["videoFullGameUrl"] = public_tv_url or tv_reel_meta.r2_url
-        public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        if public_tv_url:
+            public_fields["videoFullGameUrl"] = public_tv_url
+            public_fields["videoFullGameDurationS"] = float(tv_reel_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio full-game reel — publishing NO "
+                        "public full-game URL rather than the dugout cut.")
     if auto_hl_meta and auto_hl_meta.r2_url:
-        public_fields["videoHighlightsUrl"] = public_hl_url or auto_hl_meta.r2_url
-        public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        if public_hl_url:
+            public_fields["videoHighlightsUrl"] = public_hl_url
+            public_fields["videoHighlightsDurationS"] = float(auto_hl_meta.duration_s or 0.0)
+        else:
+            log.warning("PRIVACY: no ambience-audio highlights reel — publishing NO "
+                        "public highlights URL rather than the dugout cut.")
     # Public overlay docs are NOT version-scoped, so only the canonical "v1" run may
     # write them — a shadow A/B run (ANALYTICS_DOC_VERSION=v1-shadow) must never
     # clobber the live public reel/broadcast docs.
@@ -1516,6 +1578,13 @@ def run(
     # Skipped on shadow runs — touches the live game's clips/ collection.
     if config.ANALYTICS_DOC_VERSION == "v1":
         _purge_legacy_reel_clip_docs(game_id)
+    # Family-facing per-kid rollup (parentSeason docs). Never fail the run
+    # over it — the coach data above is already safely written.
+    try:
+        from . import parent_season
+        parent_season.publish_parent_season(game_id)
+    except Exception as e:
+        log.warning("parentSeason publish failed: %s", e)
     log.info("Wrote analytics for game %s - %d players", game_id, len(player_stats))
     return analytics
 
@@ -1556,6 +1625,11 @@ _TRACKING_CONFIG_KEYS = ("SAMPLE_RATE", "DETECT_N_TILES", "DETECT_TILE_FOV_DEG",
                          # Tag-don't-drop opponent pruning and the never-on-pitch
                          # threshold. Both change which tracks reach the cached
                          # parquet, so both must move the fingerprint.
+                         # The association algorithm itself. This sat in config
+                         # unused for months while BotSort was hardcoded, so a
+                         # cache taken on one tracker must never be reused for
+                         # another.
+                         "TRACKER_TYPE",
                          "TRACK_TAG_OPPONENTS", "KIT_TAG_TRACK_MAJORITY",
                          "KIT_TAG_MIN_VOTES", "DROP_NEVER_ONFIELD",
                          "DROP_NEVER_OUTSIDE_FRAC", "DROP_NEVER_MIN_DETS")
@@ -2054,21 +2128,41 @@ def _sanitize_json(obj):
     return obj
 
 
-def _tv_meta_to_dict(meta) -> dict | None:
+def _tv_meta_to_dict(meta, video_to_clock=None) -> dict | None:
     """asdict(TvViewMeta) but with segments flattened to a list of dicts.
 
     Firestore disallows arrays inside arrays; the dataclass stores
     segments as list[tuple[float, float]] which sanitizes to nested
     lists \u2192 \"Property tv_reel contains an invalid nested entity.\" Map
     each segment to {\"start_s\": a, \"end_s\": b} instead.
+
+    Each segment also carries where it lands in the REEL (`reel_start_s`) and what
+    the game clock reads there (`period` + `clock_s`), when `video_to_clock` is
+    supplied. That is what lets the scorebug show the right minute anywhere in a
+    highlights reel: only the events inside a rendered window get an
+    `autoHighlightsTimeS` at all -- measured on real games, 18 of 121, 21 of 106,
+    8 of 112 -- so a player that reads the clock only from events shows a minute
+    from a different part of the match between them.
     """
     if meta is None:
         return None
     d = asdict(meta)
     segs = d.get("segments") or []
-    d["segments"] = [
-        {"start_s": float(a), "end_s": float(b)} for a, b in segs
-    ]
+    out = []
+    acc = 0.0
+    for a, b in segs:
+        a, b = float(a), float(b)
+        rec = {"start_s": a, "end_s": b, "reel_start_s": acc}
+        if video_to_clock is not None:
+            try:
+                per, clock = video_to_clock(a)
+                rec["period"] = int(per)
+                rec["clock_s"] = float(clock)
+            except Exception:
+                pass
+        out.append(rec)
+        acc += max(0.0, b - a)
+    d["segments"] = out
     return d
 
 def _player_stat_to_dict(s) -> dict:

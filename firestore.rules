@@ -2,34 +2,36 @@ rules_version = '2';
 
 // Firestore security rules for the Stompers match tracker.
 //
-// PRIVACY MODEL
-// ─────────────
-// Public (parents/spectators, unauthenticated or anonymous):
-//   - can READ the games collection (scoreboard, events, goals)
-//   - CAN read the public broadcast fields on each game doc
-//     (videoHighlightsUrl, videoFullGameUrl, …) and games/<id>/public/broadcast
-//   - CANNOT read the team doc — it holds the ROSTER, which carries every
-//     child's full name and photo_url. Public pages get their player names
-//     from the first-name-only fields in the broadcast index instead.
-//   - CANNOT read the analytics/ subcollection or the clips/ subcollection
-//     under games (which contain per-player stats, GK positioning,
-//     identity confidence, sample-rate-level tracks, etc.)
-//   - CANNOT write anything.
+// PRIVACY MODEL (request-access era, 2026-08)
+// ───────────────────────────────────────────
+// Nothing is world-readable any more. Access tiers:
 //
-// Coach (authenticated user whose email appears in /allowedUsers
-// with role == "coach"):
-//   - can READ everything under teams/main
-//   - can WRITE everything under teams/main
+//   Unknown signed-in user (any Google account):
+//     - can create/read their OWN accessRequests/{email} doc (the "request
+//       access" flow) and read their OWN allowedUsers/{email} doc (so the
+//       waiting screen can flip live when the coach approves)
+//     - can append viewerLog usage pings
+//     - CANNOT read team, game, or player data of any kind
 //
-// Pipeline service account (Firebase Admin SDK / google-cloud-firestore
-// with default service-account credentials) bypasses these rules entirely.
-// No rule needs to allow it explicitly.
+//   Allowed family member (allowedUsers/{email} exists, role == 'parent'):
+//     - can READ teams/main (schedule; roster names for scoreboards),
+//       games (scoreboard, events, broadcast video URLs) and the
+//       public broadcast overlay index
+//     - can READ teams/main/parentSeason/{playerId} ONLY for playerIds
+//       listed on their own allowedUsers doc (their own kid)
+//     - CANNOT read analytics/, clips/, private/, voice/ (coach-only)
+//     - CANNOT write team/game data
 //
-// Note: the public "broadcast events" index on each game doc only contains
-// first name + jersey number for goal scorers / subs — see
-// _build_broadcast_events_index in post_game/pipeline.py. It DOES carry
-// playerId, which is why the roster behind those ids must not be public: the
-// two together would reconstitute the full names the index takes care to omit.
+//   Coach (allowedUsers role == 'coach'):
+//     - full read/write under teams/main
+//     - manages allowedUsers + accessRequests (approvals). Only the OWNER
+//       may grant/revoke the 'coach' role itself.
+//
+// Pipeline service account (Admin SDK) bypasses these rules entirely.
+//
+// SECRETS: live-stream credentials (rtmpsUrl/streamKey) live under private/
+// subdocs and raw dugout audio under games/<id>/voice/ — both coach-only.
+// Never put them back on parent-readable docs.
 //
 // Deploy from the Firebase console: Firestore → Rules → paste this file.
 
@@ -38,53 +40,74 @@ service cloud.firestore {
 
     // --- helpers -----------------------------------------------------
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+    function callerDoc() {
+      return get(/databases/$(database)/documents/allowedUsers/$(callerEmail())).data;
+    }
+    function isAllowed() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/allowedUsers/$(callerEmail()));
     }
     function isCoach() {
-      return isSignedIn()
-        && request.auth.token.email != null
-        && exists(/databases/$(database)/documents/allowedUsers/$(request.auth.token.email.lower()))
-        && get(/databases/$(database)/documents/allowedUsers/$(request.auth.token.email.lower())).data.role == 'coach';
+      return isAllowed() && callerDoc().role == 'coach';
+    }
+    // Owner = the only account allowed to mint/revoke coach rows.
+    function isOwner() {
+      return isSignedIn() && callerEmail() == 'rezaian.iman@gmail.com';
     }
 
-    // --- coach allow-list (read-only to clients; managed in console) -
+    // --- allowedUsers: the access list --------------------------------
+    // Self-get keeps the waiting screen live and lets the app learn its own
+    // role/playerIds. Only coaches may list (no email harvesting).
     match /allowedUsers/{email} {
-      allow read: if isSignedIn();
-      allow write: if false;
+      allow get: if isCoach() || (isSignedIn() && callerEmail() == email);
+      allow list: if isCoach();
+      // Coaches approve parents. Writing a 'coach' row (or touching one)
+      // is owner-only so a compromised coach account can't mint coaches.
+      allow create, update: if (isCoach() && request.resource.data.role == 'parent'
+                                 && (!exists(/databases/$(database)/documents/allowedUsers/$(email))
+                                     || resource.data.role == 'parent'))
+                              || isOwner();
+      allow delete: if (isCoach() && resource.data.role == 'parent') || isOwner();
     }
 
-    // --- viewerLog: public can append/update their own session row ---
-    // The PWA writes usage pings here (app opens, section visits, video
-    // watches with endTs). Keep it open (writes only, no sensitive data).
+    // --- accessRequests: the approval queue ---------------------------
+    // A signed-in unknown user may file/read/withdraw exactly one request:
+    // their own email. Coaches see and manage the queue.
+    match /accessRequests/{email} {
+      allow get: if isCoach() || (isSignedIn() && callerEmail() == email);
+      allow list: if isCoach();
+      allow create: if isSignedIn()
+        && callerEmail() == email
+        && request.resource.data.status == 'pending'
+        && !('role' in request.resource.data)
+        && !('playerIds' in request.resource.data);
+      allow update, delete: if isCoach()
+        || (isSignedIn() && callerEmail() == email);
+    }
+
+    // --- viewerLog: usage pings (signed-in only now) -------------------
     match /viewerLog/{doc} {
       allow read: if isCoach();
-      allow create, update: if true;
+      allow create, update: if isSignedIn();
       allow delete: if isCoach();
     }
 
     // --- viewerTags: owner-assigned audience buckets ------------------
-    // { email, buckets: ['coach'|'parent'|'player'|'unknown'] } written
-    // from the owner-only VIEWERS page; coach-gated like analytics.
     match /viewerTags/{doc} {
       allow read, write: if isCoach();
     }
 
     // --- teams/main ---------------------------------------------------
-    // SIGNED-IN ONLY. The roster on this doc carries every child's FULL name
-    // and photo_url, and it used to be world-readable. The public pages render
-    // first names only and never show a photo, and the broadcast index is
-    // scrubbed to first name + jersey number — but that index also publishes
-    // playerId, so anyone could pull the roster over the REST API and join it
-    // straight back to the full names. The scrubbing was cosmetic; this makes
-    // the data layer enforce what the app already assumes.
-    //
-    // Subcollection rules do NOT inherit from this one, so games/{id} and
-    // games/{id}/public below stay public: the live scoreboard, the event feed
-    // and the reel overlay index all keep working signed-out. Only the roster
-    // lookup is lost, and the public UI falls back to the first names carried
-    // in the broadcast index itself.
+    // ALLOWED FAMILIES ONLY (was: any signed-in Google account). The doc
+    // carries the roster (kids' full names + inline photos) and schedule —
+    // shared inside the team like any club app, invisible outside it.
     match /teams/main {
-      allow read: if isSignedIn();
+      allow read: if isAllowed();
       allow write: if isCoach();
 
       // --- fields/<name>: calibration presets (coach-only) -----------
@@ -92,32 +115,54 @@ service cloud.firestore {
         allow read, write: if isCoach();
       }
 
+      // --- private/<doc>: team-level secrets (live input creds) ------
+      match /private/{docId} {
+        allow read, write: if isCoach();
+      }
+
+      // --- parentSeason/<playerId>: per-kid season rollup -------------
+      // THE per-family data boundary: readable only by coaches and by
+      // parents whose allowedUsers.playerIds contains this playerId.
+      // Written by the pipeline (admin) and coach-side backfills.
+      match /parentSeason/{playerId} {
+        allow read: if isCoach()
+          || (isAllowed() && playerId in callerDoc().get('playerIds', []));
+        allow write: if isCoach();
+      }
+
       // --- games/<id> ------------------------------------------------
-      // Public reads the live scoreboard, events, goals, broadcast video
-      // URLs + first-name-only overlay index. NO subcollections public.
+      // Allowed families read the scoreboard, events, goals and broadcast
+      // video URLs. NO subcollections readable except public/.
       match /games/{gameId} {
-        allow read: if true;
+        allow read: if isAllowed();
         allow write: if isCoach();
 
-        // analytics/: full per-player + GK + identity stats. COACH-ONLY.
+        // analytics/: full per-player stats across ALL kids. COACH-ONLY.
         match /analytics/{docId} {
           allow read, write: if isCoach();
         }
 
-        // clips/: per-event highlight clip metadata. COACH-ONLY (the
-        // public surface now uses the broadcast video URLs on the parent
-        // game doc instead).
+        // clips/: per-event highlight clip metadata. COACH-ONLY.
         match /clips/{clipId} {
           allow read, write: if isCoach();
         }
 
-        // public/: PUBLIC-readable, coach-written. Holds the reel overlay
-        // index (public/broadcast) moved off the game doc so the dugout /
-        // scoreboard list stays lean — parents fetch it only when a reel
-        // opens. Coach-only writes; anyone may read.
+        // public/: reel overlay index (first names + jersey numbers).
+        // Readable by allowed families, written by coaches/pipeline.
         match /public/{docId} {
-          allow read: if true;
+          allow read: if isAllowed();
           allow write: if isCoach();
+        }
+
+        // private/: per-game live-input secrets. COACH-ONLY.
+        match /private/{docId} {
+          allow read, write: if isCoach();
+        }
+
+        // voice/: raw dugout audio segment index. COACH-ONLY — this is
+        // the coach's voice + kids' names; parents get the ambience reels.
+        match /voice/{docId} {
+          allow read, write: if isCoach();
         }
 
         // any other future subcollection defaults to coach-only.

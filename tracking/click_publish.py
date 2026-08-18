@@ -212,6 +212,19 @@ def main() -> None:
     print(f"\nwrote click_stats to analytics/{args.game_id} (merge — other keys "
           "untouched)")
 
+    # Refresh the season-view projection, or the PWA keeps showing this game as
+    # untagged: the season table and the pooled heatmap read analytics/summary,
+    # not analytics/v1, and only the pipeline used to write it. Rebuilt from the
+    # STORED doc rather than from `payload`, which holds click_stats alone —
+    # summarising the partial write would blank player_stats and field_tilt.
+    full = firestore_io.read_analytics(args.game_id)
+    if full:
+        firestore_io.write_analytics_summary(args.game_id, full)
+        print("refreshed analytics/summary so the season view sees the tags")
+    else:
+        print("⚠ could not re-read the doc — analytics/summary NOT refreshed; "
+              "the PWA will still show this game as untagged")
+
 
 if __name__ == "__main__":
     main()

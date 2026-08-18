@@ -607,9 +607,28 @@ offset_str = st.text_input(
          "Enter 0 (or leave blank) if the video starts exactly at the whistle \u2014 "
          "then Confirm. Confirmation is mandatory: this anchors every player's minutes.",
 )
+_h1_zero_ack = st.checkbox(
+    "The video really does start at the kickoff whistle (0:00)",
+    key="h1_zero_ack",
+    help="Only tick this if you have scrubbed to 0:00 and the whistle is there. "
+         "Leaving the box blank used to confirm 0.0 silently — that is how the "
+         "Caboto game shipped with a 33-second clip misalignment.",
+)
 if st.button("Confirm 1st-half kickoff", disabled=is_running):
     try:
-        seconds = _parse_offset_str(offset_str) if offset_str.strip() else 0.0
+        if not offset_str.strip():
+            # ⚠ A BLANK box must not mean "kickoff at 0:00". That is exactly how
+            # mri01pvelv46d got videoOffsetH1KickoffS=0.0 marked CONFIRMED while
+            # its same-day sibling had 40.9: every highlight clip was then cut
+            # 7-33 s before the goal it was supposed to show. Require an explicit
+            # acknowledgement for the one legitimate zero case.
+            if not _h1_zero_ack:
+                raise ValueError(
+                    "Enter the kickoff timestamp, or tick the box above to state "
+                    "that the video genuinely starts at the whistle.")
+            seconds = 0.0
+        else:
+            seconds = _parse_offset_str(offset_str)
         if seconds < 0:
             raise ValueError("Offset must be non-negative.")
         firestore_io.set_video_offset_h1_kickoff_s(game_id, seconds, confirmed=True)

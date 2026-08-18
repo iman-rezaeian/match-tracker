@@ -121,7 +121,8 @@ new_load_effect = (
     "          }\n"
     "          if (data.weights) setWeights(mergeWeights(data.weights));\n"
     "          if (Array.isArray(data.schedule)) setSchedule(data.schedule);\n"
-    "          if (data.teamLiveInput !== undefined) setTeamLiveInput(data.teamLiveInput || null);\n"
+    "          // teamLiveInput moved to the coach-only private subdoc (2026-08);\n"
+    "          // the CoachApp effect in the JSX subscribes to it directly.\n"
     "        } else {\n"
     "          teamDoc().set({ roster: SEED_ROSTER });\n"
     "        }\n"
@@ -227,7 +228,9 @@ new_persist = (
     "  };\n\n"
     "  const persistTeamLiveInput = async (next) => {\n"
     "    setTeamLiveInput(next); // optimistic\n"
-    "    try { await teamDoc().set({ teamLiveInput: next || null }, { merge: true }); } catch (e) { console.error('Team live input save error:', e); }\n"
+    "    // Live-input creds (rtmpsUrl/streamKey) are SECRETS: they live in the\n"
+    "    // coach-only private subdoc, never on the family-readable team doc.\n"
+    "    try { await teamDoc().collection('private').doc('liveInput').set(next || { cleared: true }); } catch (e) { console.error('Team live input save error:', e); }\n"
     "  };"
 )
 if old_persist not in jsx_body:

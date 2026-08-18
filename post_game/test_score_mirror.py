@@ -65,3 +65,63 @@ def test_silent_events_are_excluded_from_the_python_set():
     silent = {k for k, rest in types.items() if "silent: true" in rest}
     assert silent, "expected at least POSITION/BOOKMARK to be silent"
     assert not (silent & _python_nonsilent())
+
+
+# --------------------------------------------------------------------------
+# Logging-coverage weighting (Aug 2026)
+#
+# The event SET was mirrored but the season RATE FORMULA was not, so when the
+# per-pillar logging weight was added to the JSX the Python scorer silently kept
+# dividing by all minutes played. Offline scores would then disagree with the app
+# for every player — the exact class of drift this file exists to prevent.
+# --------------------------------------------------------------------------
+
+def _jsx_pillar_types() -> dict[str, set[str]]:
+    src = JSX.read_text()
+    start = src.index("const PILLAR_TYPES = {")
+    block = src[start:src.index("};", start)]
+    out: dict[str, set[str]] = {}
+    for key in ("atk", "def", "dec"):
+        m = re.search(rf"{key}: \[(.*?)\]", block, re.S)
+        assert m, f"PILLAR_TYPES.{key} not found in the JSX"
+        out[key] = set(re.findall(r"'([A-Z_]+)'", m.group(1)))
+    return out
+
+
+def _py_pillar_types() -> dict[str, set[str]]:
+    src = PY_SCORE.read_text()
+    start = src.index("PILLAR_EVENT_TYPES")
+    block = src[start:src.index("\n}", start)]
+    out: dict[str, set[str]] = {}
+    for key in ("atk", "def", "dec"):
+        m = re.search(rf'"{key}": frozenset\(\{{(.*?)\}}\)', block, re.S)
+        assert m, f"PILLAR_EVENT_TYPES['{key}'] not found in pwa_score.py"
+        out[key] = set(re.findall(r'"([A-Z_]+)"', m.group(1)))
+    return out
+
+
+@pytest.mark.skipif(not JSX.exists(), reason="JSX source not present")
+def test_pillar_coverage_types_match():
+    assert _jsx_pillar_types() == _py_pillar_types()
+
+
+@pytest.mark.skipif(not JSX.exists(), reason="JSX source not present")
+def test_the_coverage_floor_matches():
+    jsx = re.search(r"const LOG_FLOOR = ([\d.]+)", JSX.read_text())
+    py = re.search(r"LOG_COVERAGE_FLOOR = ([\d.]+)", PY_SCORE.read_text())
+    assert jsx and py, "logging-coverage floor missing from one side"
+    assert float(jsx.group(1)) == float(py.group(1))
+
+
+@pytest.mark.skipif(not JSX.exists(), reason="JSX source not present")
+def test_both_sides_divide_each_pillar_by_its_own_logged_minutes():
+    """The bug this guards: one side per-pillar, the other by all minutes."""
+    jsx = JSX.read_text()
+    assert "rate(row.atk, squadRates.atk, row.wmin.atk)" in jsx
+    assert "rate(row.def, squadRates.def, row.wmin.def)" in jsx
+    py = PY_SCORE.read_text()
+    assert 'rate(row["atk"], squad_rates["atk"], row["wmin"]["atk"])' in py
+    assert 'rate(row["def"], squad_rates["def"], row["wmin"]["def"])' in py
+    # And neither may still divide by a single scalar wmin.
+    assert "(row.wmin + M)" not in jsx
+    assert '(row["wmin"] + M)' not in py

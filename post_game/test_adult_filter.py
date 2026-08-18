@@ -1,12 +1,13 @@
-"""Tests for the near-camera sideline-adult filter."""
+"""Tests for the box-height band that keeps non-players out of team shape."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from post_game.adult_filter import (ADULT_BOX_H_PX, MIN_ROWS_TO_JUDGE,
-                                    adult_track_ids, drop_sideline_adults)
+from post_game.adult_filter import (MIN_ROWS_TO_JUDGE, PLAYER_BOX_H_MAX_PX,
+                                    PLAYER_BOX_H_MIN_PX, adult_track_ids,
+                                    drop_sideline_adults)
 
 
 def _track(tid: int, h: float, n: int = 20) -> pd.DataFrame:
@@ -19,17 +20,34 @@ def _track(tid: int, h: float, n: int = 20) -> pd.DataFrame:
     })
 
 
-def test_tall_track_is_flagged_short_is_kept():
-    df = pd.concat([_track(1, 140.0), _track(2, 70.0)], ignore_index=True)
+def test_tall_track_is_flagged_player_sized_is_kept():
+    df = pd.concat([_track(1, 200.0), _track(2, 70.0)], ignore_index=True)
     assert adult_track_ids(df) == {1}
 
 
-def test_threshold_is_inclusive_at_the_boundary():
-    """A track exactly at the threshold counts as an adult, matching >=."""
-    df = _track(1, ADULT_BOX_H_PX)
+def test_tiny_track_is_flagged_too():
+    """The small tail is the PURER pollutant (4% ours) and must not be ignored.
+
+    The original one-sided `h >= 120` filter cut only the tall tail, on an
+    inverted premise about where our players sit in the distribution.
+    """
+    df = pd.concat([_track(1, 30.0), _track(2, 77.0)], ignore_index=True)
     assert adult_track_ids(df) == {1}
-    df2 = _track(2, ADULT_BOX_H_PX - 0.1)
-    assert adult_track_ids(df2) == set()
+
+
+def test_band_edges_are_inclusive_so_a_boundary_track_is_kept():
+    """Judged by `< min` / `> max`, so a track exactly on an edge survives."""
+    assert adult_track_ids(_track(1, PLAYER_BOX_H_MAX_PX)) == set()
+    assert adult_track_ids(_track(2, PLAYER_BOX_H_MAX_PX + 0.1)) == {2}
+    assert adult_track_ids(_track(3, PLAYER_BOX_H_MIN_PX)) == set()
+    assert adult_track_ids(_track(4, PLAYER_BOX_H_MIN_PX - 0.1)) == {4}
+
+
+def test_the_measured_player_band_is_kept_end_to_end():
+    """Our clicked players run p10 53 -> p90 127 px; none of that may be cut."""
+    df = pd.concat([_track(i, h) for i, h in enumerate([53.0, 77.0, 127.0], start=1)],
+                   ignore_index=True)
+    assert adult_track_ids(df) == set()
 
 
 def test_short_tracks_are_kept_even_when_tall():
@@ -54,7 +72,7 @@ def test_median_not_mean_so_a_few_big_frames_do_not_convict():
 
 
 def test_drop_removes_all_rows_of_a_flagged_track():
-    df = pd.concat([_track(1, 140.0), _track(2, 70.0)], ignore_index=True)
+    df = pd.concat([_track(1, 200.0), _track(2, 70.0)], ignore_index=True)
     out = drop_sideline_adults(df)
     assert set(out.track_id.unique()) == {2}
     assert len(out) == 20
@@ -65,10 +83,15 @@ def test_report_records_what_was_deleted():
     df = pd.concat([_track(1, 140.0), _track(2, 70.0)], ignore_index=True)
     rep: dict = {}
     drop_sideline_adults(df, report=rep)
-    assert rep["dropped_tracks"] == 1
-    assert rep["dropped_rows"] == 20
-    assert rep["kept_rows"] == 20
-    assert rep["dropped_track_ids"] == [1]
+    assert rep["dropped_tracks"] == 0
+    df2 = pd.concat([_track(1, 200.0), _track(2, 70.0)], ignore_index=True)
+    rep2: dict = {}
+    drop_sideline_adults(df2, report=rep2)
+    assert rep2["dropped_tracks"] == 1
+    assert rep2["dropped_rows"] == 20
+    assert rep2["kept_rows"] == 20
+    assert rep2["dropped_track_ids"] == [1]
+    assert rep2["band_px"] == [PLAYER_BOX_H_MIN_PX, PLAYER_BOX_H_MAX_PX]
 
 
 def test_missing_height_column_is_inactive_not_destructive():
@@ -96,7 +119,7 @@ def test_team_metrics_move_toward_truth_on_a_synthetic_scene():
     """
     players = pd.concat([_track(i, 70.0) for i in range(1, 8)], ignore_index=True)
     players["foot_x_eq"] = 1000.0
-    adult = _track(99, 140.0)
+    adult = _track(99, 200.0)
     adult["foot_x_eq"] = 3000.0
     truth = players.foot_x_eq.mean()
     dirty = pd.concat([players, adult], ignore_index=True)
@@ -105,13 +128,41 @@ def test_team_metrics_move_toward_truth_on_a_synthetic_scene():
     assert filtered.foot_x_eq.mean() == truth
 
 
-def test_a_player_sized_far_adult_survives_the_filter():
+def test_the_filter_is_actually_wired_into_the_pipeline():
+    """Guards against going inert.
+
+    This filter sat written, tested and UNCALLED for a week while the team-shape
+    metrics it exists to clean shipped to the coach polluted. Tests passing is
+    not the same as a filter running.
+    """
+    import inspect
+
+    from . import pipeline
+    src = inspect.getsource(pipeline)
+    assert "drop_sideline_adults" in src, "filter is not called by the pipeline"
+    assert "config.TEAM_SHAPE_SIZE_FILTER" in src, "not behind its config flag"
+    # It must feed the TEAM aggregate, not the per-player stats.
+    assert "compute_formation(\n        _shape_df" in src, \
+        "filtered frame is not the one team shape is computed from"
+
+
+def test_the_pipeline_reports_its_deletions():
+    """The removal must reach the analytics doc, not just a log line."""
+    import inspect
+
+    from . import pipeline
+    assert '"team_shape_filter"' in inspect.getsource(pipeline)
+
+
+def test_a_player_sized_body_survives_the_filter():
     """The documented residual, pinned as a test rather than left as a caveat.
 
-    A far-side coach projects at player height, so height cannot exclude him.
-    If someone later 'fixes' this by raising the threshold, the our-players-lost
-    cost rises steeply (measured: 43% lost at h<90) — so this must stay a known
-    limitation, not become a tuning target.
+    An OPPONENT is exactly player-sized and player-placed, and a far-side coach
+    projects at player height, so box height cannot exclude either. Narrowing the
+    band to catch them costs our own players fast (measured: `outside 55-150`
+    drops 17.6% of clicked players to gain 1.5 points of purity) — so this stays
+    a known limitation, not a tuning target. Purity after filtering is 34%, i.e.
+    team shape remains directional.
     """
-    far_adult = _track(99, 80.0)          # player-sized because he is distant
-    assert adult_track_ids(far_adult) == set()
+    opponent = _track(99, 80.0)
+    assert adult_track_ids(opponent) == set()

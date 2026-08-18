@@ -149,6 +149,61 @@ def test_event_framing_ignores_non_dead_ball_events():
     assert np.allclose(out, cfg.base_fov_deg)
 
 
+def test_a_goal_does_not_widen_the_shot():
+    """The regression that hid a goal from the coach.
+
+    `event_framing` takes max(current, widen), so listing GOAL made the widen
+    override whatever the dynamic FOV had chosen at exactly the goal instant.
+    Measured on both Jul-12 games: ALL 6 of Game 2's goals rendered at exactly
+    84.0 deg against a 55.7 deg median for normal play, and the coach reported
+    being unable to see his team's second goal at all. A goal is live action, not
+    a restart — there is nothing to establish.
+    """
+    cfg = AimConfig(base_fov_deg=70.0, event_widen_fov_deg=84.0)
+    t = np.arange(0, 20, 0.2)
+    # A tight shot the dynamic FOV chose for a compact attacking phase.
+    fovs = np.full_like(t, 53.0)
+    for typ in ("GOAL", "SHOT_ON"):
+        out = event_framing(t, fovs, [(10.0, typ)], cfg)
+        assert np.allclose(out, 53.0), f"{typ} widened the shot to {out.max():.1f}"
+
+
+def test_dead_balls_still_widen():
+    """The counterpart: restarts genuinely need the box to fill, so removing
+    GOAL must not disable the stage wholesale."""
+    cfg = AimConfig(base_fov_deg=70.0, event_widen_fov_deg=84.0)
+    t = np.arange(0, 20, 0.2)
+    fovs = np.full_like(t, 53.0)
+    for typ in ("CORNER", "THROW_IN", "FREE_KICK", "GOAL_KICK", "KICK_OUT"):
+        out = event_framing(t, fovs, [(10.0, typ)], cfg)
+        assert out.max() > 80.0, f"{typ} no longer widens"
+
+
+def test_dead_zone_is_comparable_to_the_measured_aim_lag():
+    """Why 0.15 and not the old 0.33.
+
+    The dead zone is a fraction of the HALF-FOV, so at 70 deg the old 0.33 was an
+    11.6 deg band — 2.5x the measured median aim lag of 4.7 deg, meaning the camera
+    held still while play it should have followed drifted inside the band. That is
+    the "camera falls behind the ball" the coach reported.
+
+    0.15 gives 5.25 deg, i.e. the same ORDER as the median lag rather than well
+    above it: typical drift now commits a pan, while sub-degree wobble is still
+    ignored (which is what the dead zone is for). Deliberately not driven below the
+    lag — the coach judged 0.15 best in a side-by-side motion comparison, and a
+    band far under the median would re-introduce the micro-panning this stage
+    exists to kill.
+    """
+    cfg = AimConfig(base_fov_deg=70.0)
+    band_deg = cfg.dead_zone_frac * cfg.half_fov_lon_deg
+    MEDIAN_LAG_DEG = 4.7
+    assert band_deg < 2.0 * MEDIAN_LAG_DEG, (
+        f"dead zone {band_deg:.1f} deg is still far wider than the median aim lag "
+        f"of {MEDIAN_LAG_DEG} deg — the camera will sit out real drift")
+    assert band_deg > 0.5 * MEDIAN_LAG_DEG, (
+        f"dead zone {band_deg:.1f} deg is so tight it will chase wobble")
+
+
 # --- Phase 5: Holt lead ---------------------------------------------------
 
 def test_holt_lead_smooths_and_leads():

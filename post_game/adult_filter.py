@@ -1,4 +1,4 @@
-"""Keep near-camera sideline adults out of the team-shape metrics.
+"""Keep non-player bodies out of the team-shape metrics, by box size.
 
 Why this exists
 ---------------
@@ -8,30 +8,40 @@ confusion: permuting which name attaches to which body leaves them exactly
 unchanged. That is why they survive the association failure that makes
 per-player metrics untrustworthy.
 
-They are NOT immune to wrong-TEAM leakage. Measured against the coach's
-hand-labels on the two blind-GT games, sideline adults (coaches, spectators)
-are the dominant pollutant -- on `mqcf9axlvtuyt` they are 41,040 detection rows
-against our players' 30,759, i.e. they OUTNUMBER the team. Their effect on the
-metrics they pollute:
+They are NOT immune to wrong-BODY leakage. On a clicked frame of
+`mrhvbvwi1gjpn`, only 24.8% of tracked rows are one of our players; the rest are
+opponents, touchline adults, and phantoms. Team width's own mean is ~88 px, so
+unfiltered these metrics describe the crowd as much as the team.
 
-    game             centroid error   width error
-    mqcf9axlvtuyt        409 px          297 px
-    mqcjsjugchb2i        155 px          100 px
+⚠⚠ THE ORIGINAL ONE-SIDED VERSION OF THIS FILTER WAS WRONG. It cut `h >= 120`
+on the premise that our players are SMALL (69 px) and the pollutant is TALL
+(123 px), measured on `mqcf9axlvtuyt`. Re-scored against the coach's clicks --
+ground truth that did not exist when it was written -- the premise inverts:
 
-Team width's own mean is ~88 px, so unfiltered these metrics are dominated by
-adults standing at the touchline rather than by the shape of the team.
+    on clicked frames of mrhvbvwi1gjpn
+        our clicked players   median  77 px   (p10 53, p90 127)
+        unmatched bodies      median  62 px   (p10 39, p90 193)
 
-The signal: box HEIGHT, per track
----------------------------------
-Sideline adults stand close to the camera and are physically taller, so they
-project much larger. Per-track median box height, from the labels:
+Our players are the MIDDLE of the height distribution, not the bottom. The old
+game read differently only because its tracking predates the reprojection fixes
+and runs at a different scale entirely (rowwise median 94 px, vs 69/71 px on the
+two clean-tracked games) -- so an absolute pixel threshold tuned there does not
+transfer. P(is one of ours | height band), on clicked frames:
 
-    label        mqcf9axlvtuyt   mqcjsjugchb2i
-    ours              69 px           71 px
-    __other__        123 px          129 px
+    <=50 px    4.1%     (2,140 rows)  far-side bodies, phantoms
+    50-70     31.4%
+    70-90     45.6%  <- our players live here
+    90-110    37.4%
+    110-130   29.5%
+    130-160   23.4%
+    >160      10.2%     (1,112 rows)  near-camera adults
 
-Nearly 2x, consistent across both games.
+Non-monotone: a hump. So the cut must be TWO-SIDED. The small-box tail is a
+PURER pollutant (4.1% ours) than the tall tail the old filter targeted (10.2%),
+and the old filter did not touch it at all.
 
+The signal: box HEIGHT, per track, both tails
+---------------------------------------------
 It MUST be a per-TRACK cut, not per-detection. A coach standing at halfway
 projects his feet ~31 cm inside the touchline, so a per-detection "is he on the
 pitch" test cannot exclude him -- that is already recorded in the touchline
@@ -39,53 +49,48 @@ findings, and is why the existing never-on-pitch filter also works per track.
 
 What it buys, and what it does NOT
 ----------------------------------
-At `h < 120`, weighted by detection rows (what actually pollutes the metric):
+Scored on clicked frames of `mrhvbvwi1gjpn` (ours = a tracked box containing one
+of the coach's clicks), weighted by detection rows:
 
-    game             adults removed   our players lost
-    mqcf9axlvtuyt         76.3%             13.2%
-    mqcjsjugchb2i         81.9%              5.7%
+    filter            ours kept   unmatched cut   purity
+    none                 100.0%            0.0%    24.8%
+    h>=120 (old)          90.1%           19.8%    27.0%
+    outside 50-160        94.1%           40.0%    34.1%
 
-Composition of labelled detections improves 43% -> 71% ours (G1) and
-55% -> 80% (G2).
+The two-sided band keeps MORE of our own players than the old one-sided cut
+while removing twice as much pollutant. Cuts 31.7% / 31.0% of rows on the two
+clean-tracked games -- consistent, so the band transfers.
 
-⚠ This is an IMPROVEMENT, NOT A SOLUTION. 33-34 adult tracks survive in each
-game (9,742 and 4,758 rows), with median heights of 74-91 px -- genuinely
-player-sized, because they are standing further from the camera. A far-side
-coach is not separable from a child by size, so the residual is structural.
-Treat filtered team width as directional, not precise.
+⚠ This is an IMPROVEMENT, NOT A SOLUTION. Purity goes 24.8% -> 34.1%: the
+median team-shape frame still holds two non-players for every player. Most of
+the residual is OPPONENTS, who are exactly player-sized and player-placed and
+cannot be separated by geometry at all -- that is what the kit classifier is
+for. Treat filtered team width as directional, never precise.
 
 ⚠⚠ HOW TO SCORE THIS FILTER -- read before quoting any error figure. Measuring
 median error over ALL time bins reports **0 px** after filtering, and that
-number is an ARTEFACT, not a result. Two separate framings produced it: the
-metric's own `>= 4 bodies` gate drops most bins that contain a surviving adult,
-so the comparison silently excludes the hard cases and scores the filter on the
-bins it never had to fix. The honest split -- error on the bins that actually
-still contain a non-our-team body:
+number is an ARTEFACT, not a result: the metric's own `>= 4 bodies` gate drops
+most bins that contain a surviving adult, so the comparison silently excludes
+the hard cases and scores the filter on the bins it never had to fix. Always
+report `ours kept` ALONGSIDE `unmatched cut` -- a filter that reduces pollution
+by deleting bodies scores well on any survivor-only metric, which is how the
+opponent filter came to be shipped while eating a third of our own team.
 
-    game             arm          ALL bins   POLLUTED bins   share polluted
-    mqcf9axlvtuyt    unfiltered     415 px       468 px           90%
-                     h<120            0 px       256 px           25%
-    mqcjsjugchb2i    unfiltered      165 px       369 px           67%
-                     h<120            0 px       223 px           34%
-
-So the real effect is: **the share of polluted bins falls 90% -> 25% and
-67% -> 34%, and the error on those that remain roughly halves (468 -> 256,
-369 -> 223 px).** That is a genuine, large win. It is NOT the elimination that
-the all-bins column implies. Quote the polluted-bin column.
-
-⚠ The threshold is TUNED, not safe-by-construction. The height distribution has
-a populated middle; 120 px is a measured trade-off, not a gap in the data. Do
-not describe it as bimodal (the never-on-pitch filter's docstring made exactly
-that overclaim and it was false).
+⚠ The band is TUNED, not safe-by-construction. The height distribution has a
+populated middle and no gap; 50-160 px is a measured trade-off. Do not describe
+it as bimodal (the never-on-pitch filter's docstring made exactly that overclaim
+and it was false).
 
 Rejected alternatives, measured
 -------------------------------
+* one-sided `h >= 120` (the original): purity 27.0% for a 9.9% loss of our own
+  players. Dominated by the band on both axes.
+* tighter band `outside 55-150`: cuts more pollutant (50.9%) but drops 17.6% of
+  our confirmed players. Too destructive for a 1.5-point purity gain.
+* wider band `outside 45-180`: safer (97.1% ours kept) but only 32.0% purity.
+  Kept as the conservative option if the band ever looks too aggressive.
 * movement-based cut (`std of position > 150`): removes only 52%/10% of adults
   while losing 33%/25% of our players. Much worse.
-* height AND movement: removes barely more adults (78.6%/82.8%) for 2-3x the
-  loss of our own players (31.4%/15.7%).
-
-Height alone is the right filter.
 """
 
 from __future__ import annotations
@@ -96,10 +101,16 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-# Per-track median box height, in pixels, above which a body is treated as a
-# near-camera adult. Measured trade-off (see module docstring): our players sit
-# at 69-71 px median, sideline adults at 123-129 px.
-ADULT_BOX_H_PX = 120.0
+# Per-track median box height band, in pixels, INSIDE which a body is treated as
+# plausibly one of our players. Measured trade-off (see module docstring): our
+# clicked players run 53-127 px (p10-p90, median 77); below 50 px only 4% of rows
+# are ours, above 160 px only 10%.
+PLAYER_BOX_H_MIN_PX = 50.0
+PLAYER_BOX_H_MAX_PX = 160.0
+
+# Retained so the pre-2026-08-14 one-sided threshold stays greppable; the band
+# above replaced it after the clicks showed its premise was inverted.
+ADULT_BOX_H_PX = PLAYER_BOX_H_MAX_PX
 
 # Below this many detections a track's median height is too noisy to judge, so
 # it is KEPT. Conservative by design: never drop a real player to tidy a metric.
@@ -108,9 +119,14 @@ MIN_ROWS_TO_JUDGE = 5
 
 def adult_track_ids(
     tracks_df: pd.DataFrame,
-    threshold_px: float = ADULT_BOX_H_PX,
+    min_px: float = PLAYER_BOX_H_MIN_PX,
+    max_px: float = PLAYER_BOX_H_MAX_PX,
 ) -> set[int]:
-    """Track ids whose median box height marks them as near-camera adults.
+    """Track ids whose median box height puts them outside the player band.
+
+    Two-sided: both a near-camera adult (too tall) and a far-side body or
+    phantom (too small) are non-players, and the small tail is the purer
+    pollutant of the two.
 
     Returns an empty set (keeping everything) when the height column is absent,
     so a caller on an older cache degrades to today's behaviour rather than
@@ -121,17 +137,17 @@ def adult_track_ids(
         return set()
     g = tracks_df.groupby("track_id")["bbox_h_crop"]
     med = g.median()
-    n = g.size()
-    judged = med[(n >= MIN_ROWS_TO_JUDGE) & (med >= threshold_px)]
+    judged = med[(g.size() >= MIN_ROWS_TO_JUDGE) & ((med < min_px) | (med > max_px))]
     return {int(t) for t in judged.index}
 
 
 def drop_sideline_adults(
     tracks_df: pd.DataFrame,
-    threshold_px: float = ADULT_BOX_H_PX,
+    min_px: float = PLAYER_BOX_H_MIN_PX,
+    max_px: float = PLAYER_BOX_H_MAX_PX,
     report: dict | None = None,
 ) -> pd.DataFrame:
-    """Remove near-camera adult tracks ahead of the TEAM-level metrics.
+    """Remove out-of-band (non-player-sized) tracks ahead of TEAM-level metrics.
 
     Intended for team shape/tilt only. It is deliberately NOT applied to
     per-player stats: those are already gated on identity, and dropping a
@@ -143,7 +159,7 @@ def drop_sideline_adults(
     log line -- the two shipped filters that were scored only on survivors both
     turned out to be cutting into our own team.
     """
-    ids = adult_track_ids(tracks_df, threshold_px)
+    ids = adult_track_ids(tracks_df, min_px, max_px)
     if not ids:
         if report is not None:
             report.update(dropped_tracks=0, dropped_rows=0, kept_rows=len(tracks_df))
@@ -155,13 +171,14 @@ def drop_sideline_adults(
             dropped_tracks=len(ids),
             dropped_rows=int(mask.sum()),
             kept_rows=len(out),
-            threshold_px=float(threshold_px),
+            band_px=[float(min_px), float(max_px)],
             dropped_track_ids=sorted(ids)[:50],
         )
     log.info(
-        "  adult_filter: dropped %d tracks / %d detections (%.1f%%) with median "
-        "box height >= %.0f px — near-camera sideline adults. ~20%% of adult mass "
-        "survives (far-side adults are player-sized); team width is directional.",
+        "  adult_filter: dropped %d tracks / %d detections (%.1f%%) whose median "
+        "box height falls outside %.0f-%.0f px — non-player-sized bodies. Keeps "
+        "~94%% of clicked players and cuts ~40%% of non-players; the residual is "
+        "mostly OPPONENTS, so team width stays directional, not precise.",
         len(ids), int(mask.sum()), 100.0 * mask.sum() / max(1, len(tracks_df)),
-        threshold_px)
+        min_px, max_px)
     return out

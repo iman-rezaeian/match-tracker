@@ -131,16 +131,34 @@ BALL_CLASS_ID = 32                              # COCO sports ball
 
 # --- Tracking ------------------------------------------------------------
 
-# ⚠ DEAD KNOB — declared here but referenced NOWHERE. Changing it does nothing;
-# the tracker is constructed directly in tracking.py. Kept as the documented
-# hook for the swap experiment, which is cheap precisely because this is unwired.
-# Temper expectations before spending on it: BoT-SORT is 2022 and boxmot's
-# alternatives (ByteTrack 2022; OC-SORT / StrongSORT / DeepOCSORT / HybridSORT
-# all 2023) are the same Kalman + IoU + appearance family, so a swap is a
-# LATERAL move, not a generational one. All four BoT-SORT knobs already measured
-# inert (thresholds, buffer, heading, appearance). A genuine alternative would be
-# a different paradigm (transformer / end-to-end MOT), not installed here.
-TRACKER_TYPE = "botsort"                         # bytetrack | botsort | deepocsort
+# Association algorithm. Until 2026-08-09 this was a bare literal that nothing
+# read — `Tracker.__init__` hardcoded BotSort — so the knob documented three
+# options and delivered one, and "try another tracker" looked done while never
+# having been run once. Now wired, env-overridable, and fingerprinted.
+#
+# It matters because a sweep of every BotSort knob (thresholds, buffer, heading,
+# appearance) came back inert against a 5.7 s median track lifespan. Those are
+# results about BotSort's tuning, not about association in general.
+#
+# boxmot 11.0.5 offers: botsort, bytetrack, deepocsort, hybridsort, imprassoc,
+# ocsort, strongsort — all installed, no new dependency.
+#
+# ⚠ THE SWEEP HAS NOW RUN, AND BOTSORT WON. Six arms on one 15-min window of
+# Game 1, detector and window held fixed, median track lifespan as the objective:
+#
+#     BotSort 6.0 s | OcSort 3.7 s | DeepOcSort 3.7 s | ByteTrack 3.4 s
+#     ImprAssoc 0.1 s (10,451 tracks — shattered, not better)
+#
+# So leave this on botsort unless testing something specific. Read the teleport
+# column with care if you re-run it: three arms showed large teleport REDUCTIONS
+# that were all illusory — ImprAssoc by shattering tracks too short to teleport,
+# OcSort and DeepOcSort by carrying 16 bodies/frame instead of 20. Judge on
+# lifespan and same-person-pairs-left, with teleports only as a weld guard.
+#
+# Incidentally: DeepOcSort is OcSort PLUS appearance and the two are
+# indistinguishable here (3.7 s, ~1,344 tracks), which is a third independent
+# confirmation that OSNet appearance is inert on identical kits.
+TRACKER_TYPE = os.environ.get("TRACKER_TYPE", "botsort")
 REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 # How long a lost track is kept alive for re-acquisition. Env-overridable so a
 # tuning sweep can vary it without a code edit (a long buffer lets a lost track
@@ -350,6 +368,26 @@ DROP_NEVER_OUTSIDE_FRAC = float(os.environ.get("DROP_NEVER_OUTSIDE_FRAC", "0.95"
 # Minimum detections before the rule may fire. A 3-frame blip that happens to
 # land outside is noise, not a coach, and dropping it gains nothing.
 DROP_NEVER_MIN_DETS = int(os.environ.get("DROP_NEVER_MIN_DETS", "10"))
+
+# Restrict the TEAM-SHAPE metrics (centroid, width, depth, compactness, field
+# tilt) to bodies whose per-track median box height is player-sized.
+#
+# Only 24.8% of tracked rows on a clicked frame are one of our players; the rest
+# are opponents, touchline adults and phantoms, and team shape is a function of
+# the SET of bodies, so every one of them moves the number. Scored against the
+# coach's clicks, the band keeps 94.1% of confirmed players while removing 40%
+# of non-players (purity 24.8% -> 34.1%). See post_game/adult_filter.py for the
+# full table and for why the earlier one-sided `h >= 120` version was inverted.
+#
+# ON by default: it is a strict improvement on both axes over the unfiltered
+# metric. It applies ONLY to team aggregates — per-player stats are gated on
+# identity instead, and cutting a real player's near-camera frames there would
+# bias his own numbers rather than clean a shared one.
+#
+# ⚠ It does NOT make team shape precise. The residual is mostly OPPONENTS, who
+# are exactly player-sized; 2 non-players per player survive. Directional only.
+TEAM_SHAPE_SIZE_FILTER = os.environ.get("TEAM_SHAPE_SIZE_FILTER", "1") != "0"
+
 # Penalise a candidate that sits OPPOSITE a lost track's direction of travel.
 #
 # The association cost is overlap-with-the-prediction and nothing else — it asks
@@ -677,17 +715,34 @@ ID_ITERATIVE_DIST_CAP_M = float(os.environ.get("ID_ITERATIVE_DIST_CAP_M", "12.0"
 # --- Public-reel audio swap (public_audio.py, stage 7b) ---
 # Replace the PUBLIC reel's audio with a stadium-ambience bed + goal roars so the
 # coach voice / kids' names never leave the dugout. Dugout reel keeps original.
-PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "") == "1"
+#
+# ⚠ DEFAULTS ON, and it must stay that way. This used to default OFF (requiring
+# PUBLIC_AUDIO_ENABLED=1, which was in nobody's .env), so the stage silently never
+# ran — and because the publisher falls back to the original-audio URL when the
+# _public file is absent, every parent-facing reel shipped with the coach's voice
+# and the kids' names on it. A privacy control that is off by default is not a
+# control. Set PUBLIC_AUDIO_ENABLED=0 to disable deliberately.
+PUBLIC_AUDIO_ENABLED = os.environ.get("PUBLIC_AUDIO_ENABLED", "1") != "0"
 PUBLIC_AMBIENCE_PATH = os.environ.get("PUBLIC_AMBIENCE_PATH", "tracking/assets/stadium_ambience.mp3")
 PUBLIC_ROAR_PATH = os.environ.get("PUBLIC_ROAR_PATH", "tracking/assets/goal_roar.mp3")
 PUBLIC_BED_DB = float(os.environ.get("PUBLIC_BED_DB", "-8"))     # stadium bed level (dB rel. to source) — was -20 (too dim)
 PUBLIC_ROAR_DB = float(os.environ.get("PUBLIC_ROAR_DB", "-13"))  # goal-roar level — was -6 (too loud vs bed); ~8dB above bed now
-# The coach logs a goal ~tap_delay AFTER it happens, and goal-moment detection is
-# unreliable here (near-mic chatter / far-side crowd). So lead the roar earlier and
-# fade it IN so it BUILDS rather than banging at a wrong instant — the build hides
-# the timing slop and reads like a real crowd swelling as the goal goes in.
-PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "7"))   # start the roar this many s before the tap
-PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "2.5")) # fade-in (build) duration
+# Roar placement. A real crowd reacts just AFTER the ball crosses, so the roar
+# starts a beat late and rises fast.
+#
+# ⚠ THE LEAD USED TO BE 7 s AND MUST NOT GO BACK. That was deliberate compensation
+# for not knowing when the goal actually happened: the tap was assumed to trail the
+# goal, and a long fade-in was meant to "hide the timing slop" by having the crowd
+# swell through the uncertainty. Once events carry exact source-video times
+# (video_event_times), the slop is gone and the lead became pure error — the coach
+# heard the cheer before the ball crossed. A 7 s pre-roll cannot be corrected by
+# better timestamps; it has to be removed.
+#
+# The knob shifts the roar EARLIER, so a small NEGATIVE value starts it slightly
+# after the goal — which is what a crowd does: a beat of recognition, then noise.
+# Keep the fade short so it reads as a reaction, not a build.
+PUBLIC_ROAR_LEAD_S = float(os.environ.get("PUBLIC_ROAR_LEAD_S", "-0.4"))  # NEGATIVE lead = start AFTER the goal
+PUBLIC_ROAR_FADE_S = float(os.environ.get("PUBLIC_ROAR_FADE_S", "0.35"))  # quick rise, not a swell
 
 # --- Halftime split (pipeline.py, stage 3 -> 4) ---
 # No player is one continuous body across the halftime break, so any track_id
@@ -954,6 +1009,11 @@ GK_EVENT_TYPES = ("SHOT_ON", "GOAL", "SAVE")
 FIRESTORE_PROJECT_ID = os.environ.get("FIRESTORE_PROJECT_ID", "stompers-tracker")
 FIRESTORE_TEAM_DOC = "teams/main"
 ANALYTICS_DOC_VERSION = os.environ.get("ANALYTICS_DOC_VERSION", "v1")  # bump if schema breaks; env-override for shadow A/B runs
+# Companion doc holding ONLY the keys the season view reads. It fans out over
+# every finished game at once, and the full docs (420-970 KB each, ~3.4 MB of it
+# `identity_assignments` it never touches) made that open to a black screen on a
+# phone. See firestore_io.write_analytics_summary.
+ANALYTICS_SUMMARY_DOC = os.environ.get("ANALYTICS_SUMMARY_DOC", "summary")
 
 R2_BUCKET = os.environ.get("R2_BUCKET", "stompers-videos")
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")  # set in env, never committed
