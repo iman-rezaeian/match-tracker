@@ -1,6 +1,19 @@
 """Goalkeeper positioning at each SHOT_ON / SAVE / GOAL.
 
-Cheap and high-value: GK identity is known (`gkPlayerId` + `gkChanges`), shot
+⚠ DEAD CODE as of 2026-08-09 — `compute_gk_positions` has NO callers. The
+pipeline deliberately dropped this stage ("GK positioning analysis removed —
+not used in the film room", pipeline.py), nothing writes a `gk_positions` key,
+and no PWA view reads one. Kept only because the geometry is correct and cheap
+to re-wire if the film room ever wants save-angle analysis.
+
+Do not cite a `gk_events` count from anywhere: the CLI used to print
+`len(analytics["gk_positions"])`, which was always 0 because the key is never
+written. That fake zero was removed.
+
+Before re-wiring, note the prerequisite: this keys off `identity_by_track`, so
+it inherits the per-player identity problem. See PER_PLAYER_METRICS_DECISION.md.
+
+Original rationale: GK identity is known (`gkPlayerId` + `gkChanges`), shot
 timestamps are known (coach event log), GK field position is a single lookup
 on the trajectory already computed.
 """

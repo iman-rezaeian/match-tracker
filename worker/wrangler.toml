@@ -5,7 +5,12 @@ compatibility_date = "2024-09-01"
 [vars]
 R2_BUCKET_NAME = "stompers-videos"
 R2_PUBLIC_URL = "https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev"
-COACH_PASS = "ManUtd2016"
+# COACH_PASS deliberately NOT set here. It was a plaintext [vars] entry, which
+# is committed to the repo and injected into the deployed worker — a password
+# in version control. Auth is Firebase ID tokens now (see src/index.ts); the
+# legacy password path only stays alive if COACH_PASS exists as a SECRET
+# (`wrangler secret put COACH_PASS`), and it should be deleted once every
+# client sends a token.
 
 # Bind the bucket under BOTH names so the code's r2(env) helper (env.BUCKET
 # || env.R2) resolves whether deployed via wrangler or pasted into a

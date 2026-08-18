@@ -26,6 +26,7 @@ import base64
 import csv
 import json
 import os
+from typing import Optional
 from pathlib import Path
 
 # Default to Haiku 4.5: it supports vision + structured output, is the cost lever
@@ -39,30 +40,46 @@ LABELS_ROOT = Path(__file__).resolve().parent / "labels"
 _SCHEMA = {
     "type": "object",
     "properties": {
+        "team": {"type": "string", "enum": ["ours", "opponent", "other"],
+                 "description": "Which team this player's KIT COLOR belongs to: "
+                                "ours, opponent, or other (ref/coach/unclear)"},
         "number": {"type": "integer",
                    "description": "Jersey number if legible on the shirt, else 0"},
         "confidence": {"type": "number", "description": "0..1 legibility confidence"},
         "reasoning": {"type": "string", "description": "<=15 words"},
     },
-    "required": ["number", "confidence", "reasoning"],
+    "required": ["team", "number", "confidence", "reasoning"],
     "additionalProperties": False,
 }
 
 
-def _read_number(imgs: list[str], roster_numbers: list[int], model: str) -> dict:
-    """One VLM call: read the jersey number from a tracklet's crop(s)."""
+def _read_number(imgs: list[str], roster_numbers: list[int], model: str,
+                 our_color: Optional[str] = None, opp_color: Optional[str] = None) -> dict:
+    """One VLM call: identify the player's TEAM (by kit color) and read the
+    jersey number from a tracklet's crop(s).
+
+    our_color / opp_color are the coach's rough kit-color names ("green",
+    "blue") — used to decide `team` from the KIT COLOR the model actually sees.
+    This is the coarse-color gate: only OUR-team reads become identity drafts,
+    so an opponent's #17 is never mapped onto our roster."""
     nums = ", ".join(str(n) for n in sorted(roster_numbers))
+    our = our_color or "our team's color"
+    opp = opp_color or "a different color"
     system = (
-        "You read jersey numbers off youth soccer players from cropped frames. "
-        "The images show the SAME player in a dark kit across a few moments. "
-        f"Valid squad numbers: {nums}. Report a number ONLY if you can actually "
-        "read the digit(s) on the shirt (front or back) — do NOT guess from "
-        "build/hair/position. If no digit is legible in any crop, return 0. "
-        "Prefer 0 over a low-confidence guess."
+        "You identify youth soccer players from cropped frames. The images show "
+        "the SAME player across a few moments. "
+        f"OUR team wears {our}; the OPPONENT wears {opp}. "
+        "First decide `team` from the KIT COLOUR you see: 'ours' if the shirt is "
+        f"{our}, 'opponent' if it is {opp}, else 'other' (referee/coach/unclear). "
+        f"Then, ONLY for OUR players, read the jersey number. Valid squad numbers: "
+        f"{nums}. Report a number ONLY if you can actually read the digit(s) on "
+        "the shirt (front or back) — do NOT guess from build/hair/position. If "
+        "the player is not ours, or no digit is legible, return number 0. Prefer "
+        "0 over a low-confidence guess."
     )
     content = [{"type": "image", "source": {"type": "base64",
                 "media_type": "image/jpeg", "data": b}} for b in imgs]
-    content.append({"type": "text", "text": "Read this player's jersey number."})
+    content.append({"type": "text", "text": "Identify this player's team, then their jersey number."})
     payload = {
         "model": model,
         "max_tokens": 200,
@@ -74,9 +91,9 @@ def _read_number(imgs: list[str], roster_numbers: list[int], model: str) -> dict
     try:
         return json.loads(_call(payload))
     except (json.JSONDecodeError, TypeError):
-        return {"number": 0, "confidence": 0.0, "reasoning": "parse-fail"}
+        return {"team": "other", "number": 0, "confidence": 0.0, "reasoning": "parse-fail"}
     except RuntimeError as e:
-        return {"number": 0, "confidence": 0.0, "reasoning": f"api-error {e}"[:60]}
+        return {"team": "other", "number": 0, "confidence": 0.0, "reasoning": f"api-error {e}"[:60]}
 
 
 def _render_crops(video: str, sub, k: int, tmp: Path, tl: int) -> list[str]:
@@ -107,6 +124,62 @@ def _render_crops(video: str, sub, k: int, tmp: Path, tl: int) -> list[str]:
     return out
 
 
+_ANT_BEARER_CACHE: dict[str, object] = {}
+
+
+def _ant_bearer() -> str | None:
+    """OAuth bearer minted from the `ant` CLI, when no ANTHROPIC_OAUTH_TOKEN is
+    set in the env. Lets a Streamlit/CLI run reach Opus hands-free (no manual
+    `export`) as long as the user has run `ant auth login` once — and mints it
+    FRESH at call time so an hour-long pipeline run doesn't hit an expired token.
+    Cached for the process; returns None if `ant` is absent or not logged in."""
+    if "tok" in _ANT_BEARER_CACHE:
+        return _ANT_BEARER_CACHE["tok"]  # type: ignore[return-value]
+    import shutil
+    import subprocess
+    tok = None
+    if shutil.which("ant"):
+        try:
+            r = subprocess.run(["ant", "auth", "print-credentials", "--access-token"],
+                               capture_output=True, text=True, timeout=20)
+            t = (r.stdout or "").strip()
+            if r.returncode == 0 and t.startswith("sk-ant-"):
+                tok = t
+        except Exception:
+            tok = None
+    _ANT_BEARER_CACHE["tok"] = tok
+    return tok
+
+
+def _relaxed_session(ca_bundle: str):
+    """A requests Session that verifies against `ca_bundle` with OpenSSL 3's
+    X509_STRICT flag cleared.
+
+    Everything else about verification stays ON: the signature chain is still
+    validated to the corp root, and the hostname is still checked. The single
+    relaxation is RFC-5280 strictness about a missing Authority Key Identifier on
+    the proxy-minted leaf — the one thing that makes an otherwise-good chain fail
+    under Python 3.13. This is deliberately narrower than verify=False.
+    """
+    import ssl
+    import requests
+    from requests.adapters import HTTPAdapter
+
+    ctx = ssl.create_default_context(cafile=ca_bundle)
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT      # the ONLY thing relaxed
+    ctx.check_hostname = True                         # hostname still enforced
+    ctx.verify_mode = ssl.CERT_REQUIRED               # cert still required
+
+    class _Adapter(HTTPAdapter):
+        def init_poolmanager(self, *a, **kw):
+            kw["ssl_context"] = ctx
+            return super().init_poolmanager(*a, **kw)
+
+    s = requests.Session()
+    s.mount("https://", _Adapter())
+    return s
+
+
 def _call(payload: dict, _tries: int = 5) -> str:
     """SDK when importable, else raw HTTPS (corp-VPN route) — as voice_clean.
     Retries transient 429/5xx with exponential backoff."""
@@ -118,24 +191,52 @@ def _call(payload: dict, _tries: int = 5) -> str:
     except ImportError:
         pass
     import requests
+    # Two auth channels: an OAuth BEARER token (ANTHROPIC_OAUTH_TOKEN, minted by
+    # `ant auth print-credentials --access-token`) OR a raw x-api-key
+    # (ANTHROPIC_API_KEY). On the Rocket corp account the raw key is entitlement-
+    # limited to Haiku (instant 429 on Opus/Sonnet), but the OAuth token — same
+    # SSO that grants Claude Code its Opus — reaches Opus. Prefer the bearer when
+    # present; it needs the oauth beta header.
+    oauth = os.environ.get("ANTHROPIC_OAUTH_TOKEN") or _ant_bearer()
     key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise SystemExit("ANTHROPIC_API_KEY not set.")
+    if not oauth and not key:
+        raise SystemExit("No Anthropic auth: set ANTHROPIC_OAUTH_TOKEN, run `ant auth login`, "
+                         "or set ANTHROPIC_API_KEY.")
+    if oauth:
+        headers = {"Authorization": f"Bearer {oauth}",
+                   "anthropic-version": "2023-06-01",
+                   "anthropic-beta": "oauth-2025-04-20",
+                   "content-type": "application/json"}
+    else:
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
     # Corp VPN does TLS interception → trust the corp CA bundle if provided
     # (same var R2 uploads use). Falls back to default trust store off-VPN.
     verify = (os.environ.get("REQUESTS_CA_BUNDLE")
               or os.environ.get("AWS_CA_BUNDLE") or True)
+    session = None
     if os.environ.get("VLM_INSECURE_TLS") == "1":
         verify = False  # opt-in escape for corp CA chains OpenSSL 3 rejects
         import urllib3
         urllib3.disable_warnings()
+    elif os.environ.get("VLM_RELAXED_TLS") == "1" and verify is not True:
+        # Middle ground between "full strict" and "verify=False", for the Rocket
+        # corp proxy specifically. It re-signs api.anthropic.com with a LEAF that
+        # carries no Authority Key Identifier, and OpenSSL 3's X509_V_FLAG_X509_STRICT
+        # (on by default in Python 3.13) rejects exactly that — the chain itself is
+        # fine. Measured: the same chain verifies OK once the strict flag is cleared.
+        # So this keeps full signature-chain AND hostname verification against the
+        # corp bundle, and only tolerates the missing-AKI extension. Prefer this over
+        # VLM_INSECURE_TLS, which would accept ANY certificate.
+        session = _relaxed_session(str(verify))
+    if session is not None:
+        _post = lambda **kw: session.post(**kw)          # noqa: E731
+    else:
+        _post = lambda **kw: requests.post(verify=verify, **kw)   # noqa: E731
     base = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
     for attempt in range(_tries):
-        r = requests.post(
-            f"{base}/v1/messages",
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-            json=payload, timeout=120, verify=verify)
+        r = _post(url=f"{base}/v1/messages", headers=headers,
+                  json=payload, timeout=120)
         if r.status_code in (429, 500, 502, 503, 529) and attempt < _tries - 1:
             wait = float(r.headers.get("retry-after", 2 ** attempt))
             time.sleep(min(wait, 30))

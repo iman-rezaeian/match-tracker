@@ -48,6 +48,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     log = logging.getLogger("retrack_smoke")
 
+    import cv2
     import numpy as np
     from post_game import config, firestore_io
     from post_game.calibration import (
@@ -102,6 +103,18 @@ def main() -> None:
              config.PITCH_COLOR_GATE, config.PITCH_GATE_CAP_M, config.PITCH_PX_GATE, args.tag)
 
     detector = Detector()
+    # Kit anchors for the opponent pre-filter (pipeline stage 2a).
+    from post_game.kit_vote import pick_axis, torso_roi, vote_detection
+    _our_hex, _opp_hex = _our_color(game), game.away_color
+    _kit_on = config.KIT_VOTE_ENABLED and bool(_opp_hex)
+    _kit_axis = pick_axis(_our_hex, _opp_hex) if _kit_on else "hue"
+    n_drop = n_keep = n_off = 0
+    kit_votes: dict[int, tuple[int, int]] = {}
+    kit_value_samples: dict[int, list[float]] = {}
+    if config.TRACK_DROP_OPPONENTS:
+        log.info("  opponent pre-filter ON: ours %s vs opp %s on %s",
+                 _our_hex, _opp_hex, _kit_axis.upper())
+
     all_tracks: list[TrackedDetection] = []
     track_jersey_samples: dict[int, list[np.ndarray]] = {}
     t0 = time.time()
@@ -134,19 +147,124 @@ def main() -> None:
                     d.bbox_crop = d.bbox_eq
                     dets.append(d)
             dets = dedupe_detections_by_field_position(dets, projector, config.DETECT_TILE_DEDUPE_M)
+            # Off-field pre-filter, mirroring pipeline stage 2a0.
+            if config.TRACK_DROP_OFFFIELD and dets:
+                _feet = np.array([[(d.bbox_eq[0] + d.bbox_eq[2]) / 2.0, d.bbox_eq[3]]
+                                  for d in dets], dtype=np.float64)
+                _xy = projector.pixel_to_field_batch(_feet)
+                _ok = ((_xy[:, 0] >= -1.5) & (_xy[:, 0] <= cal.length_m + 1.5)
+                       & (_xy[:, 1] >= -1.5) & (_xy[:, 1] <= cal.width_m + 1.5)
+                       & np.isfinite(_xy).all(axis=1))
+                n_off += int((~_ok).sum())
+                dets = [d for d, k in zip(dets, _ok) if k]
+            # Opponent pre-filter, mirroring pipeline stage 2a. Without this the
+            # harness would silently ignore TRACK_DROP_OPPONENTS and an A/B on it
+            # would report "no effect" from a run that never applied the change.
+            if _kit_on and config.TRACK_DROP_OPPONENTS:
+                _keep = []
+                for d in dets:
+                    if vote_detection(sample.eq_frame, d.bbox_eq, _our_hex, _opp_hex,
+                                      axis=_kit_axis,
+                                      min_s=config.PITCH_COLOR_MIN_S,
+                                      min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                      hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                      value_margin=config.KIT_VOTE_VALUE_MARGIN) == -1:
+                        n_drop += 1
+                        continue
+                    _keep.append(d)
+                n_keep += len(_keep)
+                dets = _keep
             tracked = tracker.update(sample.eq_frame, dets, time_s=sample.time_s)
             for t in tracked:
                 all_tracks.append(t)
                 hsv = sample_jersey_hsv(sample.eq_frame, t.bbox_eq)
                 if len(hsv) > 0:
                     track_jersey_samples.setdefault(t.track_id, []).append(hsv)
+                # Tag-don't-drop, mirroring pipeline stage 2c: vote per
+                # detection but delete nothing here — the tally decides once
+                # the whole window is in hand. Same reason as the block above:
+                # without this the harness would ignore TRACK_TAG_OPPONENTS and
+                # an A/B would compare two identical runs.
+                if _kit_on and config.TRACK_TAG_OPPONENTS:
+                    _v = vote_detection(sample.eq_frame, t.bbox_eq,
+                                        _our_hex, _opp_hex, axis=_kit_axis,
+                                        min_s=config.PITCH_COLOR_MIN_S,
+                                        min_px=config.PITCH_COLOR_MIN_PIXELS,
+                                        hue_margin=config.PITCH_COLOR_MARGIN_DEG,
+                                        value_margin=config.KIT_VOTE_VALUE_MARGIN)
+                    if _v:
+                        _o, _p = kit_votes.get(t.track_id, (0, 0))
+                        kit_votes[t.track_id] = (_o + (_v == 1), _p + (_v == -1))
+                    # Torso brightness, so the anchors can be re-fitted from
+                    # this window before anything is pruned (value axis only —
+                    # hue needs no correction).
+                    if _kit_axis == "value":
+                        _roi = torso_roi(sample.eq_frame, t.bbox_eq)
+                        if _roi is not None and _roi.size:
+                            _hsv = cv2.cvtColor(_roi, cv2.COLOR_BGR2HSV)
+                            kit_value_samples.setdefault(t.track_id, []).append(
+                                float(np.median(_hsv.reshape(-1, 3)[:, 2])))
             if n % 200 == 0:
                 log.info("  %d samples, %d tracks, %.0fs elapsed", n,
                          len({t.track_id for t in all_tracks}), time.time() - t0)
         # carry the (advanced) id counter into the next half so ids stay unique
         next_id_carry = getattr(tracker, "_next_id", next_id_carry)
 
+    if config.TRACK_DROP_OFFFIELD:
+        log.info("  off-field pre-filter: dropped %d detections", n_off)
+        if n_off == 0:
+            log.warning("  !! off-field pre-filter dropped NOTHING — an A/B against "
+                        "this run would be meaningless")
+    if config.TRACK_DROP_OPPONENTS and _kit_on:
+        _seen = n_drop + n_keep
+        log.info("  opponent pre-filter: dropped %d of %d (%.0f%%), kept %d",
+                 n_drop, _seen, 100.0 * n_drop / max(_seen, 1), n_keep)
+        if n_drop == 0:
+            log.warning("  !! pre-filter dropped NOTHING — the flag is on but had no "
+                        "effect; an A/B against this run would be meaningless")
+
     tracks_df = to_dataframe(all_tracks, fps=fps_sampled)
+
+    # Stage 2b mirror: re-fit the kit anchors from THIS window's footage before
+    # anything is pruned. Skipping it would leave the harness voting on the raw
+    # hexes — the precise bug the tag path exists to fix — and would understate
+    # the change on exactly the games where it matters most.
+    if (config.TRACK_TAG_OPPONENTS and _kit_on and _kit_axis == "value"
+            and kit_value_samples):
+        from post_game.kit_vote import fit_value_anchors
+        _our_v, _opp_v, _note = fit_value_anchors(
+            [float(np.median(v)) for v in kit_value_samples.values()],
+            _our_hex, _opp_hex)
+        if _our_v is None:
+            log.warning("  kit anchors NOT fitted, keeping hex values: %s", _note)
+        else:
+            log.info("  kit anchors fitted from footage: %s", _note)
+            _m = config.KIT_VOTE_VALUE_MARGIN
+            kit_votes = {}
+            for _t, _vals in kit_value_samples.items():
+                _o = _p = 0
+                for _val in _vals:
+                    _do, _dp = abs(_val - _our_v), abs(_val - _opp_v)
+                    if _dp - _do >= _m:
+                        _o += 1
+                    elif _do - _dp >= _m:
+                        _p += 1
+                if _o or _p:
+                    kit_votes[_t] = (_o, _p)
+
+    # Stage 2c mirror: prune whole tracks that voted opponent by a clear majority.
+    if config.TRACK_TAG_OPPONENTS and kit_votes and not tracks_df.empty:
+        _opp = {t for t, (o, p) in kit_votes.items()
+                if (o + p) >= config.KIT_TAG_MIN_VOTES
+                and p / (o + p) >= config.KIT_TAG_TRACK_MAJORITY}
+        _before = len(tracks_df)
+        if _opp:
+            tracks_df = tracks_df[~tracks_df["track_id"].isin(_opp)].reset_index(drop=True)
+        log.info("  opponent TRACK prune: removed %d of %d tracks (%d of %d detections)",
+                 len(_opp), len(kit_votes), _before - len(tracks_df), _before)
+        if not _opp:
+            log.warning("  !! TRACK_TAG_OPPONENTS on but nothing met the bar — an "
+                        "A/B against this run would be meaningless")
     ckpt = config.OUTPUTS_DIR / args.game_id
     ckpt.mkdir(parents=True, exist_ok=True)
     tp = ckpt / f"tracks_raw.{args.tag}.parquet"

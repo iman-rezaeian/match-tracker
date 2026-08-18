@@ -190,7 +190,7 @@ def _landmark_field_xy(key: str, L: float, W: float, goal_w: float):
 
 def solve_sphere_scaled(reference_points, eq_w: int, eq_h: int,
                         length_m: float, cam_h: float = 5.0, goal_w: float = 4.88,
-                        w0: float = 35.0, w_bounds=(20.0, 50.0)) -> dict | None:
+                        w0: float = 35.0, w_bounds=None) -> dict | None:
     """Solve camera (pitch, roll) + field WIDTH from the clicked landmarks, with
     the field LENGTH FIXED to a map-measured touchline length (absolute-scale
     anchor). This IS identifiable — unlike freely solving both L and W, which is
@@ -205,6 +205,13 @@ def solve_sphere_scaled(reference_points, eq_w: int, eq_h: int,
     Needs >= 4 keyed points. Returns pitch_deg, roll_deg, cam_h_m, length_m,
     width_m, a, b, tx, ty, rms_m, per_point, n. None if it can't solve.
     """
+    if w_bounds is None:
+        # Same band the Run-Analysis QC gate enforces, read from the single
+        # source so the optimizer's bound and the gate can never disagree —
+        # a width pinned at a bound the gate accepts (or rejects) is exactly
+        # the silent-bad-calibration case both are there to prevent.
+        from . import config
+        w_bounds = (config.CALIB_WIDTH_MIN, config.CALIB_WIDTH_MAX)
     px, py, keys = [], [], []
     for r in reference_points or []:
         k = r.get("key")

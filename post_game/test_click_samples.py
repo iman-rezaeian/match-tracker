@@ -1,0 +1,800 @@
+"""Tests for click-sampling: the canvas<->equirect transform and the stats.
+
+The round-trip test is the important one. A click tool whose inverse transform
+is subtly wrong produces plausible-looking positions that are all shifted, and
+nothing downstream can detect it -- the numbers just quietly describe the wrong
+part of the pitch.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from tracking.click_sample_render import (canvas_to_equirect, pitch_bbox,
+                                          render_frame, sample_times)
+
+
+def _frame(w: int = 7680, h: int = 3840) -> np.ndarray:
+    return np.zeros((h, w, 3), dtype=np.uint8)
+
+
+@pytest.mark.parametrize("bands", [1, 2, 3])
+def test_canvas_click_round_trips_to_equirect(bands):
+    """A click at a known canvas point must map back to the pixel it came from."""
+    box = (2000, 1900, 5900, 2600)
+    _, geom = render_frame(_frame(), box, bands, 1900)
+    for eq_x, eq_y in [(2100.0, 1950.0), (3900.0, 2100.0), (5800.0, 2550.0)]:
+        # forward: equirect -> strip -> band -> canvas
+        sx = eq_x - box[0]
+        sy = eq_y - box[1]
+        band = min(int(sx // geom["seg_w"]), bands - 1)
+        cx = (sx - band * geom["seg_w"]) * geom["scale"]
+        cy = band * geom["band_h"] + sy * geom["scale"]
+        back = canvas_to_equirect(cx, cy, geom)
+        assert back[0] == pytest.approx(eq_x, abs=1.5)
+        assert back[1] == pytest.approx(eq_y, abs=1.5)
+
+
+def test_bands_split_covers_the_whole_strip():
+    """No horizontal gap between bands: every x must be reachable."""
+    box = (2000, 1900, 5900, 2600)
+    canvas, geom = render_frame(_frame(), box, 2, 1900)
+    left = canvas_to_equirect(0, 0, geom)
+    right = canvas_to_equirect(geom["band_w"] - 1, geom["band_h"] * 2 - 1, geom)
+    assert left[0] == pytest.approx(box[0], abs=2)
+    assert right[0] > box[0] + (box[2] - box[0]) * 0.9
+
+
+def test_click_below_last_band_is_clamped_not_wrapped():
+    """A stray click under the canvas must not wrap to band 0 and lie."""
+    box = (2000, 1900, 5900, 2600)
+    _, geom = render_frame(_frame(), box, 2, 1900)
+    deep = canvas_to_equirect(100, geom["band_h"] * 5, geom)
+    last = canvas_to_equirect(100, geom["band_h"] * 1.5, geom)
+    assert deep[0] == pytest.approx(last[0], abs=1e-6)
+
+
+def test_canvas_is_native_scale_when_bands_match_aspect():
+    """2 bands at 1900px on a ~3936px strip should be near 1:1, not shrunken."""
+    box = (1985, 1984, 5921, 2563)
+    canvas, geom = render_frame(_frame(), box, 2, 1900)
+    assert 0.9 < geom["scale"] < 1.1
+    assert canvas.shape[0] == geom["band_h"] * 2
+
+
+def test_player_render_height_is_usable_with_two_bands():
+    """The whole design rests on this: a 77px player must stay >= 60px."""
+    box = (1985, 1984, 5921, 2563)
+    _, geom = render_frame(_frame(), box, 2, 1900)
+    assert 77.0 * geom["scale"] >= 60.0
+
+
+def test_sample_times_skips_halftime_and_spans_both_halves():
+    ts = sample_times(40.0, 1750.0, 3200.0, interval=30.0, half_len_s=1500)
+    assert min(ts) == 40.0
+    h1 = [t for t in ts if t < 1600]
+    h2 = [t for t in ts if t >= 1750]
+    assert len(h1) > 10 and len(h2) > 10
+    # nothing inside the halftime gap
+    assert not [t for t in ts if 1545 < t < 1750]
+
+
+def test_sample_times_respects_video_end():
+    ts = sample_times(0.0, 1700.0, 1800.0, interval=30.0, half_len_s=1500)
+    assert max(ts) <= 1800.0
+
+
+def test_pitch_bbox_follows_the_bodies():
+    import pandas as pd
+    df = pd.DataFrame({
+        "foot_x_eq": np.concatenate([np.full(500, 3000.0), np.full(500, 5000.0)]),
+        "foot_y_eq": np.full(1000, 2100.0),
+    })
+    x0, y0, x1, y1 = pitch_bbox(df, pad=50)
+    assert x0 < 3000 and x1 > 5000
+    assert y0 < 2100 < y1
+
+
+# --------------------------------------------------------------------------
+# click -> position stats
+# --------------------------------------------------------------------------
+
+from dataclasses import dataclass as _dc
+
+from post_game.click_samples import (MIN_CLICKS, ClickPlayerStats,
+                                     compute_click_stats, spread_score,
+                                     to_field)
+from tracking.click_sample_app import snap
+
+
+@_dc
+class _Cal:
+    """Minimal stand-in with a scaled homography (1 px = 0.01 m).
+
+    `sphere=None` forces FieldProjector down its planar-homography path, which
+    is what makes the arithmetic here predictable enough to assert on.
+    """
+    length_m: float = 50.0
+    width_m: float = 30.0
+    homography: list = None
+    sphere: object = None
+    video_frame_size: tuple = (7680, 3840)
+
+    def __post_init__(self):
+        if self.homography is None:
+            self.homography = [[0.01, 0, 0], [0, 0.01, 0], [0, 0, 1]]
+
+
+def _clicks(pid, n, x_eq, y_eq, t0=0.0, dt=30.0):
+    return [{"player_id": pid, "video_time_s": t0 + i * dt,
+             "click_x_eq": x_eq, "click_y_eq": y_eq} for i in range(n)]
+
+
+def test_under_sampled_players_are_refused_not_published():
+    """A number from 10 clicks is 20% wrong; report it as missing instead."""
+    cl = _clicks("a", MIN_CLICKS - 1, 2500, 1500)
+    stats, rep = compute_click_stats(cl, _Cal())
+    assert stats == []
+    assert rep["under_sampled"][0]["player_id"] == "a"
+
+
+def test_enough_clicks_produces_stats():
+    stats, rep = compute_click_stats(_clicks("a", MIN_CLICKS, 2500, 1500), _Cal())
+    assert len(stats) == 1 and stats[0].n_clicks == MIN_CLICKS
+    assert rep["under_sampled"] == []
+
+
+def test_no_distance_or_speed_field_is_ever_emitted():
+    """The module must not expose an integral metric, even caveated."""
+    banned = {"distance", "dist", "speed", "sprint", "km", "velocity", "work_rate"}
+    fields = set(ClickPlayerStats.__dataclass_fields__)
+    for f in fields:
+        assert not any(b in f.lower() for b in banned), f"forbidden metric: {f}"
+
+
+def test_not_ours_clicks_are_excluded():
+    cl = _clicks("a", MIN_CLICKS, 2500, 1500) + _clicks("__not_ours__", 50, 100, 100)
+    pts = to_field(cl, _Cal())
+    assert all(p["player_id"] == "a" for p in pts)
+
+
+def test_halves_are_flipped_into_one_canonical_frame():
+    """Same physical spot in both halves must read as the same depth."""
+    cal = _Cal()
+    near = _clicks("a", 15, 500, 1500, t0=0.0, dt=10.0)      # x_m = 5
+    far = _clicks("a", 15, 4500, 1500, t0=2000.0, dt=10.0)   # x_m = 45
+    periods = [(0.0, 1000.0), (2000.0, 3000.0)]
+    stats, _ = compute_click_stats(
+        near + far, cal, periods=periods, our_net_at_x0={1: True, 2: False})
+    s = stats[0]
+    # H1 depth 5 (net at x0); H2 x=45 flips to depth 50-45=5 -> same
+    assert s.by_half["1"]["avg_depth_m"] == pytest.approx(5.0, abs=0.5)
+    assert s.by_half["2"]["avg_depth_m"] == pytest.approx(5.0, abs=0.5)
+
+
+def test_thirds_sum_to_one_hundred():
+    cl = (_clicks("a", 10, 500, 1500) + _clicks("a", 10, 2500, 1500, t0=500)
+          + _clicks("a", 10, 4500, 1500, t0=1000))
+    stats, _ = compute_click_stats(cl, _Cal())
+    s = stats[0]
+    assert s.pct_def_third + s.pct_mid_third + s.pct_att_third == pytest.approx(100.0, abs=0.2)
+
+
+def test_spread_score_separates_clustered_from_spread():
+    """Clustered clicks plateau the error, so the caller must be able to see it."""
+    spread = np.linspace(0, 3000, 40)
+    clustered = np.linspace(0, 60, 40)
+    assert spread_score(spread, 0, 3000) > 0.9
+    assert spread_score(clustered, 0, 3000) < 0.3
+
+
+def test_snap_rejects_an_ambiguous_pair():
+    """Two bodies equally near => keep the raw click rather than guess a child."""
+    dets = [{"track_id": 1, "foot_x_eq": 1000, "foot_y_eq": 1000, "bbox_h": 70},
+            {"track_id": 2, "foot_x_eq": 1030, "foot_y_eq": 1000, "bbox_h": 70}]
+    x, y, tid = snap(1010, 1000, dets)
+    assert tid is None and (x, y) == (1010, 1000)
+
+
+def test_snap_accepts_a_clear_single_body():
+    dets = [{"track_id": 7, "foot_x_eq": 1000, "foot_y_eq": 1000, "bbox_h": 70},
+            {"track_id": 8, "foot_x_eq": 1400, "foot_y_eq": 1000, "bbox_h": 70}]
+    x, y, tid = snap(1010, 1005, dets)
+    assert tid == 7 and (x, y) == (1000, 1000)
+
+
+def test_snap_ignores_adults():
+    """A near-camera adult must never capture a click meant for a child."""
+    dets = [{"track_id": 9, "foot_x_eq": 1000, "foot_y_eq": 1000, "bbox_h": 200}]
+    x, y, tid = snap(1005, 1000, dets)
+    assert tid is None
+
+
+# --------------------------------------------------------------------------
+# on-field filtering of the name buttons
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import onfield_at
+
+
+def test_onfield_at_returns_only_players_in_their_window():
+    """7 on the pitch, not the 12-strong squad and not the 16-name roster."""
+    iv = {
+        "a": [(0.0, 600.0)], "b": [(0.0, 600.0)], "c": [(0.0, 600.0)],
+        "d": [(0.0, 600.0)], "e": [(0.0, 600.0)], "f": [(0.0, 600.0)],
+        "gk": [(0.0, 3000.0)],
+        "sub1": [(600.0, 1200.0)], "sub2": [(600.0, 1200.0)],
+    }
+    assert onfield_at(iv, 300.0) == ["a", "b", "c", "d", "e", "f", "gk"]
+    assert len(onfield_at(iv, 300.0)) == 7
+    assert "sub1" not in onfield_at(iv, 300.0)
+
+
+def test_onfield_at_handles_a_substitution():
+    iv = {"starter": [(0.0, 600.0)], "sub": [(600.0, 1200.0)]}
+    assert onfield_at(iv, 100.0) == ["starter"]
+    assert onfield_at(iv, 900.0) == ["sub"]
+
+
+def test_onfield_at_slack_covers_the_kickoff_boundary():
+    """A frame rendered exactly at kickoff must not return an empty list.
+
+    Observed live: Game 1's first sampled frame sits at t=40.9s, the H1 kickoff
+    offset, and a strict test returned nobody on the pitch.
+    """
+    iv = {"a": [(40.92, 1500.0)]}
+    assert onfield_at(iv, 40.9) == ["a"]
+    assert onfield_at(iv, 40.9, slack_s=0.0) == []
+
+
+def test_onfield_at_is_empty_well_outside_every_window():
+    iv = {"a": [(0.0, 100.0)]}
+    assert onfield_at(iv, 5000.0) == []
+
+
+# --------------------------------------------------------------------------
+# panel ranking near the far touchline
+#
+# This is the bug that shipped three times: the far touchline is the horizon in
+# this camera geometry, so spectators behind it project onto y~0 and read as
+# on-pitch. Measured on Game 1: the line sits at pixel row 2028, and 10 px above
+# it projects to y=-3.2 m. Neither a polygon test nor apparent size can separate
+# a child at the far side from a seated adult just beyond it.
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import (FAR_TOUCHLINE_BAND_M, PANEL_H,
+                                       occupied_panels,
+                                       panel_label)
+
+
+class _Proj:
+    """Projector stub: pixel y maps linearly to field width, x to length."""
+    def pixel_to_field(self, px, py):
+        return (px - 2000) / 100.0, (py - 2000) / 100.0
+
+
+def _det(px, py, h=70, tid=1):
+    return {"track_id": tid, "foot_x_eq": px, "foot_y_eq": py, "bbox_h": h}
+
+
+def _frm(dets):
+    return {"video_time_s": 100.0, "detections": dets}
+
+
+def test_far_band_bodies_do_not_inflate_the_confident_count():
+    """A spectator projecting just inside the far line must not count.
+
+    Both detections are placed in the SAME grid cell (within one PANEL_H of each
+    other) so the assertion is about the tally rather than about how the pixel
+    grid happens to split them.
+    """
+    box = [2000, 2000, 2750, 2600]
+    band_px = 2000 + int(FAR_TOUCHLINE_BAND_M * 100)
+    near_line = _det(2100, band_px - 50)        # inside the uncertain band
+    real = _det(2200, band_px + 200)           # comfortably on the pitch
+    assert (near_line["foot_y_eq"] - box[1]) // PANEL_H \
+        == (real["foot_y_eq"] - box[1]) // PANEL_H, "fixture must share one cell"
+    cells = occupied_panels(_frm([near_line, real]), box, _Proj(), (50.0, 30.0))
+    assert len(cells) == 1
+    assert cells[0]["confident"] == 1
+    assert cells[0]["uncertain"] == 1
+
+
+def test_far_band_bodies_still_make_a_panel_visible():
+    """A player really can be at the far side, so the panel must stay clickable."""
+    box = [2000, 2000, 2750, 2600]
+    only_far = _det(2100, 2000 + 50)
+    cells = occupied_panels(_frm([only_far]), box, _Proj(), (50.0, 30.0))
+    assert len(cells) == 1 and cells[0]["confident"] == 0
+    assert cells[0]["uncertain"] == 1
+
+
+def test_ranking_prefers_confident_play_over_far_clutter():
+    box = [2000, 2000, 3500, 2600]
+    far_heavy = [_det(2100 + i * 5, 2050) for i in range(6)]      # far band
+    real_play = [_det(2900 + i * 5, 2900) for i in range(3)]      # comfortably in
+    cells = occupied_panels(_frm(far_heavy + real_play), box, _Proj(), (50.0, 30.0))
+    assert cells[0]["confident"] == 3, "real play must rank above far-band clutter"
+
+
+def test_adults_are_counted_separately_from_players():
+    box = [2000, 2000, 2750, 2600]
+    cells = occupied_panels(
+        _frm([_det(2100, 2900, h=200), _det(2150, 2900, h=70)]),
+        box, _Proj(), (50.0, 30.0))
+    assert cells[0]["adults"] == 1 and cells[0]["confident"] == 1
+
+
+def test_off_pitch_bodies_are_counted_separately():
+    box = [2000, 2000, 2750, 2600]
+    # y far beyond the pitch width -> outside the polygon entirely
+    cells = occupied_panels(_frm([_det(2100, 2000 + 5000)]), box,
+                            _Proj(), (50.0, 30.0))
+    assert cells == [] or cells[0]["off"] == 1
+
+
+def test_panel_label_uses_field_position_not_grid_arithmetic():
+    """Labels must name a real pitch area; the grid-derived version produced
+    'left, far side' three times in one frame."""
+    L, W = 60.0, 30.0
+    assert panel_label({"fx": [5.0], "fy": [15.0]}, (L, W)) == "defensive third, centre"
+    assert panel_label({"fx": [55.0], "fy": [2.0]}, (L, W)) == "attacking third, left"
+    assert panel_label({"fx": [30.0], "fy": [28.0]}, (L, W)) == "middle third, right"
+
+
+def test_panel_label_degrades_without_field_coords():
+    assert panel_label({"fx": [], "fy": []}, (50.0, 30.0)) == "pitch area"
+    assert panel_label({"fx": [1.0], "fy": [1.0]}, None) == "pitch area"
+
+
+# --------------------------------------------------------------------------
+# roster button labels
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import _num, button_label
+
+
+def test_button_label_leads_with_the_shirt_number():
+    """The number is what the coach reads off the kit, so it comes first."""
+    assert button_label({"id": "a", "name": "Liam Gibala", "number": "7"}) \
+        == "#7 Liam Gibala"
+
+
+def test_button_label_marks_the_keeper_after_the_name():
+    """Guards operator precedence: `x + y if c else x` would misplace the suffix."""
+    assert button_label({"id": "gk", "name": "Liam Garland", "number": "14"},
+                        "gk") == "#14 Liam Garland (GK)"
+    assert button_label({"id": "out", "name": "Ben Hahn", "number": "8"},
+                        "gk") == "#8 Ben Hahn"
+
+
+def test_button_label_survives_a_missing_number():
+    """A roster row without a shirt number must not render '#None'."""
+    assert button_label({"id": "a", "name": "No Number", "number": None}) == "No Number"
+    assert button_label({"id": "gk", "name": "Keeper", "number": None}, "gk") \
+        == "Keeper (GK)"
+
+
+def test_number_sort_is_numeric_not_lexical():
+    """'21' must not sort before '3'."""
+    ps = [{"number": "21"}, {"number": "3"}, {"number": "10"}]
+    assert [p["number"] for p in sorted(ps, key=_num)] == ["3", "10", "21"]
+
+
+def test_unnumbered_players_sort_last():
+    ps = [{"number": None}, {"number": "9"}, {"number": "bad"}]
+    assert _num(ps[0]) == 999 and _num(ps[2]) == 999
+    assert sorted(ps, key=_num)[0]["number"] == "9"
+
+
+# --------------------------------------------------------------------------
+# band tallies must count OUR players, not bodies
+#
+# The first version counted every child-sized body on the pitch and called them
+# "players", so a band holding only the opposition advertised "3 players" and
+# sent the coach looking for his own kids in it. Measured after the fix: 15 of 60
+# bands on the pilot hold none of ours.
+# --------------------------------------------------------------------------
+
+def _kit_det(px, py, kit, h=70):
+    return {"track_id": 1, "foot_x_eq": px, "foot_y_eq": py, "bbox_h": h, "kit": kit}
+
+
+def _tally(dets, box, bands, proj, dims, far_band):
+    """Mirror of the app's per-band tally, kept in the test to pin the rule."""
+    seg = (box[2] - box[0]) / bands
+    ours = [0] * bands
+    other = [0] * bands
+    for d in dets:
+        if d["bbox_h"] >= 120:
+            continue
+        fx, fy = proj.pixel_to_field(d["foot_x_eq"], d["foot_y_eq"])
+        L, W = dims
+        if np.isnan(fx) or not (-1 <= fx <= L + 1 and far_band <= fy <= W + 1):
+            continue
+        b = min(bands - 1, max(0, int((d["foot_x_eq"] - box[0]) // seg)))
+        (other if d.get("kit") == "opponent" else ours)[b] += 1
+    return ours, other
+
+
+def test_opponent_only_band_counts_zero_of_ours():
+    box = [2000, 2000, 3200, 2600]
+    dets = [_kit_det(2100, 2900, "opponent"), _kit_det(2150, 2900, "opponent")]
+    ours, other = _tally(dets, box, 1, _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 0 and other[0] == 2
+
+
+def test_unknown_kit_counts_as_ours():
+    """Under-counting would hide a band worth checking; over-counting costs a glance."""
+    box = [2000, 2000, 3200, 2600]
+    ours, _ = _tally([_kit_det(2100, 2900, "unknown")], box, 1,
+                     _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 1
+
+
+def test_our_and_opponent_players_are_tallied_separately():
+    box = [2000, 2000, 3200, 2600]
+    dets = [_kit_det(2100, 2900, "ours"), _kit_det(2110, 2900, "opponent"),
+            _kit_det(2120, 2900, "ours")]
+    ours, other = _tally(dets, box, 1, _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 2 and other[0] == 1
+
+
+def test_adults_are_excluded_from_both_tallies():
+    box = [2000, 2000, 3200, 2600]
+    ours, other = _tally([_kit_det(2100, 2900, "ours", h=200)], box, 1,
+                         _Proj(), (50.0, 30.0), FAR_TOUCHLINE_BAND_M)
+    assert ours[0] == 0 and other[0] == 0
+
+
+# --------------------------------------------------------------------------
+# the (GK) suffix must follow whoever is actually in the net
+# --------------------------------------------------------------------------
+
+from tracking.click_sample_app import gk_at, video_to_elapsed_ms
+
+
+def test_gk_at_returns_the_starting_keeper_with_no_changes():
+    segs = [{"playerId": "p_garland", "from": 0, "to": None}]
+    assert gk_at(segs, 0) == "p_garland"
+    assert gk_at(segs, 1_400_000) == "p_garland"
+
+
+def test_gk_at_follows_a_keeper_change():
+    """A game-wide gk_player_id would mark the wrong child after the swap."""
+    segs = [{"playerId": "a", "from": 0, "to": 600_000},
+            {"playerId": "b", "from": 600_000, "to": None}]
+    assert gk_at(segs, 599_999) == "a"
+    assert gk_at(segs, 600_000) == "b"
+    assert gk_at(segs, 1_200_000) == "b"
+
+
+def test_gk_at_is_none_without_segments():
+    assert gk_at([], 1000) is None
+    assert gk_at(None, 1000) is None
+
+
+def test_video_time_converts_to_match_clock_per_half():
+    """The clock RESTARTS at the H2 kickoff; treating video as one continuous
+    clock would push every H2 frame past the end of the match."""
+    h1, h2 = 40.92, 1753.08
+    assert video_to_elapsed_ms(40.92, h1, h2) == 0
+    assert video_to_elapsed_ms(670.92, h1, h2) == 630_000
+    # first frame of H2 must read as one minute into the SECOND half
+    assert video_to_elapsed_ms(1813.08, h1, h2) == 60_000
+
+
+def test_video_time_never_goes_negative_before_kickoff():
+    assert video_to_elapsed_ms(0.0, 40.92, 1753.08) == 0
+
+
+def test_main_runs_without_name_errors(tmp_path, monkeypatch):
+    """Smoke-run main() line by line.
+
+    An UnboundLocalError shipped to the coach because every prior check only
+    IMPORTED this module. Import proves the file parses; it never executes
+    main(), so a variable used above its assignment stays invisible until the
+    app is opened. Streamlit's bare mode runs the body with no browser, which is
+    enough to catch that whole class of mistake.
+    """
+    import json as _json
+    import sys as _sys
+
+    import tracking.click_sample_app as app
+
+    # Minimal on-disk index so main() gets past its existence check.
+    root = tmp_path / "g"
+    root.mkdir()
+    geom = {"box": [0, 0, 300, 100], "bands": 1, "band_w": 300, "band_h": 100,
+            "seg_w": 300, "scale": 1.0, "canvas": [300, 100]}
+    (root / "index.json").write_text(_json.dumps({
+        "game_id": "g", "pitch_box": [0, 0, 300, 100],
+        "frames": [{"video_time_s": 10.0, "image": "f.jpg", "geom": geom,
+                    "detections": [{"track_id": 1, "foot_x_eq": 10.0,
+                                    "foot_y_eq": 50.0, "bbox_h": 70,
+                                    "kit": "ours"}]}]}))
+    from PIL import Image as _Image
+    _Image.new("RGB", (300, 100)).save(root / "f.jpg")
+
+    # Keep the test offline: no Firestore, no calibration.
+    monkeypatch.setattr(app, "load_roster",
+                        lambda g: [{"id": "p1", "name": "A", "number": "7"}])
+    monkeypatch.setattr(app, "load_onfield",
+                        lambda g: ({"p1": [(0.0, 1e9)]},
+                                   [{"playerId": "p1", "from": 0, "to": None}]))
+    monkeypatch.setattr(app, "load_kickoff_offsets", lambda g: (0.0, 0.0))
+    monkeypatch.setattr(app, "load_projector", lambda g: (None, None))
+    monkeypatch.setattr(_sys, "argv",
+                        ["app", "--game-id", "g", "--dir", str(root)])
+
+    app.main()          # NameError / UnboundLocalError would raise here
+
+
+# --------------------------------------------------------------------------
+# resume + visible progress
+#
+# The coach restarted the app and it began at frame 0 every time, showing no
+# sign that his 22 clicks had been saved -- they had, but nothing surfaced them.
+# --------------------------------------------------------------------------
+
+def _resume_index(frames, done):
+    """Mirror of the app's resume rule, pinned here."""
+    dt = {round(float(s["video_time_s"]), 2) for s in done}
+    last = max((i for i, f in enumerate(frames)
+                if round(float(f["video_time_s"]), 2) in dt), default=-1)
+    return min(last + 1, len(frames) - 1)
+
+
+def _frames(times):
+    return [{"video_time_s": t} for t in times]
+
+
+def test_resume_starts_after_the_furthest_frame_worked():
+    frames = _frames([10.0, 20.0, 30.0, 40.0, 50.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 30.0}]
+    assert _resume_index(frames, done) == 3
+
+
+def test_resume_skips_past_a_deliberately_blank_frame():
+    """A frame with nobody nameable is legitimately empty; resuming at the first
+    blank would send the coach back to the start every session."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 40.0}]   # 10 and 30 skipped
+    assert _resume_index(frames, done) == 3                    # last index, not 0
+
+
+def test_resume_is_zero_on_a_fresh_game():
+    assert _resume_index(_frames([1.0, 2.0]), []) == 0
+
+
+def test_resume_clamps_at_the_last_frame():
+    frames = _frames([10.0, 20.0])
+    assert _resume_index(frames, [{"video_time_s": 20.0}]) == 1
+
+
+def test_clicks_for_this_frame_are_matched_on_time_not_index():
+    """Frame indices shift when the render interval changes; the timestamp does not."""
+    done = [{"video_time_s": 190.92, "player_id": "a", "click_x_eq": 1, "click_y_eq": 2},
+            {"video_time_s": 340.92, "player_id": "b", "click_x_eq": 3, "click_y_eq": 4}]
+    frame = {"video_time_s": 190.92}
+    here = [s for s in done
+            if abs(float(s["video_time_s"]) - float(frame["video_time_s"])) < 0.01]
+    assert [s["player_id"] for s in here] == ["a"]
+
+
+# --------------------------------------------------------------------------
+# far-touchline clicks, and the duplicate-click bug
+# --------------------------------------------------------------------------
+
+from post_game.click_samples import FAR_CLAMP_M
+
+
+def test_click_just_past_the_far_line_is_clamped_not_dropped():
+    """A player standing ON the far line projects a few metres negative, which is
+    the rig's geometry rather than a mis-click: measured on Game 1, eleven pixels
+    above the line maps to y = -3.0 m."""
+    cal = _Cal()                      # 1 px = 0.01 m
+    rep: dict = {}
+    pts = to_field([{"player_id": "a", "video_time_s": 1.0,
+                     "click_x_eq": 2500, "click_y_eq": -300}], cal, rep)
+    assert len(pts) == 1 and pts[0]["y_m"] == 0.0
+    assert rep["clamped_far_touchline"] == 1
+    assert rep["dropped_off_pitch"] == 0
+
+
+def test_click_far_outside_the_pitch_is_dropped():
+    cal = _Cal()
+    rep: dict = {}
+    far = -(FAR_CLAMP_M + 5.0) * 100          # metres -> px at this scale
+    pts = to_field([{"player_id": "a", "video_time_s": 1.0,
+                     "click_x_eq": 2500, "click_y_eq": far}], cal, rep)
+    assert pts == [] and rep["dropped_off_pitch"] == 1
+
+
+def test_clamped_click_still_counts_toward_the_players_samples():
+    """Discarding far-side clicks would bias every width metric toward the
+    camera, which is worse than a clamped position."""
+    cal = _Cal()
+    cl = ([{"player_id": "a", "video_time_s": float(i), "click_x_eq": 2500,
+            "click_y_eq": -200} for i in range(10)]
+          + [{"player_id": "a", "video_time_s": float(20 + i),
+              "click_x_eq": 2500, "click_y_eq": 1500} for i in range(10)])
+    stats, rep = compute_click_stats(cl, cal, min_clicks=5)
+    assert stats[0].n_clicks == 20
+    assert rep["clamped_far_touchline"] == 10
+
+
+def test_two_names_cannot_share_one_click_position():
+    """The image widget returns its last click on every rerun, so after saving a
+    name the same coordinates were still armed and a second name could be
+    attached to one body. Seen in the coach's own data: Duncan and Garland both
+    recorded at pixel (3963, 2019)."""
+    rows = [{"video_time_s": 340.92, "click_x_eq": 3963, "click_y_eq": 2019,
+             "player_id": "p_duncan"},
+            {"video_time_s": 340.92, "click_x_eq": 3963, "click_y_eq": 2019,
+             "player_id": "p_garland"}]
+    seen: dict = {}
+    for r in rows:
+        seen.setdefault((r["video_time_s"], r["click_x_eq"], r["click_y_eq"]),
+                        []).append(r["player_id"])
+    dups = {k: v for k, v in seen.items() if len(v) > 1}
+    assert dups, "fixture must reproduce the bug"
+    # The app now stamps each click and refuses to re-consume it; this test pins
+    # the detector so a regression is visible in the data.
+    assert len(next(iter(dups.values()))) == 2
+
+
+def test_a_click_does_not_trigger_a_rerun_loop(tmp_path, monkeypatch):
+    """A click must arm `pending` and stop, not rerun forever.
+
+    Calling st.rerun() after setting `pending` re-entered with the widget's
+    sticky last-value still set, which re-armed `pending` and reran again. The
+    browser tab flickered continuously and the name buttons never rendered --
+    the pass that would have drawn them was always interrupted. Streamlit reruns
+    on its own after a widget interaction, so no explicit rerun is needed here.
+    """
+    import json as _json
+    import sys as _sys
+    import types as _types
+
+    import streamlit as _st
+    from streamlit.delta_generator import DeltaGenerator
+
+    import tracking.click_sample_app as app
+
+    root = tmp_path / "g"
+    root.mkdir()
+    geom = {"box": [0, 0, 300, 200], "bands": 1, "band_w": 300, "band_h": 200,
+            "seg_w": 300, "scale": 1.0, "canvas": [300, 200]}
+    (root / "index.json").write_text(_json.dumps({
+        "game_id": "g", "pitch_box": [0, 0, 300, 200],
+        "frames": [{"video_time_s": 10.0, "image": "f.jpg", "geom": geom,
+                    "detections": [{"track_id": 1, "foot_x_eq": 150.0,
+                                    "foot_y_eq": 100.0, "bbox_h": 70,
+                                    "kit": "ours"}]}]}))
+    from PIL import Image as _Image
+    _Image.new("RGB", (300, 200)).save(root / "f.jpg")
+
+    fake = _types.ModuleType("streamlit_image_coordinates")
+    fake.streamlit_image_coordinates = lambda img, key=None: {"x": 150, "y": 100}
+    monkeypatch.setitem(_sys.modules, "streamlit_image_coordinates", fake)
+
+    reruns = []
+    monkeypatch.setattr(_st, "rerun", lambda *a, **k: reruns.append(1))
+    labels: list[str] = []
+    monkeypatch.setattr(DeltaGenerator, "button",
+                        lambda self, label, *a, **k: (labels.append(str(label)), False)[1])
+    monkeypatch.setattr(_st, "button",
+                        lambda label, *a, **k: (labels.append(str(label)), False)[1])
+    monkeypatch.setattr(app, "load_roster",
+                        lambda g: [{"id": "p1", "name": "A", "number": "7"}])
+    monkeypatch.setattr(app, "load_onfield",
+                        lambda g: ({"p1": [(0.0, 1e9)]},
+                                   [{"playerId": "p1", "from": 0, "to": None}]))
+    monkeypatch.setattr(app, "load_kickoff_offsets", lambda g: (0.0, 0.0))
+    monkeypatch.setattr(app, "load_projector", lambda g: (None, None))
+    monkeypatch.setattr(_sys, "argv", ["app", "--game-id", "g", "--dir", str(root)])
+    _st.session_state.clear()
+
+    app.main()
+    assert not reruns, "a click must not request a rerun (it loops)"
+    assert _st.session_state.get("pending"), "the click should arm a pending name"
+    assert any(b.startswith("#7") for b in labels), "name buttons must render"
+
+
+# --------------------------------------------------------------------------
+# undo + no-double-tagging
+# --------------------------------------------------------------------------
+
+import json
+
+from post_game.click_samples import drop_last_click
+
+
+def test_drop_last_click_removes_only_the_final_entry(tmp_path):
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n{"player_id": "c"}\n')
+    removed = drop_last_click(p)
+    assert removed["player_id"] == "c"
+    assert [json.loads(l)["player_id"] for l in p.read_text().splitlines()] == ["a", "b"]
+
+
+def test_drop_last_click_is_repeatable_down_to_empty(tmp_path):
+    """Undo walks back across frames, so it must survive being pressed to zero."""
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n')
+    assert drop_last_click(p)["player_id"] == "b"
+    assert drop_last_click(p)["player_id"] == "a"
+    assert drop_last_click(p) is None
+    assert p.read_text() == ""
+
+
+def test_drop_last_click_on_a_missing_file_is_safe(tmp_path):
+    assert drop_last_click(tmp_path / "nope.jsonl") is None
+
+
+def test_drop_last_click_leaves_no_temp_file_behind(tmp_path):
+    p = tmp_path / "clicks.jsonl"
+    p.write_text('{"player_id": "a"}\n{"player_id": "b"}\n')
+    drop_last_click(p)
+    assert list(tmp_path.iterdir()) == [p], "the rewrite temp file must be replaced"
+
+
+def test_already_tagged_players_are_identified_for_disabling():
+    """Exactly 7 are on the pitch, so a second tag of one child in one frame is
+    an error rather than a preference."""
+    frame_t = 190.92
+    done = [{"video_time_s": frame_t, "player_id": "p_adam"},
+            {"video_time_s": frame_t, "player_id": "p_hahn"},
+            {"video_time_s": 999.0, "player_id": "p_gibala"}]   # another frame
+    here = [s for s in done if abs(s["video_time_s"] - frame_t) < 0.01]
+    tagged = {s["player_id"] for s in here}
+    assert tagged == {"p_adam", "p_hahn"}
+    assert "p_gibala" not in tagged, "a tag on another frame must not disable here"
+
+
+# --------------------------------------------------------------------------
+# resume at the earliest gap, and explain the progress numbers
+# --------------------------------------------------------------------------
+
+def _todo(frames, done):
+    dt = {round(float(s["video_time_s"]), 2) for s in done}
+    return [i for i, f in enumerate(frames)
+            if round(float(f["video_time_s"]), 2) not in dt]
+
+
+def test_resume_goes_to_the_earliest_unlabelled_frame():
+    """Resuming past the FURTHEST frame worked stranded every frame the coach had
+    passed over -- 19 of them before he noticed."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0, 50.0])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 50.0}]
+    assert _todo(frames, done)[0] == 0
+
+
+def test_resume_is_the_last_frame_once_everything_is_labelled():
+    frames = _frames([10.0, 20.0])
+    done = [{"video_time_s": 10.0}, {"video_time_s": 20.0}]
+    todo = _todo(frames, done)
+    assert todo == []
+    assert (todo[0] if todo else len(frames) - 1) == 1
+
+
+def test_next_unlabelled_jump_wraps_to_the_earliest_gap():
+    """From beyond the last gap the jump must wrap, or a skipped frame is only
+    reachable by typing its number."""
+    frames = _frames([10.0, 20.0, 30.0, 40.0])
+    done = [{"video_time_s": 30.0}, {"video_time_s": 40.0}]
+    todo = _todo(frames, done)          # [0, 1]
+    cur = 3
+    nxt = next((i for i in todo if i > cur), todo[0] if todo else None)
+    assert nxt == 0
+
+
+def test_skipped_frames_behind_the_current_position_are_counted():
+    """This count is what reconciles '25 labelled' with 'frame 45'."""
+    frames = _frames([float(10 * i) for i in range(1, 11)])
+    done = [{"video_time_s": 20.0}, {"video_time_s": 50.0}]
+    todo = _todo(frames, done)
+    behind = sum(1 for i in todo if i < 6)
+    assert behind == 4          # indices 0, 2, 3, 5

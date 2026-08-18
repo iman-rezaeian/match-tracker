@@ -32,3 +32,12 @@ worker/.wrangler/
 voice memo/
 post_game/raw/voice/
 tracking/labels/
+
+# rendered click-sampling frames (large, regenerable from the raw video)
+tracking/outputs/click_samples/
+
+# click-sampler run log
+run*.log
+
+# local parent contact data (never commit — kids/parents PII)
+parent_contacts.local.json

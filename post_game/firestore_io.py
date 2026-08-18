@@ -79,6 +79,29 @@ class GameDoc:
     # H2 start. Use this when the "start 2nd half" button was pressed late
     # (sub chaos, distracted coach, etc.).
     video_offset_h2_kickoff_s: float = 0.0
+    # Coach explicitly confirmed each half's kickoff position in the calibration
+    # step. An UNconfirmed kickoff (default) means the offset may be a silent 0
+    # that shifts every player's on-field window — the Run-Analysis gate blocks
+    # until BOTH are confirmed. H2 may be confirmed with the auto-derived start.
+    video_offset_h1_confirmed: bool = False
+    video_offset_h2_confirmed: bool = False
+    # EXACT source-video second for individual events, keyed "<period>:<elapsed>",
+    # read off the file by the coach. Overrides the kickoff-offset arithmetic for
+    # those events only.
+    #
+    # ⚠ Needed because the residual error CHANGES SIGN between events, so no single
+    # offset can fix it. Measured on Caboto with its offset corrected to 22.0, the
+    # six goals were still out by -15.0, +4.0, +11.0, +2.1, -7.9 s. The scorebug
+    # popup and the goal-roar audio both fire at the mapped time, so a sign-changing
+    # error reads as "the cheer sometimes lands before the goal and sometimes long
+    # after" — one bug, two symptoms. A generous clip window hides the problem for
+    # clipping but does nothing for these two, which need the real instant.
+    video_event_times: dict = field(default_factory=dict)
+    # Match format: "7v7" (Canadian festivals/tournaments) or "9v9" (US
+    # tournaments, from the 2026-27 season). Sets how many bodies the pipeline
+    # should expect on the pitch. Every game predating the field is 7v7, so an
+    # absent value means 7v7 rather than unknown.
+    game_format: str = "7v7"
     # Per-game coach identity corrections, written by the PWA IdentityFixView:
     # { "<tracklet_id>": "<player_id>" | None }. A player_id force-assigns that
     # stitched tracklet to that roster player (status="coach", confidence=1.0);
@@ -87,6 +110,11 @@ class GameDoc:
     # NOTE: tracklet ids are stable only while the Stage-2 track cache is
     # unchanged — a full re-track regenerates them and invalidates overrides.
     identity_overrides: dict = field(default_factory=dict)
+    # Reserved for a FUTURE manual coach override of the camera on-field
+    # correction ({player_id: {onS, offS} in video s}). v1 derives corrections
+    # in-pipeline from identity_overrides + tracklet spans (sub_correct.py) and
+    # writes nothing here; parsed read-only so the field round-trips if set.
+    identity_sub_corrections: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -174,7 +202,13 @@ def get_game(game_id: str) -> GameDoc:
         field_name=d.get("fieldName"),
         video_offset_h1_kickoff_s=float(d.get("videoOffsetH1KickoffS", 0.0) or 0.0),
         video_offset_h2_kickoff_s=float(d.get("videoOffsetH2KickoffS", 0.0) or 0.0),
+        video_offset_h1_confirmed=bool(d.get("videoOffsetH1Confirmed", False)),
+        video_offset_h2_confirmed=bool(d.get("videoOffsetH2Confirmed", False)),
+        video_event_times={str(k): float(v) for k, v in
+                           (d.get("videoEventTimes") or {}).items()},
         identity_overrides={str(k): v for k, v in (d.get("identityOverrides") or {}).items()},
+        identity_sub_corrections={str(k): v for k, v in (d.get("identitySubCorrections") or {}).items()},
+        game_format=str(d.get("format") or "7v7"),
     )
 
 
@@ -212,8 +246,15 @@ def list_recent_games_snapshots(limit: int = 25) -> list[dict]:
             "has_video_offset": d.get("videoOffsetH1KickoffS") is not None,
             "video_offset_h1_kickoff_s": float(d.get("videoOffsetH1KickoffS") or 0.0),
             "video_offset_h2_kickoff_s": float(d.get("videoOffsetH2KickoffS") or 0.0),
+            "video_offset_h1_confirmed": bool(d.get("videoOffsetH1Confirmed", False)),
+            "video_offset_h2_confirmed": bool(d.get("videoOffsetH2Confirmed", False)),
             "has_analytics": has_analytics,
             "started_at": int(d.get("startedAt", 0)),
+            # The calibration UI reads this to place its 2nd-half preview seek.
+            # It was absent from this projection, so the UI silently fell back
+            # to 30 while the real default is 25 — landing the preview ~5 min
+            # past kickoff. Default mirrors GameDoc's.
+            "half_length_min": int(d.get("halfLengthMin", 25)),
         })
     out.sort(key=lambda r: r["started_at"], reverse=True)
     return out
@@ -397,10 +438,35 @@ def set_game_field(game_id: str, field_key: str) -> None:
     )
 
 
+# Keys the pipeline does NOT produce and must therefore never destroy on a full
+# write. `click_stats` is the coach's own hand-tagged positions -- ~10 minutes of
+# his labour per game, published by tracking/click_publish.py, and the ONLY
+# trustworthy per-player positional source in the app. A full re-render wiped it
+# on the Caboto game (2026-08-15) simply because `set()` replaces the document.
+_PRESERVE_ON_FULL_WRITE = ("click_stats",)
+
+
 def write_analytics(game_id: str, analytics: dict[str, Any]) -> None:
-    _team_doc().collection("games").document(game_id).collection("analytics").document(
-        config.ANALYTICS_DOC_VERSION
-    ).set(analytics)
+    """Replace the analytics doc, preserving keys the pipeline never writes.
+
+    `set()` without merge is deliberate for everything the pipeline DOES own -- a
+    stale key from a previous schema should disappear rather than linger. But keys
+    owned by another producer have to be carried across explicitly, or a re-render
+    silently destroys them.
+    """
+    ref = (_team_doc().collection("games").document(game_id)
+           .collection("analytics").document(config.ANALYTICS_DOC_VERSION))
+    payload = dict(analytics)
+    try:
+        prev = ref.get()
+        old = prev.to_dict() if prev.exists else None
+    except Exception:  # a read failure must not block the write
+        old = None
+    if old:
+        for key in _PRESERVE_ON_FULL_WRITE:
+            if key not in payload and old.get(key) is not None:
+                payload[key] = old[key]
+    ref.set(payload)
 
 
 def write_analytics_merge(game_id: str, fields: dict[str, Any]) -> None:
@@ -418,6 +484,65 @@ def read_analytics(game_id: str) -> Optional[dict]:
     snap = (_team_doc().collection("games").document(game_id)
             .collection("analytics").document(config.ANALYTICS_DOC_VERSION).get())
     return snap.to_dict() if snap.exists else None
+
+
+# Keys the season view actually reads. Everything else in the analytics doc is
+# either film-room detail or per-track debug data.
+_SUMMARY_KEYS = ("player_stats", "field_tilt", "generated_at_ms",
+                 "team_shape_filter")
+# Per-player fields the squad table and its sparklines use. `heatmap_grid` is
+# deliberately excluded: 96 floats per player per game, and the season view has
+# never drawn a heatmap.
+_SUMMARY_PLAYER_KEYS = ("player_id", "minutes_played", "pct_defensive_third",
+                        "pct_middle_third", "pct_attacking_third")
+
+
+def write_analytics_summary(game_id: str, analytics: dict[str, Any]) -> None:
+    """Write a SMALL companion doc for the season view to fan out over.
+
+    The season view fetches one analytics doc per finished game in a single
+    Promise.all. The full docs run 420-970 KB each -- ~5 MB across seven games,
+    of which ~3.4 MB is `identity_assignments`, a per-track array it never reads
+    (measured: it touches `player_stats` and nothing else). That download and the
+    main-thread JSON parse are what made the view open to a black screen on a
+    phone, and it gets worse with every game played.
+
+    So the fan-out target becomes this projection instead, which is ~2% of the
+    size and grows only with the roster. Derived from the payload just written,
+    so it cannot drift from the doc it summarises.
+
+    Also carries `click_stats.players[].n_clicks` -- not for numbers, only so the
+    squad table can mark which games are tagged and therefore which per-player
+    positions exist at all.
+    """
+    out: dict[str, Any] = {k: analytics[k] for k in _SUMMARY_KEYS if k in analytics}
+    if isinstance(analytics.get("player_stats"), list):
+        out["player_stats"] = [
+            {k: s[k] for k in _SUMMARY_PLAYER_KEYS if k in s}
+            for s in analytics["player_stats"] if isinstance(s, dict)
+        ]
+    cs = analytics.get("click_stats")
+    if isinstance(cs, dict):
+        out["click_stats"] = {
+            "n_clicks": cs.get("n_clicks"),
+            "n_frames": cs.get("n_frames"),
+            "median_pos_err_m": cs.get("median_pos_err_m"),
+            # Load-bearing for any cross-game pooling: when the keeper's median
+            # sits mid-pitch the orientation resolver REFUSES rather than guess,
+            # and this game's depth figures are then in an undefined frame.
+            # Averaging an unoriented game into a season figure mirrors half of
+            # its contribution. Callers must exclude `oriented: false` games.
+            "oriented": cs.get("oriented"),
+            "players": [{"player_id": p.get("player_id"),
+                         "n_clicks": p.get("n_clicks"),
+                         "avg_depth_m": p.get("avg_depth_m"),
+                         "pct_defensive_third": p.get("pct_defensive_third"),
+                         "pct_middle_third": p.get("pct_middle_third"),
+                         "pct_attacking_third": p.get("pct_attacking_third")}
+                        for p in (cs.get("players") or []) if isinstance(p, dict)],
+        }
+    (_team_doc().collection("games").document(game_id)
+     .collection("analytics").document(config.ANALYTICS_SUMMARY_DOC).set(out))
 
 
 def collect_prior_player_top_speeds(exclude_game_id: str | None = None) -> dict[str, list[float]]:
@@ -534,6 +659,22 @@ def write_voice_drafts(game_id: str, drafts: list[dict]) -> None:
         {"voiceDrafts": drafts}, merge=True)
 
 
+def write_identity_drafts(game_id: str, drafts: list[dict]) -> None:
+    """Write VLM jersey-number identity suggestions to `game.identityDrafts`.
+
+    Each draft maps a stitched tracklet to a suggested roster player (read off
+    the jersey number by the VLM). The PWA FIX-IDS view surfaces these as
+    per-tracklet Accept suggestions; on accept the coach's choice flows into
+    `identityOverrides` via the existing saveOverrides path and is applied on the
+    next pipeline re-run. These drafts are SUGGESTIONS ONLY — never auto-applied.
+
+    Additive and reversible: a new sibling field on the game doc; does NOT touch
+    `events`/scores/stats/`identityOverrides`. Overwrites the field (a re-run
+    replaces the draft set — the deterministic per-tracklet `id` prevents dupes)."""
+    _team_doc().collection("games").document(game_id).set(
+        {"identityDrafts": drafts}, merge=True)
+
+
 def set_public_reels(game_id: str, fields: dict[str, Any]) -> None:
     """Merge public-safe broadcast-reel fields onto the game doc.
 
@@ -591,22 +732,44 @@ def set_video_url(game_id: str, url: str) -> None:
     )
 
 
-def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float) -> None:
-    """Persist the seconds-into-source-video of the 1st-half kickoff whistle."""
+def set_video_offset_h1_kickoff_s(game_id: str, offset_s: float,
+                                  confirmed: bool = True) -> None:
+    """Persist the seconds-into-source-video of the 1st-half kickoff whistle.
+
+    `confirmed` marks that the coach deliberately set/verified it (default True —
+    a coach saving from the UI is confirming). The Run-Analysis gate requires
+    confirmation so a silent default-0 offset can't shift every on-field window."""
     _team_doc().collection("games").document(game_id).set(
-        {"videoOffsetH1KickoffS": float(offset_s)}, merge=True
+        {"videoOffsetH1KickoffS": float(offset_s),
+         "videoOffsetH1Confirmed": bool(confirmed)}, merge=True
     )
 
 
-def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float) -> None:
+def set_video_event_times(game_id: str, times: dict) -> None:
+    """Persist exact source-video seconds for events: {"<period>:<elapsed>": video_s}.
+
+    ADDITIVE — `game.events` is never rewritten. These only change where an event is
+    LOOKED UP in the video, which is the thing that was wrong.
+    """
+    payload = {str(k): float(v) for k, v in (times or {}).items()}
+    _team_doc().collection("games").document(game_id).set(
+        {"videoEventTimes": payload}, merge=True
+    )
+
+
+def set_video_offset_h2_kickoff_s(game_id: str, offset_s: float,
+                                  confirmed: bool = True) -> None:
     """Persist a manual override for the 2nd-half kickoff (source-video seconds).
 
     When > 0, overrides the wallclock-derived H2 start in `half_windows()`
     and `period_clock_to_video_time_factory()`. Set to 0 to fall back to the
-    auto-derived value.
+    auto-derived value. `confirmed` records that the coach verified the H2 start
+    (either by entering a timestamp or accepting the auto-derived one) — the
+    Run-Analysis gate requires it.
     """
     _team_doc().collection("games").document(game_id).set(
-        {"videoOffsetH2KickoffS": float(offset_s)}, merge=True
+        {"videoOffsetH2KickoffS": float(offset_s),
+         "videoOffsetH2Confirmed": bool(confirmed)}, merge=True
     )
 
 

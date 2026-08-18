@@ -72,6 +72,18 @@ def main() -> None:
                          "metres of a field edge — sideline coaches/spectators "
                          "(mis-classified as our team, behind the touchline) hug the "
                          "edge; real players sit further in (default 2.5).")
+    ap.add_argument("--from-analytics", action="store_true",
+                    help="Take the tracklet partition from the PUBLISHED analytics "
+                         "doc instead of the tracking/outputs/identity_eval "
+                         "stage4 snapshot. Use this whenever the labels are meant "
+                         "to score something keyed to the tracklets the coach "
+                         "actually sees — VLM identityDrafts, FIX-IDS overrides. "
+                         "The snapshot is written by a separate eval run and goes "
+                         "stale the moment anything upstream of stitching changes: "
+                         "sampling mri01pvelv46d from a 3-stitch-generation-old "
+                         "snapshot produced 30 tracklets of which exactly 1 still "
+                         "existed in the live doc, so the labels would have scored "
+                         "nothing.")
     ap.add_argument("--coherent", action="store_true",
                     help="Read the gap-split coherent cache (.stage4.coherent.*) from "
                          "build_coherent_stage4 — single-player runs, on-field, "
@@ -86,9 +98,32 @@ def main() -> None:
         # coherent parquet already carries bbox + x_m/y_m for every run
         df = pd.read_parquet(S4_DIR / f"{args.game_id}.stage4.coherent.parquet")
     else:
-        maps = json.loads((S4_DIR / f"{args.game_id}.stage4.json").read_text())
         df = pd.read_parquet(config.OUTPUTS_DIR / args.game_id / "tracks_raw.parquet",
                              columns=["frame", "time_s", "track_id"] + _BBOX)
+        if args.from_analytics:
+            # The published doc IS the partition the coach and the drafts use.
+            # identity_assignments carries every track with its tracklet root and
+            # a status; 'opponent' is the classifier's verdict, so treat anything
+            # else as ours (team 0) exactly as the analytics tracklets[] does.
+            from post_game import firestore_io
+            _an = firestore_io.read_analytics(args.game_id) or {}
+            _ia = _an.get("identity_assignments") or []
+            if not _ia:
+                raise SystemExit(f"--from-analytics: {args.game_id} has no "
+                                 f"identity_assignments in its analytics doc.")
+            maps = {
+                "tracklet_of_track": {
+                    str(r["track_id"]): int((r.get("breakdown") or {}).get("tracklet")
+                                            or r["track_id"]) for r in _ia},
+                "team_of_track": {
+                    str(r["track_id"]): (1 if r.get("status") == "opponent" else 0)
+                    for r in _ia},
+            }
+            _live = {int(t["tracklet_id"]) for t in (_an.get("tracklets") or [])}
+            print(f"--from-analytics: {len(_ia)} assignments, "
+                  f"{len(_live)} published tracklets")
+        else:
+            maps = json.loads((S4_DIR / f"{args.game_id}.stage4.json").read_text())
     team_of = {int(k): int(v) for k, v in maps["team_of_track"].items()}
     tl_of = {int(k): int(v) for k, v in maps["tracklet_of_track"].items()}
     df["track_id"] = df["track_id"].astype(int)

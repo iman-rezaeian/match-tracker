@@ -103,11 +103,64 @@ TV_STATIC_TRACK_MVMT_M = 5.0  # track-lifetime total movement threshold (m).
                          # on the touchline, refs at midfield, the ball-kid by
                          # the goalpost. Real U10 players cover way more than
                          # 5 m total even in a 30-second smoke window.
-AUTO_HIGHLIGHT_WINDOW_S = 15.0
+# Highlight clip window, ASYMMETRIC around the coach's tap.
+#
+# ⚠ It used to be symmetric +-15 s, and that chopped the build-up off every clip:
+# the coach reported the opponent's first goal appearing "only 2-3 seconds before
+# they score". A tap lands when the coach REACTS, which is after the ball crosses
+# the line, so 15 s of nominal lead is 15 s minus his reaction time. Worse, the
+# interesting part of a goal is the move that CREATED it, which typically starts
+# 20-30 s earlier — a symmetric window is the wrong shape for the thing being
+# clipped, not merely too small.
+#
+# Measured on the 3-5 Belle River game: GOAL taps land first and the ASSIST tap
+# follows 1.4-3.6 s later, so the coach taps promptly and backfills. The lag is a
+# few seconds, not a minute. 25 s of lead covers the build-up plus that lag.
+#
+# Tails are per-type: a goal earns the celebration and the restart, a shot or a save
+# resolves almost immediately.
+#
+# ⚠ The tail was briefly 40 s for everything, as SLOP. At that point the clock->video
+# map depended on a hand-entered kickoff offset — Caboto shipped with 0.0 while its
+# same-day sibling had 40.9 — which put first-half goals up to 33 s later in the video
+# than the map claimed, so a 10 s tail ended the clip before the ball crossed. The
+# wide tail bought correctness at the cost of a minute of dead footage per clip.
+#
+# That slop is no longer needed: events can now carry an EXACT source-video second
+# (see firestore_io.video_event_times), so the goal lands where the map says. Tails
+# are back to what the football actually wants. If a future game shows goals drifting
+# again, fix the OFFSET or add exact times — do not re-widen the tail, which hides the
+# error instead of removing it and pads every clip to do so.
+AUTO_HIGHLIGHT_PRE_S = 25.0
+AUTO_HIGHLIGHT_POST_S = 10.0        # goals: celebration + restart
+AUTO_HIGHLIGHT_POST_OTHER_S = 5.0   # shots / saves / key passes: resolve fast
+# Types that get the longer tail. A goal is the only event with an aftermath worth
+# keeping; everything else is over the moment the ball is cleared or gathered.
+AUTO_HIGHLIGHT_LONG_TAIL_TYPES = frozenset({"GOAL", "OPP_GOAL"})
+# Retained for callers/tests that referenced the symmetric constant. Kept equal to
+# the PRE roll so any old caller widens rather than narrows.
+AUTO_HIGHLIGHT_WINDOW_S = AUTO_HIGHLIGHT_PRE_S
 # Both teams' goals belong in the reel — OPP_GOAL was previously missing, so
 # the opponent's goals never made the highlight cut (a 3-6 game showed only the
 # 3 we scored). SAVE covers the opponent attacks our keeper stopped.
 AUTO_HIGHLIGHT_EVENT_TYPES = ("GOAL", "OPP_GOAL", "SHOT_ON", "SAVE", "KEY_PASS")
+
+# Output sharpening (unsharp mask) for the reel.
+#
+# The reel is an UPSCALE, not a downsample: a 70 deg horizontal slice of the 8K
+# equirect is ~1493 source px rendered to 1920, so no setting can add detail that
+# was never captured, and Lanczos — while the best resample available here — still
+# smooths the edge contrast the eye reads as "sharp". An unsharp mask restores
+# that acutance. Measured on a real goal frame: laplacian variance 27 -> 49.
+#
+# ⚠ This CANNOT create resolution, so it is cosmetic by construction; it is also
+# the only lever left short of raising the camera. Keep the amount modest — high
+# values halo the white pitch lines and crunch the grass texture in motion, which
+# a still frame will not reveal. Applied to the reel only, never to detection
+# tiles (sharpening changes the pixel statistics YOLO was trained on).
+TV_SHARPEN_ENABLED = True
+TV_SHARPEN_SIGMA = 1.2
+TV_SHARPEN_AMOUNT = 1.6
 
 
 @dataclass
@@ -871,6 +924,18 @@ def diagnose_aim(
 
 # --- segment render ------------------------------------------------------
 
+def _sharpen(img: np.ndarray) -> np.ndarray:
+    """Unsharp-mask a rendered reel frame (see TV_SHARPEN_* for the rationale).
+
+    Returns the input unchanged when disabled, so the render path stays a single
+    branch-free call site.
+    """
+    if not TV_SHARPEN_ENABLED:
+        return img
+    blur = cv2.GaussianBlur(img, (0, 0), TV_SHARPEN_SIGMA)
+    return cv2.addWeighted(img, TV_SHARPEN_AMOUNT, blur, 1.0 - TV_SHARPEN_AMOUNT, 0)
+
+
 def _render_segment(
     cap: cv2.VideoCapture,
     writer: "H264PipeWriter | cv2.VideoWriter",
@@ -884,6 +949,7 @@ def _render_segment(
     out_h: int,
     aim_fovs: Optional[np.ndarray] = None,
 ) -> int:
+    """Render [start_s, end_s) of the source into `writer`, following the aim."""
     start_f = max(0, int(round(start_s * fps)))
     end_f = int(round(end_s * fps))
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
@@ -903,7 +969,7 @@ def _render_segment(
         # enlarged from a ~70° slice of the sphere, so the resample quality
         # is one of the few real levers on perceived sharpness.
         crop = render_perspective(frame, lon, lat, fov, out_w, out_h, interp=cv2.INTER_LANCZOS4)
-        writer.write(crop)
+        writer.write(_sharpen(crop))
         written += 1
     return written
 
@@ -915,7 +981,16 @@ def _event_windows(
     period_clock_to_video_time: Callable[[int, int], float],
     video_duration_s: float,
     window_s: float,
+    post_s: Optional[float] = None,
 ) -> list[tuple[float, float]]:
+    """Merged clip windows around each highlight-worthy event.
+
+    `window_s` is the LEAD (before the tap); the tail is PER TYPE — a goal keeps the
+    celebration and restart (AUTO_HIGHLIGHT_POST_S), while a shot or save is over as
+    soon as the ball is gathered (AUTO_HIGHLIGHT_POST_OTHER_S). Passing `post_s`
+    overrides both, which the diagnostic harnesses rely on.
+    """
+    override = None if post_s is None else float(post_s)
     raw: list[tuple[float, float]] = []
     for ev in events:
         if ev.type not in AUTO_HIGHLIGHT_EVENT_TYPES:
@@ -923,8 +998,14 @@ def _event_windows(
         t = float(period_clock_to_video_time(ev.period, ev.elapsed))
         if t < 0:
             continue
+        if override is not None:
+            post = override
+        elif ev.type in AUTO_HIGHLIGHT_LONG_TAIL_TYPES:
+            post = AUTO_HIGHLIGHT_POST_S
+        else:
+            post = AUTO_HIGHLIGHT_POST_OTHER_S
         a = max(0.0, t - window_s)
-        b = min(video_duration_s, t + window_s)
+        b = min(video_duration_s, t + post)
         if b > a:
             raw.append((a, b))
     if not raw:
@@ -1260,7 +1341,12 @@ def extract_auto_highlights(
     game_id: str,
     field_length_m: float,
     field_width_m: float,
-    window_s: float = AUTO_HIGHLIGHT_WINDOW_S,
+    window_s: float = AUTO_HIGHLIGHT_PRE_S,
+    # ⚠ None, NOT AUTO_HIGHLIGHT_POST_S. A concrete default here is an OVERRIDE in
+    # `_event_windows`, which suppressed the per-type tail entirely: every shot and
+    # key pass rendered with the goal's 10 s tail instead of 5 s, and the bug was
+    # invisible because the number looked correct.
+    post_s: Optional[float] = None,
     upload: bool = True,
     analyzed_windows: Optional[list[tuple[float, float]]] = None,
     aim_cfg: Optional[AimConfig] = None,
@@ -1282,7 +1368,8 @@ def extract_auto_highlights(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration_s = total_frames / fps if fps else 0.0
 
-    windows = _event_windows(events, period_clock_to_video_time, duration_s, window_s)
+    windows = _event_windows(events, period_clock_to_video_time, duration_s,
+                             window_s, post_s)
     if analyzed_windows:
         clipped: list[tuple[float, float]] = []
         for (ea, eb) in windows:

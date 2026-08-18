@@ -18,7 +18,17 @@ import os
 os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
 
 import csv
+import sys
 from pathlib import Path
+
+# `streamlit run` executes this file with ITS directory on sys.path, not the
+# repo root, so `from post_game import ...` fails unless the caller happens to
+# have set PYTHONPATH. Put the repo root on the path ourselves — the app is
+# meant to be launched as `streamlit run tracking/player_gt_app.py`, and it
+# should just work when it is.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import pandas as pd
 import streamlit as st

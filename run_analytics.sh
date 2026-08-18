@@ -24,11 +24,16 @@ cd "$(dirname "$0")"
 
 SKIP_INSTALL=0
 GAME_ID=""
+# Anything we don't consume ourselves is forwarded to the pipeline. It used to
+# be dropped on the floor, so `run_analytics.sh <game> --tv-view` ran without
+# the reel and said nothing — and this is the script the app tells you to use.
+PIPELINE_ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --skip-install) SKIP_INSTALL=1 ;;
     -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
-    *) if [ -z "$GAME_ID" ]; then GAME_ID="$arg"; fi ;;
+    -*) PIPELINE_ARGS+=("$arg") ;;
+    *) if [ -z "$GAME_ID" ]; then GAME_ID="$arg"; else PIPELINE_ARGS+=("$arg"); fi ;;
   esac
 done
 
@@ -143,6 +148,9 @@ PY
 fi
 
 echo "→ Running analytics for game $GAME_ID…"
-python -m post_game.cli run --game-id "$GAME_ID"
+if [ ${#PIPELINE_ARGS[@]} -gt 0 ]; then
+  echo "  (pipeline flags: ${PIPELINE_ARGS[*]})"
+fi
+python -m post_game.cli run --game-id "$GAME_ID" "${PIPELINE_ARGS[@]}"
 
 echo "✓ Done. Refresh the Analytics panel in the app to see results."
