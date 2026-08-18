@@ -937,6 +937,22 @@ SPEED_SMOOTH_WINDOW = 5                          # samples (≈0.5s at SAMPLE_RA
 # per-step displacement so absurd top speeds (6000+ km/h) and teleport-inflated
 # distances can't occur.
 MAX_PLAUSIBLE_SPEED_MS = 9.0                      # ~32 km/h
+# "Statues aren't players": a track attributed to a player that sits inside a
+# ~3 m circle for 3+ minutes of PLAY time is a touchline stander / waiting sub
+# / coach welded into his identity, not a child playing soccer. Measured on
+# G1 Jul-12: two such tracks put 80% of Rezaeian's heatmap mass into two
+# touchline cells and buried the real map. Statue tracks are excluded from the
+# HEATMAP GRID only — motion metrics already self-defend (statues add ~zero
+# distance), and thirds/coverage semantics stay untouched until measured.
+STATUE_MIN_DURATION_S = float(os.environ.get("STATUE_MIN_DURATION_S", "180"))
+STATUE_MAX_RADIUS_M = float(os.environ.get("STATUE_MAX_RADIUS_M", "3.0"))
+# Track fragmentation defeats the per-track test (mean lifespan ~6 s: a
+# 10-minute stander shatters into dozens of short tracks at the same spot),
+# so statues are ALSO detected by SPOT: any 2 m grid cell holding 90+
+# cumulative seconds of one player's dwell is a stander post — real players
+# pass through a 2 m patch in seconds, dozens of times at most.
+STATUE_SPOT_CELL_M = float(os.environ.get("STATUE_SPOT_CELL_M", "2.0"))
+STATUE_SPOT_DWELL_S = float(os.environ.get("STATUE_SPOT_DWELL_S", "90"))
 # Cap on the distance_est_m extrapolation multiplier (coach_min / tracked_min).
 # The rate-based estimate scales the tracked slice up to full coach-logged
 # minutes; at low coverage that multiplier explodes (a 19%-coverage player would
