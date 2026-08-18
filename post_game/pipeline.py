@@ -1210,6 +1210,13 @@ def run(
                 game_id, firestore_io.read_analytics(game_id) or _update)
         except Exception as e:
             log.warning("season summary write failed: %s", e)
+        # Identity fixes change per-kid minutes/heatmaps → refresh the family
+        # rollup too (same guard as the full-run path: never fail the refresh).
+        try:
+            from . import parent_season
+            parent_season.publish_parent_season(game_id)
+        except Exception as e:
+            log.warning("parentSeason publish failed: %s", e)
         log.info("Stats-only refresh: %s — %d players; reel/audio/broadcast-index preserved",
                  game_id, len(player_stats))
         return _update
@@ -1571,6 +1578,13 @@ def run(
     # Skipped on shadow runs — touches the live game's clips/ collection.
     if config.ANALYTICS_DOC_VERSION == "v1":
         _purge_legacy_reel_clip_docs(game_id)
+    # Family-facing per-kid rollup (parentSeason docs). Never fail the run
+    # over it — the coach data above is already safely written.
+    try:
+        from . import parent_season
+        parent_season.publish_parent_season(game_id)
+    except Exception as e:
+        log.warning("parentSeason publish failed: %s", e)
     log.info("Wrote analytics for game %s - %d players", game_id, len(player_stats))
     return analytics
 
