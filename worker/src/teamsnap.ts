@@ -238,15 +238,22 @@ function tombstoneFor(uid: string) {
  * report ~22h of age one second after a clean sync, and would freeze whenever the
  * coach is not editing. The calendar's "Synced Nm ago" line needs OUR clock.
  *
- * It lives at `<COLL>/__sync__` — inside the collection the calendar already
- * subscribes to, so it costs no extra read and needs no new Firestore rule. The
- * leading underscores keep it clear of the UID namespace (TeamSnap UIDs look like
- * `9230745-366776389`); consumers MUST skip it when building events.
+ * It lives at `<COLL>/zz-sync-meta` — inside the collection the calendar already
+ * subscribes to, so it costs no extra read and needs no new Firestore rule.
+ * Consumers MUST skip it when building events (real ids look like
+ * `9230745-366776389`, so nothing collides).
+ *
+ * The id is NOT `__sync__`, which is what this first shipped as: Firestore
+ * reserves any id matching `__.*__` and rejects the write with
+ * `Resource id "__sync__" is invalid because it is reserved`. Because these
+ * writes share ONE batch commit with the events, that single rejection failed
+ * the entire commit — so a cosmetic freshness stamp took the whole mirror down
+ * with it. Test a new document id against the API before deploying it.
  */
 function syncMetaWrite(now: number, eventCount: number) {
   return {
     update: {
-      name: `projects/${PROJECT}/databases/(default)/documents/${COLL}/__sync__`,
+      name: `projects/${PROJECT}/databases/(default)/documents/${COLL}/zz-sync-meta`,
       fields: {
         syncedAt: { integerValue: String(now) },
         eventCount: { integerValue: String(eventCount) },
@@ -284,9 +291,9 @@ async function listUids(token: string): Promise<string[]> {
     const body = await res.json() as any;
     for (const d of body.documents || []) {
       const id = decodeURIComponent(d.name.split('/').pop());
-      // `__sync__` is our own freshness stamp, not a TeamSnap event. Listing it
+      // `zz-sync-meta` is our own freshness stamp, not a TeamSnap event. Listing it
       // here would tombstone it as "missing from feed" on the very next run.
-      if (id === '__sync__') continue;
+      if (id === 'zz-sync-meta') continue;
       uids.push(id);
     }
     pageToken = body.nextPageToken || '';
@@ -312,6 +319,21 @@ export interface SyncResult {
  * CDN caches for 4h, so most 15-minute runs get a 304 and cost one request.
  */
 export async function syncTeamsnap(env: any): Promise<SyncResult> {
+  try {
+    return await runSync(env);
+  } catch (err: any) {
+    // Record the failure where the unauthenticated status endpoint can read it.
+    // A cron failure is otherwise invisible without an authenticated tail, which
+    // is exactly when you need to know why it broke.
+    const msg = String(err && err.message || err).slice(0, 400);
+    if (env.SYNC_STATE) {
+      await env.SYNC_STATE.put('last-error', JSON.stringify({ at: Date.now(), msg }));
+    }
+    throw err;
+  }
+}
+
+async function runSync(env: any): Promise<SyncResult> {
   const url = env.TEAMSNAP_ICS_URL;
   if (!url) return { ok: false, skipped: 'no-url', error: 'TEAMSNAP_ICS_URL not set' };
 
@@ -360,7 +382,10 @@ export async function teamsnapStatus(env: any): Promise<any> {
   });
   if (!res.ok) return { ok: false, error: `list ${res.status}` };
   const body = await res.json() as any;
-  const docs = body.documents || [];
+  const all = body.documents || [];
+  // The freshness stamp lives in this collection but is not an event; counting it
+  // reported 117 mirrored events and an empty '?' type bucket.
+  const docs = all.filter((d: any) => !d.name.endsWith('/zz-sync-meta'));
   const byType: Record<string, number> = {};
   let canceled = 0, missing = 0, overrides = 0;
   for (const d of docs) {
@@ -372,6 +397,11 @@ export async function teamsnapStatus(env: any): Promise<any> {
     if (f.coachType) overrides++;
   }
   const etag = env.SYNC_STATE ? await env.SYNC_STATE.get('ics-etag') : null;
+  const lastError = env.SYNC_STATE ? await env.SYNC_STATE.get('last-error') : null;
+  const syncDoc = all.find((d: any) => d.name.endsWith('/zz-sync-meta'));
   return { ok: true, mirrored: docs.length, byType, canceled, missingFromFeed: missing,
-           coachOverrides: overrides, haveEtag: !!etag };
+           coachOverrides: overrides, haveEtag: !!etag,
+           syncedAt: syncDoc?.fields?.syncedAt?.integerValue
+             ? Number(syncDoc.fields.syncedAt.integerValue) : null,
+           lastError: lastError ? JSON.parse(lastError) : null };
 }

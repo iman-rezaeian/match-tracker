@@ -1273,7 +1273,7 @@ function CoachApp() {
   // Written every 15 min by the Worker cron; read-only here. Local dev has no
   // Firestore, so this stays empty and the calendar simply shows fewer kinds.
   const [teamsnapEvents, setTeamsnapEvents] = useState([]);
-  // When the cron last mirrored the feed, from the `__sync__` sentinel doc.
+  // When the cron last mirrored the feed, from the `zz-sync-meta` sentinel doc.
   // NOT any event's `modified` field — that is the feed's LAST-MODIFIED, i.e.
   // when the coach last edited the event in TeamSnap, which would read "22h
   // ago" one second after a clean sync and never advance while nobody edits.
@@ -1504,7 +1504,7 @@ function CoachApp() {
             // The cron writes its own clock as one more doc in this collection.
             // It is a sentinel, not an event — real ids look like
             // `9230745-366776389`, so it must not reach the merge.
-            if (d.id === '__sync__') { stamp = d.data()?.syncedAt ?? null; return; }
+            if (d.id === 'zz-sync-meta') { stamp = d.data()?.syncedAt ?? null; return; }
             list.push({ uid: d.id, ...d.data() });
           });
           setTeamsnapEvents(list);
@@ -16594,7 +16594,7 @@ function PublicHomePage({ access }) {
               // `9230745-366776389` — so it must not reach the merge. The
               // freshness stamp comes from here, never from an event's
               // `modified`, which is when the coach last edited in TeamSnap.
-              if (d.id === '__sync__') { stamp = d.data()?.syncedAt ?? null; return; }
+              if (d.id === 'zz-sync-meta') { stamp = d.data()?.syncedAt ?? null; return; }
               list.push({ uid: d.id, ...d.data() });
             });
             setTeamsnapEvents(list);
@@ -17259,6 +17259,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

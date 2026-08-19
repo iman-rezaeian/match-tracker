@@ -580,12 +580,14 @@ TeamSnap. Actively misinforming, so it was correctly left unimplemented.
 clock as one more write in the batch that mirrors the events:
 
 ```
-teams/main/teamsnapEvents/__sync__  ->  { syncedAt: <ms>, eventCount: <n> }
+teams/main/teamsnapEvents/zz-sync-meta  ->  { syncedAt: <ms>, eventCount: <n> }
 ```
 
 It sits inside the collection the calendar already subscribes to, so it needs no
 extra read and no new security rule. **Consumers MUST filter it out of the events
-list** — its doc id is `__sync__`, while real ids look like `9230745-366776389` —
+list** — its doc id is `zz-sync-meta`, while real ids look like `9230745-366776389` —
+(it is deliberately NOT `__sync__`: Firestore reserves ids matching `__.*__` and
+rejects the write, which fails the whole batch commit and takes the mirror down) —
 and read `syncedAt` from it. Task 5 passes that value, not `null`.
 
 `teamsnapEvents` is a Firestore **subcollection**, so unlike `schedule` it needs its own listener. Add a NEW `useEffect` — do not modify the existing team-doc effect, which `_sync_html.py` replaces by exact text.
