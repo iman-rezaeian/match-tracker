@@ -246,7 +246,7 @@ function tombstoneFor(uid: string) {
 function syncMetaWrite(now: number, eventCount: number) {
   return {
     update: {
-      name: `projects/${PROJECT}/databases/(default)/documents/teams/main/public/teamsnapSync`,
+      name: `projects/${PROJECT}/databases/(default)/documents/${COLL}/__sync__`,
       fields: {
         syncedAt: { integerValue: String(now) },
         eventCount: { integerValue: String(eventCount) },
@@ -282,7 +282,13 @@ async function listUids(token: string): Promise<string[]> {
     const res = await fetch(`${DOCS}/${COLL}?${q}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return uids;
     const body = await res.json() as any;
-    for (const d of body.documents || []) uids.push(decodeURIComponent(d.name.split('/').pop()));
+    for (const d of body.documents || []) {
+      const id = decodeURIComponent(d.name.split('/').pop());
+      // `__sync__` is our own freshness stamp, not a TeamSnap event. Listing it
+      // here would tombstone it as "missing from feed" on the very next run.
+      if (id === '__sync__') continue;
+      uids.push(id);
+    }
     pageToken = body.nextPageToken || '';
     if (!pageToken) break;
   }
