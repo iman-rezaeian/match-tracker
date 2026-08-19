@@ -13386,11 +13386,13 @@ function calSyncedLabel(syncedAt) {
 /**
  * The bar colour for an entry, or null when it must not draw one.
  *
- * Wraps the model's entryColor() rather than calling it directly: ENTRY_COLORS.off
- * is null, and entryColor()'s `??` fallback treats that as "no key" and returns
- * team-event grey. An off day would therefore paint a grey bar, which is the exact
- * opposite of what the day means. Gate on the kind so the renderers cannot inherit
- * that.
+ * Wraps the model's entryColor() rather than calling it directly. entryColor()
+ * now returns null for an off day correctly, but it did not always: it resolved
+ * kinds with `??`, and ENTRY_COLORS.off IS null, which `??` treats as absent — so
+ * off days fell through to team-event grey and painted the one bar the design
+ * forbids. The model was fixed to look the kind up with `in`; this guard stays as
+ * a cheap belt-and-braces so a future refactor of that lookup cannot silently
+ * reintroduce a grey bar on a day that means "nothing is happening".
  */
 function calBarColor(entry) {
   if (!entry || entry.kind === 'off') return null;
@@ -17158,6 +17160,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
