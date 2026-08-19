@@ -653,6 +653,21 @@ The calendar's edit sheet must be the *same* form, not a copy — reimplementing
   ```
   `values` carries exactly the keys of `initial`. `GameForm` owns all its input state; callers own persistence.
 
+  **`onEditSquad` receives the LIVE values, not `initial`.** `GameForm` calls
+  `onEditSquad(values())` so the caller can persist what the coach has typed
+  *before* navigating away to the squad picker. Reading `initial` instead would
+  silently discard every edit made since the last save — the squad detour's whole
+  job is to not lose them.
+
+  **Re-seeding must key on a value signature, not object identity.** In
+  production `_sync_html.py` wires ONE `teamDoc().onSnapshot` that sets roster,
+  weights *and* schedule, so any roster or weights write hands `setSchedule` a
+  brand-new array. A re-seed `useEffect`/`useMemo` keyed on the array or on a
+  freshly-built object therefore refires on unrelated writes and wipes the form
+  while the coach is typing — in production only. Key on a JSON value signature
+  plus the editing id plus a nonce that a reset bumps (see `formSig` /
+  `formNonce` in `ScheduleView`).
+
 - [ ] **Step 1: Create GameForm with the existing markup**
 
 Define `function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCancel, onEditSquad, showToast })` directly above `function ScheduleView`. Move into it, unchanged: the `useState` declarations for `opponent`, `date`, `time`, `tournament`, `location`, `field`, `isHome`, `format`, `halfLengthMin`, `halfLenTouched`, `homeColor`, `awayColor`, `squadIds`, `showSetup`; the helpers `pickFormat`, `setHalfLenManually`, `isLightColor`; and the entire "Add form" JSX block (`{/* Add form */}` through the submit button, around lines 13350–13600). Seed each `useState` from `initial`, and re-seed with a `useEffect` on `initial` so reopening the sheet for a different day updates the fields.
@@ -670,12 +685,14 @@ Replace the extracted block in `ScheduleView` with:
         editing={!!editingId}
         onSubmit={handleFormSubmit}
         onCancel={resetForm}
-        onEditSquad={() => onEditSquad?.({ id: editingId, opponent: formInitial.opponent || 'Opponent', squadIds: formInitial.squadIds })}
+        onEditSquad={handleEditSquad}
         showToast={showToast}
       />
 ```
 
-Keep `ScheduleView`'s `editingId`, `handleEdit`, `handleDelete`, `handleToggleCancel`, `renderRow`, the opponent manager and the past-games section as they are. `formInitial` is derived from `editingId` (the matching schedule item, or empty defaults); `handleFormSubmit` contains the add-vs-edit branch that `handleAdd` had.
+Keep `ScheduleView`'s `editingId`, `handleEdit`, `handleDelete`, `handleToggleCancel`, `renderRow`, the opponent manager and the past-games section as they are. `handleFormSubmit` contains the add-vs-edit branch that `handleAdd` had. `handleEditSquad(values)` persists the live form values and *then* navigates, which is why `GameForm` hands them out rather than the caller reading stale state.
+
+`formInitial` is memoised on `[editingId, formSig, formNonce]` — never on the `schedule` array itself, for the production re-seed reason in the Interfaces block above.
 
 - [ ] **Step 3: Verify no behaviour changed**
 
@@ -747,6 +764,8 @@ Open the app, select a day holding a scheduled game, and confirm the row is visu
 Header: month name with ‹ › steppers, `Synced Nm ago` (from `syncedAt`, hidden when null), and when `canEdit`, `+ ADD GAME` and `🏷️ OPPONENTS` actions. Body: `CalendarMonthGrid`, then `CalendarDayRows` for the selected day, then a "Next up" agenda strip listing the next four entries at or after `today` **across month boundaries** (this is the capability a month grid loses versus the old flat list). Footer: the colour legend.
 
 Tapping a day selects it. When `canEdit`, tapping an empty day, or `+ ADD GAME`, or a tournament block's add action, opens `GameForm` in a sheet with `initial` prefilled per the spec's interaction matrix: date always; tournament and location from a same-day `tournament_block`; time when the TeamSnap event carries one.
+
+Two rules carried over from Task 4, both load-bearing: memoise the sheet's `initial` on a **value signature plus a nonce**, never on the `schedule` array (a roster or weights write refires the shared team-doc snapshot and would wipe the form mid-typing in production); and wire `onEditSquad` to a handler that persists the **values `GameForm` hands out**, not the `initial` it was opened with.
 
 - [ ] **Step 4: Verify all five colours and both greys render**
 
