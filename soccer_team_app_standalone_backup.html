@@ -2907,6 +2907,11 @@ function CoachApp() {
           onBack={() => setView('home')}
           askConfirm={askConfirm}
           showToast={showToast}
+          // The squad picker unmounts the calendar, taking its sheet state with
+          // it. SquadPickerView already records which item was being edited on
+          // both exits, so hand it back and the coach resumes where they were.
+          resumeEditId={resumeScheduleEditId}
+          onConsumedResumeEditId={() => setResumeScheduleEditId(null)}
         />
       )}
 
@@ -14037,6 +14042,10 @@ function CalendarView({
   roster = [], opponentSuggestions = [], activeGame = null,
   onOpenGame, onStartGame, onSaveGame, onDeleteGame, onToggleCancel,
   onEditSquad, onManageOpponents, onBack, askConfirm, showToast,
+  // Set by the caller when returning from the squad picker, so the coach lands
+  // back in the edit sheet they left instead of a closed calendar. Mirrors
+  // ScheduleView's initialEditId/onConsumedInitialEditId pair.
+  resumeEditId = null, onConsumedResumeEditId,
 }) {
   const [month, setMonth] = useState(() => calMonthOf(today) || calMonthOf(new Date().toISOString()));
   const [selected, setSelected] = useState(today);
@@ -14045,6 +14054,25 @@ function CalendarView({
   // Bumped on every open so a blank form re-seeds even when it was blank before.
   const [formNonce, setFormNonce] = useState(0);
   const [showLegend, setShowLegend] = useState(false);
+
+  // Re-open the sheet for the game whose squad was just picked. The sheet is
+  // internal state and dies when the view unmounts for the picker detour, so
+  // without this the coach silently loses their place mid-edit.
+  useEffect(() => {
+    if (!resumeEditId || !canEdit) return;
+    for (const entries of model.days.values()) {
+      const hit = entries.find((e) => e.scheduleId === resumeEditId);
+      if (hit) {
+        setSelected(hit.date);
+        setMonth(calMonthOf(hit.date));
+        setSheet({ mode: 'edit', scheduleId: resumeEditId, seed: hit.raw || null });
+        setFormNonce((n) => n + 1);
+        break;
+      }
+    }
+    onConsumedResumeEditId?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeEditId]);
 
   const selectedEntries = model.days.get(selected) || [];
   const syncedLabel = calSyncedLabel(syncedAt);
@@ -17207,6 +17235,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
