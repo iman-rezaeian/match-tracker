@@ -569,16 +569,24 @@ The merge needs the synced events. This adds the Firestore read only — no UI y
 - Consumes: nothing from earlier tasks.
 - Produces: `teamsnapEvents` array in `App` state, shaped as the docs written by `worker/src/teamsnap.ts` (`uid, title, type, canceled, date, time, allDay, endDate, venue, address, arrival, tz, modified, missingFromFeed`).
 
-**`teamsnapSyncedAt` was NOT implemented, deliberately.** The only candidate
-field is `modified`, which the Worker fills from the feed's `LAST-MODIFIED` —
-i.e. when the *coach last edited the event in TeamSnap*, not when our cron last
-ran. `max(modified)` would therefore read as days or weeks old seconds after a
-successful sync, and would never advance while the coach isn't editing TeamSnap:
-a "Synced 9d ago" line that actively misinforms. Nothing in Firestore currently
-records the cron's own run time, and inventing a write to store one was out of
-scope for this task. Task 5 should pass `syncedAt={null}` and leave the line
-hidden (its interface already allows null) until a sync-time field is added to
-the Worker as its own change.
+**`syncedAt` must NOT come from any event's `modified` field.** Task 3's
+implementer caught this: `modified` is the feed's `LAST-MODIFIED` — when the
+*coach last edited the event in TeamSnap*, not when our cron ran. On the real
+feed the newest such stamp is ~22h old, so `max(modified)` reads "Synced 22h ago"
+one second after a clean sync and never advances while nobody is editing
+TeamSnap. Actively misinforming, so it was correctly left unimplemented.
+
+**Resolved by a Worker change (commit `4e390d1`).** The cron now writes its own
+clock as one more write in the batch that mirrors the events:
+
+```
+teams/main/teamsnapEvents/__sync__  ->  { syncedAt: <ms>, eventCount: <n> }
+```
+
+It sits inside the collection the calendar already subscribes to, so it needs no
+extra read and no new security rule. **Consumers MUST filter it out of the events
+list** — its doc id is `__sync__`, while real ids look like `9230745-366776389` —
+and read `syncedAt` from it. Task 5 passes that value, not `null`.
 
 `teamsnapEvents` is a Firestore **subcollection**, so unlike `schedule` it needs its own listener. Add a NEW `useEffect` — do not modify the existing team-doc effect, which `_sync_html.py` replaces by exact text.
 
