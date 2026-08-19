@@ -231,6 +231,31 @@ function tombstoneFor(uid: string) {
   };
 }
 
+/**
+ * A doc recording when the CRON last ran, which is NOT the same thing as any
+ * event's `modified` field: that carries the feed's own LAST-MODIFIED, i.e. when
+ * the coach last edited the event in TeamSnap. Deriving freshness from it would
+ * report ~22h of age one second after a clean sync, and would freeze whenever the
+ * coach is not editing. The calendar's "Synced Nm ago" line needs OUR clock.
+ *
+ * It lives at `<COLL>/__sync__` — inside the collection the calendar already
+ * subscribes to, so it costs no extra read and needs no new Firestore rule. The
+ * leading underscores keep it clear of the UID namespace (TeamSnap UIDs look like
+ * `9230745-366776389`); consumers MUST skip it when building events.
+ */
+function syncMetaWrite(now: number, eventCount: number) {
+  return {
+    update: {
+      name: `projects/${PROJECT}/databases/(default)/documents/teams/main/public/teamsnapSync`,
+      fields: {
+        syncedAt: { integerValue: String(now) },
+        eventCount: { integerValue: String(eventCount) },
+      },
+    },
+    updateMask: { fieldPaths: ['syncedAt', 'eventCount'] },
+  };
+}
+
 async function commit(token: string, writes: any[]): Promise<number> {
   let done = 0;
   for (let i = 0; i < writes.length; i += COMMIT_CHUNK) {
@@ -304,7 +329,8 @@ export async function syncTeamsnap(env: any): Promise<SyncResult> {
   const written = await commit(token, [
     ...events.map(writeFor),
     ...stale.map(tombstoneFor),
-  ]);
+    syncMetaWrite(Date.now(), events.length),
+  ]) - 1; // the meta doc is not an event
   const tombstoned = stale.length;
 
   const tag = res.headers.get('etag');
