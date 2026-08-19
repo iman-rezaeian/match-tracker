@@ -382,7 +382,10 @@ export async function teamsnapStatus(env: any): Promise<any> {
   });
   if (!res.ok) return { ok: false, error: `list ${res.status}` };
   const body = await res.json() as any;
-  const docs = body.documents || [];
+  const all = body.documents || [];
+  // The freshness stamp lives in this collection but is not an event; counting it
+  // reported 117 mirrored events and an empty '?' type bucket.
+  const docs = all.filter((d: any) => !d.name.endsWith('/zz-sync-meta'));
   const byType: Record<string, number> = {};
   let canceled = 0, missing = 0, overrides = 0;
   for (const d of docs) {
@@ -395,7 +398,7 @@ export async function teamsnapStatus(env: any): Promise<any> {
   }
   const etag = env.SYNC_STATE ? await env.SYNC_STATE.get('ics-etag') : null;
   const lastError = env.SYNC_STATE ? await env.SYNC_STATE.get('last-error') : null;
-  const syncDoc = docs.find((d: any) => d.name.endsWith('/zz-sync-meta'));
+  const syncDoc = all.find((d: any) => d.name.endsWith('/zz-sync-meta'));
   return { ok: true, mirrored: docs.length, byType, canceled, missingFromFeed: missing,
            coachOverrides: overrides, haveEtag: !!etag,
            syncedAt: syncDoc?.fields?.syncedAt?.integerValue
