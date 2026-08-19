@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCalendarModel } from '../js/calendarModel.mjs';
+import { buildCalendarModel, entryColor, ENTRY_COLORS } from '../js/calendarModel.mjs';
 
 const TS = {
   ecslEnd:   { uid: '9230745-355316144', title: 'ECSL End Festival- confirmed', type: 'game', date: '2026-08-22', time: '', allDay: true, canceled: false, venue: '', arrival: '12:00 PM' },
@@ -157,4 +157,24 @@ test('entry keys are unique and stable', () => {
   });
   const keys = [...m.days.values()].flat().map(e => e.key);
   assert.equal(new Set(keys).size, keys.length);
+});
+
+test('an off day gets no bar colour', () => {
+  // Regression: ENTRY_COLORS.off IS null, so a `??` fallback treated it as
+  // absent and returned team-event grey — drawing the one bar the spec forbids.
+  assert.equal(entryColor({ kind: 'off' }), null);
+});
+
+test('every declared kind resolves to its own colour', () => {
+  for (const kind of ['game_scheduled', 'game_unscheduled', 'practice', 'tryout',
+                      'team_event', 'tournament_block']) {
+    assert.equal(entryColor({ kind }), ENTRY_COLORS[kind], `${kind} colour`);
+  }
+  assert.equal(entryColor({ kind: 'game_finished', result: 'won' }), ENTRY_COLORS.won);
+  assert.equal(entryColor({ kind: 'game_finished', result: 'lost' }), ENTRY_COLORS.lost);
+  assert.equal(entryColor({ kind: 'game_finished', result: 'drawn' }), ENTRY_COLORS.drawn);
+});
+
+test('an unknown kind still gets a visible fallback colour', () => {
+  assert.equal(entryColor({ kind: 'something_new' }), ENTRY_COLORS.team_event);
 });

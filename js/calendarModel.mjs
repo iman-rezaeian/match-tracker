@@ -173,8 +173,17 @@ export function buildCalendarModel({ teamsnapEvents = [], schedule = [], games =
   return { days, byMonth, today };
 }
 
-/** The bar colour for an entry, or null when it should not draw one. */
+/**
+ * The bar colour for an entry, or null when it should not draw one.
+ *
+ * `off` deliberately returns null: an off day means nothing is happening, so a
+ * bar would say the opposite. Note the lookup cannot use `??` to fall back —
+ * `ENTRY_COLORS.off` IS null, and `??` treats that as absent and would hand back
+ * team-event grey, drawing exactly the bar the spec forbids. Use `in` so a
+ * declared null stays null and only genuinely unknown kinds fall back.
+ */
 export function entryColor(entry) {
   if (entry.kind === 'game_finished') return ENTRY_COLORS[entry.result] || null;
-  return ENTRY_COLORS[entry.kind] ?? ENTRY_COLORS.team_event;
+  if (entry.kind in ENTRY_COLORS) return ENTRY_COLORS[entry.kind];
+  return ENTRY_COLORS.team_event;
 }

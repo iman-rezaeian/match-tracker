@@ -56,11 +56,16 @@ console.log(`parsed ${events.length} events -> ${all.length} entries over ${mode
 console.log('byKind:', byKind);
 
 const dupKeys = all.length - new Set(all.map((e) => e.key)).size;
+// `off` is excluded because it SHOULD have no colour. Assert that separately,
+// or the exclusion hides a real bug: entryColor once fell through to grey for
+// off days, and this filter would never have noticed.
 const noColour = all.filter((e) => e.kind !== 'off' && !entryColor(e));
+const offWithColour = all.filter((e) => e.kind === 'off' && entryColor(e) !== null);
 const multi = [...model.days.entries()].filter(([, v]) => v.length > 1);
 
 console.log(`duplicate keys: ${dupKeys}`);
 console.log(`entries with no colour (excluding off): ${noColour.length}`);
+console.log(`off days wrongly given a colour: ${offWithColour.length}`);
 console.log(`days with more than one entry: ${multi.length}`);
 for (const [d, v] of multi) console.log(`  ${d}: ${v.map((e) => e.kind).join(', ')}`);
 
@@ -70,7 +75,7 @@ const badKinds = all.filter((e) => !VALID.has(e.kind));
 console.log(`entries with an invalid kind: ${badKinds.length}`);
 for (const e of badKinds.slice(0, 5)) console.log(`  ${e.kind}: ${e.title}`);
 
-if (dupKeys || noColour.length || badKinds.length || events.length === 0) {
+if (dupKeys || noColour.length || offWithColour.length || badKinds.length || events.length === 0) {
   console.error('FAIL');
   process.exit(1);
 }
