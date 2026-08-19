@@ -3,7 +3,8 @@
   "private": true,
   "description": "Build-time deps for Stompers match-tracker (Tailwind CLI).",
   "scripts": {
-    "build:css": "tailwindcss -i ./tailwind.input.css -o ./_site/tailwind.css --minify"
+    "build:css": "tailwindcss -i ./tailwind.input.css -o ./_site/tailwind.css --minify",
+    "test": "node --test \"test/**/*.test.mjs\""
   },
   "devDependencies": {
     "tailwindcss": "^3.4.13"
