@@ -13999,8 +13999,17 @@ function CalendarView({
     { label: 'Team event', color: ENTRY_COLORS.team_event },
   ];
 
+  // Two mounts, two shapes. The dugout routes here as a full screen (onBack
+  // gives it a Header), so it owns the viewport and paints its own surface.
+  // The parent view embeds it inline beneath the tile grid, where a
+  // viewport-tall lighter panel would look like a rendering fault. Decide it
+  // here rather than leaving callers to override the root from outside.
+  const rootClass = onBack
+    ? 'min-h-screen bg-stone-900 pb-8'
+    : 'bg-transparent pb-2';
+
   return (
-    <div className="min-h-screen bg-stone-900 pb-8">
+    <div className={rootClass}>
       {/* One <defs> for the whole view. Per-cell patterns would redefine the
           same six fills on every render of every day of the month. */}
       <svg width="0" height="0" className="absolute" aria-hidden="true">
@@ -16610,12 +16619,10 @@ function PublicHomePage({ access }) {
            the tiles, so CalendarView renders its embedded heading rather than
            a full-screen Header.
 
-           The wrapper exists because CalendarView's own root is
-           `min-h-screen bg-stone-900` for the dugout's full-screen mount:
-           inline that would force a viewport-tall lighter panel, so this caps
-           the height and repaints the background. Its sections already carry
+           The wrapper only centres and caps the width; CalendarView picks its
+           own root shape from the absence of onBack. Its sections already carry
            their own px-4, so no padding is added here. */}
-      <div className="max-w-2xl mx-auto [&>div]:min-h-0 [&>div]:bg-transparent">
+      <div className="max-w-2xl mx-auto">
         <CalendarView
           model={calendarModel}
           canEdit={false}
