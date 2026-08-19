@@ -312,6 +312,21 @@ export interface SyncResult {
  * CDN caches for 4h, so most 15-minute runs get a 304 and cost one request.
  */
 export async function syncTeamsnap(env: any): Promise<SyncResult> {
+  try {
+    return await runSync(env);
+  } catch (err: any) {
+    // Record the failure where the unauthenticated status endpoint can read it.
+    // A cron failure is otherwise invisible without an authenticated tail, which
+    // is exactly when you need to know why it broke.
+    const msg = String(err && err.message || err).slice(0, 400);
+    if (env.SYNC_STATE) {
+      await env.SYNC_STATE.put('last-error', JSON.stringify({ at: Date.now(), msg }));
+    }
+    throw err;
+  }
+}
+
+async function runSync(env: any): Promise<SyncResult> {
   const url = env.TEAMSNAP_ICS_URL;
   if (!url) return { ok: false, skipped: 'no-url', error: 'TEAMSNAP_ICS_URL not set' };
 
@@ -372,6 +387,11 @@ export async function teamsnapStatus(env: any): Promise<any> {
     if (f.coachType) overrides++;
   }
   const etag = env.SYNC_STATE ? await env.SYNC_STATE.get('ics-etag') : null;
+  const lastError = env.SYNC_STATE ? await env.SYNC_STATE.get('last-error') : null;
+  const syncDoc = docs.find((d: any) => d.name.endsWith('/__sync__'));
   return { ok: true, mirrored: docs.length, byType, canceled, missingFromFeed: missing,
-           coachOverrides: overrides, haveEtag: !!etag };
+           coachOverrides: overrides, haveEtag: !!etag,
+           syncedAt: syncDoc?.fields?.syncedAt?.integerValue
+             ? Number(syncDoc.fields.syncedAt.integerValue) : null,
+           lastError: lastError ? JSON.parse(lastError) : null };
 }
