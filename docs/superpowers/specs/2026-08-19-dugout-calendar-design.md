@@ -28,7 +28,8 @@ In:
 * A `CalendarView` component rendering a month grid plus a selected-day detail
   list, used in both the dugout and the parent view.
 * A pure merge function combining three sources into one day-keyed model.
-* Moving the coach's `schedule` from local storage to Firestore.
+* Reusing the coach's `schedule`, which already syncs via Firestore in
+  production (see below) — no migration needed.
 * Rewiring the dugout: the `SCHEDULE` tile becomes `CALENDAR`, and the
   `UPCOMING GAMES` and `PAST GAMES` sections are removed.
 * Rewiring the parent view: the `UPCOMING GAMES` rows become the calendar. Its
@@ -51,7 +52,7 @@ Out:
 | Source | Where | Owner | Carries |
 | --- | --- | --- | --- |
 | `teamsnapEvents` | Firestore `teams/main/teamsnapEvents` | the cron | practices, tournaments, team events, off-days, tryouts |
-| `schedule` | Firestore `teams/main/schedule` (moving; see below) | the coach | games with match-day setup |
+| `schedule` | Firestore, `schedule` array on `teams/main` | the coach | games with match-day setup |
 | `games` | Firestore `teams/main/games` | the app | finished games with results |
 
 The merge is a pure function — `buildCalendarModel({ teamsnapEvents, schedule,
@@ -105,23 +106,32 @@ schedule never did.
 `teamsnapEvents` entries are keyed by the TeamSnap `uid`, which the sync
 guarantees is stable and unique across polls.
 
-## Moving the schedule to Firestore
+## The schedule is already in Firestore
 
-Today `ScheduleView` persists through `storageGet`/`storageSet` on
-`STORAGE_KEYS.SCHEDULE` — one device, no sharing. The calendar makes that
-untenable: it would merge a shared Firestore collection with a per-device local
-array, and the coach's hand-entered tournament kickoff times — the only place
-those times exist — would stay invisible to families.
+An earlier draft of this design called for migrating the schedule out of local
+storage. **That work is unnecessary — it is already done.** `_sync_html.py`
+rewrites the app for production, and among its transforms it replaces the
+local-storage `persistSchedule` with `teamDoc().set({ schedule: next },
+{ merge: true })`, and the local-storage load with a `teamDoc().onSnapshot`
+listener that calls `setSchedule(data.schedule)`.
 
-Schedule items move to `teams/main/schedule/<id>`, one doc per item, matching how
-games are already stored.
+So in production the schedule is a `schedule` array field on `teams/main`: it
+already syncs across the coach's devices and is already readable by every allowed
+family, because `teams/main` is family-readable. The `storageGet`/`storageSet`
+path visible in `soccer_team_app.jsx` is the **local-dev** path only, which is why
+reading the JSX alone suggests otherwise.
 
-Migration runs once on first load: if local storage holds schedule items and the
-Firestore collection is empty, upload them and mark local as migrated. Local data
-is not deleted, so a failed migration is recoverable.
+Two consequences for this work:
 
-Rules: readable by any allowed user (parents need it for the calendar), writable
-by coaches only — the same shape as `games`.
+* There is **no migration task and no migration risk**. The calendar reads
+  `schedule` from the state the app already maintains.
+* Anything this plan changes about `persistSchedule` or the schedule-loading
+  `useEffect` must keep `_sync_html.py`'s replacements matching. That script
+  locates the code to replace by **exact source text** and calls `SystemExit`
+  when a match fails, so an innocuous edit to those blocks breaks the production
+  build. If a change there is unavoidable, update the corresponding string in
+  `_sync_html.py` in the same commit and run the script to prove it still
+  applies.
 
 ### Interaction with the TeamSnap sync
 
@@ -131,8 +141,8 @@ supplies one, the coach's value persists.** This is not a corner case — 16 of 
 34 games in the feed are all-day blocks with `time: ""` and no field, so kickoff
 times and fields for tournament days can only ever come from the coach.
 
-Coach-entered detail therefore lives in `teams/main/schedule`, never in the
-`teamsnapEvents` docs the cron overwrites. The sync physically cannot reach it.
+Coach-entered detail therefore lives in the `schedule` array on `teams/main`,
+never in the `teamsnapEvents` docs the cron overwrites. The sync physically cannot reach it.
 A scheduled game may reference the TeamSnap event it sits under via a
 `teamsnapUid` field, which is how a tournament day links its games to its block.
 
@@ -293,9 +303,11 @@ localhost, so coach-view changes have to be verified on the beta Pages URL.
 
 ## Risks
 
-**Migration.** Moving the schedule to Firestore touches live data the coach
-depends on. Mitigated by not deleting local storage, so a failed migration is
-recoverable.
+**The `_sync_html.py` coupling.** The production build rewrites the JSX by
+matching exact source text. Editing `persistSchedule`, the schedule-loading
+`useEffect`, or the surrounding persist functions breaks the build with a
+`SystemExit`. Any such edit must update the matching string in `_sync_html.py`
+in the same commit, verified by running the script.
 
 **Muscle memory.** The permanently-open form becomes a sheet. `+ ADD GAME`
 preserves the old path, but this is a real change to a daily flow.
