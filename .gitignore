@@ -41,3 +41,9 @@ run*.log
 
 # local parent contact data (never commit — kids/parents PII)
 parent_contacts.local.json
+
+# TeamSnap feed snapshots used by scripts/calendar_model_check.mjs. Not secrets
+# (the feed URL is the credential and lives in a Worker secret), but they record
+# where the kids will be and when — same reason parent_contacts.local.json is
+# ignored. Re-fetch locally when you need one.
+test/fixtures/*.ics

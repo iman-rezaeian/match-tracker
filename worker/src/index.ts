@@ -22,12 +22,17 @@
  * BINDINGS (Worker → Settings → Bindings):
  *   - R2 Bucket: variable name "BUCKET", bucket "stompers-videos"
  *
+ * CRON: every 15 min, mirrors the TeamSnap iCal feed into Firestore
+ *   (see teamsnap.ts — needs TEAMSNAP_ICS_URL + FIREBASE_SA_JSON secrets).
+ *
  * ENDPOINTS (all take { idToken } — legacy { password } still honoured):
  *   POST /upload-url       { idToken, filename, contentType? } → { uploadUrl (presigned S3), publicUrl }
  *   PUT  /put/:filename?auth=<idToken>  (raw body, fallback ≤100MB) → { ok, publicUrl }
  *   POST /live-input       { idToken, name }     → { uid, rtmpsUrl, streamKey, hlsUrl }
  *   POST /live-input/:uid/delete  { idToken }    → { ok }
  */
+
+import { syncTeamsnap, teamsnapStatus } from './teamsnap';
 
 const PUBLIC_BASE = 'https://pub-27636b574e544724ab8c5d7c7e755a99.r2.dev';
 const R2_BUCKET = 'stompers-videos';
@@ -535,6 +540,48 @@ export default {
       }
     }
 
+    // ---- GET /teamsnap/status ----
+    // Read-only health check for the cron: how many events are mirrored, their
+    // type split, and the newest few. Deliberately unauthenticated but
+    // non-sensitive in aggregate — counts and types only, no venues, no times,
+    // nothing that says where the kids will be.
+    if (request.method === 'GET' && url.pathname === '/teamsnap/status') {
+      try {
+        const out = await teamsnapStatus(env);
+        return json(out);
+      } catch (err) {
+        return json({ ok: false, error: String(err.message || err) }, 500);
+      }
+    }
+
+    // ---- POST /teamsnap/sync ----
+    // Manual kick of the same job the cron runs, so a coach who just edited
+    // TeamSnap can pull immediately instead of waiting for the next tick.
+    // Bounded by TeamSnap's own 4h CDN cache — a manual run right after an edit
+    // may still get cached bytes and report skipped:'not-modified'.
+    if (request.method === 'POST' && url.pathname === '/teamsnap/sync') {
+      let body;
+      try { body = await request.json(); } catch { body = {}; }
+      const { password, idToken } = body || {};
+      const _unauth = await requireAuth(env, { idToken, password });
+      if (_unauth) return _unauth;
+      try {
+        return json(await syncTeamsnap(env));
+      } catch (err) {
+        return json({ ok: false, error: String(err.message || err) }, 500);
+      }
+    }
+
     return json({ error: 'not found' }, 404);
+  },
+
+  // Cron entry point. Errors are logged rather than thrown so one bad poll
+  // never wedges the schedule — the next tick retries in 15 minutes.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(
+      syncTeamsnap(env)
+        .then((r) => console.log('teamsnap sync', JSON.stringify(r)))
+        .catch((e) => console.error('teamsnap sync failed', String(e && e.message || e)))
+    );
   },
 };

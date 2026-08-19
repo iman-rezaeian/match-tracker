@@ -28,3 +28,27 @@ bucket_name = "stompers-videos"
 #   R2_SECRET_ACCESS_KEY — S3 API token secret key
 #   CF_ACCOUNT_ID        — Cloudflare account ID (for R2 S3 endpoint)
 #   CF_API_TOKEN         — Cloudflare API token (for Stream live inputs)
+
+# ─── TeamSnap schedule sync ───────────────────────────────────────────────────
+# Every 15 minutes, at the coach's request. Note this is deliberately faster
+# than it needs to be: TeamSnap's CDN serves the feed with
+# `cache-control: max-age=14400` (4 hours), so most runs re-read identical
+# bytes. The job sends If-None-Match and exits on a 304 before parsing or
+# writing, so the extra ticks cost ~1 cheap request each.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# Stores the feed's last ETag so unchanged polls short-circuit — without this
+# every 15-minute tick would re-parse and re-write all 116 events even when
+# TeamSnap's 4h-cached feed has not changed a byte.
+[[kv_namespaces]]
+binding = "SYNC_STATE"
+id = "ab016d5307af4e7cb7ac5be53508defd"
+
+# Secrets (set via `wrangler secret put`):
+#   TEAMSNAP_ICS_URL  — the team's ical-cdn.teamsnap.com feed URL. This URL *is*
+#                       a credential: anyone holding it can read the whole
+#                       schedule, including where the kids will be and when.
+#                       SECRET ONLY — never a [vars] entry.
+#   FIREBASE_SA_JSON  — service-account JSON for Firestore writes. The cron has
+#                       no signed-in user to borrow a token from.
