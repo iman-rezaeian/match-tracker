@@ -15,11 +15,11 @@
 - **Single-file app.** All component code lives in `soccer_team_app.jsx` (~15,800 lines). Do not introduce a bundler, module imports, or new npm runtime dependencies. The app is transpiled in-browser from one file.
 - **`_sync_html.py` matches source text exactly.** It rewrites the JSX for production and raises `SystemExit` when a match fails. Do NOT edit `persistSchedule`, `persistRoster`, `persistGames`, `persistWeights`, `persistTeamLiveInput`, or the schedule-loading `useEffect` without updating the matching string in `_sync_html.py` in the same commit and re-running it. Tasks in this plan are designed to avoid touching them.
 - **The schedule already syncs.** In production the `schedule` array is a field on `teams/main`, read via `onSnapshot` and written by `persistSchedule`. The `storageGet`/`storageSet` code in the JSX is the local-dev path only. There is no migration.
-- **No test runner exists.** Tests use `node:test` + `node:assert`, run with `node --test`. Do not add jest/vitest.
+- **No test runner exists.** Tests use `node:test` + `node:assert`. Run them with `npm test`, which globs `test/**/*.test.mjs`. Do NOT pass a bare directory (`node --test test/`) — Node 26 resolves that as a module entry point and dies before running anything. Do not add jest/vitest.
 - **Pure merge logic must stay pure** — no React, no `window`, no `Date.now()` inside `buildCalendarModel`; `today` is a parameter. This is what makes it testable.
 - **Colours are fixed** (spec §Visual language): game (scheduled or unscheduled) `#378ADD`, won `#639922`, lost `#E24B4A`, drawn `#5F5E5A`, practice `#7F77DD`, tryout `#EF9F27`, team event `#B4B2A9`, off = no bar. Cancelled = same kind's 600 stop + X cross-hatch, 0.8px stroke on a 6px tile, 1.0px on the 8px badge, light strokes except team-event grey which uses black `#2C2C2A`.
 - **Verify coach-view changes on the deployed beta**, not localhost — the coach cannot sign in on localhost.
-- **Commit message format:** Conventional Commits, `<type>: <subject>` ≤50 chars imperative lowercase, body wrapped at 72 explaining *why*. No `Co-authored-by` trailers, no mention of Claude.
+- **Commit message format:** Conventional Commits, `<type>: <subject>` ≤50 chars imperative lowercase, body wrapped at 72 explaining *why*. No `Co-authored-by` trailers, no mention of Claude. If a commit subject quoted in a task exceeds 50 chars, the 50-char rule wins — shorten it.
 
 ---
 
@@ -411,7 +411,7 @@ Expected: PASS, 15 tests.
 In `package.json`, add to `scripts`:
 
 ```json
-"test": "node --test test/"
+"test": "node --test \"test/**/*.test.mjs\""
 ```
 
 - [ ] **Step 6: Run the suite through the script**
@@ -423,7 +423,7 @@ Expected: PASS.
 
 ```bash
 git add js/calendarModel.mjs test/calendarModel.test.mjs package.json
-git commit -m "feat: merge the three schedule sources into a calendar model"
+git commit -m "feat: merge schedule sources into a calendar model"
 ```
 
 ---
@@ -440,20 +440,21 @@ The unit tests use eight hand-picked events. This proves the merge survives all 
 - Consumes: `buildCalendarModel`, `entryColor` from Task 1.
 - Produces: a CLI check; no app code depends on it.
 
-- [ ] **Step 1: Save a feed snapshot**
+- [ ] **Step 1: Confirm the feed snapshot is present**
+
+A snapshot is already staged at `test/fixtures/teamsnap-sample.ics` (116 events).
 
 ```bash
-mkdir -p test/fixtures
-curl -sS -o test/fixtures/teamsnap-sample.ics "$(cd worker && npx wrangler secret list >/dev/null 2>&1; echo '')" || true
+grep -c 'BEGIN:VEVENT' test/fixtures/teamsnap-sample.ics
 ```
+Expected: `116`.
 
-If that produces nothing (the URL is a Worker secret, not available locally), ask the coach to run:
-
-```bash
-curl -sS -o test/fixtures/teamsnap-sample.ics '<the TeamSnap feed URL>'
-```
-
-Do NOT hardcode the feed URL in any committed file — it is a credential.
+It is **gitignored on purpose** (`.gitignore` line for `test/fixtures/*.ics`). The
+file is not a secret — the feed URL is the credential and lives in a Worker
+secret — but it records where the kids will be and when, which is the same reason
+`parent_contacts.local.json` is ignored. Do not commit it and do not hardcode the
+feed URL anywhere. If the snapshot is missing, ask the coach to re-fetch it
+locally rather than putting the URL in a file.
 
 - [ ] **Step 2: Write the check script**
 
@@ -544,12 +545,13 @@ console.log('OK');
 Run: `node scripts/calendar_model_check.mjs test/fixtures/teamsnap-sample.ics`
 Expected: `OK`, 116 entries over 113 days, `duplicate keys: 0`, `entries with no colour: 0`, `entries with an invalid kind: 0`, and 3 multi-entry days (2026-07-23, 2026-08-22, 2026-10-23). `byKind` should read `practice: 66, tournament_block: 27, team_event: 9, game_unscheduled: 7, off: 4, tryout: 3` — note **no bare `game`**, which was a real bug caught by running this check while the plan was being written.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit the script only**
 
-Add the fixture to `.gitignore` if it embeds anything identifying; the events themselves are team schedule data, not credentials, so committing the snapshot is acceptable and makes the check reproducible.
+The fixture stays untracked (see Step 1), so commit just the checker and the
+`.gitignore` rule that keeps snapshots out of history.
 
 ```bash
-git add scripts/calendar_model_check.mjs test/fixtures/teamsnap-sample.ics
+git add scripts/calendar_model_check.mjs .gitignore
 git commit -m "test: check the calendar merge against the whole feed"
 ```
 
