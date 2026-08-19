@@ -13298,21 +13298,28 @@ function WeightsView({ weights, onSave, onBack }) {
   );
 }
 
-function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
-  const [opponent, setOpponent] = useState('');
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [tournament, setTournament] = useState('');
-  const [location, setLocation] = useState('');
-  const [field, setField] = useState('');
+/* ---------- GAME FORM (shared by ScheduleView and the calendar sheet) ---------- */
+// Extracted from ScheduleView so the calendar's edit sheet mounts the *same*
+// fifteen inputs rather than a copy of them. Owns all its input state; the
+// caller owns persistence and decides what `initial` is.
+function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCancel, onEditSquad, showToast }) {
+  const init = initial || {};
+  const [opponent, setOpponent] = useState(init.opponent || '');
+  const [date, setDate] = useState(init.date || '');
+  const [time, setTime] = useState(init.time || '');
+  const [tournament, setTournament] = useState(init.tournament || '');
+  const [location, setLocation] = useState(init.location || '');
+  const [field, setField] = useState(init.field || '');
   // Optional match-day pre-fill — saved on the schedule item, used when the
   // coach taps START on match day to skip setup screens.
-  const [isHome, setIsHome] = useState(true);
-  const [format, setFormat] = useState(DEFAULT_FORMAT);
-  const [halfLengthMin, setHalfLengthMin] = useState(FORMATS[DEFAULT_FORMAT].halfMin);
+  const [isHome, setIsHome] = useState(typeof init.isHome === 'boolean' ? init.isHome : true);
+  const [format, setFormat] = useState(FORMATS[init.format] ? init.format : DEFAULT_FORMAT);
+  const [halfLengthMin, setHalfLengthMin] = useState(
+    typeof init.halfLengthMin === 'number' ? init.halfLengthMin : FORMATS[FORMATS[init.format] ? init.format : DEFAULT_FORMAT].halfMin
+  );
   // Same suggest-but-never-override rule as GameSetup: flipping format moves the
   // clock only while the coach hasn't set it themselves.
-  const [halfLenTouched, setHalfLenTouched] = useState(false);
+  const [halfLenTouched, setHalfLenTouched] = useState(typeof init.halfLengthMin === 'number');
   const pickFormat = (next) => {
     setFormat(next);
     if (!halfLenTouched) setHalfLengthMin(FORMATS[next].halfMin);
@@ -13321,14 +13328,10 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
     setHalfLenTouched(true);
     setHalfLengthMin(next);
   };
-  const [homeColor, setHomeColor] = useState('#0a0a0a');
-  const [awayColor, setAwayColor] = useState('#dc2626');
-  const [squadIds, setSquadIds] = useState([]);
-  const [editingId, setEditingId] = useState(null);
+  const [homeColor, setHomeColor] = useState(init.homeColor || '#0a0a0a');
+  const [awayColor, setAwayColor] = useState(init.awayColor || '#dc2626');
+  const [squadIds, setSquadIds] = useState(Array.isArray(init.squadIds) ? init.squadIds : []);
   const [showSetup, setShowSetup] = useState(false);
-  const [showPast, setShowPast] = useState(false);
-  const [showOpponentManager, setShowOpponentManager] = useState(false);
-  const formRef = React.useRef(null);
   const isLightColor = (hex) => {
     try {
       const h = (hex || '').replace('#', '');
@@ -13337,113 +13340,413 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
     } catch { return false; }
   };
 
-  // Keep our local squad state in sync when the parent saves an updated
-  // schedule (e.g., after returning from the squad picker for the same item).
+  // Re-seed every field when the caller hands us a different game (or resets to
+  // a blank form), so reopening the sheet for another day shows that day.
   React.useEffect(() => {
-    if (!editingId) return;
-    const item = schedule.find(s => s.id === editingId);
-    if (item && Array.isArray(item.squadIds)) setSquadIds(item.squadIds);
-  }, [schedule, editingId]);
+    const it = initial || {};
+    setOpponent(it.opponent || '');
+    setDate(it.date || '');
+    setTime(it.time || '');
+    setTournament(it.tournament || '');
+    setLocation(it.location || '');
+    setField(it.field || '');
+    setIsHome(typeof it.isHome === 'boolean' ? it.isHome : true);
+    const fmt = FORMATS[it.format] ? it.format : DEFAULT_FORMAT;
+    setFormat(fmt);
+    setHalfLengthMin(typeof it.halfLengthMin === 'number' ? it.halfLengthMin : FORMATS[fmt].halfMin);
+    setHalfLenTouched(typeof it.halfLengthMin === 'number');
+    setHomeColor(it.homeColor || '#0a0a0a');
+    setAwayColor(it.awayColor || '#dc2626');
+    setSquadIds(Array.isArray(it.squadIds) ? it.squadIds : []);
+    setShowSetup(
+      typeof it.isHome === 'boolean' ||
+      typeof it.halfLengthMin === 'number' ||
+      !!it.homeColor ||
+      !!it.awayColor ||
+      (Array.isArray(it.squadIds) && it.squadIds.length > 0)
+    );
+  }, [initial]);
+
+  const values = () => ({
+    opponent: opponent.trim(),
+    date,
+    time: time || '',
+    tournament: tournament.trim(),
+    location: location.trim(),
+    field: field.trim(),
+    isHome,
+    format,
+    halfLengthMin,
+    homeColor,
+    awayColor,
+    squadIds: Array.isArray(squadIds) ? squadIds : [],
+  });
+
+  const handleSubmit = () => {
+    if (!opponent.trim() || !date) return;
+    onSubmit?.(values());
+  };
+
+  return (
+    <div className={`bg-stone-900 border rounded-2xl p-4 space-y-3 ${editing ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-stone-800'}`}>
+      <div className="font-display text-lg flex items-center gap-2">
+        {editing ? <><span>✏️</span><span>EDIT GAME</span></> : <span>ADD GAME</span>}
+      </div>
+      <input
+        type="text"
+        placeholder="Opponent *"
+        value={opponent}
+        onChange={e => setOpponent(e.target.value)}
+        list="opponent-suggestions"
+        autoComplete="off"
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
+      {opponentSuggestions.length > 0 && (
+        <datalist id="opponent-suggestions">
+          {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+        </datalist>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <label className="relative block">
+          <span className="text-xs font-semibold text-stone-400 mb-1 block">DATE *</span>
+          <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+            {date ? new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : <span className="text-stone-400">Select date</span>}
+          </div>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+          />
+        </label>
+        <label className="relative block">
+          <span className="text-xs font-semibold text-stone-400 mb-1 block">TIME</span>
+          <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
+            {time ? formatTime12(time) : <span className="text-stone-400">Select time</span>}
+          </div>
+          <input
+            type="time"
+            value={time}
+            onChange={e => setTime(e.target.value)}
+            className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+          />
+        </label>
+      </div>
+      <input
+        type="text"
+        placeholder="Tournament / Festival"
+        value={tournament}
+        onChange={e => setTournament(e.target.value)}
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
+      <input
+        type="text"
+        placeholder="Location (address or Google Maps link)"
+        value={location}
+        onChange={e => setLocation(e.target.value)}
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
+      <input
+        type="text"
+        placeholder="Field # / name (e.g., Field 4)"
+        value={field}
+        onChange={e => setField(e.target.value)}
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
+
+      {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
+      <button
+        type="button"
+        onClick={() => setShowSetup(s => !s)}
+        className="w-full flex items-center justify-between bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-sm text-stone-200 active:scale-[0.99]"
+      >
+        <span className="font-semibold tracking-wide">
+          ⚙️ MATCH-DAY SETUP <span className="text-stone-500 font-normal">(optional)</span>
+        </span>
+        <span className="text-stone-400 text-xs">{showSetup ? 'HIDE ▲' : 'SHOW ▼'}</span>
+      </button>
+      {showSetup && (
+        <div className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
+          <p className="text-[11px] text-stone-400 leading-snug">
+            Pre-fill what you know now. If you set <span className="font-bold text-stone-200">everything</span> (squad + home/away + half length + both colors), tapping START on match day jumps straight to the starting lineup — no setup screens.
+          </p>
+
+          {/* Home / Away */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SIDE</div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsHome(true)}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+              >🏠 HOME</button>
+              <button
+                type="button"
+                onClick={() => setIsHome(false)}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+              >✈️ AWAY</button>
+            </div>
+          </div>
+
+          {/* Format — 7v7 (Canada) vs 9v9 (US tournaments) */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">FORMAT</div>
+            <div className="flex gap-2">
+              {Object.values(FORMATS).map(f => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => pickFormat(f.key)}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${format === f.key ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
+                >{f.key.toUpperCase()}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Half length */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">HALF LENGTH (MIN)</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setHalfLenManually(Math.max(1, halfLengthMin - 1))}
+                className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+              >−</button>
+              <div className="flex-1 py-2 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
+                <div className="font-display text-2xl text-stone-100 tabular-nums leading-none">{halfLengthMin}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHalfLenManually(Math.min(99, halfLengthMin + 1))}
+                className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
+              >+</button>
+            </div>
+            {!halfLenTouched && (
+              <div className="text-[10px] text-stone-500 mt-1">Suggested for {format.toUpperCase()}</div>
+            )}
+          </div>
+
+          {/* Stompers jersey */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">LASALLE STOMPERS JERSEY</div>
+            <div className="flex gap-2 items-center">
+              {[{ label: 'Black', color: '#0a0a0a' }, { label: 'Green', color: '#16a34a' }].map(p => (
+                <button
+                  key={p.color}
+                  type="button"
+                  onClick={() => setHomeColor(p.color)}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                  style={{ background: p.color, color: '#fff' }}
+                >{p.label.toUpperCase()}</button>
+              ))}
+              <label
+                className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#0a0a0a', '#16a34a'].includes(homeColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                style={{ background: homeColor, color: isLightColor(homeColor) ? '#0a0a0a' : '#fff' }}
+              >
+                🎨 CUSTOM
+                <input type="color" value={homeColor} onChange={e => setHomeColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+              </label>
+            </div>
+          </div>
+
+          {/* Opponent jersey */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">OPPONENT JERSEY</div>
+            <div className="flex gap-2 items-center">
+              {[
+                { label: 'Red', color: '#dc2626' },
+                { label: 'Blue', color: '#2563eb' },
+                { label: 'White', color: '#f5f5f4' },
+              ].map(p => (
+                <button
+                  key={p.color}
+                  type="button"
+                  onClick={() => setAwayColor(p.color)}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                  style={{ background: p.color, color: p.color === '#f5f5f4' ? '#0a0a0a' : '#fff' }}
+                >{p.label.toUpperCase()}</button>
+              ))}
+              <label
+                className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#dc2626', '#2563eb', '#f5f5f4'].includes(awayColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
+                style={{ background: awayColor, color: isLightColor(awayColor) ? '#0a0a0a' : '#fff' }}
+              >
+                🎨 CUSTOM
+                <input type="color" value={awayColor} onChange={e => setAwayColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+              </label>
+            </div>
+          </div>
+
+          {/* Squad */}
+          <div>
+            <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SQUAD (AVAILABLE PLAYERS)</div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!editing) {
+                  showToast?.('💡 Save the game first, then edit its squad.');
+                  return;
+                }
+                // The caller persists this form state before navigating away to
+                // the squad picker, so the in-progress edit isn't lost.
+                onEditSquad?.(values());
+              }}
+              className={`w-full flex items-center justify-between gap-3 px-3 py-3 rounded-xl border-2 active:scale-[0.99] transition ${
+                Array.isArray(squadIds) && squadIds.length > 0
+                  ? 'bg-lime-500/10 border-lime-400 text-stone-100'
+                  : 'bg-stone-900 border-stone-800 text-stone-300'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-xl">👥</span>
+                <span className="font-bold text-sm">
+                  {Array.isArray(squadIds) && squadIds.length > 0
+                    ? `${squadIds.length} player${squadIds.length === 1 ? '' : 's'} picked`
+                    : (editing ? 'Tap to pick squad' : 'Save game first, then pick squad')}
+                </span>
+              </span>
+              <span className="text-xs text-stone-400">{editing ? 'EDIT →' : ''}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        {editing && (
+          <button
+            onClick={onCancel}
+            className="flex-1 bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
+          >
+            CANCEL
+          </button>
+        )}
+        <button
+          onClick={handleSubmit}
+          disabled={!opponent.trim() || !date}
+          className={`flex-1 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition ${editing ? 'bg-amber-500 text-stone-950 border-2 border-amber-400' : 'bg-stone-900 text-lime-400'}`}
+        >
+          {editing ? 'SAVE CHANGES' : 'ADD TO SCHEDULE'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
+  const [editingId, setEditingId] = useState(null);
+  const [showPast, setShowPast] = useState(false);
+  const [showOpponentManager, setShowOpponentManager] = useState(false);
+  // Bumped on every reset so a blank form re-seeds even when it was already blank.
+  const [formNonce, setFormNonce] = useState(0);
+  const formRef = React.useRef(null);
+
+  // GameForm re-seeds whenever this object's identity changes. Memoise on a
+  // *value* signature, not on the array element's reference: in production the
+  // team doc's onSnapshot hands back a fresh schedule array on every roster or
+  // weights write too, and re-seeding then would wipe what the coach is typing.
+  const editingItem = editingId ? schedule.find(s => s.id === editingId) : null;
+  const formSig = editingItem ? JSON.stringify([
+    editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
+    editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
+    editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
+    editingItem.squadIds,
+  ]) : '';
+  const formInitial = useMemo(() => (editingItem ? {
+    opponent: editingItem.opponent || '',
+    date: editingItem.date || '',
+    time: editingItem.time || '',
+    tournament: editingItem.tournament || '',
+    location: editingItem.location || '',
+    field: editingItem.field || '',
+    isHome: editingItem.isHome,
+    format: editingItem.format,
+    halfLengthMin: typeof editingItem.halfLengthMin === 'number'
+      ? editingItem.halfLengthMin : undefined,
+    homeColor: editingItem.homeColor,
+    awayColor: editingItem.awayColor,
+    squadIds: Array.isArray(editingItem.squadIds) ? editingItem.squadIds : [],
+  } : { nonce: formNonce }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [editingId, formSig, formNonce]);
 
   // Resume edit mode when returning from the squad-picker detour.
   React.useEffect(() => {
     if (!initialEditId) return;
     const item = schedule.find(s => s.id === initialEditId);
-    if (item) {
-      setEditingId(item.id);
-      setOpponent(item.opponent || '');
-      setDate(item.date || '');
-      setTime(item.time || '');
-      setTournament(item.tournament || '');
-      setLocation(item.location || '');
-      setField(item.field || '');
-      setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
-      setFormat(FORMATS[item.format] ? item.format : DEFAULT_FORMAT);
-      setHalfLengthMin(typeof item.halfLengthMin === 'number'
-        ? item.halfLengthMin : formatOf(item).halfMin);
-      setHalfLenTouched(typeof item.halfLengthMin === 'number');
-      setHomeColor(item.homeColor || '#0a0a0a');
-      setAwayColor(item.awayColor || '#dc2626');
-      setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
-      setShowSetup(true);
-    }
+    if (item) setEditingId(item.id);
     onConsumedInitialEditId?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialEditId]);
 
-  const handleAdd = () => {
-    if (!opponent.trim() || !date) return;
+  const resetForm = () => {
+    setEditingId(null);
+    setFormNonce(n => n + 1);
+  };
+
+  const handleFormSubmit = (v) => {
+    if (!v.opponent || !v.date) return;
     const setupFields = {
-      isHome,
-      format,
-      halfLengthMin,
-      homeColor,
-      awayColor,
-      squadIds: Array.isArray(squadIds) ? squadIds : [],
+      isHome: v.isHome,
+      format: v.format,
+      halfLengthMin: v.halfLengthMin,
+      homeColor: v.homeColor,
+      awayColor: v.awayColor,
+      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
     };
     if (editingId) {
       onSave(schedule.map(s => s.id === editingId ? {
         ...s,
-        opponent: opponent.trim(),
-        date,
-        time: time || '',
-        tournament: tournament.trim(),
-        location: location.trim(),
-        field: field.trim(),
+        opponent: v.opponent,
+        date: v.date,
+        time: v.time || '',
+        tournament: v.tournament,
+        location: v.location,
+        field: v.field,
         ...setupFields,
       } : s));
-      showToast?.(`✏️ Updated vs ${opponent.trim()}`);
+      showToast?.(`✏️ Updated vs ${v.opponent}`);
       resetForm();
       return;
     }
     const item = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      opponent: opponent.trim(),
-      date,
-      time: time || '',
-      tournament: tournament.trim(),
-      location: location.trim(),
-      field: field.trim(),
+      opponent: v.opponent,
+      date: v.date,
+      time: v.time || '',
+      tournament: v.tournament,
+      location: v.location,
+      field: v.field,
       ...setupFields,
     };
     onSave([...schedule, item]);
-    const dateLabel = new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
+    const dateLabel = new Date(v.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
     showToast?.(`✅ Added vs ${item.opponent} · ${dateLabel}`);
     resetForm();
   };
 
-  const resetForm = () => {
-    setOpponent(''); setDate(''); setTime(''); setTournament(''); setLocation(''); setField('');
-    setIsHome(true); setHomeColor('#0a0a0a'); setAwayColor('#dc2626'); setSquadIds([]);
-    setFormat(DEFAULT_FORMAT); setHalfLengthMin(FORMATS[DEFAULT_FORMAT].halfMin);
-    setHalfLenTouched(false);
-    setShowSetup(false);
-    setEditingId(null);
+  // Persist the in-progress edit before navigating away to the squad picker,
+  // so nothing typed is lost on the detour.
+  const handleEditSquad = (v) => {
+    if (!editingId) return;
+    onSave(schedule.map(s => s.id === editingId ? {
+      ...s,
+      opponent: v.opponent || s.opponent,
+      date: v.date || s.date,
+      time: v.time || '',
+      tournament: v.tournament,
+      location: v.location,
+      field: v.field,
+      isHome: v.isHome,
+      format: v.format,
+      halfLengthMin: v.halfLengthMin,
+      homeColor: v.homeColor,
+      awayColor: v.awayColor,
+      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
+    } : s));
+    onEditSquad?.({ id: editingId, opponent: v.opponent || 'Opponent', squadIds: v.squadIds });
   };
 
   const handleEdit = (item) => {
     setEditingId(item.id);
-    setOpponent(item.opponent || '');
-    setDate(item.date || '');
-    setTime(item.time || '');
-    setTournament(item.tournament || '');
-    setLocation(item.location || '');
-    setField(item.field || '');
-    setIsHome(typeof item.isHome === 'boolean' ? item.isHome : true);
-    setFormat(FORMATS[item.format] ? item.format : DEFAULT_FORMAT);
-    setHalfLengthMin(typeof item.halfLengthMin === 'number'
-      ? item.halfLengthMin : formatOf(item).halfMin);
-    setHalfLenTouched(typeof item.halfLengthMin === 'number');
-    setHomeColor(item.homeColor || '#0a0a0a');
-    setAwayColor(item.awayColor || '#dc2626');
-    setSquadIds(Array.isArray(item.squadIds) ? item.squadIds : []);
-    setShowSetup(
-      typeof item.isHome === 'boolean' ||
-      typeof item.halfLengthMin === 'number' ||
-      !!item.homeColor ||
-      !!item.awayColor ||
-      (Array.isArray(item.squadIds) && item.squadIds.length > 0)
-    );
     if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -13576,257 +13879,15 @@ function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], 
 
       {/* Add form */}
       <div className="px-4 pt-4 space-y-3" ref={formRef}>
-        <div className={`bg-stone-900 border rounded-2xl p-4 space-y-3 ${editingId ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-stone-800'}`}>
-          <div className="font-display text-lg flex items-center gap-2">
-            {editingId ? <><span>✏️</span><span>EDIT GAME</span></> : <span>ADD GAME</span>}
-          </div>
-          <input
-            type="text"
-            placeholder="Opponent *"
-            value={opponent}
-            onChange={e => setOpponent(e.target.value)}
-            list="opponent-suggestions"
-            autoComplete="off"
-            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-          />
-          {opponentSuggestions.length > 0 && (
-            <datalist id="opponent-suggestions">
-              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
-            </datalist>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <label className="relative block">
-              <span className="text-xs font-semibold text-stone-400 mb-1 block">DATE *</span>
-              <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
-                {date ? new Date(date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : <span className="text-stone-400">Select date</span>}
-              </div>
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-              />
-            </label>
-            <label className="relative block">
-              <span className="text-xs font-semibold text-stone-400 mb-1 block">TIME</span>
-              <div className="w-full border border-stone-700 bg-stone-900 rounded-xl px-3 py-2.5 text-sm min-h-[42px] flex items-center">
-                {time ? formatTime12(time) : <span className="text-stone-400">Select time</span>}
-              </div>
-              <input
-                type="time"
-                value={time}
-                onChange={e => setTime(e.target.value)}
-                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-              />
-            </label>
-          </div>
-          <input
-            type="text"
-            placeholder="Tournament / Festival"
-            value={tournament}
-            onChange={e => setTournament(e.target.value)}
-            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-          />
-          <input
-            type="text"
-            placeholder="Location (address or Google Maps link)"
-            value={location}
-            onChange={e => setLocation(e.target.value)}
-            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-          />
-          <input
-            type="text"
-            placeholder="Field # / name (e.g., Field 4)"
-            value={field}
-            onChange={e => setField(e.target.value)}
-            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-          />
-
-          {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
-          <button
-            type="button"
-            onClick={() => setShowSetup(s => !s)}
-            className="w-full flex items-center justify-between bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-sm text-stone-200 active:scale-[0.99]"
-          >
-            <span className="font-semibold tracking-wide">
-              ⚙️ MATCH-DAY SETUP <span className="text-stone-500 font-normal">(optional)</span>
-            </span>
-            <span className="text-stone-400 text-xs">{showSetup ? 'HIDE ▲' : 'SHOW ▼'}</span>
-          </button>
-          {showSetup && (
-            <div className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
-              <p className="text-[11px] text-stone-400 leading-snug">
-                Pre-fill what you know now. If you set <span className="font-bold text-stone-200">everything</span> (squad + home/away + half length + both colors), tapping START on match day jumps straight to the starting lineup — no setup screens.
-              </p>
-
-              {/* Home / Away */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SIDE</div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsHome(true)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
-                  >🏠 HOME</button>
-                  <button
-                    type="button"
-                    onClick={() => setIsHome(false)}
-                    className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${!isHome ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
-                  >✈️ AWAY</button>
-                </div>
-              </div>
-
-              {/* Format — 7v7 (Canada) vs 9v9 (US tournaments) */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">FORMAT</div>
-                <div className="flex gap-2">
-                  {Object.values(FORMATS).map(f => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      onClick={() => pickFormat(f.key)}
-                      className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 active:scale-95 transition ${format === f.key ? 'bg-lime-500/15 text-lime-300 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'}`}
-                    >{f.key.toUpperCase()}</button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Half length */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">HALF LENGTH (MIN)</div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setHalfLenManually(Math.max(1, halfLengthMin - 1))}
-                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
-                  >−</button>
-                  <div className="flex-1 py-2 rounded-xl bg-stone-900 border-2 border-stone-800 text-center">
-                    <div className="font-display text-2xl text-stone-100 tabular-nums leading-none">{halfLengthMin}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setHalfLenManually(Math.min(99, halfLengthMin + 1))}
-                    className="w-11 h-11 rounded-xl bg-stone-900 border-2 border-stone-800 text-stone-300 text-xl font-bold active:scale-95 transition"
-                  >+</button>
-                </div>
-                {!halfLenTouched && (
-                  <div className="text-[10px] text-stone-500 mt-1">Suggested for {format.toUpperCase()}</div>
-                )}
-              </div>
-
-              {/* Stompers jersey */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">LASALLE STOMPERS JERSEY</div>
-                <div className="flex gap-2 items-center">
-                  {[{ label: 'Black', color: '#0a0a0a' }, { label: 'Green', color: '#16a34a' }].map(p => (
-                    <button
-                      key={p.color}
-                      type="button"
-                      onClick={() => setHomeColor(p.color)}
-                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${homeColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                      style={{ background: p.color, color: '#fff' }}
-                    >{p.label.toUpperCase()}</button>
-                  ))}
-                  <label
-                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#0a0a0a', '#16a34a'].includes(homeColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                    style={{ background: homeColor, color: isLightColor(homeColor) ? '#0a0a0a' : '#fff' }}
-                  >
-                    🎨 CUSTOM
-                    <input type="color" value={homeColor} onChange={e => setHomeColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
-                  </label>
-                </div>
-              </div>
-
-              {/* Opponent jersey */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">OPPONENT JERSEY</div>
-                <div className="flex gap-2 items-center">
-                  {[
-                    { label: 'Red', color: '#dc2626' },
-                    { label: 'Blue', color: '#2563eb' },
-                    { label: 'White', color: '#f5f5f4' },
-                  ].map(p => (
-                    <button
-                      key={p.color}
-                      type="button"
-                      onClick={() => setAwayColor(p.color)}
-                      className={`flex-1 py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${awayColor === p.color ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                      style={{ background: p.color, color: p.color === '#f5f5f4' ? '#0a0a0a' : '#fff' }}
-                    >{p.label.toUpperCase()}</button>
-                  ))}
-                  <label
-                    className={`flex-1 relative py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition cursor-pointer flex items-center justify-center overflow-hidden ${!['#dc2626', '#2563eb', '#f5f5f4'].includes(awayColor) ? 'border-lime-400 ring-2 ring-lime-400/40' : 'border-stone-800'}`}
-                    style={{ background: awayColor, color: isLightColor(awayColor) ? '#0a0a0a' : '#fff' }}
-                  >
-                    🎨 CUSTOM
-                    <input type="color" value={awayColor} onChange={e => setAwayColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
-                  </label>
-                </div>
-              </div>
-
-              {/* Squad */}
-              <div>
-                <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">SQUAD (AVAILABLE PLAYERS)</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!editingId) {
-                      showToast?.('💡 Save the game first, then edit its squad.');
-                      return;
-                    }
-                    // Persist current form state so the edit isn't lost while
-                    // we navigate away to the squad picker.
-                    onSave(schedule.map(s => s.id === editingId ? {
-                      ...s,
-                      opponent: opponent.trim() || s.opponent,
-                      date: date || s.date,
-                      time: time || '',
-                      tournament: tournament.trim(),
-                      location: location.trim(),
-                      field: field.trim(),
-                      isHome, format, halfLengthMin, homeColor, awayColor,
-                      squadIds: Array.isArray(squadIds) ? squadIds : [],
-                    } : s));
-                    onEditSquad?.({ id: editingId, opponent: opponent.trim() || 'Opponent', squadIds });
-                  }}
-                  className={`w-full flex items-center justify-between gap-3 px-3 py-3 rounded-xl border-2 active:scale-[0.99] transition ${
-                    Array.isArray(squadIds) && squadIds.length > 0
-                      ? 'bg-lime-500/10 border-lime-400 text-stone-100'
-                      : 'bg-stone-900 border-stone-800 text-stone-300'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-xl">👥</span>
-                    <span className="font-bold text-sm">
-                      {Array.isArray(squadIds) && squadIds.length > 0
-                        ? `${squadIds.length} player${squadIds.length === 1 ? '' : 's'} picked`
-                        : (editingId ? 'Tap to pick squad' : 'Save game first, then pick squad')}
-                    </span>
-                  </span>
-                  <span className="text-xs text-stone-400">{editingId ? 'EDIT →' : ''}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            {editingId && (
-              <button
-                onClick={resetForm}
-                className="flex-1 bg-stone-900 text-stone-300 border border-stone-700 font-display text-base py-3 rounded-xl active:scale-[0.98] transition"
-              >
-                CANCEL
-              </button>
-            )}
-            <button
-              onClick={handleAdd}
-              disabled={!opponent.trim() || !date}
-              className={`flex-1 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition ${editingId ? 'bg-amber-500 text-stone-950 border-2 border-amber-400' : 'bg-stone-900 text-lime-400'}`}
-            >
-              {editingId ? 'SAVE CHANGES' : 'ADD TO SCHEDULE'}
-            </button>
-          </div>
-        </div>
+        <GameForm
+          initial={formInitial}
+          opponentSuggestions={opponentSuggestions}
+          editing={!!editingId}
+          onSubmit={handleFormSubmit}
+          onCancel={resetForm}
+          onEditSquad={handleEditSquad}
+          showToast={showToast}
+        />
       </div>
 
       {/* Upcoming */}
@@ -16024,6 +16085,14 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
+
+
+
+
 
 
 
