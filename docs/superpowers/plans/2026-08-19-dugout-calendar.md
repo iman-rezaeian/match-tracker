@@ -567,7 +567,18 @@ The merge needs the synced events. This adds the Firestore read only — no UI y
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `teamsnapEvents` array in `App` state, shaped as the docs written by `worker/src/teamsnap.ts` (`uid, title, type, canceled, date, time, allDay, endDate, venue, address, arrival, tz, modified, missingFromFeed`), plus `teamsnapSyncedAt` (ms) for the "Synced Nm ago" line.
+- Produces: `teamsnapEvents` array in `App` state, shaped as the docs written by `worker/src/teamsnap.ts` (`uid, title, type, canceled, date, time, allDay, endDate, venue, address, arrival, tz, modified, missingFromFeed`).
+
+**`teamsnapSyncedAt` was NOT implemented, deliberately.** The only candidate
+field is `modified`, which the Worker fills from the feed's `LAST-MODIFIED` —
+i.e. when the *coach last edited the event in TeamSnap*, not when our cron last
+ran. `max(modified)` would therefore read as days or weeks old seconds after a
+successful sync, and would never advance while the coach isn't editing TeamSnap:
+a "Synced 9d ago" line that actively misinforms. Nothing in Firestore currently
+records the cron's own run time, and inventing a write to store one was out of
+scope for this task. Task 5 should pass `syncedAt={null}` and leave the line
+hidden (its interface already allows null) until a sync-time field is added to
+the Worker as its own change.
 
 `teamsnapEvents` is a Firestore **subcollection**, so unlike `schedule` it needs its own listener. Add a NEW `useEffect` — do not modify the existing team-doc effect, which `_sync_html.py` replaces by exact text.
 

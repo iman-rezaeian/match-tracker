@@ -1078,6 +1078,10 @@ function CoachApp() {
   const [roster, setRoster] = useState([]);
   const [games, setGames] = useState([]);
   const [schedule, setSchedule] = useState([]);
+  // TeamSnap-synced calendar events (practices, tournaments, team events).
+  // Written every 15 min by the Worker cron; read-only here. Local dev has no
+  // Firestore, so this stays empty and the calendar simply shows fewer kinds.
+  const [teamsnapEvents, setTeamsnapEvents] = useState([]);
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   // Team-wide Cloudflare Stream Live Input. Provisioned once, reused every
   // game so the coach can paste a single RTMPS URL + key into the Insta360
@@ -1265,6 +1269,23 @@ function CoachApp() {
         if (tli?.value) setTeamLiveInput(JSON.parse(tli.value));
       } catch (e) {}
     })();
+  }, []);
+
+  // Synced TeamSnap events. Separate effect (and a subcollection, not a team-doc
+  // field) so it can be added without touching the loaders _sync_html.py
+  // rewrites by exact source text.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb) return undefined;
+    const unsub = window.fbDb.collection('teams').doc('main').collection('teamsnapEvents')
+      .onSnapshot(
+        (snap) => {
+          const list = [];
+          snap.forEach((d) => list.push({ uid: d.id, ...d.data() }));
+          setTeamsnapEvents(list);
+        },
+        (err) => console.error('teamsnapEvents listen failed', err)
+      );
+    return () => unsub();
   }, []);
 
   useEffect(() => {
