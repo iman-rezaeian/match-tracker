@@ -238,15 +238,22 @@ function tombstoneFor(uid: string) {
  * report ~22h of age one second after a clean sync, and would freeze whenever the
  * coach is not editing. The calendar's "Synced Nm ago" line needs OUR clock.
  *
- * It lives at `<COLL>/__sync__` — inside the collection the calendar already
- * subscribes to, so it costs no extra read and needs no new Firestore rule. The
- * leading underscores keep it clear of the UID namespace (TeamSnap UIDs look like
- * `9230745-366776389`); consumers MUST skip it when building events.
+ * It lives at `<COLL>/zz-sync-meta` — inside the collection the calendar already
+ * subscribes to, so it costs no extra read and needs no new Firestore rule.
+ * Consumers MUST skip it when building events (real ids look like
+ * `9230745-366776389`, so nothing collides).
+ *
+ * The id is NOT `__sync__`, which is what this first shipped as: Firestore
+ * reserves any id matching `__.*__` and rejects the write with
+ * `Resource id "__sync__" is invalid because it is reserved`. Because these
+ * writes share ONE batch commit with the events, that single rejection failed
+ * the entire commit — so a cosmetic freshness stamp took the whole mirror down
+ * with it. Test a new document id against the API before deploying it.
  */
 function syncMetaWrite(now: number, eventCount: number) {
   return {
     update: {
-      name: `projects/${PROJECT}/databases/(default)/documents/${COLL}/__sync__`,
+      name: `projects/${PROJECT}/databases/(default)/documents/${COLL}/zz-sync-meta`,
       fields: {
         syncedAt: { integerValue: String(now) },
         eventCount: { integerValue: String(eventCount) },
@@ -284,9 +291,9 @@ async function listUids(token: string): Promise<string[]> {
     const body = await res.json() as any;
     for (const d of body.documents || []) {
       const id = decodeURIComponent(d.name.split('/').pop());
-      // `__sync__` is our own freshness stamp, not a TeamSnap event. Listing it
+      // `zz-sync-meta` is our own freshness stamp, not a TeamSnap event. Listing it
       // here would tombstone it as "missing from feed" on the very next run.
-      if (id === '__sync__') continue;
+      if (id === 'zz-sync-meta') continue;
       uids.push(id);
     }
     pageToken = body.nextPageToken || '';
@@ -388,7 +395,7 @@ export async function teamsnapStatus(env: any): Promise<any> {
   }
   const etag = env.SYNC_STATE ? await env.SYNC_STATE.get('ics-etag') : null;
   const lastError = env.SYNC_STATE ? await env.SYNC_STATE.get('last-error') : null;
-  const syncDoc = docs.find((d: any) => d.name.endsWith('/__sync__'));
+  const syncDoc = docs.find((d: any) => d.name.endsWith('/zz-sync-meta'));
   return { ok: true, mirrored: docs.length, byType, canceled, missingFromFeed: missing,
            coachOverrides: overrides, haveEtag: !!etag,
            syncedAt: syncDoc?.fields?.syncedAt?.integerValue
