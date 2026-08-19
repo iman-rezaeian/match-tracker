@@ -16261,6 +16261,11 @@ function PublicHomePage({ access }) {
   const [games, setGames] = useState([]);
   const [roster, setRoster] = useState([]);
   const [schedule, setSchedule] = useState([]);
+  // Same TeamSnap mirror the dugout reads, so parents see practices and
+  // tournaments rather than games only. Read-only on both sides — the Worker
+  // cron owns this subcollection.
+  const [teamsnapEvents, setTeamsnapEvents] = useState([]);
+  const [teamsnapSyncedAt, setTeamsnapSyncedAt] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const isCoachUser = !!access && access.status === 'coach';
@@ -16333,6 +16338,48 @@ function PublicHomePage({ access }) {
     // retryNonce: cold-start watchdog re-arms these listeners when stuck.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [retryNonce]);
+
+  // TeamSnap mirror. Its own effect, mirroring App's, so the page still loads
+  // when this subcollection is empty or unreadable — the calendar then just
+  // shows fewer kinds instead of the whole parent view failing.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) return undefined;
+    let unsub = null;
+    window.fbReady.then(() => {
+      if (!window.fbDb) return;
+      unsub = window.fbDb.collection('teams').doc('main').collection('teamsnapEvents')
+        .onSnapshot(
+          (snap) => {
+            const list = [];
+            let stamp = null;
+            snap.forEach((d) => {
+              // The cron's own clock, written as one more doc in this
+              // collection. A sentinel, not an event — real ids look like
+              // `9230745-366776389` — so it must not reach the merge. The
+              // freshness stamp comes from here, never from an event's
+              // `modified`, which is when the coach last edited in TeamSnap.
+              if (d.id === '__sync__') { stamp = d.data()?.syncedAt ?? null; return; }
+              list.push({ uid: d.id, ...d.data() });
+            });
+            setTeamsnapEvents(list);
+            setTeamsnapSyncedAt(stamp);
+          },
+          (err) => console.error('teamsnapEvents listen failed', err)
+        );
+    });
+    return () => { if (unsub) unsub(); };
+  }, []);
+
+  // Above the early returns on purpose: a hook after a conditional return
+  // changes the hook count between renders and React throws #310.
+  const calendarToday = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+  const calendarModel = useMemo(
+    () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday }),
+    [teamsnapEvents, schedule, games, calendarToday]
+  );
 
   if (error) return <PublicErrorScreen msg={error} />;
   if (!loaded) return <PublicLoadingScreen />;
@@ -16556,62 +16603,32 @@ function PublicHomePage({ access }) {
           </div>
         );
       })()}
-      {(() => {
-        const playedKey = (g) => `${(g.date || '').slice(0,10)}|${(g.opponent || '').trim().toLowerCase()}`;
-        const playedKeys = new Set((games || []).map(playedKey));
-        const upcoming = schedule
-          .filter(s => new Date(s.date + 'T' + (s.time || '23:59')) >= new Date(new Date().toDateString()))
-          .filter(s => !featuredItem || s.id !== featuredItem.id)
-          .filter(s => !playedKeys.has(`${(s.date || '').slice(0,10)}|${(s.opponent || '').trim().toLowerCase()}`))
-          .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-        if (upcoming.length === 0) return null;
-        return (
-          <div className="px-4 pt-6 max-w-md mx-auto">
-            <h3 className="font-display text-xl text-stone-200 mb-2">UPCOMING GAMES</h3>
-            <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
-              {upcoming.map(item => (
-                <div key={item.id} className="flex items-center gap-3 p-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
-                    <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
-                    <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-sm truncate">vs {item.opponent}</div>
-                    <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {item.cancelled && (
-                        <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          CANCELLED
-                        </span>
-                      )}
-                      {item.tournament && <TournamentChip value={item.tournament} />}
-                      <FormatChip value={item.format} />
-                      {item.time && <span>{formatTime12(item.time)}</span>}
-                      {item.field && (
-                        <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                          📍 {item.field}
-                        </span>
-                      )}
-                    </div>
-                    {item.location && (
-                      <div className="text-xs text-blue-400 truncate mt-0.5">
-                        {item.location.startsWith('http') ? (
-                          <a href={item.location} target="_blank" rel="noopener noreferrer" className="underline flex items-center gap-1">
-                            <MapPin className="w-3 h-3 inline" /> View Map
-                          </a>
-                        ) : (
-                          <a href={`https://maps.google.com/?q=${encodeURIComponent(item.location)}`} target="_blank" rel="noopener noreferrer" className="underline flex items-center gap-1">
-                            <MapPin className="w-3 h-3 inline" /> {item.location}
-                          </a>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
+      {/* The same calendar the dugout shows, read-only. Replaces the flat
+           UPCOMING GAMES rows: parents get practices, tournaments and past
+           results on one surface, and the agenda strip keeps the "what's next"
+           scan the rows used to provide. No `onBack` — this sits inline under
+           the tiles, so CalendarView renders its embedded heading rather than
+           a full-screen Header.
+
+           The wrapper exists because CalendarView's own root is
+           `min-h-screen bg-stone-900` for the dugout's full-screen mount:
+           inline that would force a viewport-tall lighter panel, so this caps
+           the height and repaints the background. Its sections already carry
+           their own px-4, so no padding is added here. */}
+      <div className="max-w-2xl mx-auto [&>div]:min-h-0 [&>div]:bg-transparent">
+        <CalendarView
+          model={calendarModel}
+          canEdit={false}
+          today={calendarToday}
+          syncedAt={teamsnapSyncedAt}
+          onOpenGame={(gameId) => {
+            // The route PAST GAMES already uses — the read-only game view a
+            // parent is permitted.
+            if (window.__navigate) window.__navigate({ kind: 'live', gameId });
+            else window.location.href = `./?live=${gameId}`;
+          }}
+        />
+      </div>
       {openPanel === 'past' && (
         <PastGamesPanel games={games} onBack={() => setOpenPanel(null)} />
       )}
