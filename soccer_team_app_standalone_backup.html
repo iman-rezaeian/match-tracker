@@ -737,6 +737,36 @@ function gkExtrasForGame(playerId, game) {
 // unfairly penalized by low ATK/DEC opportunity, and saves count for more.
 // `gkExtras` (optional, GK only) — { oppGoalsConceded, cleanSheets } aggregated
 // across the games being scored. Adds clean-sheet bonus and conceded penalty.
+// The four kinds of fixture, in the order they appear in the picker. `key` is
+// what gets stored and what scoring weights are keyed on; nothing else may be
+// stored in `gameType`, because an unrecognised value silently scores as a
+// full-weight league game.
+const GAME_TYPES = [
+  { key: 'scrimmage', label: 'SCRIMMAGE' },
+  { key: 'festival', label: 'FESTIVAL' },
+  { key: 'tournament', label: 'TOURNAMENT' },
+  { key: 'league', label: 'LEAGUE' },
+];
+
+/**
+ * An item's scoring type.
+ *
+ * `gameType` is the field the picker writes. Every game and schedule item
+ * created before it existed has only the free-text `tournament` box, whose value
+ * scoring read directly — so fall back to it and keep 14 games of history
+ * weighted exactly as they are today. The fallback only matches when the old
+ * text happens to BE a type name ("Festival", "Scrimmage"), which is what the
+ * real data holds; anything else lands on `league` at weight 1.0, which is what
+ * the old code did with it anyway.
+ */
+function gameTypeOf(item) {
+  const explicit = String(item?.gameType || '').toLowerCase();
+  if (GAME_TYPES.some((t) => t.key === explicit)) return explicit;
+  const legacy = String(item?.tournament || '').toLowerCase();
+  if (GAME_TYPES.some((t) => t.key === legacy)) return legacy;
+  return 'league';
+}
+
 // Default per-action point values + pillar weights. Coaches can override these
 // in Settings → Scoring Weights. `mergeWeights` fills in any missing fields so
 // older saved overrides still work if new actions are added later.
@@ -770,7 +800,7 @@ const DEFAULT_WEIGHTS = {
   // squad-average production added to every player's rate) and per-game-type
   // weights on the season aggregate (scrimmages count half by default).
   shrinkMinutes: 12,
-  gameTypes: { scrimmage: 0.5, festival: 0.75, default: 1.0 },
+  gameTypes: { scrimmage: 0.5, festival: 0.75, tournament: 1.0, league: 1.0, default: 1.0 },
 };
 
 const SCORING_VERSION = 2; // bumped 2026-06: shrinkage, INV cleanup, pro-rated clean sheet, game-type weights, season own-goal fix
@@ -997,17 +1027,39 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
-// Colored pill for the game type. Visibility escalates with stakes:
-// Scrimmage = quiet violet (just labeled), Festival = medium-pop teal,
-// anything else (e.g. "Canton Cup Tournament") = loudest amber.
-function TournamentChip({ value }) {
-  if (!value) return null;
-  const t = String(value).toLowerCase();
+// The fixture's scoring TYPE — one of GAME_TYPES, never free text. Visibility
+// escalates with stakes: scrimmage = quiet violet, festival = medium-pop teal,
+// tournament = loudest amber. `league` gets neutral stone: it is the default and
+// does not need to shout. Colours match what TournamentChip used to infer from
+// the old overloaded text field, so nothing on screen shifts.
+function GameTypeChip({ value }) {
+  const t = String(value || '').toLowerCase();
+  if (!t) return null;
   const cls = t === 'scrimmage' ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
             : t === 'festival'  ? 'bg-teal-500/20 text-teal-200 border-teal-400/50'
-            : 'bg-amber-400/25 text-amber-100 border-amber-300/60';
+            : t === 'tournament' ? 'bg-amber-400/25 text-amber-100 border-amber-300/60'
+            : 'bg-stone-700/40 text-stone-300 border-stone-600/60';
   return (
     <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
+      {t.toUpperCase()}
+    </span>
+  );
+}
+
+// The competition's NAME ("Canton Cup", "Gatorade Invitational"). One neutral
+// style, deliberately: colouring by inference is what GameTypeChip now owns, and
+// a name should not pick up scrimmage violet because of a substring.
+//
+// Suppressed when the name IS the type. Legacy items stored the type in this
+// same free-text box, so `tournament: 'Festival'` would otherwise render a
+// FESTIVAL type chip next to an identical FESTIVAL name chip. Comparison is
+// against the RESOLVED type, so a name only vanishes when it is genuinely the
+// duplicate — "Festival of Champions" still shows.
+function TournamentChip({ value, gameType }) {
+  if (!value) return null;
+  if (String(value).trim().toLowerCase() === String(gameType || '').toLowerCase()) return null;
+  return (
+    <span className="inline-block bg-stone-700/40 text-stone-200 border border-stone-600/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
       {String(value).toUpperCase()}
     </span>
   );
@@ -1697,7 +1749,7 @@ function CoachApp() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord, format) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord, format, gameType) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     // Seed POSITION events from the kickoff tactical board so the in-game
@@ -1727,7 +1779,14 @@ function CoachApp() {
     const game = {
       id: uid(),
       opponent: opponent || 'Opponent',
-      tournament: tournament || 'Festival',
+      // `tournament` is now the competition's NAME and may be blank; `gameType`
+      // is what scoring weights key on. Persist the tag explicitly so a played
+      // game no longer depends on gameTypeOf's legacy text fallback — that
+      // fallback only ever matched when the free text happened to BE a type
+      // name, which is why a typo like "Gatorate Invitational" scored as a
+      // full-weight league game.
+      tournament: tournament || '',
+      gameType: gameTypeOf({ gameType, tournament }),
       isHome: !!isHome,
       format: FORMATS[format] ? format : DEFAULT_FORMAT,
       halfLengthMin: halfLengthMin || 25,
@@ -2556,6 +2615,7 @@ function CoachApp() {
           opponent: v.opponent,
           date: v.date,
           time: v.time || '',
+          gameType: v.gameType || 'league',
           tournament: v.tournament,
           location: v.location,
           field: v.field,
@@ -2571,6 +2631,12 @@ function CoachApp() {
           title: v.title || '',
           date: v.date,
           time: v.time || '',
+          // Tag and competition name apply to sessions too — a practice at the
+          // Canton Cup. An earlier pass dropped `tournament` here because the
+          // form hid the input; now the form offers both, so both must persist
+          // or the coach's pick would be silently discarded on save.
+          gameType: v.gameType || 'league',
+          tournament: v.tournament,
           location: v.location,
           field: v.field,
         };
@@ -2598,6 +2664,9 @@ function CoachApp() {
     setPendingGameSetup({
       opponent: item.opponent,
       tournament: item.tournament,
+      // Carry the scheduled item's tag into setup so the coach's pick survives
+      // the GameSetup detour and lands on the game doc at kickoff.
+      gameType: gameTypeOf(item),
       fromSchedule: true,
       isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
       format: item.format,
@@ -2740,10 +2809,10 @@ function CoachApp() {
           initial={pendingGameSetup}
           opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
-          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format) => {
+          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format, gameType) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
             // a scheduled-game start, so it survives the GameSetup detour.
-            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format });
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format, gameType });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -2780,7 +2849,7 @@ function CoachApp() {
               try { pendingMicRef.current = navigator.mediaDevices.getUserMedia({ audio: true }); }
               catch (e) { pendingMicRef.current = null; }
             }
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord, pendingGameSetup.format);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord, pendingGameSetup.format, pendingGameSetup.gameType);
             setPendingGameSetup(null);
           }}
         />
@@ -3238,7 +3307,7 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
             </div>
             <div>
               <div className="font-bold text-sm">GAME IN PROGRESS</div>
-              <div className="text-xs">{activeGame.tournament || 'Festival'} · vs {activeGame.opponent} · {activeGame.ourScore}–{activeGame.oppScore}</div>
+              <div className="text-xs">{activeGame.tournament || gameTypeOf(activeGame).toUpperCase()} · vs {activeGame.opponent} · {activeGame.ourScore}–{activeGame.oppScore}</div>
             </div>
           </div>
           <ChevronRight className="w-5 h-5" />
@@ -3686,7 +3755,11 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 /* ---------- GAME SETUP ---------- */
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, opponentSuggestions = [] }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
-  const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
+  const [tournament, setTournament] = useState(initial?.tournament || '');
+  // The fixture's scoring tag. Seeded through gameTypeOf so a game started from
+  // a tagged schedule item keeps that tag, and an untagged one still derives it
+  // from the old free-text box rather than defaulting to a full-weight league.
+  const [gameType, setGameType] = useState(gameTypeOf(initial || {}));
   const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
   const [format, setFormat] = useState(initial?.format && FORMATS[initial.format] ? initial.format : DEFAULT_FORMAT);
   const [halfLengthMin, setHalfLengthMin] = useState(
@@ -3749,12 +3822,29 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
       <Header title="NEW GAME" onBack={onCancel} />
 
       <div className="px-4 pt-6 space-y-5">
-        <Field label="TOURNAMENT">
+        <Field label="TAG">
+          <div className="grid grid-cols-2 gap-2">
+            {GAME_TYPES.map(gt => (
+              <button
+                key={gt.key}
+                type="button"
+                onClick={() => setGameType(gt.key)}
+                className={`py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${
+                  gameType === gt.key
+                    ? 'bg-lime-500 text-stone-950 border-lime-400'
+                    : 'bg-stone-900 text-stone-300 border-stone-800'
+                }`}
+              >{gt.label}</button>
+            ))}
+          </div>
+        </Field>
+
+        <Field label="COMPETITION NAME">
           <input
             type="text"
             value={tournament}
             onChange={e => setTournament(e.target.value)}
-            placeholder="Festival"
+            placeholder="e.g. Canton Cup (optional)"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
         </Field>
@@ -3918,7 +4008,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
         </button>
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor, autoRecord, format)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim(), halfLengthMin, homeColor, awayColor, autoRecord, format, gameType)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -5608,7 +5698,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           </button>
           <div className="text-center flex-1">
             <div className="text-xs text-white font-bold tracking-wide truncate">
-              {game.tournament || 'Festival'}
+              {game.tournament || gameTypeOf(game).toUpperCase()}
             </div>
             <div className="text-[10px] text-white/50">
               {formatDate(game.date)}
@@ -9211,7 +9301,8 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
                   <div className="flex-1 min-w-0 text-left">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {g.tournament && <TournamentChip value={g.tournament} />}
+                      <GameTypeChip value={gameTypeOf(g)} />
+                      <TournamentChip value={g.tournament} gameType={gameTypeOf(g)} />
                       <FormatChip value={g.format} />
                       <span>{formatDate(g.date)}</span>
                       {pendingCount > 0 && (
@@ -9577,7 +9668,8 @@ function SeasonGamesTab({ games, tagged, onOpenGame }) {
             <div className="flex-1 min-w-0 text-left">
               <div className="font-bold text-sm truncate">vs {g.opponent}</div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                {g.tournament && <TournamentChip value={g.tournament} />}
+                <GameTypeChip value={gameTypeOf(g)} />
+                <TournamentChip value={g.tournament} gameType={gameTypeOf(g)} />
                 <FormatChip value={g.format} />
                 <span>{formatDate(g.date)}</span>
                 {tagged[g.id] && (
@@ -11401,7 +11493,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
           <section className="rounded-2xl p-4 border border-stone-800" style={{ background: 'linear-gradient(160deg,#16271b,#121214)' }}>
             <div className="flex items-start justify-between mb-3">
               <div className="min-w-0">
-                <div className="text-[10px] tracking-widest text-stone-400">{(game.tournament || 'MATCH').toUpperCase()}{game.date ? ` · ${game.date}` : ''}</div>
+                <div className="text-[10px] tracking-widest text-stone-400">{(game.tournament || gameTypeOf(game)).toUpperCase()}{game.date ? ` · ${game.date}` : ''}</div>
                 <div className="text-white font-display text-lg leading-tight truncate">Stompers <span className="text-stone-500">vs</span> {game.opponent || 'OPP'}</div>
               </div>
               <div className="text-right shrink-0 pl-3">
@@ -11921,7 +12013,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
           <div className="text-center text-xs text-lime-300 -mt-1 mb-2">{shareMsg}</div>
         )}
         <div className="text-center text-xs text-white/70 mb-1 flex items-center justify-center gap-1.5">
-          <span>{game.tournament || 'Festival'} · {formatDate(game.date)}</span>
+          <span>{game.tournament || gameTypeOf(game).toUpperCase()} · {formatDate(game.date)}</span>
           <FormatChip value={game.format} />
         </div>
         <div className="text-center font-display text-2xl">vs {game.opponent}</div>
@@ -12323,7 +12415,11 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
 /* ---------- EDIT GAME INFO (post-hoc metadata fixes) ---------- */
 function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
   const [opponent, setOpponent] = useState(game.opponent || '');
-  const [tournament, setTournament] = useState(game.tournament || 'Festival');
+  const [tournament, setTournament] = useState(game.tournament || '');
+  // Resolved, not raw: a played game from before the tag existed carries only
+  // the old free-text value, and gameTypeOf turns "Festival" into `festival`
+  // so the picker opens on the tag the game is actually being scored as.
+  const [gameType, setGameType] = useState(gameTypeOf(game));
   const [halfLengthMin, setHalfLengthMin] = useState(Number(game.halfLengthMin) || 25);
   const [isHome, setIsHome] = useState(typeof game.isHome === 'boolean' ? game.isHome : true);
   const [homeColor, setHomeColor] = useState(game.homeColor || '#0a0a0a');
@@ -12349,12 +12445,29 @@ function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
         )}
       </Field>
 
-      <Field label="TOURNAMENT / COMPETITION">
+      <Field label="TAG">
+        <div className="grid grid-cols-2 gap-2">
+          {GAME_TYPES.map((gt) => (
+            <button
+              key={gt.key}
+              type="button"
+              onClick={() => setGameType(gt.key)}
+              className={`py-2 rounded-lg font-bold text-xs border active:scale-95 transition ${
+                gameType === gt.key
+                  ? 'bg-lime-500 text-stone-950 border-lime-400'
+                  : 'bg-stone-950 text-stone-300 border-stone-800'
+              }`}
+            >{gt.label}</button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="COMPETITION NAME">
         <input
           type="text"
           value={tournament}
           onChange={(e) => setTournament(e.target.value)}
-          placeholder="Festival"
+          placeholder="e.g. Canton Cup (optional)"
           className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
         />
       </Field>
@@ -12414,7 +12527,8 @@ function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
         <button
           onClick={() => onSave({
             opponent: opponent.trim() || 'Opponent',
-            tournament: tournament.trim() || 'Festival',
+            tournament: tournament.trim(),
+            gameType,
             halfLengthMin: Number(halfLengthMin) || 25,
             isHome,
             homeColor,
@@ -12643,7 +12757,7 @@ function StatsView({ roster, games, weights, onBack }) {
     const W = mergeWeights(weights);
     const M = Math.max(0, Number(W.shrinkMinutes) || 0);
     const typeWeight = (g) => {
-      const t = String(g.tournament || '').toLowerCase();
+      const t = gameTypeOf(g);
       return (W.gameTypes[t] != null) ? Number(W.gameTypes[t]) : Number(W.gameTypes.default);
     };
     // ---- Per-pillar LOGGING WEIGHT -------------------------------------------
@@ -14003,7 +14117,8 @@ function CalendarDayRows({
             <div className="flex-1 min-w-0">
               <div className="font-bold text-sm truncate">vs {entry.opponent}</div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                {entry.tournament && <TournamentChip value={entry.tournament} />}
+                <GameTypeChip value={gameTypeOf(entry.raw)} />
+                <TournamentChip value={entry.tournament} gameType={gameTypeOf(entry.raw)} />
                 <FormatChip value={entry.raw?.format} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
               </div>
@@ -14028,7 +14143,8 @@ function CalendarDayRows({
               </div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
                 {entry.cancelled && cancelledBadge}
-                {entry.tournament && <TournamentChip value={entry.tournament} />}
+                <GameTypeChip value={gameTypeOf(item)} />
+                <TournamentChip value={entry.tournament} gameType={gameTypeOf(item)} />
                 <FormatChip value={item.format} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
                 {entry.field && (
@@ -14173,6 +14289,11 @@ function CalendarDayRows({
       case 'team_event_own': {
         const label = entry.kind === 'practice_own' ? 'PRACTICE'
           : entry.kind === 'tryout_own' ? 'TRYOUT' : 'TEAM EVENT';
+        // A coach-created session can now carry a competition tag and name —
+        // a practice AT the Canton Cup. The model leaves `tournament` blank for
+        // non-games, so both come off `raw`, the saved schedule item itself.
+        const ownItem = entry.raw || {};
+        const ownType = ownItem.gameType ? gameTypeOf(ownItem) : '';
         return shell(entry, (
           <>
             <div className="flex-1 min-w-0">
@@ -14184,6 +14305,8 @@ function CalendarDayRows({
                 <span className="inline-block bg-stone-800 text-stone-400 border border-stone-700 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                   {label}
                 </span>
+                <GameTypeChip value={ownType} />
+                <TournamentChip value={ownItem.tournament} gameType={ownType} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
                 {entry.field && (
                   <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
@@ -14407,6 +14530,7 @@ function CalendarView({
   const formSig = editingItem ? JSON.stringify([
     editingItem.type, editingItem.title,
     editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
+    editingItem.gameType,
     editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
     editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
     editingItem.squadIds,
@@ -14422,6 +14546,7 @@ function CalendarView({
         date: editingItem.date || '',
         time: editingItem.time || '',
         tournament: editingItem.tournament || '',
+        gameType: editingItem.gameType || '',
         location: editingItem.location || '',
         field: editingItem.field || '',
         isHome: editingItem.isHome,
@@ -14440,6 +14565,7 @@ function CalendarView({
       date: seed.date || selected || today,
       time: seed.time || '',
       tournament: seed.tournament || '',
+      gameType: seed.gameType || '',
       location: seed.location || '',
       field: seed.field || '',
       squadIds: [],
@@ -14778,6 +14904,10 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
   const [date, setDate] = useState(init.date || '');
   const [time, setTime] = useState(init.time || '');
   const [tournament, setTournament] = useState(init.tournament || '');
+  // Seed from the RESOLVER, not the raw field: editing a legacy game whose only
+  // record of its type is the old free-text "Festival" must preselect FESTIVAL,
+  // or saving it would silently reweight it to a full-value league game.
+  const [gameType, setGameType] = useState(gameTypeOf(init));
   const [location, setLocation] = useState(init.location || '');
   const [field, setField] = useState(init.field || '');
   // Optional match-day pre-fill — saved on the schedule item, used when the
@@ -14820,6 +14950,7 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     setDate(it.date || '');
     setTime(it.time || '');
     setTournament(it.tournament || '');
+    setGameType(gameTypeOf(it));
     setLocation(it.location || '');
     setField(it.field || '');
     setIsHome(typeof it.isHome === 'boolean' ? it.isHome : true);
@@ -14848,6 +14979,7 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     date,
     time: time || '',
     tournament: tournament.trim(),
+    gameType,
     location: location.trim(),
     field: field.trim(),
     isHome,
@@ -14945,18 +15077,33 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
           />
         </label>
       </div>
-      {/* Fixture-only: a practice has no competition, and saveCalendarEntry does
-          not persist `tournament` for non-games, so showing it would offer an
-          input whose value is silently dropped. */}
-      {isGame && (
-        <input
-          type="text"
-          placeholder="Tournament / Festival"
-          value={tournament}
-          onChange={e => setTournament(e.target.value)}
-          className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-        />
-      )}
+      {/* Tag + name, on EVERY event type. The tag is a fixed vocabulary because
+          it picks a scoring weight — typing "Scrimmage vs Caboto" into a text
+          box used to score at full league value. The name stays free text
+          beside it, and a practice can carry both: the session at the Canton
+          Cup. */}
+      <div>
+        <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">TAG</div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {GAME_TYPES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setGameType(t.key)}
+              className={`py-2 rounded-xl text-[10px] font-bold border-2 active:scale-95 transition ${
+                gameType === t.key ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'
+              }`}
+            >{t.label}</button>
+          ))}
+        </div>
+      </div>
+      <input
+        type="text"
+        placeholder="Competition name (e.g. Canton Cup)"
+        value={tournament}
+        onChange={e => setTournament(e.target.value)}
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
       <input
         type="text"
         placeholder="Location (address or Google Maps link)"
@@ -17006,7 +17153,7 @@ function PastGamesPanel({ games, onBack }) {
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                  <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
+                  <div className="text-xs text-stone-400 truncate">{g.tournament || gameTypeOf(g).toUpperCase()} · {formatDate(g.date)}</div>
                 </div>
                 <div className="font-display text-lg tabular-nums text-stone-100">{g.ourScore}–{g.oppScore}</div>
                 <ChevronRight className="w-4 h-4 text-stone-400" />
@@ -17347,6 +17494,18 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
