@@ -1870,7 +1870,7 @@ function CoachApp() {
   const deleteGame = async (gameId) => {
     // Coach "Delete game permanently" — nukes everything we know about:
     //   1. R2 objects under tv_view/<id>/ + clips/<id>/   (via worker)
-    //   2. Firestore subcollections analytics/ + clips/   (paged batch delete)
+    //   2. Firestore subcollections analytics/ clips/ public/ private/ voice/
     //   3. Firestore game doc teams/main/games/<id>
     //   4. Local games array
     // Each step is best-effort: if R2 wipe fails we still continue so the
@@ -1890,7 +1890,12 @@ function CoachApp() {
       if (window.fbDb) {
         const gameRef = window.fbDb.collection('teams').doc('main')
           .collection('games').doc(gameId);
-        for (const sub of ['analytics', 'clips', 'public']) {
+        // `voice` matters for more than tidiness: it indexes the coach's raw
+        // dugout audio, which is meant to die with the game. The worker wipes
+        // the R2 objects, but Firestore does NOT cascade a doc delete to its
+        // subcollections, so leaving `voice` out stranded a live index of
+        // deleted recordings under a game that no longer exists.
+        for (const sub of ['analytics', 'clips', 'public', 'private', 'voice']) {
           const qs = await gameRef.collection(sub).get();
           await Promise.all(qs.docs.map(d => d.ref.delete()));
         }
