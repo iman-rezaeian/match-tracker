@@ -1715,7 +1715,7 @@ function CoachApp() {
     try {
       await window.fbDb.collection('teams').doc('main').collection('calendarHidden')
         .doc(hideDocId(key)).set({ key, hiddenAt: Date.now() });
-      showToast('🙈 Hidden from the calendar');
+      showToast('Hidden from the calendar');
     } catch (e) { console.error('hide failed', e); showToast('⚠️ Could not hide that'); }
   };
 
@@ -14166,10 +14166,10 @@ function CalendarDayRows({
     HIDEABLE_KINDS.has(entry.kind) ? (
       <button
         onClick={() => onHideEntry?.(entry)}
-        className="w-8 h-8 rounded-full bg-stone-800 text-stone-300 flex items-center justify-center active:scale-90 transition text-sm shrink-0"
+        className="px-2.5 h-8 rounded-full bg-stone-800 text-stone-300 flex items-center justify-center active:scale-90 transition text-[11px] font-bold tracking-wider shrink-0"
         title="Hide from the calendar"
       >
-        🙈
+        HIDE
       </button>
     ) : null
   );
@@ -14793,7 +14793,7 @@ function CalendarView({
               onClick={() => setShowHidden((v) => !v)}
               className="w-full flex items-center justify-between text-xs font-display text-stone-400 hover:text-stone-100 px-3 py-2 rounded-xl border border-stone-800 bg-stone-900"
             >
-              <span>🙈 HIDDEN ({hiddenEntries.length})</span>
+              <span>HIDDEN ({hiddenEntries.length})</span>
               <span>{showHidden ? 'HIDE ▲' : 'SHOW ▼'}</span>
             </button>
             {showHidden && (
@@ -17576,6 +17576,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
