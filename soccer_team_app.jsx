@@ -16489,8 +16489,15 @@ function PublicHomePage({ access }) {
     if (active && (active.date || '').slice(0, 10) === todayStr && norm(active.opponent) === norm(s.opponent)) return true;
     return todayFinished.some((g) => norm(g.opponent) === norm(s.opponent));
   };
+  // Games only. The schedule now also holds coach-created practices, tryouts and
+  // team events (they carry a `type`; absent means game, since every item
+  // predates the field). Those have no opponent and no score, so featuring one
+  // would put a scoreboard reading "Stompers vs Opponent" at the top of the
+  // parent home page.
   const todaySched = (schedule || []).filter(
-    (s) => (s.date || '').slice(0, 10) === todayStr && !isCovered(s),
+    (s) => (s.date || '').slice(0, 10) === todayStr
+      && (s.type || 'game') === 'game'
+      && !isCovered(s),
   );
 
   const slots = [];
