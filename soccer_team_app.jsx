@@ -836,17 +836,39 @@ function formatTime12(time24) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
-// Colored pill for the game type. Visibility escalates with stakes:
-// Scrimmage = quiet violet (just labeled), Festival = medium-pop teal,
-// anything else (e.g. "Canton Cup Tournament") = loudest amber.
-function TournamentChip({ value }) {
-  if (!value) return null;
-  const t = String(value).toLowerCase();
+// The fixture's scoring TYPE — one of GAME_TYPES, never free text. Visibility
+// escalates with stakes: scrimmage = quiet violet, festival = medium-pop teal,
+// tournament = loudest amber. `league` gets neutral stone: it is the default and
+// does not need to shout. Colours match what TournamentChip used to infer from
+// the old overloaded text field, so nothing on screen shifts.
+function GameTypeChip({ value }) {
+  const t = String(value || '').toLowerCase();
+  if (!t) return null;
   const cls = t === 'scrimmage' ? 'bg-violet-500/10 text-violet-400 border-violet-500/30'
             : t === 'festival'  ? 'bg-teal-500/20 text-teal-200 border-teal-400/50'
-            : 'bg-amber-400/25 text-amber-100 border-amber-300/60';
+            : t === 'tournament' ? 'bg-amber-400/25 text-amber-100 border-amber-300/60'
+            : 'bg-stone-700/40 text-stone-300 border-stone-600/60';
   return (
     <span className={`inline-block ${cls} border font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded`}>
+      {t.toUpperCase()}
+    </span>
+  );
+}
+
+// The competition's NAME ("Canton Cup", "Gatorade Invitational"). One neutral
+// style, deliberately: colouring by inference is what GameTypeChip now owns, and
+// a name should not pick up scrimmage violet because of a substring.
+//
+// Suppressed when the name IS the type. Legacy items stored the type in this
+// same free-text box, so `tournament: 'Festival'` would otherwise render a
+// FESTIVAL type chip next to an identical FESTIVAL name chip. Comparison is
+// against the RESOLVED type, so a name only vanishes when it is genuinely the
+// duplicate — "Festival of Champions" still shows.
+function TournamentChip({ value, gameType }) {
+  if (!value) return null;
+  if (String(value).trim().toLowerCase() === String(gameType || '').toLowerCase()) return null;
+  return (
+    <span className="inline-block bg-stone-700/40 text-stone-200 border border-stone-600/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
       {String(value).toUpperCase()}
     </span>
   );
@@ -2359,6 +2381,7 @@ function CoachApp() {
           opponent: v.opponent,
           date: v.date,
           time: v.time || '',
+          gameType: v.gameType || 'league',
           tournament: v.tournament,
           location: v.location,
           field: v.field,
@@ -2374,6 +2397,12 @@ function CoachApp() {
           title: v.title || '',
           date: v.date,
           time: v.time || '',
+          // Tag and competition name apply to sessions too — a practice at the
+          // Canton Cup. An earlier pass dropped `tournament` here because the
+          // form hid the input; now the form offers both, so both must persist
+          // or the coach's pick would be silently discarded on save.
+          gameType: v.gameType || 'league',
+          tournament: v.tournament,
           location: v.location,
           field: v.field,
         };
@@ -2401,6 +2430,13 @@ function CoachApp() {
     setPendingGameSetup({
       opponent: item.opponent,
       tournament: item.tournament,
+      // Carry the scheduled item's tag into setup so the coach's pick is not
+      // lost on the way to kickoff. NOTE: startNewGame does not yet write
+      // gameType onto the finished game doc, so a played game still resolves
+      // its type through gameTypeOf's legacy `tournament` fallback. Closing
+      // that gap means touching GameSetup and startNewGame, which is outside
+      // this task.
+      gameType: gameTypeOf(item),
       fromSchedule: true,
       isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
       format: item.format,
@@ -9014,7 +9050,8 @@ function FilmRoomView({ games, roster, onBack, onUpdateEvent, onDeleteEvent, onC
                   <div className="flex-1 min-w-0 text-left">
                     <div className="font-bold text-sm truncate">vs {g.opponent}</div>
                     <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {g.tournament && <TournamentChip value={g.tournament} />}
+                      <GameTypeChip value={gameTypeOf(g)} />
+                      <TournamentChip value={g.tournament} gameType={gameTypeOf(g)} />
                       <FormatChip value={g.format} />
                       <span>{formatDate(g.date)}</span>
                       {pendingCount > 0 && (
@@ -9380,7 +9417,8 @@ function SeasonGamesTab({ games, tagged, onOpenGame }) {
             <div className="flex-1 min-w-0 text-left">
               <div className="font-bold text-sm truncate">vs {g.opponent}</div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                {g.tournament && <TournamentChip value={g.tournament} />}
+                <GameTypeChip value={gameTypeOf(g)} />
+                <TournamentChip value={g.tournament} gameType={gameTypeOf(g)} />
                 <FormatChip value={g.format} />
                 <span>{formatDate(g.date)}</span>
                 {tagged[g.id] && (
@@ -13806,7 +13844,8 @@ function CalendarDayRows({
             <div className="flex-1 min-w-0">
               <div className="font-bold text-sm truncate">vs {entry.opponent}</div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-                {entry.tournament && <TournamentChip value={entry.tournament} />}
+                <GameTypeChip value={gameTypeOf(entry.raw)} />
+                <TournamentChip value={entry.tournament} gameType={gameTypeOf(entry.raw)} />
                 <FormatChip value={entry.raw?.format} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
               </div>
@@ -13831,7 +13870,8 @@ function CalendarDayRows({
               </div>
               <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
                 {entry.cancelled && cancelledBadge}
-                {entry.tournament && <TournamentChip value={entry.tournament} />}
+                <GameTypeChip value={gameTypeOf(item)} />
+                <TournamentChip value={entry.tournament} gameType={gameTypeOf(item)} />
                 <FormatChip value={item.format} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
                 {entry.field && (
@@ -13976,6 +14016,11 @@ function CalendarDayRows({
       case 'team_event_own': {
         const label = entry.kind === 'practice_own' ? 'PRACTICE'
           : entry.kind === 'tryout_own' ? 'TRYOUT' : 'TEAM EVENT';
+        // A coach-created session can now carry a competition tag and name —
+        // a practice AT the Canton Cup. The model leaves `tournament` blank for
+        // non-games, so both come off `raw`, the saved schedule item itself.
+        const ownItem = entry.raw || {};
+        const ownType = ownItem.gameType ? gameTypeOf(ownItem) : '';
         return shell(entry, (
           <>
             <div className="flex-1 min-w-0">
@@ -13987,6 +14032,8 @@ function CalendarDayRows({
                 <span className="inline-block bg-stone-800 text-stone-400 border border-stone-700 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
                   {label}
                 </span>
+                <GameTypeChip value={ownType} />
+                <TournamentChip value={ownItem.tournament} gameType={ownType} />
                 {entry.time && <span>{formatTime12(entry.time)}</span>}
                 {entry.field && (
                   <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
@@ -14210,6 +14257,7 @@ function CalendarView({
   const formSig = editingItem ? JSON.stringify([
     editingItem.type, editingItem.title,
     editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
+    editingItem.gameType,
     editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
     editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
     editingItem.squadIds,
@@ -14225,6 +14273,7 @@ function CalendarView({
         date: editingItem.date || '',
         time: editingItem.time || '',
         tournament: editingItem.tournament || '',
+        gameType: editingItem.gameType || '',
         location: editingItem.location || '',
         field: editingItem.field || '',
         isHome: editingItem.isHome,
@@ -14243,6 +14292,7 @@ function CalendarView({
       date: seed.date || selected || today,
       time: seed.time || '',
       tournament: seed.tournament || '',
+      gameType: seed.gameType || '',
       location: seed.location || '',
       field: seed.field || '',
       squadIds: [],
@@ -14581,6 +14631,10 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
   const [date, setDate] = useState(init.date || '');
   const [time, setTime] = useState(init.time || '');
   const [tournament, setTournament] = useState(init.tournament || '');
+  // Seed from the RESOLVER, not the raw field: editing a legacy game whose only
+  // record of its type is the old free-text "Festival" must preselect FESTIVAL,
+  // or saving it would silently reweight it to a full-value league game.
+  const [gameType, setGameType] = useState(gameTypeOf(init));
   const [location, setLocation] = useState(init.location || '');
   const [field, setField] = useState(init.field || '');
   // Optional match-day pre-fill — saved on the schedule item, used when the
@@ -14623,6 +14677,7 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     setDate(it.date || '');
     setTime(it.time || '');
     setTournament(it.tournament || '');
+    setGameType(gameTypeOf(it));
     setLocation(it.location || '');
     setField(it.field || '');
     setIsHome(typeof it.isHome === 'boolean' ? it.isHome : true);
@@ -14651,6 +14706,7 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     date,
     time: time || '',
     tournament: tournament.trim(),
+    gameType,
     location: location.trim(),
     field: field.trim(),
     isHome,
@@ -14748,18 +14804,33 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
           />
         </label>
       </div>
-      {/* Fixture-only: a practice has no competition, and saveCalendarEntry does
-          not persist `tournament` for non-games, so showing it would offer an
-          input whose value is silently dropped. */}
-      {isGame && (
-        <input
-          type="text"
-          placeholder="Tournament / Festival"
-          value={tournament}
-          onChange={e => setTournament(e.target.value)}
-          className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-        />
-      )}
+      {/* Tag + name, on EVERY event type. The tag is a fixed vocabulary because
+          it picks a scoring weight — typing "Scrimmage vs Caboto" into a text
+          box used to score at full league value. The name stays free text
+          beside it, and a practice can carry both: the session at the Canton
+          Cup. */}
+      <div>
+        <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">TAG</div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {GAME_TYPES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setGameType(t.key)}
+              className={`py-2 rounded-xl text-[10px] font-bold border-2 active:scale-95 transition ${
+                gameType === t.key ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'
+              }`}
+            >{t.label}</button>
+          ))}
+        </div>
+      </div>
+      <input
+        type="text"
+        placeholder="Competition name (e.g. Canton Cup)"
+        value={tournament}
+        onChange={e => setTournament(e.target.value)}
+        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+      />
       <input
         type="text"
         placeholder="Location (address or Google Maps link)"
