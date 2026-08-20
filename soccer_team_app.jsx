@@ -1113,7 +1113,7 @@ function CoachApp() {
   // item id (+ a snapshot of the current squad) so the SquadPickerView can
   // save back into the schedule and return to the schedule screen.
   const [editingScheduleSquad, setEditingScheduleSquad] = useState(null);
-  // When returning from the squad picker, ScheduleView re-mounts; this hint
+  // When returning from the squad picker, the calendar re-mounts; this hint
   // tells it to drop back into edit mode for the same item.
   const [resumeScheduleEditId, setResumeScheduleEditId] = useState(null);
   // Which screen sent the coach to the squad picker, so the detour returns to
@@ -2220,7 +2220,7 @@ function CoachApp() {
 
   // Season-wide opponent rename: opponent spelling drives the schedule↔game
   // dedupe, so a typo has to be fixable across every game AND schedule entry at
-  // once. Hoisted out of the ScheduleView mount so the calendar shares it.
+  // once. Hoisted out of the old schedule screen so the calendar owns it.
   const renameOpponent = async (oldName, newName) => {
     const o = (oldName || '').trim().toLowerCase();
     const n = (newName || '').trim();
@@ -2263,7 +2263,7 @@ function CoachApp() {
   };
 
   // Add-or-edit for the calendar's GameForm sheet. Mirrors
-  // ScheduleView.handleFormSubmit — same field set, same generated id shape — so
+  // the old schedule form — same field set, same generated id shape — so
   // an item created here is indistinguishable from one created on the old screen.
   const saveCalendarGame = (v, scheduleId) => {
     if (!v.opponent || !v.date) return;
@@ -2702,22 +2702,6 @@ function CoachApp() {
         />
       )}
 
-      {view === 'schedule' && (
-        <ScheduleView
-          schedule={schedule}
-          roster={roster}
-          games={games}
-          opponentSuggestions={opponentSuggestions}
-          onRenameOpponent={renameOpponent}
-          initialEditId={resumeScheduleEditId}
-          onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
-          onSave={persistSchedule}
-          onBack={() => setView('home')}
-          onEditSquad={(item) => openScheduleSquadPicker(item, 'schedule')}
-          askConfirm={askConfirm}
-          showToast={showToast}
-        />
-      )}
 
       {view === 'scheduleSquad' && editingScheduleSquad && (
         <SquadPickerView
@@ -13149,10 +13133,10 @@ function WeightsView({ weights, onSave, onBack }) {
 
    The dugout and the parent view mount the SAME component; `canEdit` is the
    only difference. Parents get a read-only surface, the coach gets the row
-   actions and the game form that used to live permanently open in
-   ScheduleView.
+   actions and the game form that used to live permanently open at the top of
+   the old schedule screen.
 
-   Detail rows deliberately reuse ScheduleView.renderRow's chip vocabulary —
+   Detail rows deliberately reuse the old schedule row's chip vocabulary —
    TournamentChip, FormatChip, the field pill, the map link, the squad count,
    the READY badge. No new row language: two dialects for the same game is how
    the two screens drifted apart in the first place.
@@ -13618,7 +13602,7 @@ function CalendarDayRows({
         );
       }
 
-      /* ---- 2. a coach-scheduled game: the full ScheduleView row ---- */
+      /* ---- 2. a coach-scheduled game: the full detail row ---- */
       case 'game_scheduled': {
         const item = entry.raw || {};
         const ready = calIsReady(item);
@@ -13817,7 +13801,7 @@ function CalendarView({
   onEditSquad, onManageOpponents, onBack, askConfirm, showToast,
   // Set by the caller when returning from the squad picker, so the coach lands
   // back in the edit sheet they left instead of a closed calendar. Mirrors
-  // ScheduleView's initialEditId/onConsumedInitialEditId pair.
+  // the old screen's initialEditId/onConsumedInitialEditId pair.
   resumeEditId = null, onConsumedResumeEditId,
 }) {
   const [month, setMonth] = useState(() => calMonthOf(today) || calMonthOf(new Date().toISOString()));
@@ -14199,7 +14183,7 @@ function CalendarView({
         )}
       </div>
 
-      {/* Edit / add sheet — the SAME GameForm ScheduleView mounts. */}
+      {/* Edit / add sheet — the shared GameForm. */}
       {sheet && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={closeSheet}>
           <div
@@ -14230,8 +14214,8 @@ function CalendarView({
   );
 }
 
-/* ---------- GAME FORM (shared by ScheduleView and the calendar sheet) ---------- */
-// Extracted from ScheduleView so the calendar's edit sheet mounts the *same*
+/* ---------- GAME FORM (mounted by the calendar's edit sheet) ---------- */
+// Extracted from the old schedule screen so the calendar's sheet mounts the *same*
 // fifteen inputs rather than a copy of them. Owns all its input state; the
 // caller owns persistence and decides what `initial` is.
 function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCancel, onEditSquad, showToast }) {
@@ -14562,313 +14546,6 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     </div>
   );
 }
-
-function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
-  const [editingId, setEditingId] = useState(null);
-  const [showPast, setShowPast] = useState(false);
-  const [showOpponentManager, setShowOpponentManager] = useState(false);
-  // Bumped on every reset so a blank form re-seeds even when it was already blank.
-  const [formNonce, setFormNonce] = useState(0);
-  const formRef = React.useRef(null);
-
-  // GameForm re-seeds whenever this object's identity changes. Memoise on a
-  // *value* signature, not on the array element's reference: in production the
-  // team doc's onSnapshot hands back a fresh schedule array on every roster or
-  // weights write too, and re-seeding then would wipe what the coach is typing.
-  const editingItem = editingId ? schedule.find(s => s.id === editingId) : null;
-  const formSig = editingItem ? JSON.stringify([
-    editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
-    editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
-    editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
-    editingItem.squadIds,
-  ]) : '';
-  const formInitial = useMemo(() => (editingItem ? {
-    opponent: editingItem.opponent || '',
-    date: editingItem.date || '',
-    time: editingItem.time || '',
-    tournament: editingItem.tournament || '',
-    location: editingItem.location || '',
-    field: editingItem.field || '',
-    isHome: editingItem.isHome,
-    format: editingItem.format,
-    halfLengthMin: typeof editingItem.halfLengthMin === 'number'
-      ? editingItem.halfLengthMin : undefined,
-    homeColor: editingItem.homeColor,
-    awayColor: editingItem.awayColor,
-    squadIds: Array.isArray(editingItem.squadIds) ? editingItem.squadIds : [],
-  } : { nonce: formNonce }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [editingId, formSig, formNonce]);
-
-  // Resume edit mode when returning from the squad-picker detour.
-  React.useEffect(() => {
-    if (!initialEditId) return;
-    const item = schedule.find(s => s.id === initialEditId);
-    if (item) setEditingId(item.id);
-    onConsumedInitialEditId?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialEditId]);
-
-  const resetForm = () => {
-    setEditingId(null);
-    setFormNonce(n => n + 1);
-  };
-
-  const handleFormSubmit = (v) => {
-    if (!v.opponent || !v.date) return;
-    const setupFields = {
-      isHome: v.isHome,
-      format: v.format,
-      halfLengthMin: v.halfLengthMin,
-      homeColor: v.homeColor,
-      awayColor: v.awayColor,
-      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
-    };
-    if (editingId) {
-      onSave(schedule.map(s => s.id === editingId ? {
-        ...s,
-        opponent: v.opponent,
-        date: v.date,
-        time: v.time || '',
-        tournament: v.tournament,
-        location: v.location,
-        field: v.field,
-        ...setupFields,
-      } : s));
-      showToast?.(`✏️ Updated vs ${v.opponent}`);
-      resetForm();
-      return;
-    }
-    const item = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      opponent: v.opponent,
-      date: v.date,
-      time: v.time || '',
-      tournament: v.tournament,
-      location: v.location,
-      field: v.field,
-      ...setupFields,
-    };
-    onSave([...schedule, item]);
-    const dateLabel = new Date(v.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
-    showToast?.(`✅ Added vs ${item.opponent} · ${dateLabel}`);
-    resetForm();
-  };
-
-  // Persist the in-progress edit before navigating away to the squad picker,
-  // so nothing typed is lost on the detour.
-  const handleEditSquad = (v) => {
-    if (!editingId) return;
-    onSave(schedule.map(s => s.id === editingId ? {
-      ...s,
-      opponent: v.opponent || s.opponent,
-      date: v.date || s.date,
-      time: v.time || '',
-      tournament: v.tournament,
-      location: v.location,
-      field: v.field,
-      isHome: v.isHome,
-      format: v.format,
-      halfLengthMin: v.halfLengthMin,
-      homeColor: v.homeColor,
-      awayColor: v.awayColor,
-      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
-    } : s));
-    onEditSquad?.({ id: editingId, opponent: v.opponent || 'Opponent', squadIds: v.squadIds });
-  };
-
-  const handleEdit = (item) => {
-    setEditingId(item.id);
-    if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  const handleToggleCancel = (item) => {
-    const wasCancelled = !!item.cancelled;
-    onSave(schedule.map(s => s.id === item.id ? { ...s, cancelled: !s.cancelled } : s));
-    showToast?.(wasCancelled ? `↩ Restored vs ${item.opponent}` : `⛔ Cancelled vs ${item.opponent}`);
-  };
-
-  const handleDelete = (id) => {
-    const item = schedule.find(s => s.id === id);
-    const label = item ? `vs ${item.opponent}${item.date ? ' on ' + new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}` : 'this game';
-    askConfirm(`Delete ${label} from the schedule?`, () => {
-      if (editingId === id) resetForm();
-      onSave(schedule.filter(s => s.id !== id));
-      showToast?.(`🗑 Deleted ${label}`);
-    }, { danger: true, yesLabel: 'DELETE' });
-  };
-
-  const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-  const isPastItem = (item) => new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
-  const upcoming = sorted.filter(item => !isPastItem(item));      // soonest first
-  const past = sorted.filter(isPastItem).reverse();               // most-recent first
-
-  const renderRow = (item) => {
-    const isPast = isPastItem(item);
-    const isCancelled = !!item.cancelled;
-    const isEditing = editingId === item.id;
-    return (
-      <div
-        key={item.id}
-        className={`bg-stone-900 border rounded-xl p-3 flex items-center gap-3 ${
-          isEditing ? 'border-amber-500/60 ring-1 ring-amber-500/30'
-          : isCancelled ? 'border-red-900/60 opacity-70'
-          : isPast ? 'border-stone-800 opacity-50'
-          : 'border-stone-800'
-        }`}
-      >
-        <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
-          <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
-          <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className={`font-bold text-sm truncate ${isCancelled ? 'line-through text-stone-400' : ''}`}>vs {item.opponent}</div>
-          <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-            {isCancelled && (
-              <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                CANCELLED
-              </span>
-            )}
-            {item.tournament && <TournamentChip value={item.tournament} />}
-            <FormatChip value={item.format} />
-            {item.time && <span>{formatTime12(item.time)}</span>}
-            {item.field && (
-              <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                📍 {item.field}
-              </span>
-            )}
-            {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
-              <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                👥 {item.squadIds.length}
-              </span>
-            )}
-            {(() => {
-              const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
-                && typeof item.isHome === 'boolean'
-                && typeof item.halfLengthMin === 'number'
-                && !!item.homeColor && !!item.awayColor;
-              return ready ? (
-                <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                  READY
-                </span>
-              ) : null;
-            })()}
-          </div>
-          {item.location && (
-            <a
-              href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
-              target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
-              onClick={e => e.stopPropagation()}
-            >
-              <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
-            </a>
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5 shrink-0">
-          <button
-            onClick={() => handleEdit(item)}
-            className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
-            title="Edit"
-          >
-            ✏️
-          </button>
-          <button
-            onClick={() => handleToggleCancel(item)}
-            className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${isCancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'}`}
-            title={isCancelled ? 'Restore' : 'Mark cancelled'}
-          >
-            {isCancelled ? '↻' : '🚫'}
-          </button>
-          <button
-            onClick={() => handleDelete(item.id)}
-            className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
-            title="Delete"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-stone-900 pb-8">
-      <Header
-        title="SCHEDULE"
-        onBack={onBack}
-        right={
-          opponentSuggestions.length > 0 && onRenameOpponent ? (
-            <button
-              onClick={() => setShowOpponentManager(true)}
-              className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
-            >
-              🏷️ OPPONENTS
-            </button>
-          ) : null
-        }
-      />
-
-      {/* Add form */}
-      <div className="px-4 pt-4 space-y-3" ref={formRef}>
-        <GameForm
-          initial={formInitial}
-          opponentSuggestions={opponentSuggestions}
-          editing={!!editingId}
-          onSubmit={handleFormSubmit}
-          onCancel={resetForm}
-          onEditSquad={handleEditSquad}
-          showToast={showToast}
-        />
-      </div>
-
-      {/* Upcoming */}
-      <div className="px-4 pt-6">
-        <h2 className="font-display text-xl mb-3">UPCOMING ({upcoming.length})</h2>
-        {upcoming.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
-            {sorted.length === 0 ? 'No scheduled games yet.' : 'No upcoming games.'}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(renderRow)}
-          </div>
-        )}
-      </div>
-
-      {/* Past games — collapsed by default to keep the section uncluttered */}
-      {past.length > 0 && (
-        <div className="px-4 pt-6">
-          <button
-            onClick={() => setShowPast(v => !v)}
-            className="w-full flex items-center justify-between font-display text-xl mb-3 text-stone-300 hover:text-stone-100"
-          >
-            <span>PAST GAMES ({past.length})</span>
-            <span className="text-sm text-stone-400">{showPast ? 'HIDE ▲' : 'SHOW ▼'}</span>
-          </button>
-          {showPast && (
-            <div className="space-y-2">
-              {past.map(renderRow)}
-            </div>
-          )}
-        </div>
-      )}
-      {showOpponentManager && (
-        <OpponentManagerModal
-          opponentSuggestions={opponentSuggestions}
-          games={games}
-          schedule={schedule}
-          onClose={() => setShowOpponentManager(false)}
-          onRename={onRenameOpponent}
-          askConfirm={askConfirm}
-          showToast={showToast}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ---------- OPPONENT MANAGER MODAL ---------- */
 function OpponentManagerModal({ opponentSuggestions, games, schedule, onClose, onRename, askConfirm, showToast }) {
   const [renaming, setRenaming] = useState(null); // { from: string, to: string }
   const norm = (s) => (s || '').trim().toLowerCase();
