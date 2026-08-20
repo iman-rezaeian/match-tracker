@@ -424,7 +424,16 @@ except FileNotFoundError:
 # shell. Without this, CACHE_VERSION was a hand-edited constant that nobody bumped,
 # so installed PWAs kept serving the stale shell after a deploy.
 import hashlib
-_build_id = hashlib.sha1(deploy_html.encode("utf-8")).hexdigest()[:10]
+# Hash the CSS as well as the HTML. Hashing only the HTML meant a build that
+# changed tailwind.css but not index.html kept the SAME CACHE_VERSION, so the
+# service worker never purged its precached './tailwind.css'. That shipped an
+# installed PWA fresh markup against a stale stylesheet: the calendar's new
+# grid-cols-7 had no rule, `display:grid` fell back to one column, and the month
+# grid rendered as a single vertical list of dates on phones that had visited
+# before. Any precached asset must contribute to this id.
+_css_file = DEPLOY_DIR / "tailwind.css"
+_css_bytes = _css_file.read_bytes() if _css_file.is_file() else b""
+_build_id = hashlib.sha1(deploy_html.encode("utf-8") + _css_bytes).hexdigest()[:10]
 
 # Copy PWA shell files into the deploy folder.
 copied_pwa = []
