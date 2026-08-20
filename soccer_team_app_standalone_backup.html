@@ -808,11 +808,22 @@ const DEFAULT_WEIGHTS = {
   // v2 fairness knobs: empirical-Bayes shrinkage prior (virtual minutes of
   // squad-average production added to every player's rate) and per-game-type
   // weights on the season aggregate (scrimmages count half by default).
-  shrinkMinutes: 12,
+  //
+  // v3: 12 -> 45. The coach logs while coaching, so the discretionary events
+  // (duels, ball wins, clearances, give-and-gos) are barely logged at all: 4
+  // CLEARs and 12 BALL_WINs across 16 players over 14 games. With evidence that
+  // thin, a player's true rate is mostly unknown, and 12 virtual minutes let
+  // the season table state a 6.8x spread between top and bottom — a confidence
+  // the data does not support. Note that REWEIGHTING points cannot fix this:
+  // the scale has no floor, so scaling GOAL/ASSIST down moved every player ~10%
+  // and left the ratio at 6.8x (measured). Only the prior compresses, because
+  // it pulls toward the squad mean rather than rescaling. At 45 the spread is
+  // 4.4x, which still separates a 16-assist season from a 0-assist one.
+  shrinkMinutes: 45,
   gameTypes: { scrimmage: 0.5, festival: 0.75, tournament: 1.0, league: 1.0, default: 1.0 },
 };
 
-const SCORING_VERSION = 3; // bumped 2026-08: GK fairness — save value matched to outfield, GK DEF pillar 55->35
+const SCORING_VERSION = 3; // bumped 2026-08: GK fairness (save value + DEF pillar) and shrinkage 12->45 for thin logging
 
 function mergeWeights(w) {
   return {
@@ -13100,6 +13111,7 @@ function StatsView({ roster, games, weights, onBack }) {
                   <p><b className="text-stone-200">v2 (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
                   <p><b className="text-amber-400">Logging coverage (Aug 2026):</b> you tap while you coach, so how much gets logged swings a lot between games — across the season the action events per game ran 95 down to 18, and defensive taps fell from 60% of them to about 3%. Each pillar now divides by the minutes that <i>actually carried logging for that pillar</i>, instead of by every minute played. So a quiet game no longer waters down a defender's rating, and nobody is penalised for the games you were too busy to tap. A <span className="text-amber-400">●</span> next to a score means under half his minutes carried logging (<span className="text-red-400">●</span> under 30%) — treat those as provisional.</p>
                   <p><b className="text-stone-200">v{SCORING_VERSION} (Aug 2026) GK fairness:</b> a keeper's defending was measured on a different scale from everyone else's. A save gets tapped every time — it happens <i>at</i> the keeper — while a defender's good positioning is invisible: across 14 games you logged 47 saves but only 4 clearances. A save was also worth more from the keeper (10) than from anyone else (7), and DEF counted 55% of a keeper's score against 25% for outfielders. Those stacked, and the keeper topped the table on a DEF rate of 16.1 against a next-best 4.7. Saves are now worth 7 for everyone and the GK blend is DEF 35% / INV 30%. No outfielder's score moved.</p>
+                  <p><b className="text-stone-200">v{SCORING_VERSION} (Aug 2026) narrower spread:</b> the table used to read 8.2 at the top and 1.2 at the bottom — a 6.8x gap that the logging cannot support. Across 14 games the squad logged 4 clearances, 12 ball wins and 6 give-and-gos in total, so for most players the defensive and decision pillars rest on a handful of taps. Every player is now blended with <b>45 minutes</b> of squad-average production instead of 12 (⚙ Scoring → FAIRNESS), which pulls thin evidence toward the middle and leaves the spread at 4.4x. Real differences still show — a 16-assist season still reads well clear of a 0-assist one — but the table no longer claims one player is a seventh of another on six observations. Note this is a floor problem, not a weighting one: scaling goals and assists down moved everyone about 10% and left the ratio unchanged.</p>
                 </div>
               </details>
               <SeasonPlayersTab
@@ -17586,6 +17598,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
