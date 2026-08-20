@@ -25,6 +25,15 @@ const typeWeight = (g) => {
 
 **Measured before starting:** all 14 finished games currently hold either `Festival` (12) or `Scrimmage` (2), both of which lowercase to valid keys. **No existing score is wrong**, so this fixes a latent bug rather than a live one, and no score should move when this ships. That is the regression test.
 
+**But three SCHEDULED items already show the trap.** They carry
+`Gatorate Invitational` — a typo for "Gatorade" — which matches no key and would
+resolve to `league`, so those three Gatorade games would score at full weight
+once played instead of as a tournament. Nothing is broken yet because they are
+unplayed, and no migration is needed: the coach picks their tag in the UI this
+plan builds. It is worth stating in the handover, because it is the concrete case
+that shows why a picker beats a text box — a single mistyped letter silently
+chooses a scoring weight.
+
 ## Global Constraints
 
 - **Single-file app.** All component code in `soccer_team_app.jsx`. No bundler, no imports, no new npm runtime deps.
