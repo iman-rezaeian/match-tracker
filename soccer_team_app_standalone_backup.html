@@ -1650,7 +1650,13 @@ function CoachApp() {
   // ':' and '/' are not usable in a Firestore doc id, and '__x__' is reserved
   // (Firestore rejects it outright, failing the whole write). Deterministic, so
   // unhide deletes exactly the doc hide created.
-  const hideDocId = (key) => String(key).replace(/[^A-Za-z0-9-]/g, '_');
+  // Entry keys look like `ts:9230745-366776389`; ':' and '/' cannot appear in a
+  // Firestore doc id. The `h-` prefix is not decoration: Firestore REJECTS any id
+  // matching `__…__` as reserved (400 INVALID_ARGUMENT), and a bare sanitise
+  // would pass such a key straight through. Real keys are always prefixed today,
+  // so this is belt-and-braces — but that exact rejection already took the sync
+  // down once, and it fails the whole batch rather than one write.
+  const hideDocId = (key) => `h-${String(key).replace(/[^A-Za-z0-9-]/g, '_')}`;
 
   const hideEvent = async (key) => {
     if (!window.fbDb || !key) return;
@@ -17054,6 +17060,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
