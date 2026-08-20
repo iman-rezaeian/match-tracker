@@ -546,6 +546,36 @@ function gkExtrasForGame(playerId, game) {
 // unfairly penalized by low ATK/DEC opportunity, and saves count for more.
 // `gkExtras` (optional, GK only) — { oppGoalsConceded, cleanSheets } aggregated
 // across the games being scored. Adds clean-sheet bonus and conceded penalty.
+// The four kinds of fixture, in the order they appear in the picker. `key` is
+// what gets stored and what scoring weights are keyed on; nothing else may be
+// stored in `gameType`, because an unrecognised value silently scores as a
+// full-weight league game.
+const GAME_TYPES = [
+  { key: 'scrimmage', label: 'SCRIMMAGE' },
+  { key: 'festival', label: 'FESTIVAL' },
+  { key: 'tournament', label: 'TOURNAMENT' },
+  { key: 'league', label: 'LEAGUE' },
+];
+
+/**
+ * An item's scoring type.
+ *
+ * `gameType` is the field the picker writes. Every game and schedule item
+ * created before it existed has only the free-text `tournament` box, whose value
+ * scoring read directly — so fall back to it and keep 14 games of history
+ * weighted exactly as they are today. The fallback only matches when the old
+ * text happens to BE a type name ("Festival", "Scrimmage"), which is what the
+ * real data holds; anything else lands on `league` at weight 1.0, which is what
+ * the old code did with it anyway.
+ */
+function gameTypeOf(item) {
+  const explicit = String(item?.gameType || '').toLowerCase();
+  if (GAME_TYPES.some((t) => t.key === explicit)) return explicit;
+  const legacy = String(item?.tournament || '').toLowerCase();
+  if (GAME_TYPES.some((t) => t.key === legacy)) return legacy;
+  return 'league';
+}
+
 // Default per-action point values + pillar weights. Coaches can override these
 // in Settings → Scoring Weights. `mergeWeights` fills in any missing fields so
 // older saved overrides still work if new actions are added later.
@@ -579,7 +609,7 @@ const DEFAULT_WEIGHTS = {
   // squad-average production added to every player's rate) and per-game-type
   // weights on the season aggregate (scrimmages count half by default).
   shrinkMinutes: 12,
-  gameTypes: { scrimmage: 0.5, festival: 0.75, default: 1.0 },
+  gameTypes: { scrimmage: 0.5, festival: 0.75, tournament: 1.0, league: 1.0, default: 1.0 },
 };
 
 const SCORING_VERSION = 2; // bumped 2026-06: shrinkage, INV cleanup, pro-rated clean sheet, game-type weights, season own-goal fix
@@ -12416,7 +12446,7 @@ function StatsView({ roster, games, weights, onBack }) {
     const W = mergeWeights(weights);
     const M = Math.max(0, Number(W.shrinkMinutes) || 0);
     const typeWeight = (g) => {
-      const t = String(g.tournament || '').toLowerCase();
+      const t = gameTypeOf(g);
       return (W.gameTypes[t] != null) ? Number(W.gameTypes[t]) : Number(W.gameTypes.default);
     };
     // ---- Per-pillar LOGGING WEIGHT -------------------------------------------
