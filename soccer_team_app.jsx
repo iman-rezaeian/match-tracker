@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useImperativeHandle, forwa
 import {
   Plus, Users, Trash2, Edit3, ChevronLeft,
   PlayCircle, Undo2, X, ChevronRight,
-  BarChart3, Flag, Zap, Calendar, MapPin
+  BarChart3, Flag, Calendar, MapPin
 } from 'lucide-react';
 
 const STORAGE_KEYS = { ROSTER: 'roster', GAMES: 'games', WEIGHTS: 'weights', SCHEDULE: 'schedule', TEAM_LIVE_INPUT: 'team_live_input' };
@@ -2465,10 +2465,18 @@ function CoachApp() {
     // Recomputed on navigation so an app left open overnight picks up the new
     // day the next time the coach moves between screens.
   }, [view]);
+  // Which day the calendar should open on when arrived at from a NEXT UP tap.
+  const [calendarJumpTo, setCalendarJumpTo] = useState(null);
+
   const calendarModel = useMemo(
     () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday, hidden: hiddenEventKeys }),
     [teamsnapEvents, schedule, games, calendarToday, hiddenEventKeys]
   );
+  // NEXT UP moved out of the calendar and onto the dugout home, so the home
+  // screen needs the same selection the calendar used to render itself. Must sit
+  // AFTER calendarModel: a const in a useMemo body is read at render time, so
+  // referencing it above its declaration is a TDZ throw, not a hoist.
+  const homeAgenda = useMemo(() => calAgenda(calendarModel, calendarToday), [calendarModel, calendarToday]);
   // Everything from today forward, off days excluded — they are the absence of
   // an event, so counting them would inflate "3 upcoming" on a quiet week.
   const calendarUpcomingCount = useMemo(() => {
@@ -2518,10 +2526,13 @@ function CoachApp() {
           roster={roster}
           games={games}
           upcomingCount={calendarUpcomingCount}
+          agenda={homeAgenda}
           activeGame={activeGame}
           onGoRoster={() => setView('roster')}
-          onNewGame={() => setView('gameSetup')}
           onResumeGame={() => { setActiveGameId(activeGame.id); setView('activeGame'); }}
+          // Tapping a NEXT UP row lands on that entry's day in the calendar,
+          // where the full row and its actions live.
+          onOpenAgendaEntry={(entry) => { setCalendarJumpTo(entry.date); setView('calendar'); }}
           onViewStats={() => setView('stats')}
           onViewWeights={() => setView('weights')}
           onViewCalendar={() => setView('calendar')}
@@ -2832,6 +2843,11 @@ function CoachApp() {
           // both exits, so hand it back and the coach resumes where they were.
           resumeEditId={resumeScheduleEditId}
           onConsumedResumeEditId={() => setResumeScheduleEditId(null)}
+          // NEXT UP lives on the dugout home now; showing it here too would be
+          // the same four rows twice on adjacent screens.
+          showAgenda={false}
+          jumpToDate={calendarJumpTo}
+          onConsumedJumpTo={() => setCalendarJumpTo(null)}
         />
       )}
 
@@ -2950,7 +2966,7 @@ function ConfirmDialog({ message, danger, yesLabel = 'YES', onCancel, onConfirm 
 }
 
 /* ---------- HOME ---------- */
-function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, onNewGame, onResumeGame, onViewStats, onViewWeights, onViewCalendar, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining, onViewAccess }) {
+function HomeView({ roster, games, upcomingCount = 0, agenda = [], activeGame, onGoRoster, onResumeGame, onOpenAgendaEntry, onViewStats, onViewWeights, onViewCalendar, onViewHelp, onViewViewers, onViewFilmRoom, onViewTraining, onViewAccess }) {
   // Pending family requests → badge on the ACCESS tile. Errors stay silent
   // (rules not deployed yet / offline) — the tile just shows no count.
   const [pendingAccess, setPendingAccess] = useState(0);
@@ -3106,16 +3122,6 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
         </div>
       )}
 
-      <div className="px-4 pt-6">
-        <button
-          onClick={onNewGame}
-          className="w-full bg-lime-500 hover:bg-lime-600 text-stone-100 font-display text-3xl py-6 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition flex items-center justify-center gap-3"
-        >
-          <Zap className="w-7 h-7" />
-          START GAME
-        </button>
-      </div>
-
       <div className="grid grid-cols-2 gap-3 px-4 pt-3">
         <TileButton onClick={onGoRoster} icon={<Users className="w-6 h-6" />} label="ROSTER" sub={`${roster.length} players`} />
         <TileButton onClick={onViewStats} icon={<BarChart3 className="w-6 h-6" />} label="STATS" sub="Players · games · team" />
@@ -3138,6 +3144,52 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
         />
         <TileButton onClick={onViewTraining} icon={<span className="text-2xl leading-none">🎓</span>} label="TRAINING" sub="Skill videos" />
       </div>
+
+      {/* Next up. Lives here rather than inside the calendar so the first thing
+          on the dugout home after the tiles is what is actually coming — the
+          calendar itself suppresses its own copy via showAgenda={false}. Rows
+          are deliberately terse: this is a glance, and tapping goes to the
+          calendar where the full row and its actions live. */}
+      {agenda.length > 0 && (
+        <div className="px-4 pt-6">
+          <h2 className="font-display text-xl mb-3">NEXT UP</h2>
+          <div className="bg-stone-900 border border-stone-800 rounded-2xl divide-y divide-stone-800 overflow-hidden">
+            {agenda.map((entry) => (
+              <button
+                key={entry.key}
+                onClick={() => onOpenAgendaEntry?.(entry)}
+                className="w-full flex items-center gap-3 p-3 text-left active:bg-stone-950"
+              >
+                <span
+                  className="w-1.5 h-8 rounded-sm shrink-0"
+                  style={{
+                    background: calBarColor(entry) || 'transparent',
+                    border: calBarColor(entry) ? 'none' : '1px dashed #57534e',
+                  }}
+                />
+                <div className="w-11 shrink-0 text-center">
+                  <div className="text-[10px] font-bold text-stone-500 tracking-widest leading-none">
+                    {new Date(entry.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}
+                  </div>
+                  <div className="font-display text-lg leading-none tabular-nums">
+                    {new Date(entry.date + 'T12:00').getDate()}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className={`font-bold text-sm truncate ${entry.cancelled ? 'line-through text-stone-400' : ''}`}>
+                    {entry.kind === 'off' ? 'No practice' : entryLabel(entry)}
+                  </div>
+                  <div className="text-xs text-stone-400 truncate">
+                    {[entry.time ? formatTime12(entry.time) : (entry.allDay ? 'All day' : ''), entry.venue || entry.field]
+                      .filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {showInstallModal && (
         <InstallModal
@@ -13396,6 +13448,35 @@ function calBarColor(entry) {
   return entryColor(entry);
 }
 
+/**
+ * How to name an entry in a row, a toast or a confirm. Module-level because the
+ * dugout home's NEXT UP list renders the same rows as the calendar, and two
+ * copies of this would drift.
+ */
+function entryLabel(entry) {
+  if (entry.opponent) return `vs ${entry.opponent}`;
+  if (entry.title) return entry.title;
+  const base = (entry.kind || '').replace(/_own$/, '').replace(/_/g, ' ');
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'this event';
+}
+
+/**
+ * The next few entries at or after `today`, walked across month boundaries on
+ * purpose: paging the grid to December must not hide next week. Shared by the
+ * calendar and the dugout home so the two lists can never disagree.
+ */
+function calAgenda(model, today, limit = 4) {
+  const out = [];
+  for (const dayKey of [...model.days.keys()].sort()) {
+    if (dayKey < today) continue;
+    for (const entry of model.days.get(dayKey)) {
+      if (out.length >= limit) return out;
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
 /** The SVG pattern id for a kind's cancelled cross-hatch. */
 const calHatchId = (kind) => `calx-${kind}`;
 
@@ -14135,6 +14216,11 @@ function CalendarView({
   // back in the edit sheet they left instead of a closed calendar. Mirrors
   // the old screen's initialEditId/onConsumedInitialEditId pair.
   resumeEditId = null, onConsumedResumeEditId,
+  // The dugout shows NEXT UP on its own home screen, below the calendar tile,
+  // so it suppresses the in-calendar copy rather than showing it twice.
+  showAgenda = true,
+  // Open on a specific day — set when arriving from a NEXT UP tap.
+  jumpToDate = null, onConsumedJumpTo,
 }) {
   const [month, setMonth] = useState(() => calMonthOf(today) || calMonthOf(new Date().toISOString()));
   const [selected, setSelected] = useState(today);
@@ -14142,7 +14228,6 @@ function CalendarView({
   const [sheet, setSheet] = useState(null);
   // Bumped on every open so a blank form re-seeds even when it was blank before.
   const [formNonce, setFormNonce] = useState(0);
-  const [showLegend, setShowLegend] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
 
   // Re-open the sheet for the game whose squad was just picked. The sheet is
@@ -14164,6 +14249,15 @@ function CalendarView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeEditId]);
 
+  // Arriving from a NEXT UP tap: select that entry's day and page the grid to it.
+  useEffect(() => {
+    if (!jumpToDate) return;
+    setSelected(jumpToDate);
+    setMonth(calMonthOf(jumpToDate));
+    onConsumedJumpTo?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpToDate]);
+
   const selectedEntries = model.days.get(selected) || [];
   const syncedLabel = calSyncedLabel(syncedAt);
 
@@ -14171,17 +14265,7 @@ function CalendarView({
   // everything upcoming at once. Deliberately NOT scoped to the displayed
   // month — it walks every day the model holds, so paging to December never
   // hides next week.
-  const agenda = useMemo(() => {
-    const out = [];
-    for (const dayKey of [...model.days.keys()].sort()) {
-      if (dayKey < today) continue;
-      for (const entry of model.days.get(dayKey)) {
-        if (out.length >= 4) return out;
-        out.push(entry);
-      }
-    }
-    return out;
-  }, [model, today]);
+  const agenda = useMemo(() => calAgenda(model, today), [model, today]);
 
   // What the coach has hidden. The main model dropped these on purpose, so the
   // only way to describe them is to merge again with the filter off and pick
@@ -14247,13 +14331,6 @@ function CalendarView({
   // Title is optional on a non-game, so it needs a floor: without one an
   // untitled practice renders a blank row. Falls back to the kind's own name
   // ("Practice"), which is what the day rows already show.
-  const entryLabel = (entry) => {
-    if (entry.opponent) return `vs ${entry.opponent}`;
-    if (entry.title) return entry.title;
-    const base = (entry.kind || '').replace(/_own$/, '').replace(/_/g, ' ');
-    return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'this event';
-  };
-
   const handleDeleteEntry = (entry) => {
     const label = `${entryLabel(entry)}${entry.date ? ' on ' + new Date(entry.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}`;
     const run = () => {
@@ -14408,13 +14485,28 @@ function CalendarView({
         <Header
           title="CALENDAR"
           onBack={onBack}
-          right={canEdit && onManageOpponents ? (
-            <button
-              onClick={onManageOpponents}
-              className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
-            >
-              🏷️ OPPONENTS
-            </button>
+          right={canEdit ? (
+            <div className="flex items-center gap-2">
+              {/* The only route to a game that is not already on the calendar.
+                  The dugout's big START GAME button is gone, and the
+                  tap-an-empty-day gesture only works on days with no events at
+                  all — so without this an unplanned scrimmage could not be
+                  started. Opens on the selected day. */}
+              <button
+                onClick={() => openSheet({ mode: 'new', scheduleId: null, seed: { date: selected || today } })}
+                className="text-xs font-display text-lime-400 hover:text-lime-300 px-2 py-1 rounded-lg border border-lime-700/60 bg-lime-500/10"
+              >
+                + EVENT
+              </button>
+              {onManageOpponents && (
+                <button
+                  onClick={onManageOpponents}
+                  className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
+                >
+                  🏷️
+                </button>
+              )}
+            </div>
           ) : null}
         />
       ) : (
@@ -14515,6 +14607,31 @@ function CalendarView({
         />
       </div>
 
+      {/* Colour guide, directly under the grid and always open. It was collapsed
+          behind a SHOW/HIDE toggle on the theory that it teaches the grid once —
+          but the coach asked for it visible, and a legend you have to go looking
+          for is a legend nobody reads. */}
+      <div className="px-4 pt-3">
+        <div className="bg-stone-900 border border-stone-800 rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-2">
+          {legend.map((l) => (
+            <span key={l.label} className="flex items-center gap-1.5 text-[11px] text-stone-300">
+              <span className="w-3 h-1.5 rounded-[2px]" style={{ background: l.color }} />
+              {l.label}
+            </span>
+          ))}
+          <span className="flex items-center gap-1.5 text-[11px] text-stone-300">
+            <svg width="12" height="6" aria-hidden="true">
+              <rect width="12" height="6" rx="1.5" fill={`url(#${calHatchId('practice')})`} />
+            </svg>
+            Cancelled
+          </span>
+          <span className="flex items-center gap-1.5 text-[11px] text-stone-300">
+            <span className="w-3 h-1.5 rounded-[2px] border border-dashed border-stone-600" />
+            Off day (no bar)
+          </span>
+        </div>
+      </div>
+
       {/* Selected day */}
       <div className="px-4 pt-6">
         <div className="flex items-center justify-between mb-3">
@@ -14538,7 +14655,7 @@ function CalendarView({
       </div>
 
       {/* Next up — across month boundaries on purpose. */}
-      {agenda.length > 0 && (
+      {showAgenda && agenda.length > 0 && (
         <div className="px-4 pt-6">
           <h3 className="font-display text-xl mb-3">NEXT UP</h3>
           <div className="space-y-2">
@@ -14582,37 +14699,6 @@ function CalendarView({
         </div>
       )}
 
-      {/* Legend — collapsed, because it teaches the grid once and then just
-          takes up room on every visit after. */}
-      <div className="px-4 pt-6">
-        <button
-          onClick={() => setShowLegend((v) => !v)}
-          className="w-full flex items-center justify-between text-xs font-display text-stone-400 hover:text-stone-100 px-3 py-2 rounded-xl border border-stone-800 bg-stone-900"
-        >
-          <span>WHAT THE COLOURS MEAN</span>
-          <span>{showLegend ? 'HIDE ▲' : 'SHOW ▼'}</span>
-        </button>
-        {showLegend && (
-          <div className="mt-2 bg-stone-900 border border-stone-800 rounded-xl p-3 flex flex-wrap gap-x-4 gap-y-2">
-            {legend.map((l) => (
-              <span key={l.label} className="flex items-center gap-1.5 text-[11px] text-stone-300">
-                <span className="w-3 h-1.5 rounded-[2px]" style={{ background: l.color }} />
-                {l.label}
-              </span>
-            ))}
-            <span className="flex items-center gap-1.5 text-[11px] text-stone-300">
-              <svg width="12" height="6" aria-hidden="true">
-                <rect width="12" height="6" rx="1.5" fill={`url(#${calHatchId('practice')})`} />
-              </svg>
-              Cancelled
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px] text-stone-300">
-              <span className="w-3 h-1.5 rounded-[2px] border border-dashed border-stone-600" />
-              Off day (no bar)
-            </span>
-          </div>
-        )}
-      </div>
 
       {/* Edit / add sheet — the shared GameForm. */}
       {sheet && (
