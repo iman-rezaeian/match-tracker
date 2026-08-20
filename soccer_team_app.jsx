@@ -3057,8 +3057,8 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
               <Flag className="w-3.5 h-3.5" />
               Match Day Manager
             </div>
-            <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-            <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+            <h1 className="font-display text-4xl leading-none">LASALLE STOMPERS</h1>
+            <div className="font-display text-2xl text-lime-400 leading-tight">2016 BOYS SQUAD</div>
           </div>
         </div>
 
@@ -16730,8 +16730,8 @@ function PublicHomePage({ access }) {
                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
                 <div className="flex-1 min-w-0">
-                  <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-                  <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+                  <h1 className="font-display text-4xl leading-none">LASALLE STOMPERS</h1>
+                  <div className="font-display text-2xl text-lime-400 leading-tight">2016 BOYS SQUAD</div>
                 </div>
               </div>
             </div>
@@ -16791,8 +16791,8 @@ function PublicHomePage({ access }) {
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
             <div className="flex-1 min-w-0">
-              <h1 className="font-display text-5xl leading-none">U10 BOYS</h1>
-              <div className="font-display text-3xl text-lime-400 leading-tight">2016 SQUAD</div>
+              <h1 className="font-display text-4xl leading-none">LASALLE STOMPERS</h1>
+              <div className="font-display text-2xl text-lime-400 leading-tight">2016 BOYS SQUAD</div>
             </div>
           </div>
           <div className="mt-10 text-center">
