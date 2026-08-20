@@ -10,7 +10,7 @@
   <meta name="application-name" content="Stompers" />
   <meta name="theme-color" content="#0d2818" />
   <meta name="description" content="LaSalle Stompers 2016 U10 match-day tracker." />
-  <title>LaSalle Stompers 2016 — Match Day</title>
+  <title>LaSalle Stompers 2016 Boys</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
@@ -3280,10 +3280,6 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-lime-400 text-xs font-bold uppercase tracking-widest mb-2">
-              <Flag className="w-3.5 h-3.5" />
-              Match Day Manager
-            </div>
             <h1 className="font-display text-4xl leading-none">LASALLE STOMPERS</h1>
             <div className="font-display text-2xl text-lime-400 leading-tight">2016 BOYS SQUAD</div>
           </div>
@@ -17494,6 +17490,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 

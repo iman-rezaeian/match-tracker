@@ -3053,10 +3053,6 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-lime-400 text-xs font-bold uppercase tracking-widest mb-2">
-              <Flag className="w-3.5 h-3.5" />
-              Match Day Manager
-            </div>
             <h1 className="font-display text-4xl leading-none">LASALLE STOMPERS</h1>
             <div className="font-display text-2xl text-lime-400 leading-tight">2016 BOYS SQUAD</div>
           </div>
