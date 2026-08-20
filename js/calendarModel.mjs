@@ -18,6 +18,11 @@ export const ENTRY_COLORS = {
   team_event: '#B4B2A9',
   tournament_block: '#378ADD',
   off: null, // an off day means nothing is happening; a bar would say the opposite
+  // Coach-created non-game events reuse their TeamSnap hues: which system owns
+  // an event is a maintenance detail, not something the coach should have to see.
+  practice_own: '#7F77DD',
+  tryout_own: '#EF9F27',
+  team_event_own: '#B4B2A9',
 };
 
 /** Cancelled bars keep their kind's hue at the 600 stop with an X over it. */
@@ -28,6 +33,9 @@ export const CANCELLED_FILL = {
   practice: '#534AB7',
   tryout: '#854F0B',
   team_event: '#B4B2A9',
+  practice_own: '#534AB7',
+  tryout_own: '#854F0B',
+  team_event_own: '#B4B2A9',
 };
 
 /** Light strokes read on the dark fills; grey has no dark end, so it needs black. */
@@ -38,7 +46,20 @@ export const CANCELLED_STROKE = {
   practice: '#EEEDFE',
   tryout: '#FAEEDA',
   team_event: '#2C2C2A',
+  practice_own: '#EEEDFE',
+  tryout_own: '#FAEEDA',
+  team_event_own: '#2C2C2A',
 };
+
+/**
+ * Kinds a hide flag applies to: everything TeamSnap owns. The cron re-mirrors
+ * the feed every 15 minutes and the feed is read-only, so these cannot be
+ * deleted — only hidden locally. Coach-created entries are genuinely deletable
+ * and must NOT appear here, or delete would silently become hide.
+ */
+export const HIDEABLE_KINDS = new Set([
+  'practice', 'tryout', 'team_event', 'game_unscheduled', 'tournament_block',
+]);
 
 const COMPETITION = /\b(tournament|festival|invitational|classic|cup)\b/i;
 const norm = (s) => (s || '').trim().toLowerCase();
@@ -53,11 +74,15 @@ function byTime(a, b) {
   return (a.title || '').localeCompare(b.title || '');
 }
 
-export function buildCalendarModel({ teamsnapEvents = [], schedule = [], games = [], today }) {
+export function buildCalendarModel({ teamsnapEvents = [], schedule = [], games = [], today, hidden = [] }) {
+  const hiddenKeys = hidden instanceof Set ? hidden : new Set(hidden);
   const days = new Map();
   const push = (entry) => {
     const k = dayKey(entry.date);
     if (!k) return;
+    // Filtered here, before the entry reaches a day, so a day whose only event
+    // is hidden drops out of the map entirely instead of rendering an empty cell.
+    if (hiddenKeys.has(entry.key)) return;
     if (!days.has(k)) days.set(k, []);
     days.get(k).push(entry);
   };
@@ -89,11 +114,37 @@ export function buildCalendarModel({ teamsnapEvents = [], schedule = [], games =
     });
   }
 
-  // 2. Scheduled games, unless the same fixture already finished.
+  // 2. Coach-owned schedule items. Games unless the same fixture already
+  //    finished; anything with a `type` other than `game` is a practice, tryout
+  //    or team event the coach created in the app rather than in TeamSnap.
   const scheduledDays = new Set();
   for (const s of schedule) {
     const k = dayKey(s.date);
+    // No `type` means game: every item predates the field.
+    const sType = s.type || 'game';
+    if (sType !== 'game') {
+      push({
+        key: `sched:${s.id}`,
+        kind: `${sType}_own`,
+        date: k,
+        time: s.time || '',
+        // A non-game item has no opponent, so `vs undefined` must not appear.
+        title: s.title || sType.replace('_', ' '),
+        opponent: '',
+        tournament: '',
+        field: s.field || '',
+        location: s.location || '',
+        venue: '', arrival: '', allDay: false,
+        cancelled: !!s.cancelled,
+        result: null, ourScore: null, oppScore: null,
+        gameId: null, scheduleId: s.id, teamsnapUid: null,
+        raw: s,
+      });
+      continue;
+    }
     if (finishedKeys.has(`${k}|${norm(s.opponent)}`)) continue;
+    // Only GAME days go in here: a coach-created practice on a tournament day
+    // would otherwise absorb the all-day block below and hide it.
     scheduledDays.add(k);
     push({
       key: `sched:${s.id}`,

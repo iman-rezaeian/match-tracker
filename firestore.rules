@@ -147,6 +147,19 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // --- calendarHidden/<id>: coach-hidden calendar entries ----------
+      // TeamSnap events cannot be deleted — the feed is read-only and the cron
+      // re-mirrors it every 15 minutes — so "delete" on a synced event records
+      // a hide flag here instead. Deliberately NOT stored on the teamsnapEvents
+      // docs, which the cron overwrites wholesale each run.
+      //
+      // Families read it so a hidden event disappears for them too; only a
+      // coach writes it.
+      match /calendarHidden/{docId} {
+        allow read: if isAllowed();
+        allow write: if isCoach();
+      }
+
       // --- games/<id> ------------------------------------------------
       // Allowed families read the scoreboard, events, goals and broadcast
       // video URLs. NO subcollections readable except public/.

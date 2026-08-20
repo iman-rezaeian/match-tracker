@@ -1087,6 +1087,9 @@ function CoachApp() {
   // when the coach last edited the event in TeamSnap, which would read "22h
   // ago" one second after a clean sync and never advance while nobody edits.
   const [teamsnapSyncedAt, setTeamsnapSyncedAt] = useState(null);
+  // Entry keys the coach has hidden. A Set of `buildCalendarModel` entry keys
+  // (e.g. `ts:9230745-366776389`), loaded from teams/main/calendarHidden.
+  const [hiddenEventKeys, setHiddenEventKeys] = useState(() => new Set());
   const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   // Team-wide Cloudflare Stream Live Input. Provisioned once, reused every
   // game so the coach can paste a single RTMPS URL + key into the Insta360
@@ -1113,7 +1116,7 @@ function CoachApp() {
   // item id (+ a snapshot of the current squad) so the SquadPickerView can
   // save back into the schedule and return to the schedule screen.
   const [editingScheduleSquad, setEditingScheduleSquad] = useState(null);
-  // When returning from the squad picker, ScheduleView re-mounts; this hint
+  // When returning from the squad picker, the calendar re-mounts; this hint
   // tells it to drop back into edit mode for the same item.
   const [resumeScheduleEditId, setResumeScheduleEditId] = useState(null);
   // Which screen sent the coach to the squad picker, so the detour returns to
@@ -1308,6 +1311,23 @@ function CoachApp() {
     return () => unsub();
   }, []);
 
+  // Coach-hidden calendar entries. Its own collection, not a field on the
+  // teamsnapEvents docs: the cron PATCHes every one of those docs on each run,
+  // so a hide flag stored there would be gone within 15 minutes.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb) return undefined;
+    const unsub = window.fbDb.collection('teams').doc('main').collection('calendarHidden')
+      .onSnapshot(
+        (snap) => {
+          const s = new Set();
+          snap.forEach((d) => { const k = d.data()?.key; if (k) s.add(k); });
+          setHiddenEventKeys(s);
+        },
+        (err) => console.error('calendarHidden listen failed', err)
+      );
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     if (view !== 'activeGame') return;
     const id = setInterval(() => setTick(t => t + 1), 1000);
@@ -1398,6 +1418,35 @@ function CoachApp() {
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 1800);
+  };
+
+  // ':' and '/' are not usable in a Firestore doc id, and '__x__' is reserved
+  // (Firestore rejects it outright, failing the whole write). Deterministic, so
+  // unhide deletes exactly the doc hide created.
+  // Entry keys look like `ts:9230745-366776389`; ':' and '/' cannot appear in a
+  // Firestore doc id. The `h-` prefix is not decoration: Firestore REJECTS any id
+  // matching `__…__` as reserved (400 INVALID_ARGUMENT), and a bare sanitise
+  // would pass such a key straight through. Real keys are always prefixed today,
+  // so this is belt-and-braces — but that exact rejection already took the sync
+  // down once, and it fails the whole batch rather than one write.
+  const hideDocId = (key) => `h-${String(key).replace(/[^A-Za-z0-9-]/g, '_')}`;
+
+  const hideEvent = async (key) => {
+    if (!window.fbDb || !key) return;
+    try {
+      await window.fbDb.collection('teams').doc('main').collection('calendarHidden')
+        .doc(hideDocId(key)).set({ key, hiddenAt: Date.now() });
+      showToast('🙈 Hidden from the calendar');
+    } catch (e) { console.error('hide failed', e); showToast('⚠️ Could not hide that'); }
+  };
+
+  const unhideEvent = async (key) => {
+    if (!window.fbDb || !key) return;
+    try {
+      await window.fbDb.collection('teams').doc('main').collection('calendarHidden')
+        .doc(hideDocId(key)).delete();
+      showToast('👁️ Restored');
+    } catch (e) { console.error('unhide failed', e); showToast('⚠️ Could not restore that'); }
   };
 
   // Show the big TV-style penalty banner, then auto-dismiss (~2.8s).
@@ -2220,7 +2269,7 @@ function CoachApp() {
 
   // Season-wide opponent rename: opponent spelling drives the schedule↔game
   // dedupe, so a typo has to be fixable across every game AND schedule entry at
-  // once. Hoisted out of the ScheduleView mount so the calendar shares it.
+  // once. Hoisted out of the old schedule screen so the calendar owns it.
   const renameOpponent = async (oldName, newName) => {
     const o = (oldName || '').trim().toLowerCase();
     const n = (newName || '').trim();
@@ -2245,7 +2294,7 @@ function CoachApp() {
   // remember where to come back to.
   // `format` sizes the squad picker, and the calendar's onEditSquad payload omits
   // it (id/opponent/squadIds only). Reading it back off `schedule` would get the
-  // STALE array: CalendarView calls onSaveGame then onEditSquad synchronously, so
+  // STALE array: CalendarView calls onSaveEntry then onEditSquad synchronously, so
   // setSchedule has not re-rendered yet. A ref written by the save is the only
   // value that is current at that instant.
   const lastSavedGameRef = useRef(null);
@@ -2263,35 +2312,55 @@ function CoachApp() {
   };
 
   // Add-or-edit for the calendar's GameForm sheet. Mirrors
-  // ScheduleView.handleFormSubmit — same field set, same generated id shape — so
+  // the old schedule form — same field set, same generated id shape — so
   // an item created here is indistinguishable from one created on the old screen.
-  const saveCalendarGame = (v, scheduleId) => {
-    if (!v.opponent || !v.date) return;
-    const fields = {
-      opponent: v.opponent,
-      date: v.date,
-      time: v.time || '',
-      tournament: v.tournament,
-      location: v.location,
-      field: v.field,
-      isHome: v.isHome,
-      format: v.format,
-      halfLengthMin: v.halfLengthMin,
-      homeColor: v.homeColor,
-      awayColor: v.awayColor,
-      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
-    };
+  //
+  // Games and non-games write DISJOINT field sets. A practice has no opponent,
+  // so the old `if (!v.opponent) return` would have discarded every one of them
+  // without a word; and writing a game's squad/colours onto a practice would
+  // give the coach a READY badge on a keeper session.
+  const saveCalendarEntry = (v, scheduleId) => {
+    const type = v.type || 'game';
+    if (!v.date) return;
+    if (type === 'game' && !v.opponent) return;
+    const fields = type === 'game'
+      ? {
+          type: 'game',
+          opponent: v.opponent,
+          date: v.date,
+          time: v.time || '',
+          tournament: v.tournament,
+          location: v.location,
+          field: v.field,
+          isHome: v.isHome,
+          format: v.format,
+          halfLengthMin: v.halfLengthMin,
+          homeColor: v.homeColor,
+          awayColor: v.awayColor,
+          squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
+        }
+      : {
+          type,
+          title: v.title || '',
+          date: v.date,
+          time: v.time || '',
+          location: v.location,
+          field: v.field,
+        };
+    const label = type === 'game'
+      ? `vs ${v.opponent}`
+      : (v.title || ENTRY_TYPE_LABEL[type] || 'event').toLowerCase();
     if (scheduleId) {
       lastSavedGameRef.current = { id: scheduleId, ...fields };
       persistSchedule(schedule.map(s => (s.id === scheduleId ? { ...s, ...fields } : s)));
-      showToast(`✏️ Updated vs ${v.opponent}`);
+      showToast(`✏️ Updated ${label}`);
       return;
     }
     const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...fields };
     lastSavedGameRef.current = item;
     persistSchedule([...schedule, item]);
     const dateLabel = new Date(v.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
-    showToast(`✅ Added vs ${item.opponent} · ${dateLabel}`);
+    showToast(`✅ Added ${label} · ${dateLabel}`);
   };
 
   // Pre-fill from a scheduled item and always route through the full
@@ -2328,8 +2397,8 @@ function CoachApp() {
     // day the next time the coach moves between screens.
   }, [view]);
   const calendarModel = useMemo(
-    () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday }),
-    [teamsnapEvents, schedule, games, calendarToday]
+    () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday, hidden: hiddenEventKeys }),
+    [teamsnapEvents, schedule, games, calendarToday, hiddenEventKeys]
   );
   // Everything from today forward, off days excluded — they are the absence of
   // an event, so counting them would inflate "3 upcoming" on a quiet week.
@@ -2670,12 +2739,21 @@ function CoachApp() {
           activeGame={activeGame}
           onOpenGame={(id) => { setViewingGameId(id); setView('gameDetail'); }}
           onStartGame={startScheduledGame}
-          onSaveGame={saveCalendarGame}
+          onSaveEntry={saveCalendarEntry}
           onDeleteGame={(scheduleId) => persistSchedule(schedule.filter(s => s.id !== scheduleId))}
           onToggleCancel={(scheduleId) => persistSchedule(
             schedule.map(s => (s.id === scheduleId ? { ...s, cancelled: !s.cancelled } : s))
           )}
           onEditSquad={(item) => openScheduleSquadPicker(item, 'calendar')}
+          // Hiding is a coach power only. The raw sources come too, because the
+          // HIDDEN panel has to re-merge without the filter to describe what it
+          // is offering to restore.
+          hiddenKeys={hiddenEventKeys}
+          onHide={hideEvent}
+          onUnhide={unhideEvent}
+          teamsnapEvents={teamsnapEvents}
+          schedule={schedule}
+          games={games}
           onManageOpponents={() => setShowOpponentManager(true)}
           onBack={() => setView('home')}
           askConfirm={askConfirm}
@@ -2702,22 +2780,6 @@ function CoachApp() {
         />
       )}
 
-      {view === 'schedule' && (
-        <ScheduleView
-          schedule={schedule}
-          roster={roster}
-          games={games}
-          opponentSuggestions={opponentSuggestions}
-          onRenameOpponent={renameOpponent}
-          initialEditId={resumeScheduleEditId}
-          onConsumedInitialEditId={() => setResumeScheduleEditId(null)}
-          onSave={persistSchedule}
-          onBack={() => setView('home')}
-          onEditSquad={(item) => openScheduleSquadPicker(item, 'schedule')}
-          askConfirm={askConfirm}
-          showToast={showToast}
-        />
-      )}
 
       {view === 'scheduleSquad' && editingScheduleSquad && (
         <SquadPickerView
@@ -13149,10 +13211,10 @@ function WeightsView({ weights, onSave, onBack }) {
 
    The dugout and the parent view mount the SAME component; `canEdit` is the
    only difference. Parents get a read-only surface, the coach gets the row
-   actions and the game form that used to live permanently open in
-   ScheduleView.
+   actions and the game form that used to live permanently open at the top of
+   the old schedule screen.
 
-   Detail rows deliberately reuse ScheduleView.renderRow's chip vocabulary —
+   Detail rows deliberately reuse the old schedule row's chip vocabulary —
    TournamentChip, FormatChip, the field pill, the map link, the squad count,
    the READY badge. No new row language: two dialects for the same game is how
    the two screens drifted apart in the first place.
@@ -13268,6 +13330,11 @@ const ENTRY_COLORS = {
   team_event: '#B4B2A9',
   tournament_block: '#378ADD',
   off: null, // an off day means nothing is happening; a bar would say the opposite
+  // Coach-created non-game events reuse their TeamSnap hues: which system owns
+  // an event is a maintenance detail, not something the coach should have to see.
+  practice_own: '#7F77DD',
+  tryout_own: '#EF9F27',
+  team_event_own: '#B4B2A9',
 };
 
 /** Cancelled bars keep their kind's hue at the 600 stop with an X over it. */
@@ -13278,6 +13345,9 @@ const CANCELLED_FILL = {
   practice: '#534AB7',
   tryout: '#854F0B',
   team_event: '#B4B2A9',
+  practice_own: '#534AB7',
+  tryout_own: '#854F0B',
+  team_event_own: '#B4B2A9',
 };
 
 /** Light strokes read on the dark fills; grey has no dark end, so it needs black. */
@@ -13288,7 +13358,20 @@ const CANCELLED_STROKE = {
   practice: '#EEEDFE',
   tryout: '#FAEEDA',
   team_event: '#2C2C2A',
+  practice_own: '#EEEDFE',
+  tryout_own: '#FAEEDA',
+  team_event_own: '#2C2C2A',
 };
+
+/**
+ * Kinds a hide flag applies to: everything TeamSnap owns. The cron re-mirrors
+ * the feed every 15 minutes and the feed is read-only, so these cannot be
+ * deleted — only hidden locally. Coach-created entries are genuinely deletable
+ * and must NOT appear here, or delete would silently become hide.
+ */
+const HIDEABLE_KINDS = new Set([
+  'practice', 'tryout', 'team_event', 'game_unscheduled', 'tournament_block',
+]);
 
 const COMPETITION = /\b(tournament|festival|invitational|classic|cup)\b/i;
 const norm = (s) => (s || '').trim().toLowerCase();
@@ -13303,11 +13386,15 @@ function byTime(a, b) {
   return (a.title || '').localeCompare(b.title || '');
 }
 
-function buildCalendarModel({ teamsnapEvents = [], schedule = [], games = [], today }) {
+function buildCalendarModel({ teamsnapEvents = [], schedule = [], games = [], today, hidden = [] }) {
+  const hiddenKeys = hidden instanceof Set ? hidden : new Set(hidden);
   const days = new Map();
   const push = (entry) => {
     const k = dayKey(entry.date);
     if (!k) return;
+    // Filtered here, before the entry reaches a day, so a day whose only event
+    // is hidden drops out of the map entirely instead of rendering an empty cell.
+    if (hiddenKeys.has(entry.key)) return;
     if (!days.has(k)) days.set(k, []);
     days.get(k).push(entry);
   };
@@ -13339,11 +13426,37 @@ function buildCalendarModel({ teamsnapEvents = [], schedule = [], games = [], to
     });
   }
 
-  // 2. Scheduled games, unless the same fixture already finished.
+  // 2. Coach-owned schedule items. Games unless the same fixture already
+  //    finished; anything with a `type` other than `game` is a practice, tryout
+  //    or team event the coach created in the app rather than in TeamSnap.
   const scheduledDays = new Set();
   for (const s of schedule) {
     const k = dayKey(s.date);
+    // No `type` means game: every item predates the field.
+    const sType = s.type || 'game';
+    if (sType !== 'game') {
+      push({
+        key: `sched:${s.id}`,
+        kind: `${sType}_own`,
+        date: k,
+        time: s.time || '',
+        // A non-game item has no opponent, so `vs undefined` must not appear.
+        title: s.title || sType.replace('_', ' '),
+        opponent: '',
+        tournament: '',
+        field: s.field || '',
+        location: s.location || '',
+        venue: '', arrival: '', allDay: false,
+        cancelled: !!s.cancelled,
+        result: null, ourScore: null, oppScore: null,
+        gameId: null, scheduleId: s.id, teamsnapUid: null,
+        raw: s,
+      });
+      continue;
+    }
     if (finishedKeys.has(`${k}|${norm(s.opponent)}`)) continue;
+    // Only GAME days go in here: a coach-created practice on a tournament day
+    // would otherwise absorb the all-day block below and hide it.
     scheduledDays.add(k);
     push({
       key: `sched:${s.id}`,
@@ -13526,17 +13639,23 @@ function CalendarMonthGrid({ model, month, selected, today, onSelect }) {
 }
 
 /* ---------- DAY DETAIL ROWS ---------- */
-// One renderer per entry kind. All EIGHT kinds are handled — a missing branch
-// is a blank row in production, which is the failure mode nobody notices until
-// a parent reports "my kid's practice vanished".
+// One renderer per entry kind. Every kind the model emits is handled — a missing
+// branch is a blank row in production, which is the failure mode nobody notices
+// until a parent reports "my kid's practice vanished".
+//
+// Which verbs a row offers is decided by WHO OWNS the event, not by what it is.
+// App-owned entries (game_scheduled and the three *_own kinds) get edit, cancel
+// and delete. TeamSnap-owned entries get hide only: the feed is read-only, and
+// the cron re-mirrors it every 15 minutes, so an edit would revert and a delete
+// is not possible at all.
 function CalendarDayRows({
   entries, canEdit, activeGame, onOpenGame, onStartGame,
-  onEditEntry, onDeleteEntry, onToggleCancelEntry, onScheduleFrom,
+  onEditEntry, onDeleteEntry, onToggleCancelEntry, onScheduleFrom, onHideEntry,
 }) {
   if (!entries || entries.length === 0) {
     return (
       <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
-        Nothing scheduled.{canEdit ? ' Tap the day again to add a game.' : ''}
+        Nothing scheduled.{canEdit ? ' Tap the day again to add a game, practice or event.' : ''}
       </div>
     );
   }
@@ -13585,6 +13704,58 @@ function CalendarDayRows({
     </div>
   );
 
+  // Edit / cancel / delete for an app-owned entry. Shared by games and by the
+  // three coach-created kinds so a practice's buttons are the same buttons in
+  // the same order — the coach should not have to relearn the row per type.
+  const ownerActions = (entry, extraAbove = null) => (
+    <div className="flex flex-col gap-1.5 shrink-0 items-end">
+      {extraAbove}
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => onEditEntry?.(entry)}
+          className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
+          title="Edit"
+        >
+          ✏️
+        </button>
+        <button
+          onClick={() => onToggleCancelEntry?.(entry)}
+          className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${
+            entry.cancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'
+          }`}
+          title={entry.cancelled ? 'Restore' : 'Mark cancelled'}
+        >
+          {entry.cancelled ? '↻' : '🚫'}
+        </button>
+        <button
+          onClick={() => onDeleteEntry?.(entry)}
+          className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
+          title="Delete"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+
+  // The only verb available on a TeamSnap-owned row. Deliberately NOT a bin
+  // icon: nothing is deleted, and the confirm the handler raises says so.
+  //
+  // Gated on HIDEABLE_KINDS rather than on the caller's case label, so the set
+  // in the merge stays the single source of truth. A kind that becomes
+  // app-owned later loses this button without anyone editing the row markup.
+  const hideButton = (entry) => (
+    HIDEABLE_KINDS.has(entry.kind) ? (
+      <button
+        onClick={() => onHideEntry?.(entry)}
+        className="w-8 h-8 rounded-full bg-stone-800 text-stone-300 flex items-center justify-center active:scale-90 transition text-sm shrink-0"
+        title="Hide from the calendar"
+      >
+        🙈
+      </button>
+    ) : null
+  );
+
   const renderRow = (entry) => {
     switch (entry.kind) {
       /* ---- 1. a finished game: result, score, tap through to AnalyticsPanel ---- */
@@ -13618,7 +13789,7 @@ function CalendarDayRows({
         );
       }
 
-      /* ---- 2. a coach-scheduled game: the full ScheduleView row ---- */
+      /* ---- 2. a coach-scheduled game: the full detail row ---- */
       case 'game_scheduled': {
         const item = entry.raw || {};
         const ready = calIsReady(item);
@@ -13651,43 +13822,16 @@ function CalendarDayRows({
               </div>
               {entry.location && mapLink(entry.location)}
             </div>
-            {canEdit && (
-              <div className="flex flex-col gap-1.5 shrink-0 items-end">
-                {!activeGame && !entry.cancelled && onStartGame && (
-                  <button
-                    onClick={() => onStartGame(item)}
-                    className="px-3 py-1.5 bg-lime-500 text-stone-100 font-display text-xs rounded-lg active:scale-95 transition"
-                  >
-                    START
-                  </button>
-                )}
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => onEditEntry?.(entry)}
-                    className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
-                    title="Edit"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => onToggleCancelEntry?.(entry)}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${
-                      entry.cancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'
-                    }`}
-                    title={entry.cancelled ? 'Restore' : 'Mark cancelled'}
-                  >
-                    {entry.cancelled ? '↻' : '🚫'}
-                  </button>
-                  <button
-                    onClick={() => onDeleteEntry?.(entry)}
-                    className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
+            {canEdit && ownerActions(entry, (
+              !activeGame && !entry.cancelled && onStartGame ? (
+                <button
+                  onClick={() => onStartGame(item)}
+                  className="px-3 py-1.5 bg-lime-500 text-stone-100 font-display text-xs rounded-lg active:scale-95 transition"
+                >
+                  START
+                </button>
+              ) : null
+            ))}
           </>
         ));
       }
@@ -13713,13 +13857,18 @@ function CalendarDayRows({
               </div>
               {entry.location && mapLink(entry.location)}
             </div>
-            {canEdit && !entry.cancelled && (
-              <button
-                onClick={() => onScheduleFrom?.(entry)}
-                className="px-3 py-1.5 bg-stone-800 text-lime-300 border border-lime-500/40 font-display text-xs rounded-lg active:scale-95 transition shrink-0"
-              >
-                SCHEDULE
-              </button>
+            {canEdit && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {!entry.cancelled && (
+                  <button
+                    onClick={() => onScheduleFrom?.(entry)}
+                    className="px-3 py-1.5 bg-stone-800 text-lime-300 border border-lime-500/40 font-display text-xs rounded-lg active:scale-95 transition"
+                  >
+                    SCHEDULE
+                  </button>
+                )}
+                {hideButton(entry)}
+              </div>
             )}
           </>
         ));
@@ -13742,44 +13891,88 @@ function CalendarDayRows({
               </div>
               {entry.location && mapLink(entry.location)}
             </div>
-            {canEdit && !entry.cancelled && (
-              <button
-                onClick={() => onScheduleFrom?.(entry)}
-                className="px-3 py-1.5 bg-stone-800 text-lime-300 border border-lime-500/40 font-display text-xs rounded-lg active:scale-95 transition shrink-0"
-              >
-                + GAME
-              </button>
+            {canEdit && (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {!entry.cancelled && (
+                  <button
+                    onClick={() => onScheduleFrom?.(entry)}
+                    className="px-3 py-1.5 bg-stone-800 text-lime-300 border border-lime-500/40 font-display text-xs rounded-lg active:scale-95 transition"
+                  >
+                    + GAME
+                  </button>
+                )}
+                {hideButton(entry)}
+              </div>
             )}
           </>
         ));
 
       /* ---- 5-7. TeamSnap owns these. An edit here would revert within 15
-         minutes when the cron next runs, so they are read-only by design. ---- */
+         minutes when the cron next runs and the feed cannot be deleted from, so
+         the only verb offered is hide — which is local to this app. ---- */
       case 'practice':
       case 'tryout':
       case 'team_event': {
         const label = entry.kind === 'practice' ? 'PRACTICE'
           : entry.kind === 'tryout' ? 'TRYOUT' : 'TEAM EVENT';
         return shell(entry, (
-          <div className="flex-1 min-w-0">
-            <div className={`font-bold text-sm truncate ${entry.cancelled ? 'line-through text-stone-400' : ''}`}>
-              {entry.title || label}
+          <>
+            <div className="flex-1 min-w-0">
+              <div className={`font-bold text-sm truncate ${entry.cancelled ? 'line-through text-stone-400' : ''}`}>
+                {entry.title || label}
+              </div>
+              <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                {entry.cancelled && cancelledBadge}
+                <span className="inline-block bg-stone-800 text-stone-400 border border-stone-700 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                  {label}
+                </span>
+                {entry.time && <span>{formatTime12(entry.time)}</span>}
+                {entry.arrival && <span>Arrive {entry.arrival}</span>}
+                {entry.venue && <span className="truncate">{entry.venue}</span>}
+              </div>
+              {entry.location && mapLink(entry.location)}
             </div>
-            <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-              {entry.cancelled && cancelledBadge}
-              <span className="inline-block bg-stone-800 text-stone-400 border border-stone-700 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                {label}
-              </span>
-              {entry.time && <span>{formatTime12(entry.time)}</span>}
-              {entry.arrival && <span>Arrive {entry.arrival}</span>}
-              {entry.venue && <span className="truncate">{entry.venue}</span>}
-            </div>
-            {entry.location && mapLink(entry.location)}
-          </div>
+            {canEdit && hideButton(entry)}
+          </>
         ));
       }
 
-      /* ---- 8. an explicit day off ---- */
+      /* ---- 9-11. The same three things, created by the coach in this app.
+         These live in the `schedule` array, so unlike their TeamSnap twins they
+         are genuinely editable and deletable. No START: only a game has a
+         lineup to start. ---- */
+      case 'practice_own':
+      case 'tryout_own':
+      case 'team_event_own': {
+        const label = entry.kind === 'practice_own' ? 'PRACTICE'
+          : entry.kind === 'tryout_own' ? 'TRYOUT' : 'TEAM EVENT';
+        return shell(entry, (
+          <>
+            <div className="flex-1 min-w-0">
+              <div className={`font-bold text-sm truncate ${entry.cancelled ? 'line-through text-stone-400' : ''}`}>
+                {entry.title || label}
+              </div>
+              <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
+                {entry.cancelled && cancelledBadge}
+                <span className="inline-block bg-stone-800 text-stone-400 border border-stone-700 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                  {label}
+                </span>
+                {entry.time && <span>{formatTime12(entry.time)}</span>}
+                {entry.field && (
+                  <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
+                    📍 {entry.field}
+                  </span>
+                )}
+              </div>
+              {entry.location && mapLink(entry.location)}
+            </div>
+            {canEdit && ownerActions(entry)}
+          </>
+        ));
+      }
+
+      /* ---- 8. an explicit day off. Nothing is happening, so there is
+         nothing to act on. ---- */
       case 'off':
         return (
           <div
@@ -13794,7 +13987,7 @@ function CalendarDayRows({
           </div>
         );
 
-      // Unreachable while buildCalendarModel only emits the eight kinds above,
+      // Unreachable while buildCalendarModel only emits the kinds above,
       // but a silent blank row would be worse than a visible fallback.
       default:
         return shell(entry, (
@@ -13813,11 +14006,15 @@ function CalendarDayRows({
 function CalendarView({
   model, canEdit = false, today, syncedAt = null,
   roster = [], opponentSuggestions = [], activeGame = null,
-  onOpenGame, onStartGame, onSaveGame, onDeleteGame, onToggleCancel,
+  onOpenGame, onStartGame, onSaveEntry, onDeleteGame, onToggleCancel,
   onEditSquad, onManageOpponents, onBack, askConfirm, showToast,
+  // Hiding is coach-only and needs the raw sources to rebuild the list of what
+  // is hidden — the main model has already filtered those entries out.
+  hiddenKeys = null, onHide, onUnhide,
+  teamsnapEvents = [], schedule = [], games = [],
   // Set by the caller when returning from the squad picker, so the coach lands
   // back in the edit sheet they left instead of a closed calendar. Mirrors
-  // ScheduleView's initialEditId/onConsumedInitialEditId pair.
+  // the old screen's initialEditId/onConsumedInitialEditId pair.
   resumeEditId = null, onConsumedResumeEditId,
 }) {
   const [month, setMonth] = useState(() => calMonthOf(today) || calMonthOf(new Date().toISOString()));
@@ -13827,6 +14024,7 @@ function CalendarView({
   // Bumped on every open so a blank form re-seeds even when it was blank before.
   const [formNonce, setFormNonce] = useState(0);
   const [showLegend, setShowLegend] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   // Re-open the sheet for the game whose squad was just picked. The sheet is
   // internal state and dies when the view unmounts for the picker detour, so
@@ -13866,6 +14064,27 @@ function CalendarView({
     return out;
   }, [model, today]);
 
+  // What the coach has hidden. The main model dropped these on purpose, so the
+  // only way to describe them is to merge again with the filter off and pick
+  // out the keys in the hidden set. Doubles the merge for ~120 events, which is
+  // the price of the panel existing at all — without it, hiding is a one-way
+  // door with nothing to reopen.
+  const hiddenEntries = useMemo(() => {
+    if (!canEdit || !hiddenKeys || hiddenKeys.size === 0) return [];
+    const unfiltered = buildCalendarModel({ teamsnapEvents, schedule, games, today });
+    const out = [];
+    for (const dayKey of [...unfiltered.days.keys()].sort()) {
+      for (const entry of unfiltered.days.get(dayKey)) {
+        if (hiddenKeys.has(entry.key)) out.push(entry);
+      }
+    }
+    return out;
+  }, [canEdit, hiddenKeys, teamsnapEvents, schedule, games, today]);
+
+  const handleUnhide = (entry) => {
+    onUnhide?.(entry.key);
+  };
+
   const openSheet = (next) => {
     setFormNonce((n) => n + 1);
     setSheet(next);
@@ -13902,8 +14121,22 @@ function CalendarView({
     });
   };
 
+  // A game is named by its opponent, everything else by its title. Going
+  // through `entry.opponent` unconditionally would put "vs " with nothing after
+  // it in every practice's confirm, toast and agenda row.
+  //
+  // Title is optional on a non-game, so it needs a floor: without one an
+  // untitled practice renders a blank row. Falls back to the kind's own name
+  // ("Practice"), which is what the day rows already show.
+  const entryLabel = (entry) => {
+    if (entry.opponent) return `vs ${entry.opponent}`;
+    if (entry.title) return entry.title;
+    const base = (entry.kind || '').replace(/_own$/, '').replace(/_/g, ' ');
+    return base ? base.charAt(0).toUpperCase() + base.slice(1) : 'this event';
+  };
+
   const handleDeleteEntry = (entry) => {
-    const label = `vs ${entry.opponent}${entry.date ? ' on ' + new Date(entry.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}`;
+    const label = `${entryLabel(entry)}${entry.date ? ' on ' + new Date(entry.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}`;
     const run = () => {
       if (sheet?.scheduleId === entry.scheduleId) closeSheet();
       onDeleteGame?.(entry.scheduleId);
@@ -13915,7 +14148,19 @@ function CalendarView({
 
   const handleToggleCancelEntry = (entry) => {
     onToggleCancel?.(entry.scheduleId);
-    showToast?.(entry.cancelled ? `↩ Restored vs ${entry.opponent}` : `⛔ Cancelled vs ${entry.opponent}`);
+    showToast?.(entry.cancelled ? `↩ Restored ${entryLabel(entry)}` : `⛔ Cancelled ${entryLabel(entry)}`);
+  };
+
+  // Hide, not delete — and the confirm has to say so, because the bin-shaped
+  // mental model is wrong here. TeamSnap keeps sending the event; all this does
+  // is stop showing it, for the coach AND for parents reading the same flags.
+  const handleHideEntry = (entry) => {
+    const run = () => onHide?.(entry.key);
+    // One flowing string, not paragraphs: ConfirmDialog renders `message` in a
+    // plain div with no whitespace-pre-line, so newlines would collapse anyway.
+    const msg = `Hide "${entryLabel(entry)}"? TeamSnap will keep sending this event. Hiding removes it from the calendar for you and for parents.`;
+    if (askConfirm) askConfirm(msg, run, { yesLabel: 'HIDE' });
+    else run();
   };
 
   // The item being edited, looked up fresh out of the model so an external
@@ -13933,6 +14178,7 @@ function CalendarView({
   // AND schedule together, so a roster write hands back a brand-new schedule
   // array; keying on it would re-seed and wipe the form mid-typing.
   const formSig = editingItem ? JSON.stringify([
+    editingItem.type, editingItem.title,
     editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
     editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
     editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
@@ -13942,6 +14188,9 @@ function CalendarView({
   const formInitial = useMemo(() => {
     if (editingItem) {
       return {
+        // Absent `type` means game: every item written before the field existed.
+        type: editingItem.type || 'game',
+        title: editingItem.title || '',
         opponent: editingItem.opponent || '',
         date: editingItem.date || '',
         time: editingItem.time || '',
@@ -13958,6 +14207,8 @@ function CalendarView({
     }
     const seed = (sheet && sheet.seed) || {};
     return {
+      type: seed.type || 'game',
+      title: seed.title || '',
       opponent: seed.opponent || '',
       date: seed.date || selected || today,
       time: seed.time || '',
@@ -13971,7 +14222,7 @@ function CalendarView({
   }, [sheet?.mode, sheet?.scheduleId, formSig, seedSig, formNonce]);
 
   const handleSubmit = (values) => {
-    onSaveGame?.(values, sheet?.mode === 'edit' ? sheet.scheduleId : null);
+    onSaveEntry?.(values, sheet?.mode === 'edit' ? sheet.scheduleId : null);
     closeSheet();
   };
 
@@ -13981,7 +14232,7 @@ function CalendarView({
   // save — which is the exact thing the detour exists to avoid.
   const handleEditSquad = (values) => {
     if (!sheet || sheet.mode !== 'edit' || !sheet.scheduleId) return;
-    onSaveGame?.(values, sheet.scheduleId);
+    onSaveEntry?.(values, sheet.scheduleId);
     onEditSquad?.({
       id: sheet.scheduleId,
       opponent: values.opponent || 'Opponent',
@@ -14088,8 +14339,49 @@ function CalendarView({
             onClick={() => openSheet({ mode: 'new', scheduleId: null, seed: { date: selected || today } })}
             className="w-full mb-2 bg-stone-900 border border-stone-800 text-lime-400 font-display text-base py-2.5 rounded-xl active:scale-[0.99] transition"
           >
-            + ADD GAME
+            + ADD TO THIS DAY
           </button>
+        )}
+
+        {/* Hidden entries. Only shown when there are some — and it has to exist,
+            because a hidden entry is by definition absent from the grid, so this
+            panel is the coach's only way to see or undo what they hid. */}
+        {canEdit && hiddenEntries.length > 0 && (
+          <div className="mb-2">
+            <button
+              onClick={() => setShowHidden((v) => !v)}
+              className="w-full flex items-center justify-between text-xs font-display text-stone-400 hover:text-stone-100 px-3 py-2 rounded-xl border border-stone-800 bg-stone-900"
+            >
+              <span>🙈 HIDDEN ({hiddenEntries.length})</span>
+              <span>{showHidden ? 'HIDE ▲' : 'SHOW ▼'}</span>
+            </button>
+            {showHidden && (
+              <div className="mt-2 bg-stone-900 border border-stone-800 rounded-xl p-3 space-y-2">
+                <p className="text-[11px] text-stone-400 leading-snug">
+                  These still come from TeamSnap — they are just not shown to you or to parents.
+                </p>
+                {hiddenEntries.map((entry) => (
+                  <div key={`hidden:${entry.key}`} className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm truncate">{entryLabel(entry)}</div>
+                      <div className="text-xs text-stone-500 truncate">
+                        {[
+                          entry.date ? new Date(entry.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }) : '',
+                          entry.time ? formatTime12(entry.time) : (entry.allDay ? 'All day' : ''),
+                        ].filter(Boolean).join(' · ')}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleUnhide(entry)}
+                      className="px-3 py-1.5 bg-stone-800 text-lime-300 border border-lime-500/40 font-display text-xs rounded-lg active:scale-95 transition shrink-0"
+                    >
+                      RESTORE
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         <CalendarMonthGrid
@@ -14119,6 +14411,7 @@ function CalendarView({
           onDeleteEntry={handleDeleteEntry}
           onToggleCancelEntry={handleToggleCancelEntry}
           onScheduleFrom={handleScheduleFrom}
+          onHideEntry={handleHideEntry}
         />
       </div>
 
@@ -14152,7 +14445,7 @@ function CalendarView({
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className={`font-bold text-sm truncate ${entry.cancelled ? 'line-through text-stone-400' : ''}`}>
-                      {entry.kind === 'off' ? 'No practice' : (entry.opponent ? `vs ${entry.opponent}` : entry.title)}
+                      {entry.kind === 'off' ? 'No practice' : entryLabel(entry)}
                     </div>
                     <div className="text-xs text-stone-400 truncate">
                       {[entry.time ? formatTime12(entry.time) : (entry.allDay ? 'All day' : ''), entry.venue || entry.field]
@@ -14199,7 +14492,7 @@ function CalendarView({
         )}
       </div>
 
-      {/* Edit / add sheet — the SAME GameForm ScheduleView mounts. */}
+      {/* Edit / add sheet — the shared GameForm. */}
       {sheet && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={closeSheet}>
           <div
@@ -14207,8 +14500,10 @@ function CalendarView({
             className="bg-stone-950 border-t-2 sm:border-2 border-stone-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[92vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-stone-800 sticky top-0 bg-stone-950">
+              {/* Neutral wording: the form's own heading names the type, and it
+                  changes live as the coach taps the picker. */}
               <div className="font-display text-lg">
-                {sheet.mode === 'edit' ? 'EDIT GAME' : 'ADD GAME'}
+                {sheet.mode === 'edit' ? 'EDIT EVENT' : 'ADD EVENT'}
               </div>
               <button onClick={closeSheet} className="text-stone-400 hover:text-stone-100 text-2xl leading-none px-2">×</button>
             </div>
@@ -14230,12 +14525,28 @@ function CalendarView({
   );
 }
 
-/* ---------- GAME FORM (shared by ScheduleView and the calendar sheet) ---------- */
-// Extracted from ScheduleView so the calendar's edit sheet mounts the *same*
-// fifteen inputs rather than a copy of them. Owns all its input state; the
-// caller owns persistence and decides what `initial` is.
+/* ---------- GAME FORM (mounted by the calendar's edit sheet) ---------- */
+// The four things a coach can put on a day. `game` first and default, because
+// every schedule item written before the type field existed is one — the merge
+// reads a missing `type` as 'game' for exactly that reason.
+const ENTRY_TYPES = [
+  { key: 'game', short: 'GAME', label: 'GAME' },
+  { key: 'practice', short: 'PRACTICE', label: 'PRACTICE' },
+  { key: 'tryout', short: 'TRYOUT', label: 'TRYOUT' },
+  { key: 'team_event', short: 'EVENT', label: 'TEAM EVENT' },
+];
+const ENTRY_TYPE_LABEL = ENTRY_TYPES.reduce((m, t) => { m[t.key] = t.label; return m; }, {});
+
+// Extracted from the old schedule screen so the calendar's sheet mounts the *same*
+// inputs rather than a copy of them. Owns all its input state; the caller owns
+// persistence and decides what `initial` is. `type` decides which inputs exist.
 function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCancel, onEditSquad, showToast }) {
   const init = initial || {};
+  // A day holds more than games. Everything but `game` is a coach-owned
+  // practice/tryout/team event with no opponent, so `type` gates which inputs
+  // exist at all — see ENTRY_TYPES below.
+  const [type, setType] = useState(init.type || 'game');
+  const [title, setTitle] = useState(init.title || '');
   const [opponent, setOpponent] = useState(init.opponent || '');
   const [date, setDate] = useState(init.date || '');
   const [time, setTime] = useState(init.time || '');
@@ -14276,6 +14587,8 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
   // a blank form), so reopening the sheet for another day shows that day.
   React.useEffect(() => {
     const it = initial || {};
+    setType(it.type || 'game');
+    setTitle(it.title || '');
     setOpponent(it.opponent || '');
     setDate(it.date || '');
     setTime(it.time || '');
@@ -14299,7 +14612,11 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     );
   }, [initial]);
 
+  const isGame = type === 'game';
+
   const values = () => ({
+    type,
+    title: title.trim(),
     opponent: opponent.trim(),
     date,
     time: time || '',
@@ -14314,29 +14631,66 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     squadIds: Array.isArray(squadIds) ? squadIds : [],
   });
 
+  // A game is nothing without an opponent; a practice is fine with just a date,
+  // so the guard has to move with the type or the SAVE button never enables.
+  const canSubmit = isGame ? !!(opponent.trim() && date) : !!date;
+
   const handleSubmit = () => {
-    if (!opponent.trim() || !date) return;
+    if (!canSubmit) return;
     onSubmit?.(values());
   };
 
   return (
     <div className={`bg-stone-900 border rounded-2xl p-4 space-y-3 ${editing ? 'border-amber-500/60 ring-1 ring-amber-500/30' : 'border-stone-800'}`}>
       <div className="font-display text-lg flex items-center gap-2">
-        {editing ? <><span>✏️</span><span>EDIT GAME</span></> : <span>ADD GAME</span>}
+        {editing ? <><span>✏️</span><span>EDIT {ENTRY_TYPE_LABEL[type]}</span></> : <span>ADD {ENTRY_TYPE_LABEL[type]}</span>}
       </div>
-      <input
-        type="text"
-        placeholder="Opponent *"
-        value={opponent}
-        onChange={e => setOpponent(e.target.value)}
-        list="opponent-suggestions"
-        autoComplete="off"
-        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-      />
-      {opponentSuggestions.length > 0 && (
-        <datalist id="opponent-suggestions">
-          {opponentSuggestions.map((n) => <option key={n} value={n} />)}
-        </datalist>
+
+      {/* What kind of event this is. Editing an existing item keeps its type:
+          a practice cannot become a game, because the two carry different
+          fields and switching would leave the saved item half-populated. */}
+      <div>
+        <div className="text-[10px] font-bold text-stone-400 tracking-widest mb-1">TYPE</div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {ENTRY_TYPES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              disabled={editing && t.key !== type}
+              onClick={() => setType(t.key)}
+              className={`py-2 rounded-xl text-[11px] font-bold border-2 active:scale-95 transition disabled:opacity-30 ${
+                type === t.key ? 'bg-lime-500 text-stone-950 border-lime-400' : 'bg-stone-900 text-stone-400 border-stone-800'
+              }`}
+            >{t.short}</button>
+          ))}
+        </div>
+      </div>
+
+      {isGame ? (
+        <>
+          <input
+            type="text"
+            placeholder="Opponent *"
+            value={opponent}
+            onChange={e => setOpponent(e.target.value)}
+            list="opponent-suggestions"
+            autoComplete="off"
+            className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+          />
+          {opponentSuggestions.length > 0 && (
+            <datalist id="opponent-suggestions">
+              {opponentSuggestions.map((n) => <option key={n} value={n} />)}
+            </datalist>
+          )}
+        </>
+      ) : (
+        <input
+          type="text"
+          placeholder="e.g. Extra keeper session"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+        />
       )}
       <div className="grid grid-cols-2 gap-3">
         <label className="relative block">
@@ -14364,13 +14718,18 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
           />
         </label>
       </div>
-      <input
-        type="text"
-        placeholder="Tournament / Festival"
-        value={tournament}
-        onChange={e => setTournament(e.target.value)}
-        className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
-      />
+      {/* Fixture-only: a practice has no competition, and saveCalendarEntry does
+          not persist `tournament` for non-games, so showing it would offer an
+          input whose value is silently dropped. */}
+      {isGame && (
+        <input
+          type="text"
+          placeholder="Tournament / Festival"
+          value={tournament}
+          onChange={e => setTournament(e.target.value)}
+          className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
+        />
+      )}
       <input
         type="text"
         placeholder="Location (address or Google Maps link)"
@@ -14386,7 +14745,11 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
         className="w-full border border-stone-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-lime-500"
       />
 
-      {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ---- */}
+      {/* ---- Optional match-day pre-fill (squad, home/away, half, colors) ----
+          Games only: every control in here — side, format, half length, both
+          kit colours, squad — describes a fixture, and none of it is saved for
+          a practice. */}
+      {isGame && (
       <button
         type="button"
         onClick={() => setShowSetup(s => !s)}
@@ -14397,7 +14760,8 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
         </span>
         <span className="text-stone-400 text-xs">{showSetup ? 'HIDE ▲' : 'SHOW ▼'}</span>
       </button>
-      {showSetup && (
+      )}
+      {isGame && showSetup && (
         <div className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
           <p className="text-[11px] text-stone-400 leading-snug">
             Pre-fill what you know now. If you set <span className="font-bold text-stone-200">everything</span> (squad + home/away + half length + both colors), tapping START on match day jumps straight to the starting lineup — no setup screens.
@@ -14553,7 +14917,7 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
         )}
         <button
           onClick={handleSubmit}
-          disabled={!opponent.trim() || !date}
+          disabled={!canSubmit}
           className={`flex-1 font-display text-lg py-3 rounded-xl disabled:opacity-40 active:scale-[0.98] transition ${editing ? 'bg-amber-500 text-stone-950 border-2 border-amber-400' : 'bg-stone-900 text-lime-400'}`}
         >
           {editing ? 'SAVE CHANGES' : 'ADD TO SCHEDULE'}
@@ -14562,313 +14926,6 @@ function GameForm({ initial, opponentSuggestions = [], editing, onSubmit, onCanc
     </div>
   );
 }
-
-function ScheduleView({ schedule, roster, games = [], opponentSuggestions = [], onRenameOpponent, initialEditId, onConsumedInitialEditId, onSave, onBack, onEditSquad, askConfirm, showToast }) {
-  const [editingId, setEditingId] = useState(null);
-  const [showPast, setShowPast] = useState(false);
-  const [showOpponentManager, setShowOpponentManager] = useState(false);
-  // Bumped on every reset so a blank form re-seeds even when it was already blank.
-  const [formNonce, setFormNonce] = useState(0);
-  const formRef = React.useRef(null);
-
-  // GameForm re-seeds whenever this object's identity changes. Memoise on a
-  // *value* signature, not on the array element's reference: in production the
-  // team doc's onSnapshot hands back a fresh schedule array on every roster or
-  // weights write too, and re-seeding then would wipe what the coach is typing.
-  const editingItem = editingId ? schedule.find(s => s.id === editingId) : null;
-  const formSig = editingItem ? JSON.stringify([
-    editingItem.opponent, editingItem.date, editingItem.time, editingItem.tournament,
-    editingItem.location, editingItem.field, editingItem.isHome, editingItem.format,
-    editingItem.halfLengthMin, editingItem.homeColor, editingItem.awayColor,
-    editingItem.squadIds,
-  ]) : '';
-  const formInitial = useMemo(() => (editingItem ? {
-    opponent: editingItem.opponent || '',
-    date: editingItem.date || '',
-    time: editingItem.time || '',
-    tournament: editingItem.tournament || '',
-    location: editingItem.location || '',
-    field: editingItem.field || '',
-    isHome: editingItem.isHome,
-    format: editingItem.format,
-    halfLengthMin: typeof editingItem.halfLengthMin === 'number'
-      ? editingItem.halfLengthMin : undefined,
-    homeColor: editingItem.homeColor,
-    awayColor: editingItem.awayColor,
-    squadIds: Array.isArray(editingItem.squadIds) ? editingItem.squadIds : [],
-  } : { nonce: formNonce }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [editingId, formSig, formNonce]);
-
-  // Resume edit mode when returning from the squad-picker detour.
-  React.useEffect(() => {
-    if (!initialEditId) return;
-    const item = schedule.find(s => s.id === initialEditId);
-    if (item) setEditingId(item.id);
-    onConsumedInitialEditId?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialEditId]);
-
-  const resetForm = () => {
-    setEditingId(null);
-    setFormNonce(n => n + 1);
-  };
-
-  const handleFormSubmit = (v) => {
-    if (!v.opponent || !v.date) return;
-    const setupFields = {
-      isHome: v.isHome,
-      format: v.format,
-      halfLengthMin: v.halfLengthMin,
-      homeColor: v.homeColor,
-      awayColor: v.awayColor,
-      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
-    };
-    if (editingId) {
-      onSave(schedule.map(s => s.id === editingId ? {
-        ...s,
-        opponent: v.opponent,
-        date: v.date,
-        time: v.time || '',
-        tournament: v.tournament,
-        location: v.location,
-        field: v.field,
-        ...setupFields,
-      } : s));
-      showToast?.(`✏️ Updated vs ${v.opponent}`);
-      resetForm();
-      return;
-    }
-    const item = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      opponent: v.opponent,
-      date: v.date,
-      time: v.time || '',
-      tournament: v.tournament,
-      location: v.location,
-      field: v.field,
-      ...setupFields,
-    };
-    onSave([...schedule, item]);
-    const dateLabel = new Date(v.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' });
-    showToast?.(`✅ Added vs ${item.opponent} · ${dateLabel}`);
-    resetForm();
-  };
-
-  // Persist the in-progress edit before navigating away to the squad picker,
-  // so nothing typed is lost on the detour.
-  const handleEditSquad = (v) => {
-    if (!editingId) return;
-    onSave(schedule.map(s => s.id === editingId ? {
-      ...s,
-      opponent: v.opponent || s.opponent,
-      date: v.date || s.date,
-      time: v.time || '',
-      tournament: v.tournament,
-      location: v.location,
-      field: v.field,
-      isHome: v.isHome,
-      format: v.format,
-      halfLengthMin: v.halfLengthMin,
-      homeColor: v.homeColor,
-      awayColor: v.awayColor,
-      squadIds: Array.isArray(v.squadIds) ? v.squadIds : [],
-    } : s));
-    onEditSquad?.({ id: editingId, opponent: v.opponent || 'Opponent', squadIds: v.squadIds });
-  };
-
-  const handleEdit = (item) => {
-    setEditingId(item.id);
-    if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  const handleToggleCancel = (item) => {
-    const wasCancelled = !!item.cancelled;
-    onSave(schedule.map(s => s.id === item.id ? { ...s, cancelled: !s.cancelled } : s));
-    showToast?.(wasCancelled ? `↩ Restored vs ${item.opponent}` : `⛔ Cancelled vs ${item.opponent}`);
-  };
-
-  const handleDelete = (id) => {
-    const item = schedule.find(s => s.id === id);
-    const label = item ? `vs ${item.opponent}${item.date ? ' on ' + new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}` : 'this game';
-    askConfirm(`Delete ${label} from the schedule?`, () => {
-      if (editingId === id) resetForm();
-      onSave(schedule.filter(s => s.id !== id));
-      showToast?.(`🗑 Deleted ${label}`);
-    }, { danger: true, yesLabel: 'DELETE' });
-  };
-
-  const sorted = [...schedule].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-  const isPastItem = (item) => new Date(item.date + 'T' + (item.time || '23:59')) < new Date(new Date().toDateString());
-  const upcoming = sorted.filter(item => !isPastItem(item));      // soonest first
-  const past = sorted.filter(isPastItem).reverse();               // most-recent first
-
-  const renderRow = (item) => {
-    const isPast = isPastItem(item);
-    const isCancelled = !!item.cancelled;
-    const isEditing = editingId === item.id;
-    return (
-      <div
-        key={item.id}
-        className={`bg-stone-900 border rounded-xl p-3 flex items-center gap-3 ${
-          isEditing ? 'border-amber-500/60 ring-1 ring-amber-500/30'
-          : isCancelled ? 'border-red-900/60 opacity-70'
-          : isPast ? 'border-stone-800 opacity-50'
-          : 'border-stone-800'
-        }`}
-      >
-        <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-300 flex flex-col items-center justify-center text-xs font-bold leading-tight">
-          <span>{new Date(item.date + 'T12:00').toLocaleDateString('en', { month: 'short' }).toUpperCase()}</span>
-          <span className="text-base">{new Date(item.date + 'T12:00').getDate()}</span>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className={`font-bold text-sm truncate ${isCancelled ? 'line-through text-stone-400' : ''}`}>vs {item.opponent}</div>
-          <div className="text-xs text-stone-400 truncate flex items-center gap-1.5 flex-wrap mt-0.5">
-            {isCancelled && (
-              <span className="inline-block bg-red-500/15 text-red-300 border border-red-500/40 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                CANCELLED
-              </span>
-            )}
-            {item.tournament && <TournamentChip value={item.tournament} />}
-            <FormatChip value={item.format} />
-            {item.time && <span>{formatTime12(item.time)}</span>}
-            {item.field && (
-              <span className="inline-block bg-blue-500/15 text-blue-300 border border-blue-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                📍 {item.field}
-              </span>
-            )}
-            {Array.isArray(item.squadIds) && item.squadIds.length > 0 && (
-              <span className="inline-flex items-center gap-1 bg-lime-500/15 text-lime-300 border border-lime-500/40 font-bold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                👥 {item.squadIds.length}
-              </span>
-            )}
-            {(() => {
-              const ready = Array.isArray(item.squadIds) && item.squadIds.length > 0
-                && typeof item.isHome === 'boolean'
-                && typeof item.halfLengthMin === 'number'
-                && !!item.homeColor && !!item.awayColor;
-              return ready ? (
-                <span className="inline-block bg-lime-500/20 text-lime-200 border border-lime-400/60 font-extrabold tracking-wider text-[10px] px-1.5 py-0.5 rounded">
-                  READY
-                </span>
-              ) : null;
-            })()}
-          </div>
-          {item.location && (
-            <a
-              href={item.location.startsWith('http') ? item.location : `https://maps.google.com/?q=${encodeURIComponent(item.location)}`}
-              target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 underline flex items-center gap-1 mt-0.5"
-              onClick={e => e.stopPropagation()}
-            >
-              <MapPin className="w-3 h-3" /> {item.location.startsWith('http') ? 'View Map' : item.location}
-            </a>
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5 shrink-0">
-          <button
-            onClick={() => handleEdit(item)}
-            className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-400 flex items-center justify-center active:scale-90 transition text-sm"
-            title="Edit"
-          >
-            ✏️
-          </button>
-          <button
-            onClick={() => handleToggleCancel(item)}
-            className={`w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition text-sm ${isCancelled ? 'bg-lime-500/15 text-lime-400' : 'bg-stone-800 text-stone-300'}`}
-            title={isCancelled ? 'Restore' : 'Mark cancelled'}
-          >
-            {isCancelled ? '↻' : '🚫'}
-          </button>
-          <button
-            onClick={() => handleDelete(item.id)}
-            className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center active:scale-90 transition"
-            title="Delete"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  return (
-    <div className="min-h-screen bg-stone-900 pb-8">
-      <Header
-        title="SCHEDULE"
-        onBack={onBack}
-        right={
-          opponentSuggestions.length > 0 && onRenameOpponent ? (
-            <button
-              onClick={() => setShowOpponentManager(true)}
-              className="text-xs font-display text-stone-400 hover:text-stone-100 px-2 py-1 rounded-lg border border-stone-800"
-            >
-              🏷️ OPPONENTS
-            </button>
-          ) : null
-        }
-      />
-
-      {/* Add form */}
-      <div className="px-4 pt-4 space-y-3" ref={formRef}>
-        <GameForm
-          initial={formInitial}
-          opponentSuggestions={opponentSuggestions}
-          editing={!!editingId}
-          onSubmit={handleFormSubmit}
-          onCancel={resetForm}
-          onEditSquad={handleEditSquad}
-          showToast={showToast}
-        />
-      </div>
-
-      {/* Upcoming */}
-      <div className="px-4 pt-6">
-        <h2 className="font-display text-xl mb-3">UPCOMING ({upcoming.length})</h2>
-        {upcoming.length === 0 ? (
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6 text-center text-stone-400 text-sm">
-            {sorted.length === 0 ? 'No scheduled games yet.' : 'No upcoming games.'}
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(renderRow)}
-          </div>
-        )}
-      </div>
-
-      {/* Past games — collapsed by default to keep the section uncluttered */}
-      {past.length > 0 && (
-        <div className="px-4 pt-6">
-          <button
-            onClick={() => setShowPast(v => !v)}
-            className="w-full flex items-center justify-between font-display text-xl mb-3 text-stone-300 hover:text-stone-100"
-          >
-            <span>PAST GAMES ({past.length})</span>
-            <span className="text-sm text-stone-400">{showPast ? 'HIDE ▲' : 'SHOW ▼'}</span>
-          </button>
-          {showPast && (
-            <div className="space-y-2">
-              {past.map(renderRow)}
-            </div>
-          )}
-        </div>
-      )}
-      {showOpponentManager && (
-        <OpponentManagerModal
-          opponentSuggestions={opponentSuggestions}
-          games={games}
-          schedule={schedule}
-          onClose={() => setShowOpponentManager(false)}
-          onRename={onRenameOpponent}
-          askConfirm={askConfirm}
-          showToast={showToast}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ---------- OPPONENT MANAGER MODAL ---------- */
 function OpponentManagerModal({ opponentSuggestions, games, schedule, onClose, onRename, askConfirm, showToast }) {
   const [renaming, setRenaming] = useState(null); // { from: string, to: string }
   const norm = (s) => (s || '').trim().toLowerCase();
@@ -16275,6 +16332,8 @@ function PublicHomePage({ access }) {
   // cron owns this subcollection.
   const [teamsnapEvents, setTeamsnapEvents] = useState([]);
   const [teamsnapSyncedAt, setTeamsnapSyncedAt] = useState(null);
+  // The coach's hidden entry keys, read-only in the parent view.
+  const [hiddenEventKeys, setHiddenEventKeys] = useState(() => new Set());
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const isCoachUser = !!access && access.status === 'coach';
@@ -16379,6 +16438,28 @@ function PublicHomePage({ access }) {
     return () => { if (unsub) unsub(); };
   }, []);
 
+  // The coach's hide flags, read-only — parents never hide anything. Mirrored
+  // here rather than passed down because PublicHomePage is a separate root
+  // reached by a route branch, not a child of App. Without it a hidden event
+  // would keep showing for families, which is the opposite of the intent.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.fbDb || !window.fbReady) return undefined;
+    let unsub = null;
+    window.fbReady.then(() => {
+      if (!window.fbDb) return;
+      unsub = window.fbDb.collection('teams').doc('main').collection('calendarHidden')
+        .onSnapshot(
+          (snap) => {
+            const s = new Set();
+            snap.forEach((d) => { const k = d.data()?.key; if (k) s.add(k); });
+            setHiddenEventKeys(s);
+          },
+          (err) => console.error('calendarHidden listen failed', err)
+        );
+    });
+    return () => { if (unsub) unsub(); };
+  }, []);
+
   // Above the early returns on purpose: a hook after a conditional return
   // changes the hook count between renders and React throws #310.
   const calendarToday = useMemo(() => {
@@ -16386,8 +16467,8 @@ function PublicHomePage({ access }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
   const calendarModel = useMemo(
-    () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday }),
-    [teamsnapEvents, schedule, games, calendarToday]
+    () => buildCalendarModel({ teamsnapEvents, schedule, games, today: calendarToday, hidden: hiddenEventKeys }),
+    [teamsnapEvents, schedule, games, calendarToday, hiddenEventKeys]
   );
 
   if (error) return <PublicErrorScreen msg={error} />;
@@ -16408,8 +16489,15 @@ function PublicHomePage({ access }) {
     if (active && (active.date || '').slice(0, 10) === todayStr && norm(active.opponent) === norm(s.opponent)) return true;
     return todayFinished.some((g) => norm(g.opponent) === norm(s.opponent));
   };
+  // Games only. The schedule now also holds coach-created practices, tryouts and
+  // team events (they carry a `type`; absent means game, since every item
+  // predates the field). Those have no opponent and no score, so featuring one
+  // would put a scoreboard reading "Stompers vs Opponent" at the top of the
+  // parent home page.
   const todaySched = (schedule || []).filter(
-    (s) => (s.date || '').slice(0, 10) === todayStr && !isCovered(s),
+    (s) => (s.date || '').slice(0, 10) === todayStr
+      && (s.type || 'game') === 'game'
+      && !isCovered(s),
   );
 
   const slots = [];
