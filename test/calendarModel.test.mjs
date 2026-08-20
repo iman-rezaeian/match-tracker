@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCalendarModel, entryColor, ENTRY_COLORS } from '../js/calendarModel.mjs';
+import { buildCalendarModel, entryColor, ENTRY_COLORS, HIDEABLE_KINDS } from '../js/calendarModel.mjs';
 
 const TS = {
   ecslEnd:   { uid: '9230745-355316144', title: 'ECSL End Festival- confirmed', type: 'game', date: '2026-08-22', time: '', allDay: true, canceled: false, venue: '', arrival: '12:00 PM' },
@@ -177,4 +177,57 @@ test('every declared kind resolves to its own colour', () => {
 
 test('an unknown kind still gets a visible fallback colour', () => {
   assert.equal(entryColor({ kind: 'something_new' }), ENTRY_COLORS.team_event);
+});
+
+test('a coach-created practice is its own kind, not a game', () => {
+  const m = buildCalendarModel({
+    teamsnapEvents: [], games: [], today: TODAY,
+    schedule: [{ id: 'p1', type: 'practice', title: 'Extra keeper session',
+                 date: '2026-08-25', time: '18:00', location: 'Vollmer' }],
+  });
+  const e = m.days.get('2026-08-25')[0];
+  assert.equal(e.kind, 'practice_own');
+  assert.equal(e.scheduleId, 'p1', 'app-owned, so it carries a scheduleId');
+  assert.equal(e.teamsnapUid, null);
+});
+
+test('a schedule item with no type is still a game', () => {
+  const m = buildCalendarModel({
+    teamsnapEvents: [], games: [], today: TODAY,
+    schedule: [{ id: 's1', opponent: 'Caboto', date: '2026-08-25', time: '11:00' }],
+  });
+  assert.equal(m.days.get('2026-08-25')[0].kind, 'game_scheduled');
+});
+
+test('a hidden teamsnap event is dropped from the model', () => {
+  const args = {
+    teamsnapEvents: [TS.practice23], schedule: [], games: [], today: TODAY,
+  };
+  const shown = buildCalendarModel(args);
+  assert.equal(shown.days.get('2026-10-23').length, 1);
+
+  const hiddenModel = buildCalendarModel({ ...args, hidden: [`ts:${TS.practice23.uid}`] });
+  assert.equal(hiddenModel.days.has('2026-10-23'), false, 'day drops out entirely');
+});
+
+test('hiding is keyed by entry key, so it cannot hide the wrong event', () => {
+  const m = buildCalendarModel({
+    teamsnapEvents: [TS.practice23, TS.terror23], schedule: [], games: [], today: TODAY,
+    hidden: [`ts:${TS.practice23.uid}`],
+  });
+  const kinds = m.days.get('2026-10-23').map((e) => e.kind);
+  assert.deepEqual(kinds, ['tournament_block'], 'only the named event is hidden');
+});
+
+test('coach-created events are never hideable, they are deletable', () => {
+  assert.equal(HIDEABLE_KINDS.has('practice'), true);
+  assert.equal(HIDEABLE_KINDS.has('tournament_block'), true);
+  assert.equal(HIDEABLE_KINDS.has('practice_own'), false);
+  assert.equal(HIDEABLE_KINDS.has('game_scheduled'), false);
+});
+
+test('own-practice colours match their teamsnap equivalents', () => {
+  assert.equal(entryColor({ kind: 'practice_own' }), ENTRY_COLORS.practice);
+  assert.equal(entryColor({ kind: 'tryout_own' }), ENTRY_COLORS.tryout);
+  assert.equal(entryColor({ kind: 'team_event_own' }), ENTRY_COLORS.team_event);
 });
