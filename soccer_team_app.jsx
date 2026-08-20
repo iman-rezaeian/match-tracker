@@ -1522,7 +1522,7 @@ function CoachApp() {
     persistRoster(roster.filter(p => p.id !== id));
   };
 
-  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord, format) => {
+  const startNewGame = (opponent, isHome, tournament, startingLineup, gkPlayerId, squad, halfLengthMin, homeColor, awayColor, liveInput, youtubeVideoId, kickoffPositions, autoRecord, format, gameType) => {
     const now = Date.now();
     const squadIds = (squad && squad.length > 0) ? squad : (startingLineup || []);
     // Seed POSITION events from the kickoff tactical board so the in-game
@@ -1552,7 +1552,14 @@ function CoachApp() {
     const game = {
       id: uid(),
       opponent: opponent || 'Opponent',
-      tournament: tournament || 'Festival',
+      // `tournament` is now the competition's NAME and may be blank; `gameType`
+      // is what scoring weights key on. Persist the tag explicitly so a played
+      // game no longer depends on gameTypeOf's legacy text fallback — that
+      // fallback only ever matched when the free text happened to BE a type
+      // name, which is why a typo like "Gatorate Invitational" scored as a
+      // full-weight league game.
+      tournament: tournament || '',
+      gameType: gameTypeOf({ gameType, tournament }),
       isHome: !!isHome,
       format: FORMATS[format] ? format : DEFAULT_FORMAT,
       halfLengthMin: halfLengthMin || 25,
@@ -2430,12 +2437,8 @@ function CoachApp() {
     setPendingGameSetup({
       opponent: item.opponent,
       tournament: item.tournament,
-      // Carry the scheduled item's tag into setup so the coach's pick is not
-      // lost on the way to kickoff. NOTE: startNewGame does not yet write
-      // gameType onto the finished game doc, so a played game still resolves
-      // its type through gameTypeOf's legacy `tournament` fallback. Closing
-      // that gap means touching GameSetup and startNewGame, which is outside
-      // this task.
+      // Carry the scheduled item's tag into setup so the coach's pick survives
+      // the GameSetup detour and lands on the game doc at kickoff.
       gameType: gameTypeOf(item),
       fromSchedule: true,
       isHome: typeof item.isHome === 'boolean' ? item.isHome : true,
@@ -2579,10 +2582,10 @@ function CoachApp() {
           initial={pendingGameSetup}
           opponentSuggestions={opponentSuggestions}
           onCancel={() => { setPendingGameSetup(null); setView('home'); }}
-          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format) => {
+          onStart={(opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format, gameType) => {
             // Preserve any pre-picked squad / fromSchedule flag carried in from
             // a scheduled-game start, so it survives the GameSetup detour.
-            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format });
+            setPendingGameSetup({ ...(pendingGameSetup || {}), opponent, isHome, tournament, halfLengthMin, homeColor, awayColor, autoRecord, format, gameType });
             setView('squad');
           }}
           onGoRoster={() => setView('roster')}
@@ -2619,7 +2622,7 @@ function CoachApp() {
               try { pendingMicRef.current = navigator.mediaDevices.getUserMedia({ audio: true }); }
               catch (e) { pendingMicRef.current = null; }
             }
-            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord, pendingGameSetup.format);
+            startNewGame(pendingGameSetup.opponent, pendingGameSetup.isHome, pendingGameSetup.tournament, lineup, gkPlayerId, pendingGameSetup.squad, pendingGameSetup.halfLengthMin, pendingGameSetup.homeColor, pendingGameSetup.awayColor, liveInput, youtubeVideoId, kickoffPositions, pendingGameSetup.autoRecord, pendingGameSetup.format, pendingGameSetup.gameType);
             setPendingGameSetup(null);
           }}
         />
@@ -3077,7 +3080,7 @@ function HomeView({ roster, games, upcomingCount = 0, activeGame, onGoRoster, on
             </div>
             <div>
               <div className="font-bold text-sm">GAME IN PROGRESS</div>
-              <div className="text-xs">{activeGame.tournament || 'Festival'} · vs {activeGame.opponent} · {activeGame.ourScore}–{activeGame.oppScore}</div>
+              <div className="text-xs">{activeGame.tournament || gameTypeOf(activeGame).toUpperCase()} · vs {activeGame.opponent} · {activeGame.ourScore}–{activeGame.oppScore}</div>
             </div>
           </div>
           <ChevronRight className="w-5 h-5" />
@@ -3525,7 +3528,11 @@ function PlayerAvatar({ player, sizeClass = 'w-12 h-12', numberClasses = 'bg-sto
 /* ---------- GAME SETUP ---------- */
 function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, opponentSuggestions = [] }) {
   const [opponent, setOpponent] = useState(initial?.opponent || '');
-  const [tournament, setTournament] = useState(initial?.tournament || 'Festival');
+  const [tournament, setTournament] = useState(initial?.tournament || '');
+  // The fixture's scoring tag. Seeded through gameTypeOf so a game started from
+  // a tagged schedule item keeps that tag, and an untagged one still derives it
+  // from the old free-text box rather than defaulting to a full-weight league.
+  const [gameType, setGameType] = useState(gameTypeOf(initial || {}));
   const [isHome, setIsHome] = useState(typeof initial?.isHome === 'boolean' ? initial.isHome : true);
   const [format, setFormat] = useState(initial?.format && FORMATS[initial.format] ? initial.format : DEFAULT_FORMAT);
   const [halfLengthMin, setHalfLengthMin] = useState(
@@ -3588,12 +3595,29 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
       <Header title="NEW GAME" onBack={onCancel} />
 
       <div className="px-4 pt-6 space-y-5">
-        <Field label="TOURNAMENT">
+        <Field label="TAG">
+          <div className="grid grid-cols-2 gap-2">
+            {GAME_TYPES.map(gt => (
+              <button
+                key={gt.key}
+                type="button"
+                onClick={() => setGameType(gt.key)}
+                className={`py-2.5 rounded-xl font-bold text-xs border-2 active:scale-95 transition ${
+                  gameType === gt.key
+                    ? 'bg-lime-500 text-stone-950 border-lime-400'
+                    : 'bg-stone-900 text-stone-300 border-stone-800'
+                }`}
+              >{gt.label}</button>
+            ))}
+          </div>
+        </Field>
+
+        <Field label="COMPETITION NAME">
           <input
             type="text"
             value={tournament}
             onChange={e => setTournament(e.target.value)}
-            placeholder="Festival"
+            placeholder="e.g. Canton Cup (optional)"
             className="w-full bg-stone-900 border-2 border-stone-800 focus:border-stone-900 outline-none rounded-xl px-4 py-3 text-lg font-semibold"
           />
         </Field>
@@ -3757,7 +3781,7 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
         </button>
 
         <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim() || 'Festival', halfLengthMin, homeColor, awayColor, autoRecord, format)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim(), halfLengthMin, homeColor, awayColor, autoRecord, format, gameType)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -5447,7 +5471,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
           </button>
           <div className="text-center flex-1">
             <div className="text-xs text-white font-bold tracking-wide truncate">
-              {game.tournament || 'Festival'}
+              {game.tournament || gameTypeOf(game).toUpperCase()}
             </div>
             <div className="text-[10px] text-white/50">
               {formatDate(game.date)}
@@ -11242,7 +11266,7 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
           <section className="rounded-2xl p-4 border border-stone-800" style={{ background: 'linear-gradient(160deg,#16271b,#121214)' }}>
             <div className="flex items-start justify-between mb-3">
               <div className="min-w-0">
-                <div className="text-[10px] tracking-widest text-stone-400">{(game.tournament || 'MATCH').toUpperCase()}{game.date ? ` · ${game.date}` : ''}</div>
+                <div className="text-[10px] tracking-widest text-stone-400">{(game.tournament || gameTypeOf(game)).toUpperCase()}{game.date ? ` · ${game.date}` : ''}</div>
                 <div className="text-white font-display text-lg leading-tight truncate">Stompers <span className="text-stone-500">vs</span> {game.opponent || 'OPP'}</div>
               </div>
               <div className="text-right shrink-0 pl-3">
@@ -11762,7 +11786,7 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
           <div className="text-center text-xs text-lime-300 -mt-1 mb-2">{shareMsg}</div>
         )}
         <div className="text-center text-xs text-white/70 mb-1 flex items-center justify-center gap-1.5">
-          <span>{game.tournament || 'Festival'} · {formatDate(game.date)}</span>
+          <span>{game.tournament || gameTypeOf(game).toUpperCase()} · {formatDate(game.date)}</span>
           <FormatChip value={game.format} />
         </div>
         <div className="text-center font-display text-2xl">vs {game.opponent}</div>
@@ -12164,7 +12188,11 @@ function GameDetail({ game, roster, weights, opponentSuggestions = [], onBack, o
 /* ---------- EDIT GAME INFO (post-hoc metadata fixes) ---------- */
 function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
   const [opponent, setOpponent] = useState(game.opponent || '');
-  const [tournament, setTournament] = useState(game.tournament || 'Festival');
+  const [tournament, setTournament] = useState(game.tournament || '');
+  // Resolved, not raw: a played game from before the tag existed carries only
+  // the old free-text value, and gameTypeOf turns "Festival" into `festival`
+  // so the picker opens on the tag the game is actually being scored as.
+  const [gameType, setGameType] = useState(gameTypeOf(game));
   const [halfLengthMin, setHalfLengthMin] = useState(Number(game.halfLengthMin) || 25);
   const [isHome, setIsHome] = useState(typeof game.isHome === 'boolean' ? game.isHome : true);
   const [homeColor, setHomeColor] = useState(game.homeColor || '#0a0a0a');
@@ -12190,12 +12218,29 @@ function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
         )}
       </Field>
 
-      <Field label="TOURNAMENT / COMPETITION">
+      <Field label="TAG">
+        <div className="grid grid-cols-2 gap-2">
+          {GAME_TYPES.map((gt) => (
+            <button
+              key={gt.key}
+              type="button"
+              onClick={() => setGameType(gt.key)}
+              className={`py-2 rounded-lg font-bold text-xs border active:scale-95 transition ${
+                gameType === gt.key
+                  ? 'bg-lime-500 text-stone-950 border-lime-400'
+                  : 'bg-stone-950 text-stone-300 border-stone-800'
+              }`}
+            >{gt.label}</button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="COMPETITION NAME">
         <input
           type="text"
           value={tournament}
           onChange={(e) => setTournament(e.target.value)}
-          placeholder="Festival"
+          placeholder="e.g. Canton Cup (optional)"
           className="w-full bg-stone-950 border border-stone-800 rounded-lg px-3 py-2"
         />
       </Field>
@@ -12255,7 +12300,8 @@ function GameInfoEditor({ game, opponentSuggestions = [], onSave, onCancel }) {
         <button
           onClick={() => onSave({
             opponent: opponent.trim() || 'Opponent',
-            tournament: tournament.trim() || 'Festival',
+            tournament: tournament.trim(),
+            gameType,
             halfLengthMin: Number(halfLengthMin) || 25,
             isHome,
             homeColor,
@@ -16880,7 +16926,7 @@ function PastGamesPanel({ games, onBack }) {
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-display text-sm ${rColor}`}>{r}</div>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm truncate">vs {g.opponent}</div>
-                  <div className="text-xs text-stone-400 truncate">{g.tournament || 'Festival'} · {formatDate(g.date)}</div>
+                  <div className="text-xs text-stone-400 truncate">{g.tournament || gameTypeOf(g).toUpperCase()} · {formatDate(g.date)}</div>
                 </div>
                 <div className="font-display text-lg tabular-nums text-stone-100">{g.ourScore}–{g.oppScore}</div>
                 <ChevronRight className="w-4 h-4 text-stone-400" />
