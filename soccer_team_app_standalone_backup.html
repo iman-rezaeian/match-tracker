@@ -16221,15 +16221,15 @@ function HelpView({ onBack }) {
             and season totals.
           </p>
           <p>The basic flow is always the same:</p>
-          <Step n={1}>Tap <Pill tone="lime">START GAME</Pill> → opponent → squad → starting 7.</Step>
+          <Step n={1}>Open <Pill tone="lime">CALENDAR</Pill> → tap the game's day → <Pill tone="lime">START</Pill> → squad → starting 7.</Step>
           <Step n={2}>During play, tap actions as they happen.</Step>
           <Step n={3}>End the game → scores save → review in <Pill>STATS</Pill> &amp; past games.</Step>
           <p className="text-xs text-stone-400">All data syncs to the cloud, so other coaches with the link see the same roster and live games.</p>
         </Section>
 
         <Section id="start" emoji="🚀" title="1 · Starting a match" summary="Opponent → squad → lineup → GK">
-          <p>From Home tap <Pill tone="lime">START GAME</Pill> and walk through the wizard:</p>
-          <Step n={1}><strong>Game setup</strong>: opponent name, tournament/festival label, and the <strong>format</strong> — 7v7 or 9v9. Picking 9v9 suggests a 30-minute half and raises the squad limit to 16; you can still override both.</Step>
+          <p>Open <Pill tone="lime">CALENDAR</Pill>, tap the day, then <Pill tone="lime">START</Pill> on the game — it arrives pre-filled with the opponent, tag, colours and squad you set when you scheduled it. For a game that is not on the calendar, tap <Pill tone="lime">+ EVENT</Pill> in the calendar header first. Either way you walk the same wizard:</p>
+          <Step n={1}><strong>Game setup</strong>: opponent name, the <strong>tag</strong> (scrimmage / festival / tournament / league — this sets how much the game counts toward season scores), an optional competition name, and the <strong>format</strong> — 7v7 or 9v9. Picking 9v9 suggests a 30-minute half and raises the squad limit to 16; you can still override both.</Step>
           <Step n={2}><strong>Squad picker</strong>: tick who's actually available today. You'll see a soft warning over the squad limit for the format (12 for 7v7, 16 for 9v9) — but no hard limit.</Step>
           <Step n={3}><strong>Starting lineup</strong>: pick the 7 (or 9 for 9v9) who start on the field. Everyone else begins on the bench.</Step>
           <Step n={4}><strong>Goalkeeper</strong>: tap the player wearing the gloves. You can change keeper at any time during the game.</Step>
@@ -17576,6 +17576,10 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
+
+
 
 
 
