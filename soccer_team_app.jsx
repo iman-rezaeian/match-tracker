@@ -593,7 +593,7 @@ const DEFAULT_WEIGHTS = {
   },
   gkPoints: {
     GOAL_atk: 10, ASSIST_atk: 8, KEY_PASS_atk: 10, SHOT_ON_atk: 3, SHOT_OFF_atk: 1,
-    SAVE_def: 10, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 2, DUEL_LOSE_def: -2,
+    SAVE_def: 7, BLOCK_def: 5, BALL_WIN_def: 5, DUEL_WIN_def: 2, DUEL_LOSE_def: -2,
     CLEAR_def: 3, KICK_OUT_def: 1,
     GIVE_GO_dec: 6, GIVE_GO_PARTNER_dec: 3, GATES_dec: 4, KEY_PASS_dec: 6, ASSIST_dec: 3,
     HOLDS_BALL_dec: -4, TURNOVER_dec: -4, CLEAN_SHEET_def: 8,
@@ -601,18 +601,38 @@ const DEFAULT_WEIGHTS = {
     PEN_AWARDED_atk: 6, PEN_CONCEDED_def: -8,
     OWN_GOAL_def: -10,
   },
+  // v3: the GK DEF pillar was 55 — more than double the outfield 25 — while a
+  // keeper's DEF points come almost entirely from SAVEs, the one defensive
+  // action that gets logged every time (it happens AT the keeper). Outfield
+  // defending is discretionary: measured over 14 games the squad logged 47
+  // SAVEs but only 4 CLEARs, and in four games fewer than 3 discretionary
+  // defensive actions total. Weighting the keeper's most-reliably-logged pillar
+  // the heaviest compounded that bias instead of correcting it, and put the
+  // keeper top of the table on a DEF rate of 16.1 against a next-best 4.7.
+  // DEF 55->35 with the difference to INV, which is coverage-neutral.
   pillars: {
     outfield: { atk: 30, def: 25, dec: 30, inv: 15 },
-    gk:       { atk: 10, def: 55, dec: 25, inv: 10 },
+    gk:       { atk: 10, def: 35, dec: 25, inv: 30 },
   },
   // v2 fairness knobs: empirical-Bayes shrinkage prior (virtual minutes of
   // squad-average production added to every player's rate) and per-game-type
   // weights on the season aggregate (scrimmages count half by default).
-  shrinkMinutes: 12,
+  //
+  // v3: 12 -> 45. The coach logs while coaching, so the discretionary events
+  // (duels, ball wins, clearances, give-and-gos) are barely logged at all: 4
+  // CLEARs and 12 BALL_WINs across 16 players over 14 games. With evidence that
+  // thin, a player's true rate is mostly unknown, and 12 virtual minutes let
+  // the season table state a 6.8x spread between top and bottom — a confidence
+  // the data does not support. Note that REWEIGHTING points cannot fix this:
+  // the scale has no floor, so scaling GOAL/ASSIST down moved every player ~10%
+  // and left the ratio at 6.8x (measured). Only the prior compresses, because
+  // it pulls toward the squad mean rather than rescaling. At 45 the spread is
+  // 4.4x, which still separates a 16-assist season from a 0-assist one.
+  shrinkMinutes: 45,
   gameTypes: { scrimmage: 0.5, festival: 0.75, tournament: 1.0, league: 1.0, default: 1.0 },
 };
 
-const SCORING_VERSION = 2; // bumped 2026-06: shrinkage, INV cleanup, pro-rated clean sheet, game-type weights, season own-goal fix
+const SCORING_VERSION = 3; // bumped 2026-08: GK fairness (save value + DEF pillar) and shrinkage 12->45 for thin logging
 
 function mergeWeights(w) {
   return {
@@ -12861,8 +12881,10 @@ function StatsView({ roster, games, weights, onBack }) {
                   <p>It's a <b className="text-stone-200">per-20-minute development rating</b>, not a goal tally — a blend of four pillars:</p>
                   <p><b className="text-lime-400">ATK</b> goals/assists/shots · <b className="text-sky-400">DEF</b> saves/blocks/wins · <b className="text-amber-400">DEC</b> smart passes vs turnovers · <b className="text-stone-200">INV</b> total involvement.</p>
                   <p>Because it's a <i>rate</i>, more minutes spread a player's actions thinner, and turnovers count against the Decisions pillar. So a high-volume scorer who also gives the ball away can rank below a tidy player in fewer minutes — by design. Tune the weights in <b className="text-stone-200">⚙ Scoring</b>.</p>
-                  <p><b className="text-stone-200">v{SCORING_VERSION} (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
+                  <p><b className="text-stone-200">v2 (Jun 2026) recalibration:</b> short-minute scores are <i>shrunk</i> toward the squad average (no more one-lucky-goal cameo topping the table); mistakes (turnovers, lost 1v1s, fouls, own goals) no longer earn Involvement credit; GK clean-sheet credit is pro-rated by time in goal; and scrimmages count less toward the season score (tune in ⚙ Scoring → FAIRNESS).</p>
                   <p><b className="text-amber-400">Logging coverage (Aug 2026):</b> you tap while you coach, so how much gets logged swings a lot between games — across the season the action events per game ran 95 down to 18, and defensive taps fell from 60% of them to about 3%. Each pillar now divides by the minutes that <i>actually carried logging for that pillar</i>, instead of by every minute played. So a quiet game no longer waters down a defender's rating, and nobody is penalised for the games you were too busy to tap. A <span className="text-amber-400">●</span> next to a score means under half his minutes carried logging (<span className="text-red-400">●</span> under 30%) — treat those as provisional.</p>
+                  <p><b className="text-stone-200">v{SCORING_VERSION} (Aug 2026) GK fairness:</b> a keeper's defending was measured on a different scale from everyone else's. A save gets tapped every time — it happens <i>at</i> the keeper — while a defender's good positioning is invisible: across 14 games you logged 47 saves but only 4 clearances. A save was also worth more from the keeper (10) than from anyone else (7), and DEF counted 55% of a keeper's score against 25% for outfielders. Those stacked, and the keeper topped the table on a DEF rate of 16.1 against a next-best 4.7. Saves are now worth 7 for everyone and the GK blend is DEF 35% / INV 30%. No outfielder's score moved.</p>
+                  <p><b className="text-stone-200">v{SCORING_VERSION} (Aug 2026) narrower spread:</b> the table used to read 8.2 at the top and 1.2 at the bottom — a 6.8x gap that the logging cannot support. Across 14 games the squad logged 4 clearances, 12 ball wins and 6 give-and-gos in total, so for most players the defensive and decision pillars rest on a handful of taps. Every player is now blended with <b>45 minutes</b> of squad-average production instead of 12 (⚙ Scoring → FAIRNESS), which pulls thin evidence toward the middle and leaves the spread at 4.4x. Real differences still show — a 16-assist season still reads well clear of a 0-assist one — but the table no longer claims one player is a seventh of another on six observations. Note this is a floor problem, not a weighting one: scaling goals and assists down moved everyone about 10% and left the ratio unchanged.</p>
                 </div>
               </details>
               <SeasonPlayersTab
@@ -16061,8 +16083,8 @@ function HelpView({ onBack }) {
             <li><Pill tone="amber">DEC</Pill> Decisions — give &amp; go, gates, holds-ball/turnover penalties.</li>
             <li><Pill>INV</Pill> Involvement — sheer number of actions per minute on the pitch.</li>
           </ul>
-          <p>Each pillar is normalized to a "per 20 minutes" rate so a substitute who plays 10 minutes is compared fairly against a starter who plays 40. Since v{SCORING_VERSION} (Jun 2026), rates are also <strong>shrunk toward the squad average</strong> with a few virtual minutes, so tiny samples can't dominate; mistakes no longer count as Involvement; clean sheets are pro-rated by GK time; and the season score weights games by type (scrimmages count half by default).</p>
-          <p>Outfield players use a balanced blend; goalkeepers use a defence-heavy blend (DEF counts ~55%, ATK only ~10%).</p>
+          <p>Each pillar is normalized to a "per 20 minutes" rate so a substitute who plays 10 minutes is compared fairly against a starter who plays 40. Since v2 (Jun 2026), rates are also <strong>shrunk toward the squad average</strong> with a few virtual minutes, so tiny samples can't dominate; mistakes no longer count as Involvement; clean sheets are pro-rated by GK time; and the season score weights games by type (scrimmages count half by default).</p>
+          <p>Outfield players use a balanced blend; goalkeepers use a defence-leaning blend (DEF ~35%, INV ~30%, ATK only ~10%). A keeper's DEF used to count 55%, but because saves are logged far more reliably than outfield defending, that weighted the most-biased pillar the heaviest — see the v3 note under the season table.</p>
         </Section>
 
         <Section id="weights" emoji="⚙" title="7 · Tuning scoring weights" summary="Adjust how much each action is worth">
