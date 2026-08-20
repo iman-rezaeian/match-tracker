@@ -1,7 +1,7 @@
 {
-  "name": "LaSalle Stompers — Match Tracker",
+  "name": "LaSalle Stompers 2016 Boys",
   "short_name": "Stompers",
-  "description": "U10 soccer match-day tracker for the LaSalle Stompers 2016 squad.",
+  "description": "Team app for the LaSalle Stompers 2016 boys: schedule, live match tracking, film and player stats.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

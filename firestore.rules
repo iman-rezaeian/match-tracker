@@ -130,6 +130,36 @@ service cloud.firestore {
         allow write: if isCoach();
       }
 
+      // --- teamsnapEvents/<uid>: the synced TeamSnap calendar ---------
+      // Mirrored from the team's iCal feed by the Worker cron, keyed by the
+      // TeamSnap event UID. Every allowed family reads it (the calendar is the
+      // parent view's schedule); NOBODY writes from a client. The cron uses a
+      // service account, which bypasses these rules — so denying all client
+      // writes here costs nothing and stops a signed-in parent (or a stale
+      // coach build) from corrupting synced state.
+      //
+      // Exception to note: the coach's per-event TYPE override is a client
+      // write. It is deliberately kept OUT of this collection — the sync's
+      // updateMask would clobber it on the next poll — and belongs in its own
+      // doc so it survives. Keep this collection feed-owned and read-only.
+      match /teamsnapEvents/{eventUid} {
+        allow read: if isAllowed();
+        allow write: if false;
+      }
+
+      // --- calendarHidden/<id>: coach-hidden calendar entries ----------
+      // TeamSnap events cannot be deleted — the feed is read-only and the cron
+      // re-mirrors it every 15 minutes — so "delete" on a synced event records
+      // a hide flag here instead. Deliberately NOT stored on the teamsnapEvents
+      // docs, which the cron overwrites wholesale each run.
+      //
+      // Families read it so a hidden event disappears for them too; only a
+      // coach writes it.
+      match /calendarHidden/{docId} {
+        allow read: if isAllowed();
+        allow write: if isCoach();
+      }
+
       // --- games/<id> ------------------------------------------------
       // Allowed families read the scoreboard, events, goals and broadcast
       // video URLs. NO subcollections readable except public/.
