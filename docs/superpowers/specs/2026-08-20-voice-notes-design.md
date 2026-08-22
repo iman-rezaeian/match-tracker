@@ -1,6 +1,9 @@
 # Voice notes — design
 
-**Status:** spec, nothing built
+**Status:** Part 1 (push-to-talk recorder) and Part 2's Fix A + Fix B (source-keyed
+draft ids, per-source merge in `write_voice_drafts`) shipped 2026-08-22. Fix C
+(cross-source corroboration), the repetition guard, and Part 3's provenance UI
+are still open — as is the unmeasured post-game yield question below.
 **Date:** 2026-08-20
 **Supersedes:** the auto-start full-game recorder (`POST_GAME_NARRATION_GUIDE.md` stays valid for post-game narration)
 
