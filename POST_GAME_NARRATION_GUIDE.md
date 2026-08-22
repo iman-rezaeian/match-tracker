@@ -106,7 +106,7 @@ set -a; source .env; set +a
 .venv-post-game/bin/python -m tracking.voice_probe   --audio <file> --label <label>
 .venv-post-game/bin/python -m tracking.voice_clean   --label <label>
 .venv-post-game/bin/python -m tracking.voice_extract --annotated tracking/outputs/voice_clean/<label>.annotated.json --label <label>
-.venv-post-game/bin/python -m tracking.voice_union   --events tracking/outputs/voice_clean/<label>.events.json --game-id <gameId>
+.venv-post-game/bin/python -m tracking.voice_union   --events tracking/outputs/voice_clean/<label>.events.json --game-id <gameId> --source post
 ```
 
 ⚠ **Alignment.** The in-PWA recorder writes one segment per half, so timestamps
