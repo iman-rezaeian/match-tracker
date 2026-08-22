@@ -405,6 +405,14 @@ function eventDisplayMinute(event, halfLengthMin) {
 }
 
 function computeElapsed(game) {
+  // A finished game can NEVER show a running clock, whatever the other clock
+  // fields say. This guard exists because a lost/failed endGame cloud write
+  // once left status/clockRunning stale on the doc, and every scoreboard kept
+  // counting off segmentStartedAt for hours (2026-08-22, North Oakland).
+  if (game.status === 'finished') {
+    return game.elapsedAtPause !== undefined ? game.elapsedAtPause
+      : (game.endedAt && game.startedAt ? Math.floor((game.endedAt - game.startedAt) / 1000) : 0);
+  }
   if (game.elapsedAtPause === undefined) {
     return game.startedAt ? Math.floor((Date.now() - game.startedAt) / 1000) : 0;
   }
@@ -1843,8 +1851,9 @@ function CoachApp() {
   };
 
   const endGame = (gameId) => {
-    updateGame(gameId, g => {
-      const now = Date.now();
+    const now = Date.now();
+    // The terminal clock fields, derived from a given snapshot of the game.
+    const finishFields = (g) => {
       const additional = g.clockRunning && g.segmentStartedAt
         ? Math.floor((now - g.segmentStartedAt) / 1000) : 0;
       const pp = [...(g.pausePeriods || [])];
@@ -1852,7 +1861,6 @@ function CoachApp() {
         pp[pp.length-1] = { ...pp[pp.length-1], endedAt: now };
       }
       return {
-        ...g,
         status: 'finished',
         endedAt: now,
         clockRunning: false,
@@ -1863,7 +1871,24 @@ function CoachApp() {
         // at the break — isHalfTime() would keep reporting true for it.
         halftime: false,
       };
-    });
+    };
+    updateGame(gameId, g => ({ ...g, ...finishFields(g) }));
+    // Belt-and-braces direct cloud write. The final whistle is the one write
+    // that must never be lost: on 2026-08-22 the diffed persistGames write
+    // silently failed at the field, the cloud doc stayed status:'active', and
+    // every scoreboard kept counting for hours. This targeted merge bypasses
+    // the diff machinery entirely and surfaces failure instead of hiding it.
+    if (typeof window !== 'undefined' && window.fbDb) {
+      const snap = games.find(g => g.id === gameId);
+      if (snap) {
+        window.fbDb.collection('teams').doc('main').collection('games').doc(gameId)
+          .set(finishFields(snap), { merge: true })
+          .catch((e) => {
+            console.error('finalize cloud write failed:', e);
+            showToast('⚠️ Final score may not have saved to the cloud — check connection');
+          });
+      }
+    }
     setActiveGameId(null);
     setView('home');
     showToast('Game saved');
