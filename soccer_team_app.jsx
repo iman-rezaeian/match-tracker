@@ -1678,8 +1678,10 @@ function CoachApp() {
         // 'us miss' / 'them goal' = our keeper saved / their conversion etc.
         saved: eventType === 'OPP_PEN_MISSED',
         playerLabel,
-        ourScore: updated.ourScore,
-        oppScore: updated.oppScore,
+        // Post-event score, derived the same way the persistGames updater
+        // derives it — `game` is the pre-event snapshot.
+        ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
+        oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
       });
     }
 
@@ -2134,7 +2136,9 @@ function CoachApp() {
     const on = roster.find(p => p.id === onPlayerId);
     showToast(`🔄 ${on?.name || '?'} IN · ${off?.name || '?'} OUT`);
     // If the player going off was the current GK, immediately prompt for the new keeper.
-    const wasGK = currentGKAt(updated, subAt - 1) === offPlayerId;
+    // Evaluate against the pre-sub game at subAt-1 — the just-appended SUB
+    // events can't affect who was keeper a millisecond before them.
+    const wasGK = currentGKAt(game, subAt - 1) === offPlayerId;
     if (wasGK) {
       setPendingEvent({ type: 'NEW_GK', defaultGK: onPlayerId, at: subAt });
     } else {
