@@ -1402,6 +1402,11 @@ function CoachApp() {
     setConfirmDialog({ message, onYes, danger: !!opts.danger, yesLabel: opts.yesLabel || 'YES' });
   };
 
+  // Rescue any voice audio stranded in IndexedDB by a crashed/killed session.
+  // Must live at app level: it used to run only when a live autoRecord game
+  // was open, and once every game finished there was no mount left to run it.
+  useEffect(() => { _voiceRecoverStrays(); }, []);
+
   // Recurring opponents dataset — derived from past games (most-recent first)
   // and the schedule. Grassroots/festival teams play the same opponents over
   // and over; we surface them as datalist suggestions on the game-setup and
@@ -5513,6 +5518,48 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS, extra = nu
   return publicUrl;
 }
 
+// One recovery pass over ANY audio chunks stranded in IndexedDB by a crashed,
+// killed, or offline session — keys carry their own gameId, so a take from an
+// already-finished game still uploads to the right doc. Lived inside
+// VoiceRecorder until 2026-08-22, but that only runs while an autoRecord game
+// is OPEN; with autoRecord retired for new games the legacy recorder may never
+// mount again, and the Nationals Macomb 2nd-half audio sat stranded on the
+// coach's phone with no path home. CoachApp now runs this once per app open.
+// The in-flight guard stops a recorder mount mid-pass from double-uploading.
+let _voiceRecoveryInFlight = null;
+function _voiceRecoverStrays() {
+  if (_voiceRecoveryInFlight) return _voiceRecoveryInFlight;
+  _voiceRecoveryInFlight = (async () => {
+    try {
+      const rows = await _voiceList();
+      if (!rows.length) return;
+      const bySeg = {};
+      rows.forEach(r => {
+        const [gid, seg] = r.k.split('|');
+        if (!gid || !seg) return;
+        (bySeg[`${gid}|${seg}`] = bySeg[`${gid}|${seg}`] || []).push(r);
+      });
+      for (const [pref, list] of Object.entries(bySeg)) {
+        const [gid, seg] = pref.split('|');
+        // A take started in the last two minutes is likely still RECORDING in
+        // this very session — uploading and clearing it here would race the
+        // recorder's own finalize (this race is where game 1's handful of
+        // tiny stray files came from). Leave it; the next app open gets it.
+        if (Date.now() - Number(seg) < 120000) continue;
+        list.sort((a, b) => Number(a.k.split('|')[2]) - Number(b.k.split('|')[2]));
+        const mime = _voiceMime() || 'audio/mp4';
+        const blob = new Blob(list.map(r => r.v), { type: mime });
+        if (blob.size > 20000) {
+          await _voiceUpload(gid, Number(seg), blob, mime, Math.round(list.length * 10));
+        }
+        await _voiceClear(`${pref}|`);
+      }
+    } catch (e) { console.warn('voice recovery failed:', e); }
+    finally { _voiceRecoveryInFlight = null; }
+  })();
+  return _voiceRecoveryInFlight;
+}
+
 /* ---------- PUSH-TO-TALK VOICE NOTE (replaces the full-game recorder) ----------
  * Voice-notes design (docs/superpowers/specs/2026-08-20-voice-notes-design.md):
  * hold the mic to record a short note, release to stop + upload. Each clip is
@@ -5637,34 +5684,9 @@ const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef },
   const lpRef = useRef(null);                     // long-press (= stop) tracker
   const AUTO_RESUME_S = 5;
 
-  // Recover orphaned chunks from ANY previous crashed/failed session — keys
-  // carry their own gameId, so a take stranded on an already-finished game
-  // still uploads to the right doc the next time any live game is open.
-  useEffect(() => {
-    (async () => {
-      try {
-        const rows = await _voiceList();
-        if (!rows.length) return;
-        const bySeg = {};
-        rows.forEach(r => {
-          const [gid, seg] = r.k.split('|');
-          if (!gid || !seg) return;
-          (bySeg[`${gid}|${seg}`] = bySeg[`${gid}|${seg}`] || []).push(r);
-        });
-        for (const [pref, list] of Object.entries(bySeg)) {
-          const [gid, seg] = pref.split('|');
-          list.sort((a, b) => Number(a.k.split('|')[2]) - Number(b.k.split('|')[2]));
-          const mime = _voiceMime() || 'audio/mp4';
-          const blob = new Blob(list.map(r => r.v), { type: mime });
-          if (blob.size > 20000) {
-            await _voiceUpload(gid, Number(seg), blob, mime, Math.round(list.length * 10));
-          }
-          await _voiceClear(`${pref}|`);
-        }
-      } catch (e) { console.warn('voice recovery failed:', e); }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.id]);
+  // Recover orphaned chunks from previous crashed/failed sessions (shared
+  // pass — CoachApp also runs it once per app open, see _voiceRecoverStrays).
+  useEffect(() => { _voiceRecoverStrays(); }, [game.id]);
 
   const start = async (streamOverride) => {
     try {
@@ -17753,6 +17775,8 @@ function LiveScoreboard({ game, roster, transparent = false }) {
     </>
   );
 }
+
+
 
 
 
