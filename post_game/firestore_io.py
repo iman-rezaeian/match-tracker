@@ -647,16 +647,41 @@ def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> No
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 
 
-def write_voice_drafts(game_id: str, drafts: list[dict]) -> None:
-    """Write voice-extracted draft events to the game doc's `voiceDrafts` field.
+def _draft_source(draft: dict) -> str:
+    """Which capture channel a stored voice draft came from ('live' | 'post').
+
+    Drafts written before the two-source design carry source='voice_draft' (or
+    nothing at all); the only capture path back then was the live recorder, so
+    they count as 'live' — a live re-run replaces them, a post-game run leaves
+    them alone."""
+    s = draft.get("source")
+    return s if s in ("live", "post") else "live"
+
+
+def merge_voice_drafts(existing: list[dict], drafts: list[dict], source: str) -> list[dict]:
+    """Pure merge for `voiceDrafts`: keep the OTHER source's drafts, replace the
+    named source's with `drafts` (each stamped with `source`). Split out from
+    write_voice_drafts so the merge semantics are testable without Firestore."""
+    if source not in ("live", "post"):
+        raise ValueError(f"source must be 'live' or 'post', got {source!r}")
+    kept = [d for d in (existing or []) if _draft_source(d) != source]
+    return kept + [{**d, "source": source} for d in drafts]
+
+
+def write_voice_drafts(game_id: str, drafts: list[dict], source: str) -> None:
+    """Write ONE source's voice-extracted draft events to `voiceDrafts`.
 
     The PWA confirm queue reads these; the coach one-click accepts a draft into
     `game.events` (source='voice-confirmed') or dismisses it. Additive and
     reversible — a new sibling field to `voiceSegments`; does NOT touch
-    `events`/scores/stats. Overwrites the field (re-running extraction replaces
-    the draft set rather than appending duplicates)."""
-    _team_doc().collection("games").document(game_id).set(
-        {"voiceDrafts": drafts}, merge=True)
+    `events`/scores/stats. Replaces only the named source's drafts (re-running
+    extraction replaces its own draft set rather than appending duplicates);
+    the other source's drafts are preserved — the old whole-field overwrite
+    meant narrating post-game DELETED the live notes' drafts."""
+    ref = _team_doc().collection("games").document(game_id)
+    existing = (ref.get().to_dict() or {}).get("voiceDrafts") or []
+    ref.set({"voiceDrafts": merge_voice_drafts(existing, drafts, source)},
+            merge=True)
 
 
 def write_identity_drafts(game_id: str, drafts: list[dict]) -> None:

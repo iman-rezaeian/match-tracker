@@ -79,6 +79,12 @@ def main() -> None:
     ap.add_argument("--boundaries", help="comma-sep cumulative half-end concat-seconds "
                                          "(default: auto from R2 segment durations)")
     ap.add_argument("--window-s", type=float, default=30.0, help="same-type match window")
+    ap.add_argument("--source", choices=("live", "post"), default="live",
+                    help="capture channel of the audio: in-game recorder / "
+                         "push-to-talk notes ('live', the default — every game "
+                         "processed so far) vs watching-back narration ('post'). "
+                         "Keys the draft ids + the merge, so re-running one "
+                         "source never touches the other's drafts.")
     ap.add_argument("--write", action="store_true",
                     help="write the drafts to the game doc's voiceDrafts field "
                          "(PWA confirm queue reads them). Additive + reversible.")
@@ -109,7 +115,7 @@ def main() -> None:
         rec = {"type": vtype, "period": period, "elapsed": round(elapsed),
                "player_id": v.get("player_id"), "player_first_name": v.get("player_first_name"),
                "confidence": v.get("confidence"), "quote": v.get("quote"),
-               "source": "voice_draft"}
+               "source": args.source}
         if cand:
             e = min(cand, key=lambda e: abs(e["elapsed"] - elapsed))
             e["matched"] = True
@@ -143,20 +149,22 @@ def main() -> None:
 
     if args.write:
         # Shape for the PWA: camelCase (matches event/voiceSegments fields) +
-        # deterministic id per (period,elapsed,type) so re-runs replace, not dup.
+        # deterministic id per (source,period,elapsed,type) so a re-run replaces
+        # its own drafts — while a live note and a post-game narration of the
+        # same moment keep DISTINCT ids and coexist.
         def _shape(r, kind):
             return {
-                "id": f"vd_{r['period']}_{r['elapsed']}_{r['type']}",
+                "id": f"vd_{args.source}_{r['period']}_{r['elapsed']}_{r['type']}",
                 "type": r["type"], "period": r["period"], "elapsed": r["elapsed"],
                 "playerId": r.get("player_id"),
                 "playerName": r.get("player_first_name") or "",
                 "confidence": r.get("confidence"), "quote": r.get("quote"),
-                "kind": kind, "source": "voice_draft",
+                "kind": kind, "source": args.source,
             }
         drafts = [_shape(r, "new") for r in new_drafts] + [_shape(r, "enrich") for r in enrichments]
-        firestore_io.write_voice_drafts(args.game_id, drafts)
-        print(f"→ wrote {len(drafts)} voiceDrafts to game {args.game_id} "
-              f"(PWA confirm queue). Reversible: field can be cleared.")
+        firestore_io.write_voice_drafts(args.game_id, drafts, args.source)
+        print(f"→ wrote {len(drafts)} {args.source} voiceDrafts to game {args.game_id} "
+              f"(PWA confirm queue; other source's drafts untouched).")
 
 
 if __name__ == "__main__":

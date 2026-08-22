@@ -405,6 +405,14 @@ function eventDisplayMinute(event, halfLengthMin) {
 }
 
 function computeElapsed(game) {
+  // A finished game can NEVER show a running clock, whatever the other clock
+  // fields say. This guard exists because a lost/failed endGame cloud write
+  // once left status/clockRunning stale on the doc, and every scoreboard kept
+  // counting off segmentStartedAt for hours (2026-08-22, North Oakland).
+  if (game.status === 'finished') {
+    return game.elapsedAtPause !== undefined ? game.elapsedAtPause
+      : (game.endedAt && game.startedAt ? Math.floor((game.endedAt - game.startedAt) / 1000) : 0);
+  }
   if (game.elapsedAtPause === undefined) {
     return game.startedAt ? Math.floor((Date.now() - game.startedAt) / 1000) : 0;
   }
@@ -1678,8 +1686,10 @@ function CoachApp() {
         // 'us miss' / 'them goal' = our keeper saved / their conversion etc.
         saved: eventType === 'OPP_PEN_MISSED',
         playerLabel,
-        ourScore: updated.ourScore,
-        oppScore: updated.oppScore,
+        // Post-event score, derived the same way the persistGames updater
+        // derives it — `game` is the pre-event snapshot.
+        ourScore: game.ourScore + (ev.delta === 'us' ? 1 : 0),
+        oppScore: game.oppScore + (ev.delta === 'opp' ? 1 : 0),
       });
     }
 
@@ -1841,8 +1851,9 @@ function CoachApp() {
   };
 
   const endGame = (gameId) => {
-    updateGame(gameId, g => {
-      const now = Date.now();
+    const now = Date.now();
+    // The terminal clock fields, derived from a given snapshot of the game.
+    const finishFields = (g) => {
       const additional = g.clockRunning && g.segmentStartedAt
         ? Math.floor((now - g.segmentStartedAt) / 1000) : 0;
       const pp = [...(g.pausePeriods || [])];
@@ -1850,7 +1861,6 @@ function CoachApp() {
         pp[pp.length-1] = { ...pp[pp.length-1], endedAt: now };
       }
       return {
-        ...g,
         status: 'finished',
         endedAt: now,
         clockRunning: false,
@@ -1861,7 +1871,24 @@ function CoachApp() {
         // at the break — isHalfTime() would keep reporting true for it.
         halftime: false,
       };
-    });
+    };
+    updateGame(gameId, g => ({ ...g, ...finishFields(g) }));
+    // Belt-and-braces direct cloud write. The final whistle is the one write
+    // that must never be lost: on 2026-08-22 the diffed persistGames write
+    // silently failed at the field, the cloud doc stayed status:'active', and
+    // every scoreboard kept counting for hours. This targeted merge bypasses
+    // the diff machinery entirely and surfaces failure instead of hiding it.
+    if (typeof window !== 'undefined' && window.fbDb) {
+      const snap = games.find(g => g.id === gameId);
+      if (snap) {
+        window.fbDb.collection('teams').doc('main').collection('games').doc(gameId)
+          .set(finishFields(snap), { merge: true })
+          .catch((e) => {
+            console.error('finalize cloud write failed:', e);
+            showToast('⚠️ Final score may not have saved to the cloud — check connection');
+          });
+      }
+    }
     setActiveGameId(null);
     setView('home');
     showToast('Game saved');
@@ -2134,7 +2161,9 @@ function CoachApp() {
     const on = roster.find(p => p.id === onPlayerId);
     showToast(`🔄 ${on?.name || '?'} IN · ${off?.name || '?'} OUT`);
     // If the player going off was the current GK, immediately prompt for the new keeper.
-    const wasGK = currentGKAt(updated, subAt - 1) === offPlayerId;
+    // Evaluate against the pre-sub game at subAt-1 — the just-appended SUB
+    // events can't affect who was keeper a millisecond before them.
+    const wasGK = currentGKAt(game, subAt - 1) === offPlayerId;
     if (wasGK) {
       setPendingEvent({ type: 'NEW_GK', defaultGK: onPlayerId, at: subAt });
     } else {
@@ -3627,12 +3656,6 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
   };
   const [homeColor, setHomeColor] = useState(initial?.homeColor || '#0a0a0a');
   const [awayColor, setAwayColor] = useState(initial?.awayColor || '#dc2626');
-  // Auto-record narration with the game clock. Sticky across games via
-  // localStorage; defaults ON the first time.
-  const [autoRecord, setAutoRecord] = useState(() => {
-    try { const v = localStorage.getItem('autoRecordVoice'); return v === null ? true : v === '1'; }
-    catch (e) { return true; }
-  });
   const isLightColor = (hex) => {
     try {
       const h = (hex || '').replace('#', '');
@@ -3829,32 +3852,14 @@ function GameSetup({ rosterCount, onCancel, onStart, onGoRoster, initial, oppone
           </div>
         </Field>
 
-        {/* Auto-record narration: starts at kickoff, pauses at half time,
-            resumes at the 2nd half, saves at the final whistle. */}
+        {/* The full-game auto-recorder is retired (2026-08 voice-notes design):
+            50 minutes of sideline audio yielded ~12 usable events because the
+            coach is coaching, not narrating. New games get the push-to-talk
+            note button in the live scorebug instead; autoRecord:false below is
+            what routes them there. Old games with autoRecord:true keep the
+            legacy recorder. */}
         <button
-          type="button"
-          onClick={() => setAutoRecord(v => {
-            const nv = !v;
-            try { localStorage.setItem('autoRecordVoice', nv ? '1' : '0'); } catch (e) {}
-            return nv;
-          })}
-          className={`w-full mt-1 flex items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 text-left active:scale-[0.99] transition ${autoRecord ? 'border-lime-600 bg-lime-950/30' : 'border-stone-700 bg-stone-900'}`}
-        >
-          <div className="min-w-0">
-            <div className="font-display text-sm tracking-wide text-stone-100 flex items-center gap-1.5">
-              <span>🎙</span><span>AUTO-RECORD NARRATION</span>
-            </div>
-            <div className="text-[11px] text-stone-400 leading-tight mt-0.5">
-              Starts at kickoff · pauses at half time · saves at full time
-            </div>
-          </div>
-          <span className={`shrink-0 w-11 h-6 rounded-full border-2 relative transition ${autoRecord ? 'bg-lime-500 border-lime-400' : 'bg-stone-700 border-stone-600'}`}>
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${autoRecord ? 'left-[1.4rem]' : 'left-0.5'}`} />
-          </span>
-        </button>
-
-        <button
-          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim(), halfLengthMin, homeColor, awayColor, autoRecord, format, gameType)}
+          onClick={() => onStart(opponent.trim() || 'Opponent', isHome, tournament.trim(), halfLengthMin, homeColor, awayColor, false, format, gameType)}
           className="w-full bg-lime-500 text-stone-100 font-display text-3xl py-5 rounded-2xl shadow-lg shadow-lime-500/30 border-2 border-lime-600 active:scale-[0.99] transition mt-4 flex items-center justify-center gap-3"
         >
           <Flag className="w-7 h-7" />
@@ -5218,10 +5223,14 @@ const _voiceMime = () => {
   return '';
 };
 
-async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
+async function _voiceUpload(gameId, startedAt, blob, mime, durationS, extra = null) {
+  // `extra` (voice-notes design, 2026-08-20): push-to-talk notes pass
+  // { kind: 'note', period, elapsed } so each clip is self-anchoring — the
+  // extraction pipeline never has to derive its position on the game clock.
   const ext = (mime || '').includes('mp4') ? 'm4a' : 'webm';
   const contentType = mime || 'audio/mp4';
-  const filename = `voice_${gameId}_live_${startedAt}.${ext}`;
+  const kindTag = (extra && extra.kind) || 'live';
+  const filename = `voice_${gameId}_${kindTag}_${startedAt}.${ext}`;
   // DEPLOYED worker contract (older than the repo's r2-upload-worker.js,
   // which has an unpublished /put proxy): /upload-url returns a PRESIGNED
   // direct-to-R2 PUT. Content-Type is part of the signature — the PUT must
@@ -5240,7 +5249,7 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
       // subcollection (rules lock it), never on the family-readable game doc.
       const ref = window.fbDb.collection('teams').doc('main').collection('games').doc(gameId)
         .collection('voice').doc('segments');
-      const seg = { startedAt, url: publicUrl, durationS, mime };
+      const seg = { startedAt, url: publicUrl, durationS, mime, ...(extra || {}) };
       const fv = (typeof firebase !== 'undefined' && firebase.firestore) ? firebase.firestore.FieldValue : null;
       if (fv) await ref.set({ list: fv.arrayUnion(seg) }, { merge: true });
       else {
@@ -5251,6 +5260,120 @@ async function _voiceUpload(gameId, startedAt, blob, mime, durationS) {
     }
   } catch (e) { console.warn('voice segment index write failed (audio is in R2):', e); }
   return publicUrl;
+}
+
+/* ---------- PUSH-TO-TALK VOICE NOTE (replaces the full-game recorder) ----------
+ * Voice-notes design (docs/superpowers/specs/2026-08-20-voice-notes-design.md):
+ * hold the mic to record a short note, release to stop + upload. Each clip is
+ * an independent segment whose startedAt is the same wall-clock anchor the
+ * event taps use, plus {kind:'note', period, elapsed} captured at press time,
+ * so the extraction pipeline never derives its position. The mic stream is
+ * retained across notes so only the FIRST press prompts (iOS grants
+ * getUserMedia inside the pointerdown gesture). A note is primarily a NOTE —
+ * the transcript is the deliverable; extracted event drafts are a bonus.
+ * Games with the legacy autoRecord flag keep the old VoiceRecorder below.
+ */
+function VoiceNoteButton({ game }) {
+  const [state, setState] = useState('idle'); // idle | rec | uploading | done | err
+  const [secs, setSecs] = useState(0);
+  const streamRef = useRef(null); // retained across notes; released on unmount
+  const recRef = useRef(null);    // in-flight take
+  const heldRef = useRef(false);  // finger still down (release can beat getUserMedia)
+
+  useEffect(() => () => {
+    const rec = recRef.current;
+    if (rec) { rec.discard = true; try { rec.mr.stop(); } catch (e) {} }
+    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    if (state !== 'rec') return undefined;
+    setSecs(0);
+    const id = setInterval(() => setSecs(s => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [state]);
+
+  const press = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (recRef.current || state === 'uploading') return;
+    heldRef.current = true;
+    // Anchor the note to the game clock AT PRESS TIME.
+    const meta = { kind: 'note', period: game.period || 1, elapsed: computeElapsed(game) };
+    try {
+      let stream = streamRef.current;
+      if (!stream || stream.getAudioTracks().every(t => t.readyState === 'ended')) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+      }
+      if (!heldRef.current) return; // lifted while the permission prompt was up
+      const mime = _voiceMime();
+      if (mime == null) { setState('err'); return; }
+      const rec = { chunks: [], startedAt: Date.now(), meta, discard: false, mime: mime || 'audio/mp4' };
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      rec.mr = mr;
+      mr.ondataavailable = (ev) => { if (ev.data && ev.data.size) rec.chunks.push(ev.data); };
+      mr.onstop = async () => {
+        recRef.current = null;
+        const durationS = Math.round((Date.now() - rec.startedAt) / 1000);
+        // Under a second or empty = an accidental tap, not a note.
+        if (rec.discard || durationS < 1 || rec.chunks.length === 0) { setState('idle'); return; }
+        setState('uploading');
+        try {
+          const blob = new Blob(rec.chunks, { type: rec.mime });
+          await _voiceUpload(game.id, rec.startedAt, blob, rec.mime, durationS, rec.meta);
+          setState('done');
+        } catch (err) {
+          console.error('voice note upload failed:', err);
+          setState('err');
+        }
+      };
+      recRef.current = rec;
+      mr.start();
+      setState('rec');
+    } catch (err) {
+      console.error('mic failed:', err);
+      setState('err');
+    }
+  };
+
+  const release = () => {
+    heldRef.current = false;
+    const rec = recRef.current;
+    if (!rec) return;
+    try { rec.mr.stop(); } catch (e) { recRef.current = null; setState('err'); }
+  };
+
+  if (typeof MediaRecorder === 'undefined') return null;
+  const mmss = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  const tone = state === 'rec' ? 'bg-red-500/15 text-red-300 border-red-600/60'
+    : state === 'err' ? 'bg-red-500/15 text-red-400 border-red-700'
+    : state === 'uploading' ? 'bg-stone-800 text-stone-400 border-stone-700'
+    : state === 'done' ? 'bg-lime-500/10 text-lime-300 border-lime-700/60'
+    : 'bg-stone-900 text-stone-300 border-stone-800';
+  return (
+    <button
+      onPointerDown={press}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onPointerLeave={release}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+      className={`shrink-0 rounded-full px-3 py-2.5 font-display text-xs tracking-widest border-2 active:scale-95 transition flex items-center gap-1 ${tone}`}
+      title="Hold to record a voice note · release to save"
+    >
+      {state === 'rec' ? (
+        <>
+          <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <span>{mmss}</span>
+        </>
+      ) : (
+        <>
+          <span>🎙</span>
+          <span>{state === 'uploading' ? 'SAVING…' : state === 'err' ? 'NOTE ⚠' : state === 'done' ? 'NOTE ✓' : 'HOLD · NOTE'}</span>
+        </>
+      )}
+    </button>
+  );
 }
 
 const VoiceRecorder = forwardRef(function VoiceRecorder({ game, pendingMicRef }, ref) {
@@ -5573,8 +5696,11 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             </button>
             {/* Recorder lives in the scorebug (always-mounted header) so it
                 survives every event picker — same reason it's not in the
-                control row below. */}
-            <VoiceRecorder ref={voiceRef} game={game} pendingMicRef={pendingMicRef} />
+                control row below. New games get the hold-to-record note
+                button; only legacy autoRecord games keep the full-game take. */}
+            {game.autoRecord
+              ? <VoiceRecorder ref={voiceRef} game={game} pendingMicRef={pendingMicRef} />
+              : <VoiceNoteButton game={game} />}
           </div>
           <div className="text-center">
             <div className="text-[10px] font-bold tracking-widest text-red-400 truncate">{game.opponent || 'OPPONENT'}</div>
