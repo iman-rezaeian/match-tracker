@@ -2709,7 +2709,9 @@ function CoachApp() {
               return;
             }
             if (type === 'SUB') {
-              setPendingEvent({ type: 'SUB', step: 'OFF' });
+              // IN first, then OUT — the coach thinks "who's going in" before
+              // "who comes off" (his words, 2026-08-22).
+              setPendingEvent({ type: 'SUB', step: 'ON' });
               return;
             }
             if (type === 'OPP_GOAL') {
@@ -2752,21 +2754,22 @@ function CoachApp() {
           onMovePosition={(playerId, x, y) => addPositionEvent(activeGame.id, playerId, x, y)}
           onResetFormation={(slots) => addPositionEventsBatch(activeGame.id, slots)}
           onSelectPlayer={(playerId) => {
-            if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
-              // Re-validate against the LIVE lineup at click time, not the
-              // picker's snapshot — prevents stale state from advancing.
+            if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'ON') {
+              // First pick: who's going IN. Re-validate against the LIVE
+              // lineup at click time, not the picker's snapshot — prevents
+              // stale state from advancing.
               const liveOn = onFieldAt(activeGame);
-              if (!liveOn.has(playerId)) {
+              if (liveOn.has(playerId)) {
                 const p = roster.find(r => r.id === playerId);
-                showToast(`⚠️ ${p?.name || 'That player'} is already off the field`);
+                showToast(`⚠️ ${p?.name || 'That player'} is already on the field`);
                 setPendingEvent(null);
                 return;
               }
-              setPendingEvent({ type: 'SUB', step: 'ON', offPlayerId: playerId });
+              setPendingEvent({ type: 'SUB', step: 'OFF', onPlayerId: playerId });
               return;
             }
-            if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'ON') {
-              logSubEvent(activeGame.id, pendingEvent.offPlayerId, playerId);
+            if (pendingEvent?.type === 'SUB' && pendingEvent.step === 'OFF') {
+              logSubEvent(activeGame.id, playerId, pendingEvent.onPlayerId);
               return;
             }
             // Give & go: first pick = initiator, then ask for the wall partner.
@@ -5994,13 +5997,15 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
             return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
           };
           if (isSub) {
+            // IN first (bench, with minutes so time gets spread fairly), then
+            // OUT (on-field).
             const onField = onFieldAt(game);
-            if (pendingEvent.step === 'OFF') {
-              pickerEvent = { emoji: '🔄', label: 'WHO\'S OFF?', requiresPlayer: true };
-              pickerPlayers = playersSorted.filter(p => onField.has(p.id)).sort(gkFirst);
+            if (pendingEvent.step === 'ON') {
+              pickerEvent = { emoji: '🔄', label: 'WHO\'S GOING IN?', requiresPlayer: true };
+              pickerPlayers = playersSorted.filter(p => !onField.has(p.id)).sort(gkFirst);
             } else {
-              pickerEvent = { emoji: '🔄', label: 'WHO\'S ON?', requiresPlayer: true };
-              pickerPlayers = playersSorted.filter(p => !onField.has(p.id) && p.id !== pendingEvent.offPlayerId).sort(gkFirst);
+              pickerEvent = { emoji: '🔄', label: 'WHO COMES OFF?', requiresPlayer: true };
+              pickerPlayers = playersSorted.filter(p => onField.has(p.id) && p.id !== pendingEvent.onPlayerId).sort(gkFirst);
             }
             pickerSkippable = false;
             pickerOnUnknown = null;
@@ -6034,7 +6039,7 @@ function ActiveGameView({ game, roster, pendingEvent, onSelectEvent, onSelectPla
               onUnknown={pickerOnUnknown}
               onCancel={onCancelEvent}
               emptyMessage={isSub && pickerPlayers.length === 0
-                ? (pendingEvent.step === 'OFF' ? 'No one is on the field.' : 'Everyone is already on the field.')
+                ? (pendingEvent.step === 'ON' ? 'Everyone is already on the field.' : 'No one is on the field.')
                 : (isGGPartner && pickerPlayers.length === 0 ? 'No teammates available — tap SKIP.' : (!isSub && !isGGPartner && pickerPlayers.length === 0 ? 'No players on the field.' : null))}
             />
           );
@@ -6407,24 +6412,28 @@ function MultiSubPicker({
   players, onFieldIds, gameGKId, secondsByPlayer, bandHist, currentPositions, onCancel, onCommit,
 }) {
   const onFieldSet = useMemo(() => new Set(onFieldIds), [onFieldIds]);
-  const onFieldPlayers = players.filter(p => onFieldSet.has(p.id));
+  // The keeper is never listed — GK changes go through SWAP GK.
+  const fieldPlayers = players.filter(p => onFieldSet.has(p.id) && p.id !== gameGKId);
   const benchPlayers = players.filter(p => !onFieldSet.has(p.id));
 
-  // Everyone on the field is going off unless kept. The keeper starts kept —
-  // the coach subs them separately when needed.
-  const [keptIds, setKeptIds] = useState(
-    () => new Set(onFieldPlayers.filter(p => p.id === gameGKId).map(p => p.id))
-  );
-  const toggleKeep = (pid) => setKeptIds(prev => {
+  // Explicit two-sided pick (coach, 2026-08-22): GOING IN on the left, COMING
+  // OFF on the right — replaces the old keep-model where everyone not tapped
+  // was implicitly going off.
+  const [inIds, setInIds] = useState(() => new Set());
+  const [outIds, setOutIds] = useState(() => new Set());
+  const mkToggle = (setter) => (pid) => setter(prev => {
     const next = new Set(prev);
     if (next.has(pid)) next.delete(pid); else next.add(pid);
     return next;
   });
+  const toggleIn = mkToggle(setInIds);
+  const toggleOut = mkToggle(setOutIds);
 
-  const offPlayers = onFieldPlayers.filter(p => !keptIds.has(p.id));
-  const nOff = offPlayers.length;
-  const nBench = benchPlayers.length;
-  const short = nOff > nBench;
+  const offPlayers = fieldPlayers.filter(p => outIds.has(p.id));
+  const nIn = inIds.size;
+  const nOff = outIds.size;
+  const short = nOff > nIn;   // deliberate short-handed play (injury, send-off)
+  const over = nIn > nOff;    // more coming in than slots vacated — pick more off
 
   // One vacated slot per outgoing player: the slot they currently occupy is
   // what the incoming player inherits (nearest named slot for a hand-dragged
@@ -6440,9 +6449,12 @@ function MultiSubPicker({
     return { key: `${s.key}#${i}`, slotKey: s.key, x: s.x, y: s.y, offId: p.id };
   });
 
+  // Pair the SELECTED incoming players to the vacated slots by each player's
+  // historical board position (band affinity) — the likely-position logic is
+  // unchanged, only the candidate pool is now the coach's explicit picks.
   const assignment = useMemo(
-    () => assignIncomingToSlots(vacatedSlots, benchPlayers.map(p => p.id), bandHist, secondsByPlayer),
-    [vacatedSlots.map(s => s.key).join(','), benchPlayers.map(p => p.id).join(','), bandHist, secondsByPlayer]
+    () => assignIncomingToSlots(vacatedSlots, [...inIds], bandHist, secondsByPlayer),
+    [vacatedSlots.map(s => s.key).join(','), [...inIds].join(','), bandHist, secondsByPlayer]
   );
 
   const nameOf = (pid) => players.find(p => p.id === pid)?.name || '?';
@@ -6460,7 +6472,8 @@ function MultiSubPicker({
       y: s.y,
     }));
     const nextOnField = [
-      ...onFieldPlayers.filter(p => keptIds.has(p.id)).map(p => p.id),
+      // Unselected field players stay on — including the GK, who is never listed.
+      ...onFieldIds.filter(id => !outIds.has(id)),
       ...pairing.filter(r => r.onId).map(r => r.onId),
     ];
     onCommit(nextOnField, pairing);
@@ -6471,51 +6484,81 @@ function MultiSubPicker({
       <div className="px-4 pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-3 border-b border-stone-800 flex items-center justify-between">
         <div>
           <div className="font-display text-xl text-white leading-none">SUB MULTIPLE</div>
-          <div className="text-xs text-stone-400 mt-1">Tap a player to KEEP them on. The rest come off.</div>
+          <div className="text-xs text-stone-400 mt-1">Pick who's going IN, then who COMES OFF.</div>
         </div>
         <div className="text-right">
-          <div className={`text-2xl font-display leading-none ${short ? 'text-red-400' : 'text-lime-400'}`}>{nOff}</div>
-          <div className="text-[10px] text-stone-500 uppercase tracking-wide">going off</div>
+          <div className={`text-2xl font-display leading-none ${short || over ? 'text-red-400' : 'text-lime-400'}`}>
+            {nIn}<span className="text-stone-500 text-lg"> in · </span>{nOff}<span className="text-stone-500 text-lg"> off</span>
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
-        <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider px-1 mb-1.5">On field</div>
-        <div className="grid grid-cols-2 gap-2">
-          {onFieldPlayers.map(p => {
-            const kept = keptIds.has(p.id);
-            const isGK = p.id === gameGKId;
-            return (
-              <button
-                key={p.id}
-                onClick={() => toggleKeep(p.id)}
-                className={`rounded-2xl border-2 px-3 py-3 flex flex-col items-start gap-1 active:scale-[0.97] transition text-left ${
-                  kept
-                    ? 'bg-lime-900/40 border-lime-500/70 text-lime-100'
-                    : 'bg-purple-950/50 border-purple-600/60 text-purple-100'
-                }`}
-              >
-                <div className="flex items-center gap-2 w-full">
-                  <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${kept ? 'bg-lime-700/60 text-white' : 'bg-purple-800/70 text-purple-100'}`}>#{p.number}</span>
-                  {isGK && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-700/60 text-amber-100">GK</span>}
-                  <span className="ml-auto text-[10px] font-mono text-stone-400">{mins(p.id)}'</span>
-                </div>
-                <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
-                <div className={`text-[10px] font-bold tracking-wide ${kept ? 'text-lime-300' : 'text-purple-300'}`}>
-                  {kept ? 'STAYING ON' : '→ COMING OFF'}
-                </div>
-              </button>
-            );
-          })}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[11px] font-bold text-lime-500 uppercase tracking-wider px-1 mb-1.5">→ Going in (bench)</div>
+            <div className="space-y-2">
+              {benchPlayers.length === 0 && (
+                <div className="text-sm text-stone-500 italic px-1">Bench is empty.</div>
+              )}
+              {benchPlayers.map(p => {
+                const sel = inIds.has(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => toggleIn(p.id)}
+                    className={`w-full rounded-2xl border-2 px-3 py-2.5 flex flex-col items-start gap-0.5 active:scale-[0.97] transition text-left ${
+                      sel
+                        ? 'bg-lime-900/40 border-lime-500/70 text-lime-100'
+                        : 'bg-stone-900 border-stone-700 text-stone-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 w-full">
+                      <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${sel ? 'bg-lime-700/60 text-white' : 'bg-stone-800 text-stone-400'}`}>#{p.number}</span>
+                      <span className="ml-auto text-[10px] font-mono text-stone-400">{mins(p.id)}'</span>
+                    </div>
+                    <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
+                    {sel && <div className="text-[10px] font-bold tracking-wide text-lime-300">→ GOING IN</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold text-purple-400 uppercase tracking-wider px-1 mb-1.5">Coming off (field)</div>
+            <div className="space-y-2">
+              {fieldPlayers.map(p => {
+                const sel = outIds.has(p.id);
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => toggleOut(p.id)}
+                    className={`w-full rounded-2xl border-2 px-3 py-2.5 flex flex-col items-start gap-0.5 active:scale-[0.97] transition text-left ${
+                      sel
+                        ? 'bg-purple-950/50 border-purple-600/60 text-purple-100'
+                        : 'bg-stone-900 border-stone-700 text-stone-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 w-full">
+                      <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${sel ? 'bg-purple-800/70 text-purple-100' : 'bg-stone-800 text-stone-400'}`}>#{p.number}</span>
+                      <span className="ml-auto text-[10px] font-mono text-stone-400">{mins(p.id)}'</span>
+                    </div>
+                    <div className="font-sans-pro font-extrabold text-sm leading-tight">{p.name}</div>
+                    {sel && <div className="text-[10px] font-bold tracking-wide text-purple-300">→ COMING OFF</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        {/* Who comes on, and where they'll land. Read-only: the board is where
-            the coach adjusts, per the agreed commit-immediately flow. */}
+        {/* Who lands where. Read-only: the board is where the coach adjusts,
+            per the agreed commit-immediately flow. */}
         <div className="text-[11px] font-bold text-stone-500 uppercase tracking-wider px-1 mt-4 mb-1.5">
-          Coming on {nOff > 0 && `· ${assignment.pairs.length} of ${nBench} on bench`}
+          Where they'll land
         </div>
         {nOff === 0 ? (
-          <div className="text-sm text-stone-500 italic px-1">Nobody selected to come off.</div>
+          <div className="text-sm text-stone-500 italic px-1">Nobody selected to come off yet.</div>
         ) : (
           <div className="space-y-1.5">
             {offPlayers.map((p, i) => {
@@ -6549,8 +6592,13 @@ function MultiSubPicker({
       <div className="px-4 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] border-t border-stone-800">
         {short && (
           <div className="text-[11px] text-red-300 text-center mb-2 leading-snug">
-            {nOff} going off but only {nBench} on the bench — keep {nOff - nBench} more on,
+            {nOff} coming off but only {nIn} going in — pick {nOff - nIn} more,
             or play short.
+          </div>
+        )}
+        {over && (
+          <div className="text-[11px] text-red-300 text-center mb-2 leading-snug">
+            {nIn} going in but only {nOff} coming off — pick {nIn - nOff} more to come off.
           </div>
         )}
         <div className="flex gap-2">
@@ -6562,9 +6610,9 @@ function MultiSubPicker({
           </button>
           <button
             onClick={commit}
-            disabled={nOff === 0 || short}
+            disabled={nOff === 0 || short || over}
             className={`flex-1 rounded-2xl py-3 font-display border-2 transition ${
-              nOff === 0 || short
+              nOff === 0 || short || over
                 ? 'bg-stone-800/60 text-stone-600 border-stone-800 cursor-not-allowed'
                 : 'bg-lime-700 text-white border-lime-500 active:scale-[0.97]'
             }`}
@@ -6573,7 +6621,7 @@ function MultiSubPicker({
           </button>
         </div>
         {short && (
-          <ShortHandedButton count={nOff} available={nBench} onConfirm={commit} />
+          <ShortHandedButton count={nOff} available={nIn} onConfirm={commit} />
         )}
       </div>
     </div>
@@ -16216,8 +16264,8 @@ function HelpView({ onBack }) {
 
         <Section id="subs" emoji="🔄" title="4 · Substitutions & GK swaps" summary="Two-tap flow, validates lineup">
           <p>Tap <Pill tone="purple">SUBSTITUTION</Pill> then:</p>
-          <Step n={1}><strong>Who's OFF?</strong> Picker shows only players on the field.</Step>
-          <Step n={2}><strong>Who's ON?</strong> Picker shows only bench players (with minutes played so far so you can spread time fairly).</Step>
+          <Step n={1}><strong>Who's going IN?</strong> Picker shows only bench players (with minutes played so far so you can spread time fairly).</Step>
+          <Step n={2}><strong>Who comes OFF?</strong> Picker shows only players on the field.</Step>
           <p>If the player coming off is the current keeper, you'll be prompted to pick a new GK immediately.</p>
           <p>To change the keeper without subbing anyone, tap <Pill tone="amber">SWAP GK</Pill>. You can pick from the entire squad (field <em>or</em> bench).</p>
           <p className="text-xs text-stone-400">The system rejects impossible subs — you can't take the same player off twice, and you can't sub someone in who's already on the field.</p>
