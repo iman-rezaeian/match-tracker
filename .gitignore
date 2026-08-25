@@ -47,3 +47,6 @@ parent_contacts.local.json
 # where the kids will be and when — same reason parent_contacts.local.json is
 # ignored. Re-fetch locally when you need one.
 test/fixtures/*.ics
+
+# workbench narration media hardlinks (86GB reels — never commit)
+workbench/media/

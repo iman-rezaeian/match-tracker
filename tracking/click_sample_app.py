@@ -81,9 +81,18 @@ FAR_TOUCHLINE_BAND_M = 3.0
 
 def _args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--game-id", required=True)
+    # Not required: when this file runs as a page inside the workbench app
+    # there is no argv — the game comes from the workbench's shared sidebar
+    # selector (st.session_state["wb_game_id"]). CLI use is unchanged.
+    ap.add_argument("--game-id", default=None)
     ap.add_argument("--dir", default=None)
     known, _ = ap.parse_known_args()
+    if not known.game_id:
+        known.game_id = st.session_state.get("wb_game_id")
+    if not known.game_id:
+        st.error("No game selected — pick one in the workbench sidebar, or "
+                 "launch with --game-id.")
+        st.stop()
     return known
 
 

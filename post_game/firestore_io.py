@@ -684,6 +684,43 @@ def write_voice_drafts(game_id: str, drafts: list[dict], source: str) -> None:
             merge=True)
 
 
+def voice_event_at_ms(game: dict, period: int, elapsed_s: float) -> int:
+    """The `at` timestamp the PWA would stamp on a voice-confirmed event.
+
+    Mirrors the PWA's confirmVoiceDraft: startedAt + (P2 ? halfMs + pausedMs
+    : 0) + elapsed*1000, where pausedMs sums the recorded pausePeriods. Kept
+    identical so Mac-confirmed and phone-confirmed events sort the same way
+    in every `at`-ordered view."""
+    paused_ms = sum(
+        max(0, (p.get("endedAt") or p.get("startedAt") or 0)
+            - (p.get("startedAt") or 0))
+        for p in (game.get("pausePeriods") or []))
+    half_ms = (game.get("halfLengthMin") or 25) * 60000
+    h2_off = half_ms + paused_ms if int(period) == 2 else 0
+    return int((game.get("startedAt") or 0) + h2_off + float(elapsed_s) * 1000)
+
+
+def append_confirmed_event(game_id: str, event: dict,
+                           score_delta: str | None = None) -> None:
+    """Append ONE coach-confirmed event to `game.events` (Mac confirm queue).
+
+    Post-game narration is reviewed at the Mac (coach decision 2026-08-24), so
+    acceptance writes the event directly instead of round-tripping through the
+    PWA's voiceDrafts queue. Mirrors the PWA's confirmVoiceDraft write: the
+    event lands in `events`, and a GOAL-type confirm moves the score. Uses
+    ArrayUnion + Increment so a concurrent PWA write to other fields cannot be
+    clobbered (the PWA rewrites whole docs; this touches only what it must)."""
+    from google.cloud import firestore as _fs
+
+    ref = _team_doc().collection("games").document(game_id)
+    patch: dict = {"events": _fs.ArrayUnion([event])}
+    if score_delta == "us":
+        patch["ourScore"] = _fs.Increment(1)
+    elif score_delta == "opp":
+        patch["oppScore"] = _fs.Increment(1)
+    ref.update(patch)
+
+
 def write_identity_drafts(game_id: str, drafts: list[dict]) -> None:
     """Write VLM jersey-number identity suggestions to `game.identityDrafts`.
 
