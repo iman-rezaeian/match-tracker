@@ -353,6 +353,38 @@ def snap(
     return float(best["foot_x_eq"]), float(best["foot_y_eq"]), int(best["track_id"])
 
 
+def same_body_conflicts(
+    this_frame: list[dict], proj, warn_m: float = 1.0,
+) -> list[tuple[str, str, float]]:
+    """Same-frame click pairs with DIFFERENT names within warn_m metres.
+
+    Two of the coach's names within 1 m of each other in one frame is almost
+    certainly one body named twice, not two kids: the 10th-percentile spacing
+    between simultaneous real bodies is 1.9 m, and in the first two click
+    sessions every same-frame pair under 1 m was a lookalike conflict (Duncan/
+    Garland and Zaidan/Garland at 0.00 m — the same snapped detection). Warned,
+    not blocked: undo is one click away and the coach may know better.
+    """
+    ours = [s for s in this_frame
+            if s.get("player_id") not in (None, "__not_ours__")]
+    pts = []
+    for s in ours:
+        fx, fy = proj.pixel_to_field(float(s["click_x_eq"]),
+                                     float(s["click_y_eq"]))
+        if np.isnan(fx) or np.isnan(fy):
+            continue         # above-horizon / far-line clicks carry no metres
+        pts.append((s["player_id"], float(fx), float(fy)))
+    out = []
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            if pts[i][0] == pts[j][0]:
+                continue
+            d = float(np.hypot(pts[i][1] - pts[j][1], pts[i][2] - pts[j][2]))
+            if d < warn_m:
+                out.append((pts[i][0], pts[j][0], d))
+    return out
+
+
 def samples_path(root: Path) -> Path:
     return root / "clicks.jsonl"
 
@@ -492,6 +524,7 @@ def main() -> None:
             button_label(by_id.get(p, {"id": p, "name": p}), gk_id)
             for p in sorted(_on, key=lambda i: _num(by_id.get(i, {})))))
 
+    proj, dims = load_projector(a.game_id)
     # What has already been recorded on THIS frame, so the coach can see his own
     # work instead of guessing whether a click landed.
     this_frame = [s for s in done
@@ -529,6 +562,23 @@ def main() -> None:
                 st.toast(f"↶ removed {button_label(_lp)}")
             st.rerun()
 
+    # Two names on one body — the only pollution channel this instrument has.
+    # Derived fresh from the saved clicks every rerun (no state), so it also
+    # fires when revisiting a frame from an earlier session, and clears itself
+    # the moment the wrong click is undone.
+    if proj is not None:
+        _conf = same_body_conflicts(this_frame, proj)
+        if _conf:
+            st.error(
+                "⚠ **Two names on one kid?** "
+                + " · ".join(
+                    f"{button_label(by_id.get(p1, {'id': p1, 'name': p1}))} and "
+                    f"{button_label(by_id.get(p2, {'id': p2, 'name': p2}))} "
+                    f"are {d:.1f} m apart here"
+                    for p1, p2, d in _conf)
+                + " — if that's one body, ↶ undo the wrong name (a skipped "
+                  "click costs almost nothing; a wrong one biases both players).")
+
     img = Image.open(root / frame["image"])
     # The rendered canvas is banded; rebuild the flat strip so panel maths is
     # simple and independent of how many bands the renderer used.
@@ -542,7 +592,6 @@ def main() -> None:
     if abs(sc - 1.0) > 0.01:
         flat = flat.resize((int(flat.width / sc), int(flat.height / sc)))
 
-    proj, dims = load_projector(a.game_id)
     st.write("**Click a player, then pick their name.** Spectators sit behind "
              "the far touchline and the camera cannot tell them from players — "
              "ignore anything that looks like a folding chair.")
