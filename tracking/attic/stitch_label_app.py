@@ -23,7 +23,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-LABELS_ROOT = Path(__file__).resolve().parent / "labels"
+LABELS_ROOT = Path(__file__).resolve().parent.parent / "labels"
 LABEL_MEANING = {"1": "✅ same", "0": "❌ different", "-1": "🤷 can't tell",
                  "junk": "🚫 not a player"}
 LABEL_COLOR = {"1": "#22c55e", "0": "#ef4444", "-1": "#a8a29e",

@@ -52,7 +52,7 @@ from pathlib import Path
 
 # `streamlit run` puts THIS file's directory on sys.path, not the repo root, so
 # `from post_game import ...` fails without help. Same fix as player_gt_app.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -61,7 +61,7 @@ import streamlit as st
 
 from post_game import firestore_io
 
-LABELS_ROOT = Path(__file__).resolve().parent / "labels"
+LABELS_ROOT = Path(__file__).resolve().parent.parent / "labels"
 FIELDS = ["clip", "stint_key", "player_id", "t_checkpoint_s",
           "elapsed_in_follow_s", "verdict", "true_player_id", "certain", "note"]
 # verdict vocabulary
