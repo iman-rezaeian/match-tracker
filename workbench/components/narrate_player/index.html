@@ -1,0 +1,79 @@
+<!doctype html>
+<!-- Narrate player: a plain <video> that reports its timeline to Python.
+
+     Hand-rolled Streamlit component (no npm build): speaks the component
+     postMessage protocol directly. The component VALUE is the cumulative tick
+     log [{w: wall_ms, v: video_t_s, r: rate, k: kind}] — posted on every
+     play/pause/seek/rate/end plus an 8s heartbeat while playing. Python maps
+     recording wall-time onto video time from these ticks
+     (tracking/narration_align.py), so pauses and rewinds during narration
+     cost nothing.
+
+     The video file is served from ./media/current.mp4 — a symlink the Narrate
+     page rewrites when the coach picks a source. args.nonce changes with the
+     selection so the SAME iframe reloads the element (Streamlit keeps the
+     iframe alive across reruns when the key is stable, which is exactly what
+     keeps playback running while Python reruns). -->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; }
+    video { width: 100%; display: block; border-radius: 8px; background: #000; }
+    #bar { font: 12px -apple-system, sans-serif; color: #888; padding: 4px 2px; }
+  </style>
+</head>
+<body>
+  <video id="v" controls preload="metadata"></video>
+  <div id="bar">no video loaded</div>
+  <script>
+    const HEARTBEAT_MS = 8000;
+    let ticks = [];
+    let nonce = null;
+    let hb = null;
+    const v = document.getElementById("v");
+    const bar = document.getElementById("bar");
+
+    function send(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+    }
+    function setValue() {
+      send("streamlit:setComponentValue", { dataType: "json", value: { ticks: ticks, n: ticks.length } });
+    }
+    function tick(kind) {
+      ticks.push({ w: Date.now(), v: v.currentTime, r: v.playbackRate, k: kind });
+      bar.textContent = `t=${v.currentTime.toFixed(1)}s  rate=${v.playbackRate}  ticks=${ticks.length}  (${kind})`;
+      setValue();
+    }
+    v.addEventListener("play",  () => { tick("play");  clearInterval(hb); hb = setInterval(() => tick("hb"), HEARTBEAT_MS); });
+    v.addEventListener("pause", () => { tick("pause"); clearInterval(hb); });
+    v.addEventListener("seeked", () => tick("seek"));
+    v.addEventListener("ratechange", () => tick("rate"));
+    v.addEventListener("ended", () => { tick("end"); clearInterval(hb); });
+    v.addEventListener("loadedmetadata", () => {
+      bar.textContent = `loaded: ${v.duration.toFixed(0)}s`;
+      send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 4 });
+    });
+
+    window.addEventListener("message", (ev) => {
+      const m = ev.data;
+      if (!m || m.type !== "streamlit:render") return;
+      const args = (m.args && (m.args.args || m.args)) || {};
+      if (args.nonce !== nonce) {
+        nonce = args.nonce;
+        ticks = [];                    // a new video = a new timeline
+        // Served by Streamlit's static route (streams with Range support —
+        // the component asset route buffers whole files and dies on 86 GB).
+        v.src = (args.video_url || "/app/static/current.mp4")
+                + "?nonce=" + encodeURIComponent(nonce || "0");
+        v.load();
+        setValue();
+      }
+      send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 4 });
+    });
+
+    send("streamlit:componentReady", { apiVersion: 1 });
+    send("streamlit:setFrameHeight", { height: 420 });
+  </script>
+</body>
+</html>

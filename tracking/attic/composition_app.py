@@ -34,14 +34,14 @@ import sys
 from pathlib import Path
 
 # `streamlit run` puts this file's directory on sys.path, not the repo root.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import pandas as pd
 import streamlit as st
 
-LABELS_ROOT = Path(__file__).resolve().parent / "labels"
+LABELS_ROOT = Path(__file__).resolve().parent.parent / "labels"
 FIELDS = ["tracklet_id", "image", "duration_s", "n_det",
           "verdict", "n_children", "note"]
 ONE, SEVERAL, UNSURE = "one", "several", "cant_tell"
