@@ -6,7 +6,8 @@ One launcher, one port, five pages that used to be scattered tools:
   🖱 Clicks     — click-sampling for per-player position stats (tracking/click_sample_app)
   🎙 Narrate    — post-game narration over the local video (new)
   ✅ Review     — voice pipeline + Mac confirm queue (new)
-  📤 Publish    — doc status, click-stats publish, confirmed events (new)
+  📤 Publish    — cross-check that all three lanes published (each lane tab
+                  also carries its own publish panel; coach, 2026-08-26)
 
 The PWA stays the product (live taps, family views); this is the workbench
 (everything that needs the Mac's video files and compute). Coach decision
@@ -58,6 +59,15 @@ def _run_script(rel_path: str) -> None:
 
 def page_game() -> None:
     _run_script("post_game/ui_app.py")
+    # Each lane tab carries its own publish panel (coach, 2026-08-26); the
+    # Publish page repeats all three as the final cross-check. Skipped on
+    # ui_app's early-exit paths (it st.stop()/st.rerun()s there). Clicks needs
+    # no footer: click_sample_app has its own inline publish in the sidebar.
+    game_id = st.session_state.get("wb_game_id")
+    if game_id:
+        from workbench import pubstatus
+        st.divider()
+        pubstatus.game_lane(game_id)
 
 
 def page_clicks() -> None:
