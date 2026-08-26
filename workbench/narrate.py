@@ -131,6 +131,41 @@ def _preflight_mic(idx: int) -> str | None:
     return None
 
 
+@st.cache_data(ttl=120)
+def _onfield_payload(game_id: str) -> tuple[list[dict], str]:
+    """Per-player on-field intervals in VIDEO seconds, for the strip under the
+    narrate player (coach request 2026-08-26: always see who is on the field
+    at a glance while narrating).
+
+    Sources, in the project's own precedence: the coach's SUB log + starting
+    lineup builds the baseline windows, and the FIX-IDS-tag-derived camera
+    corrections (identitySubCorrections, published by the pipeline from
+    sub_correct) override the logged edges where they exist — tags win ties.
+    """
+    from post_game import firestore_io
+    from post_game.identity import (_onfield_intervals,
+                                    period_clock_to_video_time_factory)
+    game = firestore_io.get_game(game_id)
+    clock_to_video = period_clock_to_video_time_factory(game)
+    corr = game.identity_sub_corrections or None
+    intervals = _onfield_intervals(game.starting_lineup, game.events,
+                                   clock_to_video, corrections=corr)
+    roster = {p.id: p for p in firestore_io.get_roster()}
+    payload = []
+    for pid, spans in intervals.items():
+        r = roster.get(pid)
+        name = (r.name.split()[0] if r is not None and r.name else pid)
+        num = getattr(r, "jersey_number", None) if r is not None else None
+        payload.append({
+            "pid": pid, "name": name, "num": num,
+            "gk": pid == (game.gk_player_id or ""),
+            # 1e9 = "until final whistle" sentinel; the JS clamps to duration.
+            "iv": [[round(float(a), 1), round(float(min(b, 9e8)), 1)]
+                   for a, b in spans],
+        })
+    return payload, ("tags + coach log" if corr else "coach log only")
+
+
 def _video_candidates(game_id: str) -> list[Path]:
     cands = []
     tv = REPO / "post_game" / "outputs" / game_id / "tv_view" / "tv_reel.mp4"
@@ -361,8 +396,13 @@ def render() -> None:
             except OSError:
                 shutil.copyfile(video_path, MEDIA_LINK)
         port = _media_port()
+        try:
+            onfield, onfield_src = _onfield_payload(game_id)
+        except Exception as e:
+            onfield, onfield_src = [], f"unavailable ({type(e).__name__})"
         val = _player(nonce=str(video_path),
                       video_url=f"http://localhost:{port}/current.mp4",
+                      onfield=onfield, onfield_src=onfield_src,
                       key="narr_player", default=None)
         if isinstance(val, dict) and "ticks" in val:
             st.session_state["narr_ticks"] = val["ticks"]

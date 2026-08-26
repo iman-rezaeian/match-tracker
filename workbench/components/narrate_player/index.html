@@ -21,18 +21,56 @@
     html, body { margin: 0; padding: 0; background: transparent; }
     video { width: 100%; display: block; border-radius: 8px; background: #000; }
     #bar { font: 12px -apple-system, sans-serif; color: #888; padding: 4px 2px; }
+    /* On-field strip: who is on the pitch at the current video time. */
+    #onfield { display: none; flex-wrap: wrap; gap: 6px; align-items: center;
+               padding: 6px 2px 2px 2px; min-height: 28px;
+               font: 13px -apple-system, sans-serif; }
+    #onfield .lbl { color: #777; font-size: 11px; margin-right: 2px; }
+    #onfield .chip { background: #1d3a24; color: #b9e4c3; border: 1px solid #2e5c39;
+                     border-radius: 12px; padding: 2px 9px; white-space: nowrap; }
+    #onfield .chip.gk { background: #3a331d; color: #e4d8b9; border-color: #5c522e; }
+    #onfield .none { color: #777; font-style: italic; }
   </style>
 </head>
 <body>
   <video id="v" controls preload="metadata"></video>
+  <div id="onfield"></div>
   <div id="bar">no video loaded</div>
   <script>
     const HEARTBEAT_MS = 8000;
     let ticks = [];
     let nonce = null;
     let hb = null;
+    let onfield = [];        // [{pid, name, num, gk, iv: [[a,b],...]}] video-secs
+    let onfieldSrc = "";
+    let lastRoster = null;   // avoid re-rendering identical chip sets
     const v = document.getElementById("v");
     const bar = document.getElementById("bar");
+    const strip = document.getElementById("onfield");
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, c => (
+        {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+    }
+    function renderOnfield() {
+      if (!onfield.length) { strip.style.display = "none"; return; }
+      strip.style.display = "flex";
+      const t = v.currentTime || 0;
+      const on = onfield.filter(p => p.iv.some(([a, b]) => t >= a && t <= b));
+      on.sort((x, y) => (y.gk - x.gk) || ((x.num ?? 99) - (y.num ?? 99)));
+      const key = on.map(p => p.pid).join(",");
+      if (key === lastRoster) return;
+      lastRoster = key;
+      const chips = on.map(p =>
+        `<span class="chip${p.gk ? " gk" : ""}">${p.gk ? "🧤 " : ""}` +
+        `#${p.num ?? "?"} ${esc(p.name)}</span>`).join("");
+      strip.innerHTML =
+        `<span class="lbl">ON FIELD (${on.length}) · ${esc(onfieldSrc)}</span>` +
+        (chips || `<span class="none">no lineup data for this moment</span>`);
+      send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 4 });
+    }
+    v.addEventListener("timeupdate", renderOnfield);
+    v.addEventListener("seeked", renderOnfield);
 
     function send(type, data) {
       window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
@@ -59,6 +97,10 @@
       const m = ev.data;
       if (!m || m.type !== "streamlit:render") return;
       const args = (m.args && (m.args.args || m.args)) || {};
+      onfield = args.onfield || [];
+      onfieldSrc = args.onfield_src || "";
+      lastRoster = null;          // args may have changed → force re-render
+      renderOnfield();
       if (args.nonce !== nonce) {
         nonce = args.nonce;
         ticks = [];                    // a new video = a new timeline
