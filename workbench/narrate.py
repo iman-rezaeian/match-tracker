@@ -48,11 +48,13 @@ MEDIA_ROOT = REPO / "workbench" / "media"
 MEDIA_LINK = MEDIA_ROOT / "current.mp4"
 NARR_ROOT = REPO / "tracking" / "outputs" / "narration"
 
-# A segment must be producing bytes by this age or it is declared dead. 96 kbps
-# AAC writes ~12 KB/s; reruns arrive on the 8 s player heartbeat, so the first
-# check lands at ~8 s with ~90 KB expected — 4 KB is a generous floor.
+# A segment must show captured time advancing by this age or it is declared
+# dead. Liveness comes from ffmpeg's -progress feed, NOT the m4a's on-disk
+# size: the mp4 muxer buffers in memory and the file sits at ~44 bytes (bare
+# ftyp box) for many seconds of healthy capture — a size check here killed a
+# perfectly good Jabra recording on 2026-08-26. Reruns arrive on the 8 s
+# player heartbeat, so the first check lands at ~8 s.
 HEALTH_AGE_S = 6.0
-HEALTH_MIN_BYTES = 4096
 
 _player = components.declare_component("narrate_player", path=str(COMPONENT_DIR))
 
@@ -97,6 +99,38 @@ def _resolve_mic_index(name: str) -> int | None:
     return None
 
 
+def _preflight_mic(idx: int) -> str | None:
+    """Try a 0.3 s capture at arm time. Returns an error message or None.
+
+    Catches the launch-context trap up front: a workbench started from a
+    sandboxed shell (e.g. a Claude session's Bash without the sandbox
+    disabled) or from a terminal without macOS microphone permission cannot
+    open ANY device — ffmpeg says "Cannot use <device>" or hangs delivering
+    no frames. Without this check that surfaces 8 s into the first play.
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "warning",
+             "-f", "avfoundation", "-i", f":{idx}",
+             "-t", "0.3", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=8)
+    except subprocess.TimeoutExpired:
+        return ("Mic test timed out — the device delivers no audio to this "
+                "app. Relaunch the workbench from your own Terminal "
+                "(./run_workbench.sh) and grant it microphone permission.")
+    if r.returncode != 0:
+        tail = "\n".join(r.stderr.strip().splitlines()[-4:])
+        hint = ""
+        if "Cannot use" in r.stderr or "Failed to create" in r.stderr:
+            hint = ("\n\nmacOS is refusing this app access to the microphone "
+                    "— usually the workbench was launched from a shell that "
+                    "cannot use the mic (sandboxed session, or a terminal "
+                    "without mic permission). Relaunch it from your own "
+                    "Terminal: ./run_workbench.sh")
+        return f"Mic test failed. ffmpeg said:\n{tail}{hint}"
+    return None
+
+
 def _video_candidates(game_id: str) -> list[Path]:
     cands = []
     tv = REPO / "post_game" / "outputs" / game_id / "tv_view" / "tv_reel.mp4"
@@ -138,16 +172,19 @@ def _start_segment() -> None:
     sess_dir = Path(st.session_state["narr_dir"])
     audio = sess_dir / f"seg_{n:03d}.m4a"
     errf = sess_dir / f"seg_{n:03d}.stderr.txt"
+    prog = sess_dir / f"seg_{n:03d}.progress"
     idx = st.session_state["narr_mic_idx"]
     t0 = time.time() * 1000.0
     p = subprocess.Popen(
         ["ffmpeg", "-hide_banner", "-loglevel", "warning",
+         "-nostats", "-progress", str(prog),
          "-f", "avfoundation", "-i", f":{idx}",
          "-ac", "1", "-ar", "48000", "-c:a", "aac", "-b:a", "96k",
          "-y", str(audio)],
         stdout=subprocess.DEVNULL, stderr=open(errf, "w"))
     st.session_state["narr_seg"] = {
-        "proc": p, "file": str(audio), "stderr": str(errf), "t0": t0}
+        "proc": p, "file": str(audio), "stderr": str(errf),
+        "progress": str(prog), "t0": t0}
 
 
 def _close_segment() -> None:
@@ -173,16 +210,32 @@ def _close_segment() -> None:
             + _stderr_tail(seg["stderr"]))
 
 
+def _seg_capturing(seg: dict) -> bool:
+    """True if the segment's -progress feed shows captured time > 0."""
+    try:
+        txt = Path(seg["progress"]).read_text()
+    except OSError:
+        return False
+    # ffmpeg emits out_time_us and/or out_time_ms depending on build (both
+    # are microseconds — the _ms name is a long-standing ffmpeg quirk).
+    for line in reversed(txt.strip().splitlines()):
+        if line.startswith(("out_time_us=", "out_time_ms=")):
+            try:
+                return int(line.split("=", 1)[1]) > 0
+            except ValueError:
+                return False
+    return False
+
+
 def _check_segment_health() -> None:
-    """Fail fast: a dead or byte-less ffmpeg must not keep showing REC."""
+    """Fail fast: a dead or frame-less ffmpeg must not keep showing REC."""
     seg = st.session_state.get("narr_seg")
     if not seg:
         return
     age_s = (time.time() * 1000.0 - seg["t0"]) / 1000.0
     died = seg["proc"].poll() is not None
     f = Path(seg["file"])
-    silent = age_s > HEALTH_AGE_S and (
-        not f.exists() or f.stat().st_size < HEALTH_MIN_BYTES)
+    silent = age_s > HEALTH_AGE_S and not _seg_capturing(seg)
     if died or silent:
         why = "ffmpeg exited" if died else f"no audio after {age_s:.0f}s"
         seg["proc"].kill()
@@ -348,10 +401,13 @@ def render() -> None:
         if c1.button("⏺ Arm recording", type="primary",
                      disabled=not (video_path and video_path.exists())):
             idx = _resolve_mic_index(dev[1])   # fresh listing, by NAME
+            err = _preflight_mic(idx) if idx is not None else None
             if idx is None:
                 st.error(f"Mic “{dev[1]}” is no longer connected — "
                          "refresh the device list.")
                 _mic_devices.clear()
+            elif err:
+                st.error(err)
             else:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 sess_dir = NARR_ROOT / game_id / f"sess_{ts}"
