@@ -47,6 +47,12 @@ import numpy as np
 MIN_CLICKS_PUBLISH = 12
 # Bootstrap draws for the error bars and the drift CI.
 TRIALS = 800
+# A per-ROLE heatmap needs its own samples. 25 is the coach's chosen bar
+# (2026-08-25): at ~20 clicks the position error is ~15% of the gap between two
+# children, so 25 keeps a role map honest while still unlocking within a couple
+# of clicked games. Roles under it publish their minutes and click count but no
+# map, so the app can show a "pooling" state instead of a misleading sparse grid.
+MIN_CLICKS_ROLE = 25
 
 
 def _boot_mean(v: np.ndarray, trials: int, rng) -> np.ndarray:
@@ -57,6 +63,7 @@ def _boot_mean(v: np.ndarray, trials: int, rng) -> np.ndarray:
 def build_payload(game_id: str, root: Path) -> dict:
     from post_game import firestore_io
     from post_game.click_orientation import our_net_at_x0_from_keeper
+    from post_game import roles as roles_mod
     from post_game.click_samples import (HEATMAP_BANDWIDTH_M, kde_heatmap,
                                         load_clicks, to_field)
 
@@ -76,6 +83,19 @@ def build_payload(game_id: str, root: Path) -> dict:
     def period_of(t: float) -> int:
         return 1 if t < h2 else 2
 
+    # Role stints from the tactical board (post_game.roles). Clicks get tagged
+    # with the role in force at that moment, so a child who played wide-mid then
+    # forward yields two separate position maps instead of one blended blob.
+    half_s = float(getattr(game, "half_length_min", 25) or 25) * 60.0
+    h1 = float(getattr(game, "video_offset_h1_kickoff_s", 0.0) or 0.0)
+    stints = roles_mod.build_stints(
+        game.events, half_s,
+        getattr(game, "starting_lineup", None), game.gk_player_id)
+
+    def game_clock(video_t: float) -> float:
+        """Video seconds -> game clock, using the confirmed kickoff offsets."""
+        return (video_t - h2) + half_s if (h2 and video_t >= h2) else (video_t - h1)
+
     net = our_net_at_x0_from_keeper(pts, game.gk_player_id, L, period_of)
     # Without an orientation the halves cannot be compared, so per-half figures
     # and drift are withheld rather than published in an undefined frame.
@@ -85,10 +105,14 @@ def build_payload(game_id: str, root: Path) -> dict:
     for p in pts:
         per = period_of(float(p["video_time_s"]))
         flip = (not net.get(per, True)) if oriented else False
-        e = rows.setdefault(str(p["player_id"]), {"d": [], "w": [], "half": []})
+        e = rows.setdefault(str(p["player_id"]),
+                            {"d": [], "w": [], "half": [], "role": []})
         e["d"].append((L - p["x_m"]) if flip else p["x_m"])
         e["w"].append((W - p["y_m"]) if flip else p["y_m"])
         e["half"].append(per)
+        e["role"].append(roles_mod.role_at(
+            stints.get(str(p["player_id"]), []),
+            game_clock(float(p["video_time_s"]))))
 
     rng = np.random.default_rng(0)
     out, under = [], []
@@ -160,13 +184,56 @@ def build_payload(game_id: str, root: Path) -> dict:
                     # anything; the PWA must not render it as a finding.
                     "significant": bool((lo > 0) == (hi > 0)),
                 }
+        # --- per-ROLE positions (the coach plays children in several roles) ---
+        # Minutes come from the board+SUB stints, so EVERY role he played is
+        # listed even when it has too few clicks to map. That distinction is the
+        # point: the app shows the minutes always, the heatmap only when earned.
+        pstints = stints.get(pid, [])
+        if pstints:
+            rmins = roles_mod.minutes_by_role(pstints)
+            rarr = np.asarray([r or "" for r in v["role"]])
+            per_role = []
+            for role, mins in rmins.items():
+                m = rarr == role
+                blk = {"role": role, "minutes": mins, "n_clicks": int(m.sum())}
+                if m.sum() >= MIN_CLICKS_ROLE:
+                    dr, wr = d[m], w[m]
+                    blk.update({
+                        "avg_depth_m": round(float(dr.mean()), 1),
+                        "avg_width_m": round(float(wr.mean()), 1),
+                        "p10_depth_m": round(float(np.quantile(dr, 0.10)), 1),
+                        "p90_depth_m": round(float(np.quantile(dr, 0.90)), 1),
+                        "area_covered_m2": round(float(np.pi * 2 * dr.std() * 2 * wr.std())),
+                        "heatmap": [round(float(z), 4)
+                                    for z in kde_heatmap(dr, wr, L, W, (12, 8)).ravel()],
+                    })
+                per_role.append(blk)
+            rec["by_role"] = per_role
+            rec["minutes_by_role"] = rmins
+
         out.append(rec)
 
     out.sort(key=lambda r: r["avg_depth_m"])
     errs = [r["pos_err_m"] for r in out]
+    # Role TIMELINE for every player who took the field — independent of
+    # clicks, so it lands on games that were never click-sampled.
+    timeline = []
+    for pid, ss in stints.items():
+        timeline.append({
+            "player_id": pid,
+            "total_minutes": round(sum(s.seconds for s in ss) / 60.0, 1),
+            "minutes_by_role": roles_mod.minutes_by_role(ss),
+            "stints": [{"start_s": round(s.start_s, 1), "end_s": round(s.end_s, 1),
+                        "role": s.role} for s in ss],
+        })
+    timeline.sort(key=lambda r: -r["total_minutes"])
+
     return {
         "click_stats": {
             "players": out,
+            "role_timeline": timeline,
+            "half_length_s": half_s,
+            "min_clicks_role": MIN_CLICKS_ROLE,
             "under_sampled": under,
             "n_clicks": len(clicks),
             "n_frames": len({round(float(c["video_time_s"]), 2) for c in clicks}),
