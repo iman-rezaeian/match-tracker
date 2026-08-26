@@ -31,6 +31,48 @@ class TeamTimeSeries:
     width_m: list[float]
     depth_m: list[float]
     centroid_x_m: list[float]
+    # How many DISTINCT identified players the sample was computed from.
+    # Load-bearing, not diagnostic: see the coverage-bias note in
+    # compute_formation. Consumers MUST NOT plot width/depth without it.
+    n_players: list[int] = field(default_factory=list)
+
+
+# --- coverage bias on shape metrics --------------------------------------
+#
+# Measured on the 2026-08-09 game (428 windows with >=5 identified players,
+# subsampled): with only 3 of 6 outfielders tracked, the max-min WIDTH reads
+# 28% LOW and DEPTH 24% LOW; at 4 players, 13% and 11% low. Because coverage
+# flickers second-to-second (that game: 1-2 players 36% of windows, 3-4 49%,
+# 5+ 15%, six or more just 1%), the bias swings frame to frame — which is what
+# made the PWA sparklines look like violent shape changes when the team was
+# doing nothing unusual.
+#
+# So a plain "require >= 6 players" gate is NOT the fix here: it would delete
+# 99% of the samples on real data. Instead:
+#   * MIN_PLAYERS_SHAPE gates out the worst (n<4) samples;
+#   * extents are reported as the EXPECTED-RANGE-corrected value, scaling the
+#     observed max-min by the expected fraction of the full range that n of
+#     N_OUTFIELD uniformly-drawn samples span ((n-1)/(n+1) vs (N-1)/(N+1));
+#   * n_players rides along so consumers can weight, band, or grey out
+#     low-coverage stretches rather than reading them as tactics.
+MIN_PLAYERS_SHAPE = 4
+N_OUTFIELD = 6           # 7v7 minus the keeper
+
+
+def _extent_correction(n: int, n_full: int = N_OUTFIELD) -> float:
+    """Multiplier putting an n-player max-min extent on an n_full-player scale.
+
+    For n samples from a distribution, the expected span is a known fraction
+    of the population range — (n-1)/(n+1) for the uniform case, which is the
+    honest first-order model for players spread across a pitch axis. The ratio
+    of the two expectations is the correction. Exactly 1.0 at n == n_full, so
+    a fully-tracked window is untouched.
+    """
+    if n < 2:
+        return 1.0
+    obs = (n - 1) / (n + 1)
+    full = (n_full - 1) / (n_full + 1)
+    return float(full / obs) if obs > 0 else 1.0
 
 
 # Outfield counts for which a FOUR-row shape is worth considering: EXACTLY 8,
@@ -288,25 +330,34 @@ def compute_formation(
 
     our = df[df["team"] == 0]
     if our.empty:
-        ts = TeamTimeSeries([], [], [], [], [])
+        ts = TeamTimeSeries([], [], [], [], [], [])
     else:
         t0 = float(our["time_s"].min())
         t1 = float(our["time_s"].max())
-        times, comp, width, depth, cx = [], [], [], [], []
+        times, comp, width, depth, cx, npl = [], [], [], [], [], []
         cur = t0
         while cur <= t1:
             window = our[(our["time_s"] >= cur) & (our["time_s"] < cur + 1.0)]
-            if not window.empty and window["player_id"].nunique() >= 3:
+            n = int(window["player_id"].nunique()) if not window.empty else 0
+            if n >= MIN_PLAYERS_SHAPE:
                 xs = window.groupby("player_id")["x_m"].mean().to_numpy()
                 ys = window.groupby("player_id")["y_m"].mean().to_numpy()
                 pairwise = np.sqrt(
                     (xs[:, None] - xs[None, :]) ** 2 + (ys[:, None] - ys[None, :]) ** 2
                 )
+                # Mean pairwise distance is an AVERAGE over pairs, so missing
+                # players cost precision but not much bias — reported as-is.
                 comp.append(float(pairwise[np.triu_indices_from(pairwise, k=1)].mean()))
-                width.append(float(ys.max() - ys.min()))
-                depth.append(float(xs.max() - xs.min()))
+                # Extents are max-min, which shrinks systematically with fewer
+                # samples — corrected onto the full-team scale (see
+                # _extent_correction) so a coverage dip is not read as the team
+                # suddenly getting narrow.
+                k = _extent_correction(n)
+                width.append(float((ys.max() - ys.min()) * k))
+                depth.append(float((xs.max() - xs.min()) * k))
                 cx.append(float(xs.mean()))
                 times.append(cur)
+                npl.append(n)
             cur += 1.0
-        ts = TeamTimeSeries(times, comp, width, depth, cx)
+        ts = TeamTimeSeries(times, comp, width, depth, cx, npl)
     return snaps, ts
