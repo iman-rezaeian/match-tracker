@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -1259,6 +1260,59 @@ def run(
             clips = []
 
     # 7b. Optional TV-view + auto-highlight reel
+    # 7d hoisted above 7b (2026-08-25 speed pass): the tracklet index needs
+    # nothing from the reels, and building it early lets the VLM identity
+    # stage overlap the renders below.
+    tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
+                                             field_cal.length_m, field_cal.width_m,
+                                             track_jersey_samples=track_jersey_samples,
+                                             our_color_hex=_our_color(game),
+                                             opp_color_hex=game.away_color)
+
+    # 7c-bis body, callable either concurrently or inline (see join site
+    # below). The VLM pass is NETWORK-bound (Opus jersey reads through the
+    # gateway) while the reels are compute-bound, so running them together
+    # hides the shorter stage completely; it cost ~40 idle minutes when
+    # sequential on the 2026-08-09 game. Results land in _vlm_result and are
+    # consumed on the main thread only after join — the prune of
+    # tracklet_records stays single-threaded.
+    _vlm_on = config.VLM_IDENTITY if vlm_identity is None else vlm_identity
+    _vlm_result: dict = {}
+
+    def _vlm_stage() -> None:
+        try:
+            from tracking.vlm_identity import generate_drafts
+            _cur = {int(r["tracklet_id"]): (r.get("player_id"), float(r.get("minutes") or 0.0))
+                    for r in tracklet_records}
+            _team: dict[int, str] = {}
+            _drafts = generate_drafts(
+                tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
+                team_of_track=team_of_track, roster=roster, game=game,
+                video_path=str(video_path), field_length_m=field_cal.length_m,
+                field_width_m=field_cal.width_m, current_of_tl=_cur,
+                model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
+                max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
+                # Camera ground position, so crop choice can prefer frames where
+                # the player's back is turned. Read from the calibration rather
+                # than assumed: on this field the camera sits BEYOND the far
+                # touchline (y=34.6 of a 30 m pitch), so guessing the sideline
+                # would invert the test.
+                cam_xy=_camera_ground_xy(field_cal),
+                min_digit_px=config.VLM_MIN_DIGIT_PX, min_away=config.VLM_MIN_AWAY,
+                dt=(1.0 / fps_sampled if fps_sampled else 0.1),
+                log_fn=lambda m: log.info("%s", m), team_out=_team)
+            firestore_io.write_identity_drafts(game_id, _drafts)
+            _vlm_result.update(n_drafts=len(_drafts), team=_team)
+        except Exception as e:  # non-fatal, reported at the join site
+            _vlm_result["error"] = e
+
+    _vlm_thread: Optional[threading.Thread] = None
+    if (_vlm_on and tracklet_records and not stats_only
+            and config.VLM_OVERLAP_RENDER and tv_view):
+        _vlm_thread = threading.Thread(target=_vlm_stage, name="vlm-identity")
+        _vlm_thread.start()
+        log.info("Stage 7c-bis: VLM identity started CONCURRENTLY with the reel render")
+
     tv_reel_meta = None
     auto_hl_meta = None
     if tv_view:
@@ -1401,50 +1455,29 @@ def run(
     # records let the PWA list each stitched tracklet (worst-confidence first)
     # with its current player + a representative crop so the coach can fix swaps;
     # corrections come back as `identityOverrides` on the game doc.
-    tracklet_records = _build_tracklet_index(tracks_df, tracklet_of_track, assignments, fps_sampled,
-                                             field_cal.length_m, field_cal.width_m,
-                                             track_jersey_samples=track_jersey_samples,
-                                             our_color_hex=_our_color(game),
-                                             opp_color_hex=game.away_color)
-
-    # 7c-bis. VLM jersey-number identity DRAFTS. Runs HERE, inside the run, so
-    # drafts key by THIS run's tracklet ids — the exact ids the analytics doc +
-    # PWA FIX-IDS use (a standalone tool can't reproduce them). Reads the number
-    # off number-optimized crops, writes suggestions to game.identityDrafts;
-    # never auto-applies. ON by default: it lifts naming from ~4.6% of tracked
-    # time to ~35% for ~9 min of a ~2 h run, and jersey numbers are the only
-    # signal that tells identically-dressed children apart. Needs the raw video
-    # and an Opus token; the try/except below keeps a missing token from costing
-    # the run, since everything else is already computed by this point.
-    _vlm_on = config.VLM_IDENTITY if vlm_identity is None else vlm_identity
+    # 7c-bis. VLM jersey-number identity DRAFTS — join site. The stage body
+    # lives in _vlm_stage above 7b: drafts key by THIS run's tracklet ids —
+    # the exact ids the analytics doc + PWA FIX-IDS use. Never auto-applies.
+    # ON by default: it lifts naming from ~4.6% of tracked time to ~35%, and
+    # jersey numbers are the only signal that tells identically-dressed
+    # children apart. Non-fatal: a missing Opus token must not cost the run.
     if _vlm_on and tracklet_records and not stats_only:
-        try:
-            from tracking.vlm_identity import generate_drafts
-            _cur = {int(r["tracklet_id"]): (r.get("player_id"), float(r.get("minutes") or 0.0))
-                    for r in tracklet_records}
-            _vlm_team: dict[int, str] = {}
-            _drafts = generate_drafts(
-                tracks_df=tracks_df, tracklet_of_track=tracklet_of_track,
-                team_of_track=team_of_track, roster=roster, game=game,
-                video_path=str(video_path), field_length_m=field_cal.length_m,
-                field_width_m=field_cal.width_m, current_of_tl=_cur,
-                model=config.VLM_IDENTITY_MODEL, min_conf=config.VLM_IDENTITY_MIN_CONF,
-                max_tracklets=config.VLM_IDENTITY_MAX_TRACKLETS,
-                # Camera ground position, so crop choice can prefer frames where
-                # the player's back is turned. Read from the calibration rather
-                # than assumed: on this field the camera sits BEYOND the far
-                # touchline (y=34.6 of a 30 m pitch), so guessing the sideline
-                # would invert the test.
-                cam_xy=_camera_ground_xy(field_cal),
-                min_digit_px=config.VLM_MIN_DIGIT_PX, min_away=config.VLM_MIN_AWAY,
-                dt=(1.0 / fps_sampled if fps_sampled else 0.1),
-                log_fn=lambda m: log.info("%s", m), team_out=_vlm_team)
-            firestore_io.write_identity_drafts(game_id, _drafts)
-            log.info("  -> VLM identity: wrote %d draft(s) to game.identityDrafts", len(_drafts))
+        if _vlm_thread is not None:
+            _vlm_thread.join()
+        else:
+            _vlm_stage()   # sequential fallback (VLM_OVERLAP_RENDER=0 / no reels)
+        if "error" in _vlm_result:
+            log.warning("VLM identity drafts failed (non-fatal): %s", _vlm_result["error"])
+        else:
+            log.info("  -> VLM identity: wrote %d draft(s) to game.identityDrafts",
+                     _vlm_result.get("n_drafts", 0))
             # VLM team-read prune: the VLM reliably tags each tracklet's team by
             # kit colour. Drop UNASSIGNED tracklets it calls opponent/other from
             # the review list (the coarse-pixel prune misses washed opponents;
             # the VLM read catches them). Coach-decided tracklets stay visible.
+            # Applied HERE (after join) so tracklet_records is only ever
+            # mutated on the main thread.
+            _vlm_team = _vlm_result.get("team") or {}
             if _vlm_team:
                 _kept, _dropped = [], 0
                 for _r in tracklet_records:
@@ -1457,8 +1490,6 @@ def run(
                     log.info("  -> VLM team-read pruned %d opponent/coach tracklet(s) from review list",
                              _dropped)
                 tracklet_records = _kept
-        except Exception as e:
-            log.warning("VLM identity drafts failed (non-fatal): %s", e)
 
     if tracklet_records:
         try:

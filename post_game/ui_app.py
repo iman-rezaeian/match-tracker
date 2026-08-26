@@ -425,14 +425,23 @@ def _stop_running() -> None:
 
 st.set_page_config(page_title="Post-game pipeline", layout="wide")
 st.title("⚽ Post-game pipeline (local)")
-st.caption("Lists games from Firestore. Source video stays on this Mac; clips upload to R2 for parents.")
+st.caption("Source video stays on this Mac; clips upload to R2 for parents.")
 
-with st.sidebar:
-    st.header("Game list")
-    limit = st.slider("Show last N games", 5, 50, 15)
-    only_unprocessed = st.checkbox("Only unprocessed (has-video & no-analytics)", value=False)
-    if st.button("Refresh list"):
-        _list_games.clear()
+# Hosted inside the workbench there is exactly ONE game selection — the
+# workbench sidebar (coach, 2026-08-25: two selectors made no sense). This
+# page renders its own picker only when launched STANDALONE
+# (streamlit run post_game/ui_app.py).
+_hosted = bool(st.session_state.get("wb_hosted"))
+
+if _hosted:
+    limit, only_unprocessed = 30, False
+else:
+    with st.sidebar:
+        st.header("Game list")
+        limit = st.slider("Show last N games", 5, 50, 15)
+        only_unprocessed = st.checkbox("Only unprocessed (has-video & no-analytics)", value=False)
+        if st.button("Refresh list"):
+            _list_games.clear()
 
 rows = _list_games(limit=limit, only_unprocessed=only_unprocessed)
 
@@ -440,11 +449,35 @@ if not rows:
     st.warning("No games found.")
     st.stop()
 
-st.markdown("**Legend**: 🎥 video attached · ⏱ both kickoffs confirmed · 📐 calibrated · 📊 analytics ran")
-labels = [_format_row(r) for r in rows]
-idx = st.radio("Pick a game", range(len(rows)), format_func=lambda i: labels[i])
+ids = [r["id"] for r in rows]
+if _hosted:
+    _wb = st.session_state.get("wb_game_id")
+    if _wb not in ids:
+        st.error("The game selected in the sidebar is not in the recent list — "
+                 "hit ↻ refresh list in the sidebar.")
+        st.stop()
+    idx = ids.index(_wb)
+else:
+    st.markdown("**Legend**: 🎥 video attached · ⏱ both kickoffs confirmed · 📐 calibrated · 📊 analytics ran")
+    labels = [_format_row(r) for r in rows]
+    # Sticky selection by GAME ID. The row labels embed status flags (🎥⏱📐📊)
+    # that CHANGE as steps complete; a changed label changes an UNKEYED radio's
+    # widget identity and Streamlit drops its state — the picker silently reset
+    # to row 0 after every kickoff/calibration/run (reported 2026-08-24). The
+    # value lives in session_state under an explicit key (no `index` at all)
+    # and is re-derived only when the game LIST itself changes, so neither
+    # label churn nor step completions can move the selection.
+    _cur = st.session_state.get("ui_game_id")
+    if (st.session_state.get("_ui_game_list") != ids
+            or "ui_game_pick" not in st.session_state
+            or not (0 <= st.session_state["ui_game_pick"] < len(ids))):
+        st.session_state["ui_game_pick"] = ids.index(_cur) if _cur in ids else 0
+        st.session_state["_ui_game_list"] = ids
+    idx = st.radio("Pick a game", range(len(rows)),
+                   format_func=lambda i: labels[i], key="ui_game_pick")
 game = rows[idx]
 game_id = game["id"]
+st.session_state["ui_game_id"] = game_id
 
 st.divider()
 st.subheader(f"Selected: {game['date']} vs {game['opponent']}  ({game_id})")
@@ -883,12 +916,25 @@ _cal_help = "Opens the calibration tab on :8766. It stays open until you SAVE �
 if not _map_len or not _fkey:
     st.caption("⚠ Enter a field name + touchline length above for accurate distance/speed. "
                "You can still calibrate without them, but distance/speed will be scale-approximate.")
+if not current_video:
+    st.caption("📼 Attach the game video in step 1 first — the calibrate "
+               "button is disabled until then.")
 if st.button(_cal_btn_label, disabled=not current_video, help=_cal_help):
     _args = ["calibrate", "--game-id", game_id]
     if _map_len and _fkey:
         _args += ["--map-length", str(_map_len), "--field-key", _fkey]
     _start_subprocess("calibrate", game_id, _args)
     st.rerun()
+# The calibration UI lives in a SEPARATE tab that webbrowser.open() spawns in
+# the system default browser — easy to miss entirely (coach did, 2026-08-24).
+# While the server is up, show the link so a missed auto-open is one click.
+_cal_up = (st.session_state.get(K_PROC) is not None
+           and st.session_state[K_PROC].poll() is None
+           and st.session_state.get(K_PROC_KIND) == "calibrate")
+if _cal_up:
+    st.info("📐 The calibration page is a **separate browser tab** → "
+            "[open http://localhost:8766](http://localhost:8766) if it didn't "
+            "appear. Click the 13 landmarks there and SAVE, then come back.")
 
 # --- 3. run pipeline ----------------------------------------------------
 
