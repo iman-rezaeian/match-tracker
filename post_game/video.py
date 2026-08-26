@@ -36,24 +36,56 @@ from . import config
 # +faststart) so the output streams instantly in any HTML5 <video> tag.
 
 
+_VT_AVAILABLE: Optional[bool] = None
+
+
+def _videotoolbox_available() -> bool:
+    """Probe once whether this ffmpeg build has the VideoToolbox H.264 encoder."""
+    global _VT_AVAILABLE
+    if _VT_AVAILABLE is None:
+        ffmpeg = shutil.which("ffmpeg")
+        try:
+            r = subprocess.run([ffmpeg, "-hide_banner", "-h",
+                                "encoder=h264_videotoolbox"],
+                               capture_output=True, text=True, timeout=10)
+            _VT_AVAILABLE = r.returncode == 0 and "videotoolbox" in r.stdout.lower()
+        except Exception:
+            _VT_AVAILABLE = False
+    return _VT_AVAILABLE
+
+
 class H264PipeWriter:
     """ffmpeg-backed replacement for cv2.VideoWriter.
 
     Usage mirrors cv2.VideoWriter — `.write(bgr_frame)` per frame, `.close()`
     at the end. Frames must be uint8 BGR of shape (height, width, 3) and must
     match the (width, height) passed at construction.
+
+    `encoder=None` resolves from config.TV_ENCODER: "videotoolbox" hands the
+    encode to Apple's media engine (near-zero CPU, rate-controlled by
+    config.TV_VT_BITRATE — VideoToolbox has no CRF), "x264" is the original
+    software path where `crf`/`preset` apply. Falls back to x264 silently
+    when the ffmpeg build lacks the VT encoder, so callers never branch.
     """
 
     def __init__(self, path: str | Path, fps: float, width: int, height: int,
                  crf: int = 23, preset: str = "veryfast",
                  audio_source: "str | Path | None" = None,
-                 audio_start_s: float = 0.0) -> None:
+                 audio_start_s: float = 0.0,
+                 encoder: Optional[str] = None) -> None:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
             raise RuntimeError("ffmpeg not on PATH — required for H.264 encoding.")
         self._path = str(path)
         self._w = int(width)
         self._h = int(height)
+        enc = (encoder or config.TV_ENCODER).lower()
+        if enc == "videotoolbox" and not _videotoolbox_available():
+            enc = "x264"
+        if enc == "videotoolbox":
+            vcodec = ["-c:v", "h264_videotoolbox", "-b:v", config.TV_VT_BITRATE]
+        else:
+            vcodec = ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
         cmd = [
             ffmpeg, "-y",
             "-loglevel", "error",
@@ -69,9 +101,7 @@ class H264PipeWriter:
             cmd += [
                 "-map", "0:v",
                 "-map", "1:a?",
-                "-c:v", "libx264",
-                "-preset", preset,
-                "-crf", str(crf),
+                *vcodec,
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 "-c:a", "aac",
@@ -81,9 +111,7 @@ class H264PipeWriter:
         else:
             cmd += [
                 "-an",
-                "-c:v", "libx264",
-                "-preset", preset,
-                "-crf", str(crf),
+                *vcodec,
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 self._path,
@@ -163,23 +191,34 @@ def render_perspective(
     out_w: int,
     out_h: int,
     interp: int = cv2.INTER_LINEAR,
+    map_scale: int = 1,
 ) -> np.ndarray:
     """Render a perspective crop. Note: latitude is negated — positive lat
     means "look up from equator" in our convention (matches phase0 notebook).
 
     `interp` is the cv2 interpolation for the resample. INTER_LINEAR is fine
-    (and fast) for detection tiles; the broadcast reel passes INTER_LANCZOS4
-    for a sharper upscale since the TV crop is enlarged from the sphere.
+    (and fast) for detection tiles; the broadcast reel used to pass
+    INTER_LANCZOS4 for sharpness (config.TV_REMAP_INTERP restores it).
+
+    `map_scale > 1` computes the (u, v) sampling maps at 1/map_scale
+    resolution and bilinearly upscales them before the remap. The maps are
+    smooth trigonometric fields, so the upscale error is subpixel — but the
+    per-frame trig cost drops ~map_scale². The remap itself still samples the
+    full-resolution equirect frame, so output sharpness is unchanged.
     """
     h_eq, w_eq = eq_frame.shape[:2]
+    s = max(1, int(map_scale))
+    mw, mh = max(2, out_w // s), max(2, out_h // s)
     f = out_w / (2 * math.tan(math.radians(fov_deg) / 2))
 
-    x = np.arange(out_w, dtype=np.float32) - out_w / 2
+    # Sample the map grid at the CENTers of s-sized blocks scaled back to
+    # full-res pixel coordinates, so the upscaled map stays aligned.
+    x = (np.arange(mw, dtype=np.float32) + 0.5) * (out_w / mw) - 0.5 - out_w / 2
     # Output image-y grows DOWNWARD, but world-Y grows UPWARD. Negate so the
     # top of the output crop maps to the upper hemisphere of the sphere
     # (otherwise every crop comes out vertically mirrored — sky at bottom,
     # players upside-down, YOLO catches almost nothing).
-    y = -(np.arange(out_h, dtype=np.float32) - out_h / 2)
+    y = -((np.arange(mh, dtype=np.float32) + 0.5) * (out_h / mh) - 0.5 - out_h / 2)
     xv, yv = np.meshgrid(x, y)
     z = np.full_like(xv, f, dtype=np.float32)
 
@@ -200,6 +239,17 @@ def render_perspective(
     u = (lon_out / (2 * math.pi) + 0.5) * w_eq
     v = (0.5 - lat_out / math.pi) * h_eq
 
+    if s > 1:
+        # ⚠ A crop that straddles the equirect seam wraps u from w_eq back to
+        # 0 — bilinear upscaling across that jump would sweep the map through
+        # the whole frame. Unwrap before resizing, re-wrap after.
+        useam = (u.max() - u.min()) > w_eq / 2
+        if useam:
+            u = np.where(u < w_eq / 2, u + w_eq, u)
+        u = cv2.resize(u.astype(np.float32), (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+        v = cv2.resize(v.astype(np.float32), (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+        if useam:
+            u = np.mod(u, w_eq)
     return cv2.remap(
         eq_frame,
         u.astype(np.float32),

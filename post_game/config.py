@@ -16,6 +16,49 @@ MODELS_DIR = POST_GAME_ROOT / "models"
 for _d in (CACHE_DIR, OUTPUTS_DIR, MODELS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
+# --- Render speed (2026-08-25 — the Aug-9 full run took ~12 h wall) -------
+#
+# Four multipliers stacked on every reel frame: software 8K HEVC decode, a
+# full trig warp-map rebuild, a Lanczos4 resample, and a preset=slow software
+# x264 encode — all on one thread. Each knob below removes one and is
+# env-overridable back to the old behavior.
+
+# Hardware-accelerated DECODE for every cv2.VideoCapture (VideoToolbox via
+# OpenCV's ffmpeg backend). Read at capture-open time, so setting it here
+# covers stage-2 detection AND the reel/highlight renders. "0" disables.
+if os.environ.get("DECODE_HWACCEL", "1") != "0":
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "hwaccel;videotoolbox")
+
+# Reel/clip ENCODER. ⚠ QUALITY IS THE COACH'S EXPLICIT PRIORITY here (stated
+# 2026-08-25): the reel is a small slice of the sphere blown up to 1080p, so
+# crf 18 + preset slow were deliberately raised from 23/veryfast — the encoder
+# and resample stay at maximum quality BY DEFAULT and speed comes from the
+# quality-neutral knobs below. "videotoolbox" (Apple media engine, ~2x encode
+# throughput, needs ~TV_VT_BITRATE≈20M to visually match crf18) is opt-in.
+TV_ENCODER = os.environ.get("TV_ENCODER", "x264")
+TV_VT_BITRATE = os.environ.get("TV_VT_BITRATE", "20M")
+
+# Warp resample: Lanczos4 — the coach's deliberate sharpness choice (the crop
+# is enlarged from few source pixels; bilinear visibly softens it). "linear"
+# exists for experiments only.
+TV_REMAP_INTERP = os.environ.get("TV_REMAP_INTERP", "lanczos")
+
+# Warp maps are smooth fields — compute them at 1/N resolution and upscale
+# (subpixel error, invisible), cutting the per-frame trig cost ~N².
+# 1 restores the per-pixel rebuild.
+TV_MAP_SCALE = int(os.environ.get("TV_MAP_SCALE", "4"))
+
+# Run the jersey-VLM identity pass CONCURRENTLY with the reel render: VLM is
+# network-bound (CPU idle) and the render is compute-bound, so overlapping
+# them hides the shorter stage entirely. "0" restores sequential order.
+VLM_OVERLAP_RENDER = os.environ.get("VLM_OVERLAP_RENDER", "1") != "0"
+
+# Prefetch decoded frames on a reader thread during reel/highlight renders,
+# overlapping the ~28 ms/frame 8K decode with the warp+encode of the previous
+# frame (cv2 releases the GIL inside read()). Quality-neutral — same frames,
+# same order. "0" restores the serial decode→warp→write loop.
+TV_DECODE_PREFETCH = os.environ.get("TV_DECODE_PREFETCH", "1") != "0"
+
 # --- Device --------------------------------------------------------------
 
 # Lazy import so the lightweight UI (which only imports firestore_io -> config)

@@ -954,10 +954,45 @@ def _render_segment(
     end_f = int(round(end_s * fps))
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_f)
     written = 0
-    for f in range(start_f, end_f):
-        ok, frame = cap.read()
-        if not ok:
-            break
+
+    def _frames():
+        """(frame_index, frame) pairs — serially, or via a prefetch thread.
+
+        The 8K decode (~28 ms) and the warp+encode of the PREVIOUS frame are
+        independent, and cv2 releases the GIL inside read(), so one reader
+        thread overlaps them for free. Bounded queue: 4 × 88 MB frames caps
+        the memory cost. Quality-neutral (same frames, same order) —
+        TV_DECODE_PREFETCH=0 restores the serial loop.
+        """
+        if not config.TV_DECODE_PREFETCH:
+            for f in range(start_f, end_f):
+                ok, frame = cap.read()
+                if not ok:
+                    return
+                yield f, frame
+            return
+        import queue as _queue
+        import threading as _threading
+        buf: "_queue.Queue" = _queue.Queue(maxsize=4)
+
+        def _reader() -> None:
+            for f in range(start_f, end_f):
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                buf.put((f, frame))
+            buf.put(None)
+
+        t = _threading.Thread(target=_reader, name="reel-decode", daemon=True)
+        t.start()
+        while True:
+            item = buf.get()
+            if item is None:
+                break
+            yield item
+        t.join()
+
+    for f, frame in _frames():
         t = f / fps
         lon_uw = float(np.interp(t, aim_times, aim_lons_uw))
         lat = float(np.interp(t, aim_times, aim_lats))
@@ -965,10 +1000,15 @@ def _render_segment(
         # Per-frame FOV: constant TV_FOV_DEG unless event framing widened it
         # around a coach-logged dead ball.
         fov = TV_FOV_DEG if aim_fovs is None else float(np.interp(t, aim_times, aim_fovs))
-        # Lanczos gives a sharper upscale than bilinear — the TV crop is
-        # enlarged from a ~70° slice of the sphere, so the resample quality
-        # is one of the few real levers on perceived sharpness.
-        crop = render_perspective(frame, lon, lat, fov, out_w, out_h, interp=cv2.INTER_LANCZOS4)
+        # Resample choice: Lanczos was the original pick for sharpness, but it
+        # costs ~4x a bilinear remap and the unsharp mask below already covers
+        # perceived sharpness — config.TV_REMAP_INTERP="lanczos" restores it.
+        # map_scale computes the smooth warp maps at reduced resolution
+        # (subpixel error) — the 2026-08-25 speed pass; TV_MAP_SCALE=1 reverts.
+        _interp = (cv2.INTER_LANCZOS4 if config.TV_REMAP_INTERP == "lanczos"
+                   else cv2.INTER_LINEAR)
+        crop = render_perspective(frame, lon, lat, fov, out_w, out_h,
+                                  interp=_interp, map_scale=config.TV_MAP_SCALE)
         writer.write(_sharpen(crop))
         written += 1
     return written
