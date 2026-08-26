@@ -81,9 +81,18 @@ FAR_TOUCHLINE_BAND_M = 3.0
 
 def _args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--game-id", required=True)
+    # Not required: when this file runs as a page inside the workbench app
+    # there is no argv — the game comes from the workbench's shared sidebar
+    # selector (st.session_state["wb_game_id"]). CLI use is unchanged.
+    ap.add_argument("--game-id", default=None)
     ap.add_argument("--dir", default=None)
     known, _ = ap.parse_known_args()
+    if not known.game_id:
+        known.game_id = st.session_state.get("wb_game_id")
+    if not known.game_id:
+        st.error("No game selected — pick one in the workbench sidebar, or "
+                 "launch with --game-id.")
+        st.stop()
     return known
 
 
@@ -353,6 +362,60 @@ def snap(
     return float(best["foot_x_eq"]), float(best["foot_y_eq"]), int(best["track_id"])
 
 
+def same_body_conflicts(
+    this_frame: list[dict], proj, warn_m: float = 1.0,
+) -> list[tuple[str, str, float]]:
+    """Same-frame click pairs with DIFFERENT names within warn_m metres.
+
+    Two of the coach's names within 1 m of each other in one frame is almost
+    certainly one body named twice, not two kids: the 10th-percentile spacing
+    between simultaneous real bodies is 1.9 m, and in the first two click
+    sessions every same-frame pair under 1 m was a lookalike conflict (Duncan/
+    Garland and Zaidan/Garland at 0.00 m — the same snapped detection). Warned,
+    not blocked: undo is one click away and the coach may know better.
+    """
+    ours = [s for s in this_frame
+            if s.get("player_id") not in (None, "__not_ours__")]
+    pts = []
+    for s in ours:
+        fx, fy = proj.pixel_to_field(float(s["click_x_eq"]),
+                                     float(s["click_y_eq"]))
+        if np.isnan(fx) or np.isnan(fy):
+            continue         # above-horizon / far-line clicks carry no metres
+        pts.append((s["player_id"], float(fx), float(fy)))
+    out = []
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            if pts[i][0] == pts[j][0]:
+                continue
+            d = float(np.hypot(pts[i][1] - pts[j][1], pts[i][2] - pts[j][2]))
+            if d < warn_m:
+                out.append((pts[i][0], pts[j][0], d))
+    return out
+
+
+@st.cache_resource(show_spinner=False)
+def load_flat_strip(img_path: str, bands: int, band_w: int, band_h: int,
+                    scale: float) -> Image.Image:
+    """The frame's flat 1:1 strip, assembled ONCE per frame.
+
+    Streamlit re-runs the whole script on every interaction, and rebuilding
+    this (open + paste + rescale of an 8K-wide banded canvas) on each click /
+    band switch / name pick was the bulk of the Clicks-page lag (~1 s per
+    interaction, coach-reported 2026-08-25). Cached as a resource — callers
+    must treat it as READ-ONLY (crop() copies; never draw on it directly).
+    """
+    img = Image.open(img_path)
+    flat = Image.new("RGB", (band_w * bands, band_h))
+    for b in range(bands):
+        flat.paste(img.crop((0, b * band_h, band_w, (b + 1) * band_h)),
+                   (b * band_w, 0))
+    # Undo the render scale so panels are true 1:1 equirect pixels.
+    if abs(scale - 1.0) > 0.01:
+        flat = flat.resize((int(flat.width / scale), int(flat.height / scale)))
+    return flat
+
+
 def samples_path(root: Path) -> Path:
     return root / "clicks.jsonl"
 
@@ -384,7 +447,47 @@ def main() -> None:
     st.set_page_config(page_title="Click sampling", layout="wide")
 
     if not (root / "index.json").exists():
-        st.error(f"No rendered frames at {root}. Run click_sample_render first.")
+        # Frame rendering used to be a manual CLI step, which dead-ended the
+        # coach on every NEW game (hit 2026-08-24 on the Aug-9 game). Offer it
+        # right here: one 8K frame per 30 s of play, decoded from the local
+        # video — a few minutes, once per game.
+        st.error(f"No rendered frames for this game yet ({root}).")
+        # Rendering needs the FULL-game tracking cache (detections drive the
+        # click snapping + per-band counts). A smoke run writes only .smoke
+        # caches, which read as "process done" but can't feed this page —
+        # exactly the trap hit on the first new game (2026-08-24).
+        _tracks_pq = Path("post_game/outputs") / a.game_id / "tracks_raw.parquet"
+        if not _tracks_pq.exists():
+            _smoke = _tracks_pq.with_name("tracks_raw.smoke.parquet")
+            st.warning(
+                "The **full pipeline hasn't run** for this game"
+                + (" — only a smoke test (2 min per half) exists so far."
+                   if _smoke.exists() else ".")
+                + " Go to the **Game** page, make sure *Smoke test* is "
+                  "UNCHECKED, and Run pipeline (a full 8K game takes "
+                  "~1.5–2 h). Then come back here to render frames.")
+            return
+        st.caption("Rendering grabs one frame every 30 s of play from the "
+                   "local game video (halftime skipped). Takes a few minutes "
+                   "on the 8K sources — runs once per game.")
+        if st.button("🎞 Render frames now", type="primary"):
+            import subprocess
+            cmd = [sys.executable, "-m", "tracking.click_sample_render",
+                   "--game-id", a.game_id]
+            with st.status("Rendering frames …", expanded=True) as _s:
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True)
+                _box = st.empty()
+                _tail: list[str] = []
+                for _line in p.stdout:
+                    _tail = (_tail + [_line.rstrip()])[-8:]
+                    _box.code("\n".join(_tail))
+                _ok = p.wait() == 0 and (root / "index.json").exists()
+                _s.update(state="complete" if _ok else "error",
+                          label="Frames rendered — loading the sampler"
+                          if _ok else "Render FAILED — see output above")
+            if _ok:
+                st.rerun()
         return
 
     idx = load_index(str(root))
@@ -492,6 +595,7 @@ def main() -> None:
             button_label(by_id.get(p, {"id": p, "name": p}), gk_id)
             for p in sorted(_on, key=lambda i: _num(by_id.get(i, {})))))
 
+    proj, dims = load_projector(a.game_id)
     # What has already been recorded on THIS frame, so the coach can see his own
     # work instead of guessing whether a click landed.
     this_frame = [s for s in done
@@ -529,20 +633,28 @@ def main() -> None:
                 st.toast(f"↶ removed {button_label(_lp)}")
             st.rerun()
 
-    img = Image.open(root / frame["image"])
-    # The rendered canvas is banded; rebuild the flat strip so panel maths is
-    # simple and independent of how many bands the renderer used.
-    geom = frame["geom"]
-    bands, bw, bh = geom["bands"], geom["band_w"], geom["band_h"]
-    flat = Image.new("RGB", (bw * bands, bh))
-    for b in range(bands):
-        flat.paste(img.crop((0, b * bh, bw, (b + 1) * bh)), (b * bw, 0))
-    # Undo the render scale so panels are true 1:1 equirect pixels.
-    sc = geom["scale"]
-    if abs(sc - 1.0) > 0.01:
-        flat = flat.resize((int(flat.width / sc), int(flat.height / sc)))
+    # Two names on one body — the only pollution channel this instrument has.
+    # Derived fresh from the saved clicks every rerun (no state), so it also
+    # fires when revisiting a frame from an earlier session, and clears itself
+    # the moment the wrong click is undone.
+    if proj is not None:
+        _conf = same_body_conflicts(this_frame, proj)
+        if _conf:
+            st.error(
+                "⚠ **Two names on one kid?** "
+                + " · ".join(
+                    f"{button_label(by_id.get(p1, {'id': p1, 'name': p1}))} and "
+                    f"{button_label(by_id.get(p2, {'id': p2, 'name': p2}))} "
+                    f"are {d:.1f} m apart here"
+                    for p1, p2, d in _conf)
+                + " — if that's one body, ↶ undo the wrong name (a skipped "
+                  "click costs almost nothing; a wrong one biases both players).")
 
-    proj, dims = load_projector(a.game_id)
+    geom = frame["geom"]
+    bands = geom["bands"]
+    flat = load_flat_strip(str(root / frame["image"]), bands,
+                           geom["band_w"], geom["band_h"], geom["scale"])
+
     st.write("**Click a player, then pick their name.** Spectators sit behind "
              "the far touchline and the camera cannot tell them from players — "
              "ignore anything that looks like a folding chair.")

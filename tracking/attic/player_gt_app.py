@@ -26,7 +26,7 @@ from pathlib import Path
 # have set PYTHONPATH. Put the repo root on the path ourselves — the app is
 # meant to be launched as `streamlit run tracking/player_gt_app.py`, and it
 # should just work when it is.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -38,7 +38,7 @@ from post_game import firestore_io
 from post_game.identity import half_windows, period_clock_to_video_time_factory
 from post_game.identity_assign import _gk_windows
 
-LABELS_ROOT = Path(__file__).resolve().parent / "labels"
+LABELS_ROOT = Path(__file__).resolve().parent.parent / "labels"
 NOT_PLAYER, CANT_TELL, REFEREE, OPPONENT = (
     "__not_player__", "__cant_tell__", "__referee__", "__opponent__")
 
