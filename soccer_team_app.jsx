@@ -10524,6 +10524,116 @@ function BroadcastSubBug({ elapsed, holdEnd, subs }) {
  * vertical pitch and shade each cell by occupancy; row 0 is rendered at the
  * bottom so "bottom-left" always = our-half left side, in both halves.
  */
+// ROLE COLOURS — shared by the timeline and the per-role maps so a colour means
+// the same position in both.
+const ROLE_COLORS = {
+  GK: '#f472b6', DEF: '#60a5fa', 'MID-W': '#a3e635', 'MID-C': '#4ade80', FWD: '#fb923c',
+};
+
+// WHERE HE PLAYED — the coach rotates children through positions constantly at
+// this age (measured: 9-12 of 12 players change role every match), so a single
+// whole-match heatmap blends two or three different jobs together. This strip
+// shows the actual sequence, reconstructed from tactical-board drags crossed
+// with SUB taps: gaps are bench time, and total minutes come from the coach's
+// own taps rather than from tracking.
+//
+// ⚠ A role is the coach's INSTRUCTION (where he put the child on the board),
+// not a measurement of where the child ran. The wording says "played" rather
+// than anything implying observation.
+function PlayerRoleTimeline({ tl, halfS }) {
+  if (!tl || !tl.stints || !tl.stints.length) return null;
+  const total = halfS * 2;
+  const W = 300, H = 26;
+  const roles = Object.entries(tl.minutes_by_role || {});
+  return (
+    <div className="mt-2 rounded-xl border border-stone-700/60 bg-stone-950/40 p-2">
+      <div className="flex items-baseline gap-2 mb-1">
+        <div className="text-[8px] tracking-widest text-stone-500">WHERE HE PLAYED</div>
+        <div className="text-[9px] text-stone-400 ml-auto tabular-nums">
+          {tl.total_minutes}′ total
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: `${H}px` }}>
+        <rect x="0" y="4" width={W} height="13" rx="2" fill="#0c0a09" />
+        {tl.stints.map((st, i) => {
+          const x = (st.start_s / total) * W;
+          const w = Math.max(1.5, ((st.end_s - st.start_s) / total) * W);
+          return (
+            <g key={i}>
+              <rect x={x} y="4" width={w} height="13" rx="1.5"
+                    fill={ROLE_COLORS[st.role] || '#78716c'} opacity="0.9">
+                <title>{`${st.role}: ${Math.round(st.start_s / 60)}–${Math.round(st.end_s / 60)} min`}</title>
+              </rect>
+              {w > 30 && (
+                <text x={x + w / 2} y="13.5" fill="#0c0a09" fontSize="7"
+                      fontWeight="700" textAnchor="middle">{st.role}</text>
+              )}
+            </g>
+          );
+        })}
+        <line x1={W / 2} y1="1" x2={W / 2} y2="20" stroke="#e7e5e4" strokeWidth="1" />
+        <text x="0" y="25" fill="#57534e" fontSize="7">KO</text>
+        <text x={W / 2} y="25" fill="#78716c" fontSize="7" textAnchor="middle">HALF</text>
+        <text x={W} y="25" fill="#57534e" fontSize="7" textAnchor="end">FT</text>
+      </svg>
+      <div className="flex gap-2 flex-wrap text-[8px] text-stone-500 mt-0.5">
+        {roles.map(([r, m]) => (
+          <span key={r}>
+            <span className="inline-block w-1.5 h-1.5 rounded-sm mr-1"
+                  style={{ background: ROLE_COLORS[r] || '#78716c' }} />
+            {r} {m}′
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// HEATMAP BY POSITION — the same tagged clicks, split by which role the child
+// was in at that moment. A role needs `minClicks` tags before its map is drawn
+// (25, the coach's bar): below that the grid is noise, so the role shows its
+// minutes and a pooling state instead. Clicks accumulate across games, so these
+// fill in over a season without any extra work.
+function PlayerRoleMaps({ blocks, tl, shape, minClicks }) {
+  // Prefer the published per-role blocks; fall back to the timeline's minutes so
+  // an unclicked game still lists the roles he played.
+  const list = (blocks && blocks.length)
+    ? blocks
+    : Object.entries((tl && tl.minutes_by_role) || {}).map(([role, minutes]) => ({ role, minutes, n_clicks: 0 }));
+  if (!list.length || list.length < 2) return null;   // one role = the card's main heatmap already covers it
+  return (
+    <div className="mt-2">
+      <div className="text-[8px] tracking-widest text-stone-500 mb-1">HEATMAP BY POSITION</div>
+      <div className="flex gap-1.5">
+        {list.map(b => (
+          <div key={b.role} className="flex-1 min-w-0">
+            {b.heatmap ? (
+              <div className="rounded-lg border border-stone-700/60 bg-stone-950/40 overflow-hidden">
+                <PlayerHeatmap grid={b.heatmap} rows={shape[0]} cols={shape[1]} />
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-stone-700 bg-stone-950/40
+                              flex flex-col items-center justify-center text-center"
+                   style={{ minHeight: '54px' }}>
+                <div className="text-[9px] text-stone-500 tabular-nums">{b.n_clicks}/{minClicks}</div>
+                <div className="text-[7px] text-stone-600">tags</div>
+              </div>
+            )}
+            <div className="text-[7.5px] text-center mt-0.5 truncate"
+                 style={{ color: b.heatmap ? (ROLE_COLORS[b.role] || '#a8a29e') : '#57534e' }}>
+              {b.role} · {b.minutes}′
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="text-[8px] text-stone-600 mt-1 leading-snug">
+        Split by the position you had him in. A position needs {minClicks} tags for its
+        own map — the rest fill in as more games are tagged.
+      </div>
+    </div>
+  );
+}
+
 function PlayerHeatmap({ grid, rows, cols }) {
   if (!grid || !grid.length || !rows || !cols) {
     return <div className="text-[11px] text-stone-500 py-2">No positional data.</div>;
@@ -11539,6 +11649,13 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
   const clickByPlayer = Object.fromEntries(
     ((clickStats && clickStats.players) || []).map(p => [p.player_id, p]));
   const clickShape = (clickStats && clickStats.heatmap_shape) || [12, 8];
+  // Role stints per player, from the tactical board + SUB taps (post_game/roles.py).
+  // Independent of clicks, so the position timeline lands even on games that were
+  // never click-sampled.
+  const roleTl = Object.fromEntries(
+    ((clickStats && clickStats.role_timeline) || []).map(t => [t.player_id, t]));
+  const roleHalfS = (clickStats && clickStats.half_length_s) || ((game.halfLengthMin || 25) * 60);
+  const roleMinClicks = (clickStats && clickStats.min_clicks_role) || 25;
   // Team minutes come from the coach's SUB taps, so unlike a tracked peak they
   // don't depend on identity or coverage at all.
   const teamMinutes = pstats.reduce((s, p) => s + (p.minutes_played || 0), 0);
@@ -11986,6 +12103,13 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                         </div>
                       </>
                     )}
+                    <PlayerRoleTimeline tl={roleTl[s.player_id]} halfS={roleHalfS} />
+                    <PlayerRoleMaps
+                      blocks={cp && cp.by_role}
+                      tl={roleTl[s.player_id]}
+                      shape={clickShape}
+                      minClicks={roleMinClicks}
+                    />
                   </div>
                 );
               })}
