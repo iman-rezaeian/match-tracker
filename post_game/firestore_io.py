@@ -643,6 +643,19 @@ def write_game_calibration(game_id: str, calibration: dict[str, Any]) -> None:
     )
 
 
+def write_identity_sub_corrections(game_id: str, corrections: dict[str, dict]) -> None:
+    """Publish the camera-derived on-field corrections to the game doc.
+
+    The pipeline computes these each run from the coach's FIX-IDS accepts
+    (sub_correct.py) but previously kept them in-memory only; publishing lets
+    doc-only consumers (the workbench Narrate on-field strip) apply the same
+    "tags win ties" windows without the tracks cache. Times are VIDEO SECONDS
+    (onS/offS), matching what GameDoc.identity_sub_corrections reads back."""
+    _team_doc().collection("games").document(game_id).set(
+        {"identitySubCorrections": corrections}, merge=True
+    )
+
+
 def write_clip_metadata(game_id: str, event_id: str, meta: dict[str, Any]) -> None:
     _team_doc().collection("games").document(game_id).collection("clips").document(event_id).set(meta)
 

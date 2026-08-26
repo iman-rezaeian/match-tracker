@@ -920,6 +920,14 @@ def run(
         if sub_corrections:
             log.info("  -> sub-timeline: camera-corrected on-field window for %d player(s)",
                      len(sub_corrections))
+            # Publish to the game doc so doc-only consumers (Narrate on-field
+            # strip) can apply the same tags-win-ties windows without the
+            # tracks cache. Non-fatal: the in-memory corrections still drive
+            # this run either way.
+            try:
+                firestore_io.write_identity_sub_corrections(game_id, sub_corrections)
+            except Exception as e:
+                log.warning("  -> could not publish identitySubCorrections: %s", e)
 
     # Board orientation per period, resolved by the identity search — reused by
     # the tag pre-fill (3.3) to map field meters back to coach zone vocab.

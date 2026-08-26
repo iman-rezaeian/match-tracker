@@ -69,8 +69,24 @@ def build(
     game_id: str = typer.Option(..., "--game-id"),
     every_s: float = typer.Option(2.0, "--every-s", help="Sample one frame every N in-play seconds."),
     max_frames: int = typer.Option(600, "--max", help="Cap total crops."),
+    video_override: str = typer.Option(None, "--video",
+                                       help="Use this video file instead of the game doc's videoUrl "
+                                            "(for footage not yet attached)."),
+    windows_override: str = typer.Option(None, "--windows",
+                                         help="Sample windows 'a-b[,c-d]' in video seconds instead of "
+                                              "the kickoff-derived halves (for games without confirmed "
+                                              "kickoffs — empty-pitch frames self-skip via the centroid "
+                                              "aim, so a whole-match window is fine)."),
 ):
-    video, wins = _in_play_windows(game_id)
+    if video_override and windows_override:
+        video, wins = video_override, None      # fully offline — no Firestore
+    else:
+        video, wins = _in_play_windows(game_id)
+    if video_override:
+        video = video_override
+    if windows_override:
+        wins = [(float(a), float(b)) for a, b in
+                (w.split("-", 1) for w in windows_override.split(","))]
     out_dir = config.OUTPUTS_DIR / "ball_dataset" / game_id
     img_dir = out_dir / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
