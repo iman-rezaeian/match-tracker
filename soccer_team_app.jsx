@@ -10524,6 +10524,72 @@ function BroadcastSubBug({ elapsed, holdEnd, subs }) {
  * vertical pitch and shade each cell by occupancy; row 0 is rendered at the
  * bottom so "bottom-left" always = our-half left side, in both halves.
  */
+// KEEPER: two maps, one per team phase. Unlike the outfield roles this needs no
+// tactical board — the keeper's job changes with where the REST of the team is,
+// so a frame is "attacking" when the tagged outfielders' mean depth is past
+// halfway (see GK_MIN_OUTFIELD in tracking/click_publish.py).
+//
+// ⚠ The numbers are shown NEXT TO the maps on purpose. Measured on Jul-12 G1 the
+// difference is 2.5 m out attacking vs 1.7 m defending — real but small, and not
+// significant on one game (p=0.11) against a ±1.7 m tagging error. Two
+// near-identical blobs would imply a difference the data has not earned; the
+// figures let the coach see for himself how little the keeper moves, which is
+// itself the finding at this age.
+function GkPhaseMaps({ blocks, shape, minClicks }) {
+  if (!blocks || blocks.length < 2) return null;
+  const labels = { attacking: 'WE ATTACK', defending: 'WE DEFEND' };
+  const anyMap = blocks.some(b => b.heatmap);
+  const diff = (() => {
+    const a = blocks.find(b => b.phase === 'attacking');
+    const d = blocks.find(b => b.phase === 'defending');
+    if (!a || !d || a.avg_depth_m == null || d.avg_depth_m == null) return null;
+    return +(a.avg_depth_m - d.avg_depth_m).toFixed(1);
+  })();
+  return (
+    <div className="mt-2">
+      <div className="text-[8px] tracking-widest text-stone-500 mb-1">
+        KEEPER POSITION BY PHASE
+      </div>
+      <div className="flex gap-1.5">
+        {blocks.map(b => (
+          <div key={b.phase} className="flex-1 min-w-0">
+            {b.heatmap ? (
+              <div className="rounded-lg border border-stone-700/60 bg-stone-950/40 overflow-hidden">
+                <PlayerHeatmap grid={b.heatmap} rows={shape[0]} cols={shape[1]} />
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-stone-700 bg-stone-950/40
+                              flex flex-col items-center justify-center text-center"
+                   style={{ minHeight: '54px' }}>
+                <div className="text-[9px] text-stone-500 tabular-nums">{b.n_clicks}/{minClicks}</div>
+                <div className="text-[7px] text-stone-600">tags</div>
+              </div>
+            )}
+            <div className="text-center mt-0.5">
+              <div className="text-[7.5px]" style={{ color: b.heatmap ? '#f472b6' : '#57534e' }}>
+                {labels[b.phase] || b.phase}
+              </div>
+              {b.avg_depth_m != null && (
+                <div className="text-[9px] text-stone-300 tabular-nums leading-tight">
+                  {b.avg_depth_m} m out
+                </div>
+              )}
+              <div className="text-[7px] text-stone-600">{b.n_clicks} tags</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="text-[8px] text-stone-600 mt-1 leading-snug">
+        {diff != null
+          ? `He stood ${Math.abs(diff)} m ${diff > 0 ? 'further out' : 'deeper'} when we were attacking`
+          : 'Split by where the rest of the team was'}
+        {anyMap ? '' : ` · maps need ${minClicks} tags per phase`} · ±1.7 m tagging error, so a
+        gap this size is worth watching over several games rather than reading as settled.
+      </div>
+    </div>
+  );
+}
+
 // ROLE COLOURS — shared by the timeline and the per-role maps so a colour means
 // the same position in both.
 const ROLE_COLORS = {
@@ -12107,6 +12173,11 @@ function AnalyticsPanel({ game, roster, onClose, onSeekVideo, onDeleteVideos, on
                     <PlayerRoleMaps
                       blocks={cp && cp.by_role}
                       tl={roleTl[s.player_id]}
+                      shape={clickShape}
+                      minClicks={roleMinClicks}
+                    />
+                    <GkPhaseMaps
+                      blocks={cp && cp.by_gk_phase}
                       shape={clickShape}
                       minClicks={roleMinClicks}
                     />
