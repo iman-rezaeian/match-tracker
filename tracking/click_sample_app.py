@@ -416,6 +416,41 @@ def load_flat_strip(img_path: str, bands: int, band_w: int, band_h: int,
     return flat
 
 
+def published_marker(root: Path) -> Path:
+    """Marks the click count as of the last publish, so the app can tell the
+    coach when the app's numbers are behind his tagging. Sitting next to the
+    clicks themselves means it survives restarts and travels with the game."""
+    return root / ".published"
+
+
+def clicks_since_publish(root: Path, n_now: int) -> int:
+    m = published_marker(root)
+    if not m.exists():
+        return n_now
+    try:
+        return max(0, n_now - int(m.read_text().strip() or 0))
+    except ValueError:
+        return n_now
+
+
+def publish_clicks(game_id: str, root: Path, n_now: int) -> tuple[bool, str]:
+    """Run the publisher for this game, then record the count we published at.
+
+    Publishing is deliberately COACH-TRIGGERED rather than automatic on every
+    Nth tag: a mid-session publish would push half-finished stats to the app
+    the family can see, so the coach decides when numbers go public.
+    """
+    import subprocess
+    r = subprocess.run(
+        [sys.executable, "-m", "tracking.click_publish", "--game-id", game_id],
+        capture_output=True, text=True, cwd=str(_ROOT))
+    tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-6:])
+    if r.returncode == 0:
+        published_marker(root).write_text(str(n_now))
+        return True, tail
+    return False, tail
+
+
 def samples_path(root: Path) -> Path:
     return root / "clicks.jsonl"
 
@@ -522,6 +557,30 @@ def main() -> None:
         st.metric("clicks recorded", len(done))
         st.caption("Target ~400 total (~50/player) for ~7% position error. "
                    "20/player (~15% error) is still usable.")
+        # Publish lives HERE, not only on the Publish page: the coach finishes a
+        # tagging session on this page, and having to remember another tab (and
+        # re-pick the game there) is how a session's work sits unpublished.
+        _new = clicks_since_publish(root, len(done))
+        if _new:
+            st.warning(f"⬆ **{_new} new tag{'s' if _new != 1 else ''}** not in the app yet"
+                       if published_marker(root).exists()
+                       else f"⬆ **{_new} tags** never published")
+        else:
+            st.success("✓ the app is up to date with your tags")
+        if st.button("📤 Publish to the app", type="primary",
+                     disabled=not len(done) or not _new,
+                     use_container_width=True,
+                     help="Recomputes positions, per-role and keeper-phase maps "
+                          "from your tags and writes them to this game."):
+            with st.spinner("publishing…"):
+                ok, tail = publish_clicks(a.game_id, root, len(done))
+            if ok:
+                st.success("Published — open the game in the app to see it.")
+                st.code(tail)
+                st.rerun()
+            else:
+                st.error("Publish failed")
+                st.code(tail)
         st.write("**per player** (matchday squad)")
         for pid in sorted(squad, key=lambda i: _num(by_id.get(i, {}))):
             n = counts.get(pid, 0)

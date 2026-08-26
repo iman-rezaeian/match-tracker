@@ -27,14 +27,31 @@ import json
 from pathlib import Path
 
 
-def audio_to_video(audio_t: float, t0_wall_ms: float, ticks: list[dict]) -> float | None:
-    """Map an audio second to a video second via the tick log.
+def audio_to_wall(audio_t: float, sess: dict) -> float:
+    """Map a second of the (possibly concatenated) audio file to wall-clock ms.
+
+    Segmented sessions (recorder pauses with the video, 2026-08-26) carry a
+    `segments` table: each recorded chunk's wall-clock start plus its offset
+    (`virtual_start_s`) inside the concatenated audio.m4a. Older single-shot
+    sessions have no table and map linearly from t0_wall_ms.
+    """
+    segs = sess.get("segments")
+    if not segs:
+        return float(sess["t0_wall_ms"]) + audio_t * 1000.0
+    for s in segs:
+        if audio_t < s["virtual_start_s"] + s["dur_s"] or s is segs[-1]:
+            return (float(s["t0_wall_ms"])
+                    + max(0.0, audio_t - s["virtual_start_s"]) * 1000.0)
+    raise AssertionError("unreachable")
+
+
+def wall_to_video(wall: float, ticks: list[dict]) -> float | None:
+    """Map a wall-clock ms to a video second via the tick log.
 
     Between ticks the video advances at the last known rate while playing and
     holds still while paused. Ticks are (w=wall_ms, v=video_t, r=rate,
     k=play|pause|seek|rate|hb|end). Returns None before the first tick.
     """
-    wall = t0_wall_ms + audio_t * 1000.0
     ts = sorted(ticks, key=lambda t: t["w"])
     if not ts or wall < ts[0]["w"]:
         return None
@@ -62,12 +79,11 @@ def main() -> None:
 
     doc = json.loads(Path(args.events).read_text())
     sess = json.loads(Path(args.session).read_text())
-    t0 = float(sess["t0_wall_ms"])
     ticks = sess.get("ticks") or []
 
     kept, dropped = [], 0
     for e in doc.get("events", []):
-        v = audio_to_video(float(e["t"]), t0, ticks)
+        v = wall_to_video(audio_to_wall(float(e["t"]), sess), ticks)
         if v is None:
             dropped += 1
             continue
