@@ -948,6 +948,7 @@ def _render_segment(
     out_w: int,
     out_h: int,
     aim_fovs: Optional[np.ndarray] = None,
+    sr_enabled: bool = False,
 ) -> int:
     """Render [start_s, end_s) of the source into `writer`, following the aim."""
     start_f = max(0, int(round(start_s * fps)))
@@ -1009,7 +1010,14 @@ def _render_segment(
                    else cv2.INTER_LINEAR)
         crop = render_perspective(frame, lon, lat, fov, out_w, out_h,
                                   interp=_interp, map_scale=config.TV_MAP_SCALE)
-        writer.write(_sharpen(crop))
+        # Neural SR replaces (not stacks with) the unsharp mask: both sharpen,
+        # and together they halo the pitch lines. See config.TV_SR / TV_SR_SCOPE
+        # for which render paths pass sr_enabled.
+        if sr_enabled:
+            from post_game import tv_sr
+            writer.write(tv_sr.enhance(crop))
+        else:
+            writer.write(_sharpen(crop))
         written += 1
     return written
 
@@ -1201,6 +1209,7 @@ def render_tv_reel(
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h, aim_fovs,
+                sr_enabled=config.TV_SR and config.TV_SR_SCOPE == "all",
             )
             writer.close()
             part_paths.append(part_path)
@@ -1495,6 +1504,7 @@ def extract_auto_highlights(
             _render_segment(
                 cap, writer, fps, a, b,
                 aim_times, aim_lons_uw, aim_lats, out_w, out_h, aim_fovs,
+                sr_enabled=config.TV_SR,
             )
             writer.close()
             part_paths.append(part_path)

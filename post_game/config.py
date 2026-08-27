@@ -48,6 +48,31 @@ TV_REMAP_INTERP = os.environ.get("TV_REMAP_INTERP", "lanczos")
 # 1 restores the per-pixel rebuild.
 TV_MAP_SCALE = int(os.environ.get("TV_MAP_SCALE", "4"))
 
+# Neural super-resolution pass on rendered reel frames (realesr-general-x4v3,
+# weights in post_game/models/). The look is coach-gated (2026-08-27 A/B on
+# the workbench reel): the stronger RealESRGAN_x2plus was rejected outright
+# ("players ... look like cartoons"); general-v3 at full dn + original chroma
+# + blend 0.7 ("LUMA 0.7") is the approved config, baked into the defaults.
+# When enabled it REPLACES the unsharp mask (stacking both halos the lines).
+# OFF by default: at ~1 s/frame on MPS even highlights-only costs 2-3 h per
+# game, which the coach rejected ("2-3 hours is a lot for a few minutes
+# highlight"). Flip TV_SR=1 only with a fast device (T4/CUDA renders
+# highlights in ~15-40 min; tv_sr auto-uses cuda).
+# TV_SR_SCOPE  "highlights" (default) = extract_auto_highlights only;
+#              "all" adds the continuous reel (~25 h on MPS — GPU only).
+# TV_SR_DN     1.0 = full general model; lower mixes in the -wdn weights
+#              (softer, more denoised). Official dni interpolation.
+# TV_SR_BLEND  strength of the SR result over the plain render (1.0 = pure
+#              SR); the coach picked 0.7.
+# TV_SR_CHROMA "orig" (default) keeps the ORIGINAL frame's color planes and
+#              takes only luma from the model — full SR shifted saturation
+#              (coach-flagged 2026-08-27). "model" uses the raw SR colors.
+TV_SR = os.environ.get("TV_SR", "0") != "0"
+TV_SR_SCOPE = os.environ.get("TV_SR_SCOPE", "highlights")
+TV_SR_DN = float(os.environ.get("TV_SR_DN", "1.0"))
+TV_SR_BLEND = float(os.environ.get("TV_SR_BLEND", "0.7"))
+TV_SR_CHROMA = os.environ.get("TV_SR_CHROMA", "orig")
+
 # Run the jersey-VLM identity pass CONCURRENTLY with the reel render: VLM is
 # network-bound (CPU idle) and the render is compute-bound, so overlapping
 # them hides the shorter stage entirely. "0" restores sequential order.
