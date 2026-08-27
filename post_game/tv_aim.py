@@ -100,6 +100,10 @@ class AimConfig:
                                        # along players' COLLECTIVE run direction
     use_leading_room: bool = True      # broadcast "nose room": frame the action
                                        # toward the trailing edge, space ahead
+    use_ball_aim: bool = True          # bias the aim toward the fine-tuned ball
+                                       # detector's confirmed track (tv_ball.py);
+                                       # silently off when models/ball_finetuned.pt
+                                       # is absent — player aim is the fallback
 
     # --- geometry (mirrors tv_view constants; injected, not imported) ----
     base_fov_deg: float = 70.0         # TV_FOV_DEG
