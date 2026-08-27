@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from . import config, firestore_io, tv_aim
+from . import config, firestore_io, tv_aim, tv_ball
 from .firestore_io import CoachEvent
 from .calibration import FieldProjector
 from .highlights import _smooth_aim_stream
@@ -1167,6 +1167,32 @@ def render_tv_reel(
                 field_length_m, field_width_m,
                 aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
             )
+            # Ball-aware bias (tv_ball): decode this window once, track the
+            # ball with the fine-tuned detector, pull the aim toward it.
+            # Player aim is untouched when the model is absent or the ball is
+            # never confirmed. The FINAL stream is cached because the review-
+            # label chips must project through the aim the reel actually
+            # rendered with — with the ball pass it is no longer re-derivable
+            # from tracks alone.
+            _cfg = aim_cfg or _default_aim_cfg()
+            if _cfg.use_ball_aim and tv_ball.ball_aim_available():
+                log.info("TV reel half %d: ball pass (detect->track->bias)...",
+                         i + 1)
+                records = tv_ball.extract_ball_records(
+                    cap, a, b, aim_times, aim_lons_uw, aim_lats,
+                    cache_path=out_dir / f"ball_records_{i + 1}.json",
+                )
+                aim_lons_uw, aim_lats, aim_fovs, _bs = tv_ball.blend_ball_aim(
+                    aim_times, aim_lons_uw, aim_lats, aim_fovs, records,
+                    aim_hz=TV_AIM_HZ,
+                )
+                log.info("  ball aim: confirmed %.0f%% of window, "
+                         "mean |bias| %.1f deg",
+                         100.0 * _bs["confirmed_frac"],
+                         _bs["mean_abs_bias_deg"])
+            np.savez(out_dir / f"aim_stream_{i + 1}.npz",
+                     times=aim_times, lons=aim_lons_uw, lats=aim_lats,
+                     fovs=aim_fovs)
             part_path = tmp_dir / f"half_{i + 1}.mp4"
             # High-quality reel encode: CRF 18 + slow preset (vs default 23/veryfast).
             writer = H264PipeWriter(part_path, fps, out_w, out_h, crf=18, preset="slow",
@@ -1254,9 +1280,11 @@ def build_review_label_track(
 ) -> Optional[str]:
     """Per-second name-label keyframes for the coach REVIEW overlay (plan 3.7).
 
-    NOT a second video render: re-derives the reel's aim stream (deterministic
-    from tracks, so it matches an already-rendered reel byte-for-byte in aim
-    terms), projects every assigned player's equirect foot position into the
+    NOT a second video render: loads the reel's cached FINAL aim stream
+    (aim_stream_<i>.npz, saved at render time — required since the ball-aware
+    bias made the aim non-re-derivable from tracks; pre-cache reels rebuild
+    the deterministic player aim), projects every assigned player's equirect
+    foot position into the
     reel crop per sample, and writes a compact JSON the PWA draws as toggleable
     DOM name chips synced to playback (same mechanism as the scorebug).
 
@@ -1305,12 +1333,23 @@ def build_review_label_track(
 
     frames: list = []
     acc = 0.0
-    for (a, b) in tv_meta.segments:
-        aim_times, aim_lons_uw, aim_lats, aim_fovs = _build_aim_stream(
-            tracks_field_df, projector, a, b,
-            field_length_m, field_width_m,
-            aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
-        )
+    for _seg_i, (a, b) in enumerate(tv_meta.segments):
+        # The reel's FINAL aim stream is cached at render time (it includes
+        # the ball-aware bias, which is not re-derivable from tracks). Load
+        # it so the chips land exactly where the reel is looking; rebuild
+        # only for reels rendered before the cache existed (player-aim-only,
+        # deterministic, so the rebuild still matches those).
+        _npz = config.OUTPUTS_DIR / game_id / "tv_view" / f"aim_stream_{_seg_i + 1}.npz"
+        if _npz.exists():
+            _d = np.load(_npz)
+            aim_times, aim_lons_uw = _d["times"], _d["lons"]
+            aim_lats, aim_fovs = _d["lats"], _d["fovs"]
+        else:
+            aim_times, aim_lons_uw, aim_lats, aim_fovs = _build_aim_stream(
+                tracks_field_df, projector, a, b,
+                field_length_m, field_width_m,
+                aim_cfg=aim_cfg, events=events, clock_to_video=clock_to_video,
+            )
         seg = df[(df["time_s"] >= a) & (df["time_s"] <= b)].copy()
         if seg.empty:
             acc += (b - a)
